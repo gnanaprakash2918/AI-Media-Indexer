@@ -68,3 +68,4 @@
   * 80-character line length.
   * Google-style docstrings.
   * Import sorting and basic linting (unused imports, unreachable code, etc.).
+* Removed dead code from the project.
