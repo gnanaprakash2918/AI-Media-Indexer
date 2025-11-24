@@ -3,9 +3,9 @@ from datetime import datetime
 from enum import Enum
 
 class MediaType(str, Enum):
-    video = "video"
-    audio = "audio"
-    image = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+    IMAGE = "image"
 
 class MediaAsset(BaseModel):
     """The standard A2A data packet for a file that's found on scan."""

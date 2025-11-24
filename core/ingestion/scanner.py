@@ -1,11 +1,12 @@
 from pathlib import Path
 from typing import Generator, Union, Iterable
 import magic
+from core.schemas import MediaType
 
 class LibraryScanner:
     """System to efficiently find media files (images, audio, video) under a directory."""
 
-    DEFAULT_EXCLUDES = {
+    DEFAULT_EXCLUDES: set[str] = {
         ".git", ".hg", ".svn",
         ".venv", "venv", ".env", "env"
         "__pycache__", ".mypy_cache", ".pytest_cache",
@@ -16,6 +17,23 @@ class LibraryScanner:
         "dist", "build", ".egg-info",
         ".idea", ".vscode",
     }
+
+    VIDEO_EXTS: set[str] = {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v'}
+    AUDIO_EXTS: set[str] = {'.mp3', '.wav', '.aac', '.flac', '.m4a', '.ogg'}
+    IMAGE_EXTS: set[str] = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff'}
+
+    def _get_media_type(self, extension: str):
+        """Determines media type based on extension."""
+        extension = extension.lower()
+        if extension in self.VIDEO_EXTS:
+            return MediaType.VIDEO
+        elif extension in self.AUDIO_EXTS:
+            return MediaType.AUDIO
+        elif extension in self.IMAGE_EXTS:
+            return MediaType.IMAGE
+
+        return None
+
 
     def _is_media_file(self, file_path: Path) -> tuple[bool, str]:
         """
@@ -33,7 +51,7 @@ class LibraryScanner:
                 media_type: One of "image", "video", "audio", or "none".
         """
 
-        SMALL_FILE_SIZE_THRESHOLD = 4 * 1024
+        SMALL_FILE_SIZE_THRESHOLD: int = 4 * 1024
 
         try:
             file_stats = file_path.stat()
@@ -41,12 +59,7 @@ class LibraryScanner:
 
             if file_size > SMALL_FILE_SIZE_THRESHOLD:
                 ext = file_path.suffix.lower()
-                if ext in {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff'}:
-                    return True, "image"
-                if ext in {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v'}:
-                    return True, "video"
-                if ext in {'.mp3', '.wav', '.aac', '.flac', '.m4a', '.ogg'}:
-                    return True, "audio"
+
             else:
                 mime = magic.from_file(str(file_path), mime=True)
 
