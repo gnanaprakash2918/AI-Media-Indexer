@@ -11,7 +11,7 @@ def main():
 
     target_folder = "D:\\Hibernate"  # noqa: E501
 
-    print(f"🚀 Scanning: {target_folder}")
+    print(f"Scanning: {target_folder}")
 
     for asset in scanner.scan(target_folder):
         print(f"Found {asset.media_type.value}: {asset.file_path.name}")
