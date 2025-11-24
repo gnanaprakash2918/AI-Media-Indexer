@@ -84,7 +84,7 @@ class MediaProber:
         result into a Python dictionary.
 
         Args:
-            file_path: Path to the media file to probe.
+            file_path: Path to the media file to probe. Either a string or Path object.
 
         Returns:
             dict: A dictionary representing the JSON output from ffprobe. It
@@ -158,3 +158,8 @@ class MediaProber:
             ) from exc
 
         return result_dict
+
+if __name__ == "__main__":
+    scanner = MediaProber()
+    path = ""
+    print(scanner.probe(path))
