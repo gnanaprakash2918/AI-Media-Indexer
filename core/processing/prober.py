@@ -1,55 +1,58 @@
-from typing import Any, Optional
-import subprocess
-import json
-from pathlib import Path
-import shutil
+"""Tools for probing media files with ffprobe."""
+
 import functools
+import json
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any, Optional
 
 def requires_ffprobe(func):
     """
-    Ensure that the `ffprobe` executable is available before calling the function.
+    Ensure that the `ffprobe` executable is available.
 
     This decorator checks whether the `ffprobe` binary is accessible in the
     system PATH. If it is not found, a `RuntimeError` is raised before the
-    wrapped function executes. This is typically used to guard methods that
-    rely on `ffprobe`, such as media metadata extraction.
+    wrapped function executes. Use this for methods that rely on `ffprobe`,
+    such as media metadata extraction.
 
     Args:
-        func (Callable): The function or method being wrapped.
+      func: Function or method to wrap.
 
     Returns:
-        Callable: The wrapped function that performs the ffprobe availability
-            check before invoking the original function.
+      The wrapped function that performs the `ffprobe` availability check
+      before invoking the original function.
 
     Raises:
-        RuntimeError: If `ffprobe` is not installed or not found in the PATH.
+      RuntimeError: If `ffprobe` is not installed or not found in the PATH.
     """
 
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
-        """Wrapper that performs the ffprobe availability check."""
+        """Wrap the call with an `ffprobe` availability check."""
         if not shutil.which("ffprobe"):
             raise RuntimeError("ffprobe is not installed or not in PATH.")
         return func(self, *args, **kwargs)
 
     return wrapper
 
+
 class MediaProbeError(Exception):
     """
-    Raised when probing media metadata with ffprobe fails.
+    Error that occurs while probing media metadata with ffprobe.
 
     Attributes:
-        code: A short, machine-friendly error code.
-        message: Human-readable description of the error.
-        details: Optional extra context (stderr output, return code, etc.).
-
+      code: Short, machine-friendly error code.
+      message: Human-readable description of the error.
+      details: Optional extra context (stderr output, return code, etc.).
     """
+
     def __init__(
-            self,
-            message: str,
-            *,
-            code: str = "media_probe_error",
-            details: Optional[Any] = None,
+        self,
+        message: str,
+        *,
+        code: str = "media_probe_error",
+        details: Optional[Any] = None,
     ) -> None:
         self.code = code
         self.message = message
@@ -72,11 +75,11 @@ class MediaProber:
 
     This class is responsible for running `ffprobe` on the provided media file
     and returning the parsed JSON metadata describing the available streams
-    and format.
+    and container format.
     """
 
     @requires_ffprobe
-    def probe(self, file_path: str | Path) -> dict:
+    def probe(self, file_path: str | Path) -> dict[str, Any]:
         """
         Probe a media file with ffprobe and return its metadata.
 
@@ -84,15 +87,17 @@ class MediaProber:
         result into a Python dictionary.
 
         Args:
-            file_path: Path to the media file to probe. Either a string or Path object.
+          file_path: Path to the media file to probe. Either a string or
+            a Path object.
 
         Returns:
-            dict: A dictionary representing the JSON output from ffprobe. It
-            typically contains keys like "streams" and "format".
+          A dictionary representing the JSON output from `ffprobe`. It
+          typically contains keys such as "streams" and "format".
 
         Raises:
-            MediaProbeError: If ffprobe fails to execute, returns a non-zero
-                exit code, or produces invalid JSON output.
+          ValueError: If `file_path` is an empty string.
+          MediaProbeError: If `ffprobe` fails to execute, returns a non-zero
+            exit code, or produces invalid JSON output.
         """
 
         if isinstance(file_path, str):
@@ -102,14 +107,12 @@ class MediaProber:
         else:
             path_obj = file_path
 
-        # Check if that path actually exists
-        # Also Check if it's an empty string (as empty string is a valid POSIX path)
-
+        # Check if the path actually exists.
         if not path_obj.exists():
             raise MediaProbeError(
                 f"File does not exist: {file_path}",
                 code="file_not_found",
-                details={"path": file_path}
+                details={"path": str(file_path)},
             )
 
         args_to_ffprobe = [
@@ -120,7 +123,7 @@ class MediaProber:
             "json",
             "-show_format",
             "-show_streams",
-            str(file_path)
+            str(file_path),
         ]
 
         try:
@@ -129,14 +132,14 @@ class MediaProber:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                shell=False
+                shell=False,
             )
 
             out, err = process.communicate()
             return_code = process.returncode
 
             if return_code != 0:
-                # ffprobe failed to execute
+                # ffprobe failed to execute.
                 raise MediaProbeError(
                     "ffprobe failed to execute",
                     code="media_probe_error",
@@ -146,12 +149,11 @@ class MediaProber:
                         "stdout": out.strip() if out else "",
                     },
                 )
-
-        except Exception as e:
-            raise MediaProbeError(f"Subprocess failed: {e}")
+        except Exception as exc:
+            raise MediaProbeError(f"Subprocess failed: {exc}") from exc
 
         try:
-            result_dict = json.loads(out)
+            result_dict: dict[str, Any] = json.loads(out)
         except json.JSONDecodeError as exc:
             raise MediaProbeError(
                 "Failed to parse ffprobe JSON output",
