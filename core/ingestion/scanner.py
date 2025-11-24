@@ -1,58 +1,66 @@
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Union
 import magic
 
 class LibraryScanner:
-    """system to find all files efficiently."""
+    """System to efficiently find media files (images, audio, video) under a directory."""
 
-    def _is_media_file(self, file_path: Path) -> bool:
-        """ Return True if the file is an image, audio, or video based on MIME type."""
+    def _is_media_file(self, file_path: Path) -> tuple[bool, str]:
+        """
+        Check whether a file is a media file (image, audio, or video).
+
+        This function determines the MIME type of the file using the `magic` library
+        and classifies it as one of: "image", "video", or "audio".
+
+        Args:
+            file_path: Path to the file being examined.
+
+        Returns:
+            A tuple (is_media, media_type):
+                is_media: True if the file is recognized as a media file, False otherwise.
+                media_type: One of "image", "video", "audio", or "none".
+        """
+
         try:
             mime = magic.from_file(str(file_path), mime=True)
             if mime is None:
-                return False
+                return False, "none"
 
-        except FileNotFoundError:
-            print(f"File not found: {file_path}")
-            return False
-
-        except PermissionError:
-            print(f"Insufficient Permissions :  Denied {file_path}")
-            return False
-
-        except IsADirectoryError:
-            print(f"Path is a directory, not a file : {file_path}")
-            return False
-
-        except OSError:
-            print(f"IO Error when reading this file path : {file_path}")
-            return False
+        except (FileNotFoundError, PermissionError, IsADirectoryError, OSError) as e:
+            print(f"[ERROR:{type(e).__name__}] Cannot read '{file_path}': {e}")
+            return False, "none"
 
         except Exception as e:
             print(f"Error: {e}")
-            return False
+            return False, "none"
 
-        return (
-                mime.startswith('image/') or
-                mime.startswith('video/') or
-                mime.startswith('audio/')
-        )
+        if mime.startswith('image/'):
+            return True, "image"
+        elif mime.startswith('video/'):
+            return True, "video"
+        elif mime.startswith('audio/'):
+            return True, "audio"
 
-    def scan(self, root_path: str) -> Generator[Path, None, None]:
+        return False, "none"
+
+    def scan(self, root_path: Union[str, Path]) -> Generator[tuple[Path, str], None, None]:
         """
         Recursively yield media files (images, audio, video) under the given directory.
 
         Args:
-            directory: Root directory to scan.
+            root_path: Root directory to scan. Can be a string or a Path object.
+
 
         Yields:
-            Path objects for files that are detected as media files.
+        Tuples of (file_path, media_type), where:
+            file_path: Path object for a file that is detected as a media file.
+            media_type: One of "image", "video", "audio".
         """
 
         directory_path = Path(root_path)
 
         try:
-            if not directory_path or root_path.strip() == '':
+            if isinstance(root_path, str) and root_path.strip() == "":
                 raise ValueError("Provided path is empty or whitespace.")
 
             if not directory_path.exists():
@@ -82,5 +90,7 @@ class LibraryScanner:
             if not path.is_file():
                 continue
 
-            if self._is_media_file(path):
-                yield path
+            is_media, file_type = self._is_media_file(path)
+
+            if is_media:
+                yield path, file_type

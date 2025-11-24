@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import subprocess
 import json
 from pathlib import Path
@@ -45,7 +45,7 @@ class MediaProber:
     and format.
     """
 
-    def probe(self, file_path: str) -> dict:
+    def probe(self, file_path: Union[str, Path]) -> dict:
         """
         Probe a media file with ffprobe and return its metadata.
 
@@ -69,6 +69,9 @@ class MediaProber:
             raise RuntimeError("ffprobe is not installed or not in PATH.")
 
         path = Path(file_path)
+
+        if isinstance(file_path, str) and file_path.strip() == "":
+            raise ValueError("Provided path is empty or whitespace.")
 
         # Check if that path actually exists
         # Also Check if it's an empty string (as empty string is a valid POSIX path)
