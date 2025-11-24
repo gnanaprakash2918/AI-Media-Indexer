@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 from typing import Generator, Iterable
 import magic
-from core.schemas import MediaType
+import datetime
+from core.schemas import MediaType, MediaAsset
 
 class LibraryScanner:
     """System to efficiently find media files (images, audio, video) under a directory."""
@@ -81,13 +83,13 @@ class LibraryScanner:
 
         return False, "none"
 
-    def scan(self, root_path: str | Path, excluded_dirs_files: Iterable[str] | None = None) -> Generator[tuple[Path, str], None, None]:
+    def scan(self, root_path: str | Path, excluded_dirs: Iterable[str] | None = None) -> Generator[MediaAsset, None, None]:
         """
         Recursively yield media files (images, audio, video) under the given directory.
 
         Args:
             root_path: Root directory to scan. Can be a string or a Path object.
-            excluded_dirs_files: Iterable of directory or file names to exclude by name. If None, a default set of common project/system directories is used.
+            excluded_dirs: Iterable of directory or file names to exclude by name. If None, a default set of common project/system directories is used.
 
         Yields:
             Tuples of (file_path, media_type), where:
@@ -107,33 +109,41 @@ class LibraryScanner:
             if not directory_path.is_dir():
                 raise NotADirectoryError(f"Path is not a directory: {directory_path}")
 
-        except (ValueError, NotADirectoryError, FileNotFoundError, PermissionError, IsADirectoryError, OSError) as e:
+            if excluded_dirs is None:
+                excluded_dirs = self.DEFAULT_EXCLUDES
+
+            excludes = set(excluded_dirs) if excluded_dirs else self.DEFAULT_EXCLUDES
+
+            # Walk through the given directory recursively
+            for dirpath, dir_names, filenames in os.walk(directory_path):
+                dir_names[:] = [dir_name for dir_name in dir_names if dir_name not in excludes and not dir_name.startswith('.')]
+
+                for filename in filenames:
+                    if filename.startswith("."):
+                        continue
+
+                    full_file_path = Path(dirpath) / filename
+                    file_media_type = self._get_media_type(full_file_path.suffix)
+
+                    if file_media_type:
+                        stat = full_file_path.stat()
+                        last_modified_dt = datetime.datetime.fromtimestamp(stat.st_mtime)
+
+                        yield MediaAsset(
+                            file_path=full_file_path,
+                            media_type=file_media_type,
+                            file_size_bytes=stat.st_size,
+                            last_modified=last_modified_dt
+                        )
+
+        except (ValueError, NotADirectoryError, FileNotFoundError, PermissionError, IsADirectoryError,
+                OSError) as e:
             print(f"[ERROR:{type(e).__name__}] Cannot read '{directory_path}': {e}")
             return
 
         except Exception as e:
             print(f"[ERROR:{type(e).__name__}] Cannot read '{directory_path}': {e}")
             return
-
-        if excluded_dirs_files is None:
-            excluded_dirs_files = self.DEFAULT_EXCLUDES
-
-        excluded_set = set(excluded_dirs_files)
-
-        # Walk through the given directory recursively
-        for path in directory_path.rglob('*'):
-            if not path.is_file():
-                continue
-
-            if any(part in excluded_set for part in path.parts):
-                # Skip if it's mentioned in Excluded files
-                continue
-
-            is_media, file_type = self._is_media_file(path)
-
-            if is_media:
-                yield path, file_type
-
 
 if __name__ == "__main__":
     scanner = LibraryScanner()

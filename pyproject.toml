@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
 [project]
 name = "ai-media-indexer"
 version = "0.1.0"
@@ -9,3 +13,47 @@ dependencies = [
     "python-magic>=0.4.27",
     "ruff>=0.14.6",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.4.0",
+    "mypy>=1.10.0",
+]
+
+[tool.black]
+line-length = 80
+target-version = ["py312"]
+skip-string-normalization = false
+
+[tool.ruff]
+line-length = 80
+target-version = "py312"
+
+[tool.ruff.lint]
+# Core linting, plus pydocstyle for Google-style docstrings.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # import sorting (isort)
+    "N",   # naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "D",   # pydocstyle
+]
+ignore = [
+    # Relax rules that conflict with Google-style docstrings.
+    "D203",  # one-blank-line-before-class
+    "D213",  # multi-line-summary-second-line
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["ai_media_indexer"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+line-ending = "lf"
