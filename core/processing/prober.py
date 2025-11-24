@@ -25,6 +25,7 @@ class MediaProbeError(Exception):
         super().__init__(message)
 
     def __str__(self) -> str:
+        """Return a readable string representation of the error."""
         base = f"[{self.code}] {self.message}"
         if self.details is not None:
             return f"{base} | details={self.details!r}"
