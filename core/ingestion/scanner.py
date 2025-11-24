@@ -89,9 +89,20 @@ class LibraryScanner:
             print(f"[ERROR:{type(e).__name__}] Cannot read '{directory_path}': {e}")
             return
 
+        if excluded_dirs_files is None:
+            excluded_dirs_files = self.DEFAULT_EXCLUDES
+
+        excluded_set = set(excluded_dirs_files)
+
+
+
         # Walk through the given directory recursively
         for path in directory_path.rglob('*'):
             if not path.is_file():
+                continue
+
+            if any(part in excluded_set for part in path.parts):
+                # Skip if it's mentioned in Excluded files
                 continue
 
             is_media, file_type = self._is_media_file(path)
