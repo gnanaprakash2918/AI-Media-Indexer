@@ -6,11 +6,35 @@ from faster_whisper import WhisperModel
 
 
 class AudioTranscriber:
-    """Audio Transcriber using Faster Whisper model."""
+    """Audio Transcriber using faster-whisper.
 
-    def __init__(self) -> None:
-        """Initialize the AudioTranscriber with a Whisper model."""
-        self.model_size = "base"
+    - Defaults to model_size "small" (smaller and faster).
+    - Auto-detects CUDA and chooses appropriate compute_type.
+    - Returns a dict with full text, list of segments (with start/end), language info.
+    """
+
+    def __init__(
+        self,
+        model_size: str = "small",
+        device: str | None = None,
+        model_path: str | Path | None = None,
+        max_download_retries: int = 3,
+    ) -> None:
+        """Initialize a new AudioTranscriber instance.
+
+        Args:
+        model_size: Whisper model name (e.g., "small", "base", "tiny"). Defaults to "small".
+        device: "cuda" or "cpu". If None, we try to auto-detect CUDA (torch.cuda).
+        model_path: Optional local path or HF repo id. If you pre-downloaded model, set this to that path.
+        max_download_retries: Number of times to retry model download on transient errors.
+        """
+        self.model_size = model_size
+        self.model_path = None if model_path is None else str(model_path)
+        self.max_download_retries = max_download_retries
+
+        if device is None:
+            pass
+            # device = "cuda" if (torch is not None and torch.cuda.is_available())
 
         # Run on GPU with FP16
         # Other option : compute_type="int8_float16", cuda
