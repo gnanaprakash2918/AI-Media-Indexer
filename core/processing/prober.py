@@ -2,8 +2,15 @@ from typing import Any, Optional
 import subprocess
 import json
 
-
 class MediaProbeError(Exception):
+    """
+    Raised when probing media metadata with ffprobe fails.
+
+    Attributes:
+        code: A short, machine-friendly error code.
+        message: Human-readable description of the error.
+        details: Optional extra context (stderr output, return code, etc.).
+    """
     def __init__(
             self,
             message: str,
