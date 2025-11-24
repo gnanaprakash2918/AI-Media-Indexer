@@ -3,6 +3,36 @@ import subprocess
 import json
 from pathlib import Path
 import shutil
+import functools
+
+def requires_ffprobe(func):
+    """
+    Ensure that the `ffprobe` executable is available before calling the function.
+
+    This decorator checks whether the `ffprobe` binary is accessible in the
+    system PATH. If it is not found, a `RuntimeError` is raised before the
+    wrapped function executes. This is typically used to guard methods that
+    rely on `ffprobe`, such as media metadata extraction.
+
+    Args:
+        func (Callable): The function or method being wrapped.
+
+    Returns:
+        Callable: The wrapped function that performs the ffprobe availability
+            check before invoking the original function.
+
+    Raises:
+        RuntimeError: If `ffprobe` is not installed or not found in the PATH.
+    """
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        """Wrapper that performs the ffprobe availability check."""
+        if not shutil.which("ffprobe"):
+            raise RuntimeError("ffprobe is not installed or not in PATH.")
+        return func(self, *args, **kwargs)
+
+    return wrapper
 
 class MediaProbeError(Exception):
     """
@@ -45,6 +75,7 @@ class MediaProber:
     and format.
     """
 
+    @requires_ffprobe
     def probe(self, file_path: Union[str, Path]) -> dict:
         """
         Probe a media file with ffprobe and return its metadata.
@@ -63,10 +94,6 @@ class MediaProber:
             MediaProbeError: If ffprobe fails to execute, returns a non-zero
                 exit code, or produces invalid JSON output.
         """
-
-        # Check if ffprobe and ffmpeg are actually installed before proceeding
-        if not shutil.which("ffprobe"):
-            raise RuntimeError("ffprobe is not installed or not in PATH.")
 
         path = Path(file_path)
 
