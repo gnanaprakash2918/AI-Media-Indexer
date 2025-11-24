@@ -95,15 +95,17 @@ class MediaProber:
                 exit code, or produces invalid JSON output.
         """
 
-        path = Path(file_path)
-
-        if isinstance(file_path, str) and file_path.strip() == "":
-            raise ValueError("Provided path is empty or whitespace.")
+        if isinstance(file_path, str):
+            if file_path.strip() == "":
+                raise ValueError("Provided path is empty or whitespace.")
+            path_obj = Path(file_path)
+        else:
+            path_obj = file_path
 
         # Check if that path actually exists
         # Also Check if it's an empty string (as empty string is a valid POSIX path)
 
-        if not path.exists() or file_path.strip() == '':
+        if not path_obj.exists():
             raise MediaProbeError(
                 f"File does not exist: {file_path}",
                 code="file_not_found",
@@ -118,32 +120,35 @@ class MediaProber:
             "json",
             "-show_format",
             "-show_streams",
-            file_path
+            str(file_path)
         ]
 
-        process = subprocess.Popen(
-            args=args_to_ffprobe,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            shell=False
-        )
-
-        out, err = process.communicate()
-
-        return_code = process.returncode
-
-        if return_code != 0:
-            # ffprobe failed to execute
-            raise MediaProbeError(
-                "ffprobe failed to execute",
-                code="media_probe_error",
-                details={
-                    "return_code": return_code,
-                    "stderr": err.strip() if err else "",
-                    "stdout": out.strip() if out else "",
-                },
+        try:
+            process = subprocess.Popen(
+                args=args_to_ffprobe,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False
             )
+
+            out, err = process.communicate()
+            return_code = process.returncode
+
+            if return_code != 0:
+                # ffprobe failed to execute
+                raise MediaProbeError(
+                    "ffprobe failed to execute",
+                    code="media_probe_error",
+                    details={
+                        "return_code": return_code,
+                        "stderr": err.strip() if err else "",
+                        "stdout": out.strip() if out else "",
+                    },
+                )
+
+        except Exception as e:
+            raise MediaProbeError(f"Subprocess failed: {e}")
 
         try:
             result_dict = json.loads(out)
