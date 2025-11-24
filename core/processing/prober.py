@@ -1,6 +1,8 @@
 from typing import Any, Optional
 import subprocess
 import json
+from pathlib import Path
+import shutil
 
 class MediaProbeError(Exception):
     """
@@ -62,6 +64,22 @@ class MediaProber:
                 exit code, or produces invalid JSON output.
         """
 
+        # Check if ffprobe and ffmpeg are actually installed before proceeding
+        if not shutil.which("ffprobe"):
+            raise RuntimeError("ffprobe is not installed or not in PATH.")
+
+        path = Path(file_path)
+
+        # Check if that path actually exists
+        # Also Check if it's an empty string (as empty string is a valid POSIX path)
+
+        if not path.exists() or file_path.strip() == '':
+            raise MediaProbeError(
+                f"File does not exist: {file_path}",
+                code="file_not_found",
+                details={"path": file_path}
+            )
+
         args_to_ffprobe = [
             "ffprobe",
             "-v",
@@ -84,7 +102,6 @@ class MediaProber:
         out, err = process.communicate()
 
         return_code = process.returncode
-        result_dict = json.loads(out)
 
         if return_code != 0:
             # ffprobe failed to execute
@@ -97,5 +114,17 @@ class MediaProber:
                     "stdout": out.strip() if out else "",
                 },
             )
+
+        try:
+            result_dict = json.loads(out)
+        except json.JSONDecodeError as exc:
+            raise MediaProbeError(
+                "Failed to parse ffprobe JSON output",
+                code="media_probe_error",
+                details={
+                    "stdout": out,
+                    "stderr": err,
+                },
+            ) from exc
 
         return result_dict
