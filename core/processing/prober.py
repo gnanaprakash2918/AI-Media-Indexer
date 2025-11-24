@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Any, Optional
 import subprocess
 import json
 from pathlib import Path
@@ -76,7 +76,7 @@ class MediaProber:
     """
 
     @requires_ffprobe
-    def probe(self, file_path: Union[str, Path]) -> dict:
+    def probe(self, file_path: str | Path) -> dict:
         """
         Probe a media file with ffprobe and return its metadata.
 

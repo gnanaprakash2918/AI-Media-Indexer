@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Generator, Union, Iterable
+from typing import Generator, Iterable
 import magic
 from core.schemas import MediaType
 
@@ -81,7 +81,7 @@ class LibraryScanner:
 
         return False, "none"
 
-    def scan(self, root_path: Union[str, Path], excluded_dirs_files: Iterable[str] | None = None) -> Generator[tuple[Path, str], None, None]:
+    def scan(self, root_path: str | Path, excluded_dirs_files: Iterable[str] | None = None) -> Generator[tuple[Path, str], None, None]:
         """
         Recursively yield media files (images, audio, video) under the given directory.
 
