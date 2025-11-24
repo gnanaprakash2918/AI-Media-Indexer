@@ -5,8 +5,6 @@ import os
 from collections.abc import Generator, Iterable
 from pathlib import Path
 
-import magic
-
 from core.schemas import MediaAsset, MediaType
 
 
@@ -62,63 +60,6 @@ class LibraryScanner:
             return MediaType.IMAGE
 
         return None
-
-    def _is_media_file(self, file_path: Path) -> tuple[bool, str]:
-        """Check whether a file is a media file (image, audio, or video).
-
-        This function determines the type of the file using its size and,
-        for small files, the MIME type via the `magic` library. It
-        classifies files as one of "image", "video", "audio", or "none".
-
-        Args:
-          file_path: Path to the file being examined.
-
-        Returns:
-          A tuple (is_media, media_type), where:
-            is_media: True if the file is recognized as a media file,
-              False otherwise.
-            media_type: One of "image", "video", "audio", or "none".
-        """
-        small_file_size_threshold: int = 4 * 1024
-
-        try:
-            file_stats = file_path.stat()
-            file_size = file_stats.st_size
-
-            if file_size > small_file_size_threshold:
-                ext = file_path.suffix.lower()
-                media_type = self._get_media_type(ext)
-                if media_type is not None:
-                    return True, media_type.value
-            else:
-                mime = magic.from_file(str(file_path), mime=True)
-
-                for prefix, media_type_str in (
-                    ("image/", "image"),
-                    ("video/", "video"),
-                    ("audio/", "audio"),
-                ):
-                    if mime.startswith(prefix):
-                        return True, media_type_str
-
-        except (
-            FileNotFoundError,
-            PermissionError,
-            IsADirectoryError,
-            OSError,
-        ) as exc:
-            print(
-                f"[ERROR:{type(exc).__name__}] Cannot read '{file_path}': {exc}"
-            )
-            return False, "none"
-
-        except Exception as exc:  # pylint: disable=broad-except
-            print(
-                f"[ERROR:{type(exc).__name__}] Cannot read '{file_path}': {exc}"
-            )
-            return False, "none"
-
-        return False, "none"
 
     def scan(
         self,
