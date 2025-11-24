@@ -46,12 +46,13 @@ class LibraryScanner:
             print(f"[ERROR:{type(e).__name__}] Cannot read '{file_path}': {e}")
             return False, "none"
 
-        if mime.startswith('image/'):
-            return True, "image"
-        elif mime.startswith('video/'):
-            return True, "video"
-        elif mime.startswith('audio/'):
-            return True, "audio"
+        for prefix, media_type_itr in (
+                ("image/", "image"),
+                ("video/", "video"),
+                ("audio/", "audio"),
+        ):
+            if mime.startswith(prefix):
+                return True, media_type_itr
 
         return False, "none"
 
@@ -61,12 +62,12 @@ class LibraryScanner:
 
         Args:
             root_path: Root directory to scan. Can be a string or a Path object.
-
+            excluded_dirs_files: Iterable of directory or file names to exclude by name. If None, a default set of common project/system directories is used.
 
         Yields:
-        Tuples of (file_path, media_type), where:
-            file_path: Path object for a file that is detected as a media file.
-            media_type: One of "image", "video", "audio".
+            Tuples of (file_path, media_type), where:
+                file_path: Path object for a file that is detected as a media file.
+                media_type: One of "image", "video", "audio".
         """
 
         directory_path = Path(root_path)
@@ -93,8 +94,6 @@ class LibraryScanner:
             excluded_dirs_files = self.DEFAULT_EXCLUDES
 
         excluded_set = set(excluded_dirs_files)
-
-
 
         # Walk through the given directory recursively
         for path in directory_path.rglob('*'):
