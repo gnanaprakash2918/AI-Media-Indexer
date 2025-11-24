@@ -33,10 +33,30 @@ class LibraryScanner:
                 media_type: One of "image", "video", "audio", or "none".
         """
 
+        SMALL_FILE_SIZE_THRESHOLD = 4 * 1024
+
         try:
-            mime = magic.from_file(str(file_path), mime=True)
-            if mime is None:
-                return False, "none"
+            file_stats = file_path.stat()
+            file_size = file_stats.st_size
+
+            if file_size > SMALL_FILE_SIZE_THRESHOLD:
+                ext = file_path.suffix.lower()
+                if ext in {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff'}:
+                    return True, "image"
+                if ext in {'.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v'}:
+                    return True, "video"
+                if ext in {'.mp3', '.wav', '.aac', '.flac', '.m4a', '.ogg'}:
+                    return True, "audio"
+            else:
+                mime = magic.from_file(str(file_path), mime=True)
+
+                for prefix, media_type_itr in (
+                        ("image/", "image"),
+                        ("video/", "video"),
+                        ("audio/", "audio"),
+                ):
+                    if mime.startswith(prefix):
+                        return True, media_type_itr
 
         except (FileNotFoundError, PermissionError, IsADirectoryError, OSError) as e:
             print(f"[ERROR:{type(e).__name__}] Cannot read '{file_path}': {e}")
@@ -45,14 +65,6 @@ class LibraryScanner:
         except Exception as e:
             print(f"[ERROR:{type(e).__name__}] Cannot read '{file_path}': {e}")
             return False, "none"
-
-        for prefix, media_type_itr in (
-                ("image/", "image"),
-                ("video/", "video"),
-                ("audio/", "audio"),
-        ):
-            if mime.startswith(prefix):
-                return True, media_type_itr
 
         return False, "none"
 
