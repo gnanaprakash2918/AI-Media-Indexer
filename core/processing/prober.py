@@ -5,11 +5,11 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+
 
 def requires_ffprobe(func):
-    """
-    Ensure that the `ffprobe` executable is available.
+    """Ensure that the `ffprobe` executable is available.
 
     This decorator checks whether the `ffprobe` binary is accessible in the
     system PATH. If it is not found, a `RuntimeError` is raised before the
@@ -38,8 +38,7 @@ def requires_ffprobe(func):
 
 
 class MediaProbeError(Exception):
-    """
-    Error that occurs while probing media metadata with ffprobe.
+    """Error that occurs while probing media metadata with ffprobe.
 
     Attributes:
       code: Short, machine-friendly error code.
@@ -52,8 +51,15 @@ class MediaProbeError(Exception):
         message: str,
         *,
         code: str = "media_probe_error",
-        details: Optional[Any] = None,
+        details: Any | None = None,
     ) -> None:
+        """Initialize a new MediaProbeError instance.
+
+        Args:
+          message: Human-readable description of the error.
+          code: Short, machine-friendly error code.
+          details: Optional extra context (stderr output, return code, etc.).
+        """
         self.code = code
         self.message = message
         self.details = details
@@ -70,8 +76,7 @@ class MediaProbeError(Exception):
 
 
 class MediaProber:
-    """
-    Probe media files using ffprobe and return parsed metadata.
+    """Probe media files using ffprobe and return parsed metadata.
 
     This class is responsible for running `ffprobe` on the provided media file
     and returning the parsed JSON metadata describing the available streams
@@ -80,8 +85,7 @@ class MediaProber:
 
     @requires_ffprobe
     def probe(self, file_path: str | Path) -> dict[str, Any]:
-        """
-        Probe a media file with ffprobe and return its metadata.
+        """Probe a media file with ffprobe and return its metadata.
 
         This method invokes `ffprobe` with JSON output enabled and parses the
         result into a Python dictionary.
@@ -99,7 +103,6 @@ class MediaProber:
           MediaProbeError: If `ffprobe` fails to execute, returns a non-zero
             exit code, or produces invalid JSON output.
         """
-
         if isinstance(file_path, str):
             if file_path.strip() == "":
                 raise ValueError("Provided path is empty or whitespace.")
@@ -165,6 +168,7 @@ class MediaProber:
             ) from exc
 
         return result_dict
+
 
 if __name__ == "__main__":
     scanner = MediaProber()

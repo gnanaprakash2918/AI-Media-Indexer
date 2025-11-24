@@ -2,10 +2,13 @@
 
 import datetime
 import os
+from collections.abc import Generator, Iterable
 from pathlib import Path
-from typing import Generator, Iterable
+
 import magic
+
 from core.schemas import MediaAsset, MediaType
+
 
 class LibraryScanner:
     """Scan directories for media files (images, audio, video)."""
@@ -42,8 +45,7 @@ class LibraryScanner:
     IMAGE_EXTS: set[str] = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
 
     def _get_media_type(self, extension: str) -> MediaType | None:
-        """
-        Determine media type based on a file extension.
+        """Determine media type based on a file extension.
 
         Args:
           extension: File extension including the leading dot.
@@ -51,7 +53,6 @@ class LibraryScanner:
         Returns:
           A MediaType value if the extension is known; otherwise None.
         """
-
         extension = extension.lower()
         if extension in self.VIDEO_EXTS:
             return MediaType.VIDEO
@@ -63,8 +64,7 @@ class LibraryScanner:
         return None
 
     def _is_media_file(self, file_path: Path) -> tuple[bool, str]:
-        """
-        Check whether a file is a media file (image, audio, or video).
+        """Check whether a file is a media file (image, audio, or video).
 
         This function determines the type of the file using its size and,
         for small files, the MIME type via the `magic` library. It
@@ -108,15 +108,13 @@ class LibraryScanner:
             OSError,
         ) as exc:
             print(
-                f"[ERROR:{type(exc).__name__}] "
-                f"Cannot read '{file_path}': {exc}"
+                f"[ERROR:{type(exc).__name__}] Cannot read '{file_path}': {exc}"
             )
             return False, "none"
 
         except Exception as exc:  # pylint: disable=broad-except
             print(
-                f"[ERROR:{type(exc).__name__}] "
-                f"Cannot read '{file_path}': {exc}"
+                f"[ERROR:{type(exc).__name__}] Cannot read '{file_path}': {exc}"
             )
             return False, "none"
 
@@ -212,6 +210,7 @@ class LibraryScanner:
                 f"Cannot read '{directory_path}': {exc}"
             )
             return
+
 
 if __name__ == "__main__":
     scanner = LibraryScanner()
