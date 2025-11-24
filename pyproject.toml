@@ -17,6 +17,9 @@ dependencies = [
     "python-magic>=0.4.27",
     "python-magic-bin>=0.4.14",
     "ruff>=0.14.6",
+    "torch>=2.5.1",
+    "torchaudio>=2.5.1",
+    "torchvision>=0.20.1",
 ]
 
 [project.optional-dependencies]
@@ -59,3 +62,15 @@ convention = "google"
 
 [tool.ruff.format]
 line-ending = "lf"
+
+# 1. Define the PyTorch CUDA index
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+# 2. Tell uv to pull torch packages from that specific index
+[tool.uv.sources]
+torch = [{ index = "pytorch" }]
+torchvision = [{ index = "pytorch" }]
+torchaudio = [{ index = "pytorch" }]

@@ -77,3 +77,5 @@
 ### Task 2.1
 
 - Add a transcriber file to `core/processing/transcriber.py`.
+- Use this command `nvidia-smi` to check for the CUDA version and download that specific torch.
+- For my case, the CUDA version was 13.0. So I downloaded `uv add torch --index-url https://download.pytorch.org/whl/cu121`
