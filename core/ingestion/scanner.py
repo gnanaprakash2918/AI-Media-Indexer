@@ -1,9 +1,21 @@
 from pathlib import Path
-from typing import Generator, Union
+from typing import Generator, Union, Iterable
 import magic
 
 class LibraryScanner:
     """System to efficiently find media files (images, audio, video) under a directory."""
+
+    DEFAULT_EXCLUDES = {
+        ".git", ".hg", ".svn",
+        ".venv", "venv", ".env", "env"
+        "__pycache__", ".mypy_cache", ".pytest_cache",
+        "node_modules", ".cache", ".local",
+        ".Trash", "lost+found",
+        ".DS_Store", "__MACOSX",
+        "Thumbs.db", "desktop.ini",
+        "dist", "build", ".egg-info",
+        ".idea", ".vscode",
+    }
 
     def _is_media_file(self, file_path: Path) -> tuple[bool, str]:
         """
@@ -31,7 +43,7 @@ class LibraryScanner:
             return False, "none"
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"[ERROR:{type(e).__name__}] Cannot read '{file_path}': {e}")
             return False, "none"
 
         if mime.startswith('image/'):
@@ -43,7 +55,7 @@ class LibraryScanner:
 
         return False, "none"
 
-    def scan(self, root_path: Union[str, Path]) -> Generator[tuple[Path, str], None, None]:
+    def scan(self, root_path: Union[str, Path], excluded_dirs_files: Iterable[str] | None = None) -> Generator[tuple[Path, str], None, None]:
         """
         Recursively yield media files (images, audio, video) under the given directory.
 
@@ -69,20 +81,12 @@ class LibraryScanner:
             if not directory_path.is_dir():
                 raise NotADirectoryError(f"Path is not a directory: {directory_path}")
 
-        except ValueError as e:
-            print(f"[ERROR] Invalid path: {e}")
+        except (ValueError, NotADirectoryError, FileNotFoundError, PermissionError, IsADirectoryError, OSError) as e:
+            print(f"[ERROR:{type(e).__name__}] Cannot read '{directory_path}': {e}")
             return
 
-        except FileNotFoundError as e:
-            print(f"[ERROR] {e}")
-            return
-
-        except NotADirectoryError as e:
-            print(f"[ERROR] {e}")
-            return
-
-        except OSError as e:
-            print(f"[ERROR] OS error while accessing '{directory_path}': {e}")
+        except Exception as e:
+            print(f"[ERROR:{type(e).__name__}] Cannot read '{directory_path}': {e}")
             return
 
         # Walk through the given directory recursively
@@ -94,3 +98,11 @@ class LibraryScanner:
 
             if is_media:
                 yield path, file_type
+
+
+if __name__ == "__main__":
+    scanner = LibraryScanner()
+    file_path = ''
+
+    for media_path, media_type in scanner.scan(file_path):
+        print(f"[{media_type.upper()}] found: {media_path}")
