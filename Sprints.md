@@ -42,3 +42,13 @@
   2. `subprocess.run` vs `subprocess.Popen`
   3. The arguments capture_output=True and text=True.
   4. FFmpeg flags: `-v quiet, -print_format json, -show_format, -show_streams`.
+
+
+### Task 1.3
+
+- Create a Class named `LibraryScanner` and write a method `scan(self, root_path: str) -> Generator[Path, None, None]` inside that class.
+- The file should be `core/ingestion/scanner.py`
+- Goal: Recursively find video/audio files, ignore junk, and yield paths. (Don't return them all at once).
+- This is to prevent RAM from overloading in case of terabytes of media.
+- Use pathlib.Path, not string manipulation for paths.
+- Handle PermissionError: If you hit a system folder you can't read.
