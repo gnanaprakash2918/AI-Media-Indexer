@@ -1,13 +1,14 @@
 import shutil
+import subprocess
+import tempfile
 from collections.abc import Generator
 from pathlib import Path
-import subprocess
-from typing import Any
-import tempfile
+
 
 class FrameExtractor:
     class FrameCache:
         """Dont clutter the user's video folder with thousands of JPEGs."""
+
         def __init__(self):
             self.path = Path(tempfile.mkdtemp(prefix="media_agent_frames_"))
             self._active = True
@@ -26,7 +27,9 @@ class FrameExtractor:
         def __exit__(self, exc_type, exc, tb):
             self.cleanup()
 
-    def extract(self, video_path: str | Path, interval: int = 2) -> Generator[Path, None, None]:
+    def extract(
+        self, video_path: str | Path, interval: int = 2
+    ) -> Generator[Path, None, None]:
         # Convert a video file into sequence of frames at regular intervals
         # interval=2 means "Take a screenshot every 2 seconds."
 
@@ -43,7 +46,9 @@ class FrameExtractor:
                 raise FileNotFoundError(f"Path does not exist: {path_obj}")
 
             if path_obj.is_dir():
-                raise IsADirectoryError(f"Expected a file, but got a directory: {path_obj}")
+                raise IsADirectoryError(
+                    f"Expected a file, but got a directory: {path_obj}"
+                )
 
             if not path_obj.is_file():
                 raise FileNotFoundError(f"Path is not a file: {path_obj}")
