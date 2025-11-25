@@ -13,7 +13,7 @@ class FrameExtractor:
 
             # Fresh directory
             if self.path.exists():
-                shutil.rmtree(self.path)
+                shutil.rmtree(self.path, ignore_errors=True)
             self.path.mkdir(parents=True, exist_ok=True)
 
             self._active = True
@@ -26,55 +26,22 @@ class FrameExtractor:
             self._active = False
 
         # This is to enable context within 'with'
-        def __enter__(self):
+        def __enter__(self) -> Path:
             return self.path
 
         def __exit__(self, exc_type, exc, tb):
             self.cleanup()
 
-    def extract_frames(video_path: Path, interval: float) -> list[Path]:
-        frame_cache_path = Path(".frame_cache")
-        frame_cache_context = FrameExtractor().FrameCache(base=".", folder_name=frame_cache_path)
-
-        args_to_ffmpeg = [
-            "ffmpeg",
-            "-i",
-            str(video_path),
-            "-vf",
-            f"fps=1/{interval}",
-            "-q:v",
-            "2",
-            "-f",
-            "image2",
-            str(frame_cache_path / "frame_%04d.jpg"),
-        ]
-
-        try:
-            process = subprocess.Popen(
-                args=args_to_ffmpeg,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                shell=False,
-            )
-
-            out, err = process.communicate()
-            return_code = process.returncode
-
-            if return_code != 0:
-                raise
-
-        except Exception as exc:
-            raise
-
-        frames = sorted(frame_cache_path.glob("frame_*.jpg"))
-        return frames
-
     def extract(
         video_path: str | Path, interval: int = 2
     ) -> Generator[Path, None, None]:
-        # Convert a video file into sequence of frames at regular intervals
-        # interval=2 means "Take a screenshot every 2 seconds."
+        """
+        Convert a video file into sequence of frames at regular intervals.
+        interval=2 means "Take a screenshot every 2 seconds."
+
+        Yields:
+            Path to each extracted .jpg frame so the AI can process it immediately.
+        """
 
         try:
             if isinstance(video_path, str):
@@ -85,11 +52,50 @@ class FrameExtractor:
             else:
                 path_obj = video_path
 
+            if not path_obj.exists():
+                raise FileNotFoundError(f"Path does not exist: {path_obj}")
+
             if path_obj.is_dir():
                 raise IsADirectoryError(f"Expected a file, but got a directory: {path_obj}")
 
             if not path_obj.is_file():
                 raise FileNotFoundError(f"Path is not a file: {path_obj}")
+
+            # Extract frames into temporary cache directory
+            with FrameExtractor.FrameCache(base=path_obj.parent, folder_name=".frame_cache") as cache_dir:
+                output_pattern = cache_dir / "frame_%04d.jpg"
+
+                args_to_ffmpeg = [
+                    "ffmpeg",
+                    "-i",
+                    str(path_obj),
+                    "-vf",
+                    f"fps=1/{interval}",
+                    "-q:v",
+                    "2",
+                    "-f",
+                    "image2",
+                    str(output_pattern),
+                ]
+
+                process = subprocess.Popen(
+                    args=args_to_ffmpeg,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    shell=False,
+                )
+
+                out, err = process.communicate()
+                return_code = process.returncode
+
+                if return_code != 0:
+                    raise RuntimeError(
+                        f"ffmpeg failed with code {return_code}: {err.strip() if err else ''}"
+                    )
+
+                for frame_path in sorted(cache_dir.glob("frame_*.jpg")):
+                    yield frame_path
 
         except (
             ValueError,
