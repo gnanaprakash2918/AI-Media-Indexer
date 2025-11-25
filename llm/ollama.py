@@ -1,3 +1,8 @@
+"""Ollama LLM adapter.
+
+Wraps the `ollama` async client and adapts it to the LLMInterface.
+"""
+
 import os
 from pathlib import Path
 from typing import Any
@@ -8,19 +13,29 @@ from .interface import LLMInterface, T
 
 
 class OllamaLLM(LLMInterface):
+    """Adapter for the Ollama LLM service."""
+
     def __init__(
         self,
         model_name: str | None = None,
         base_url_env: str = "OLLAMA_BASE_URL",
         prompt_dir: str = "./prompts",
     ):
+        """Initialize the Ollama AsyncClient.
+
+        Args:
+            model_name: Optional model override.
+            base_url_env: Environment variable name for the base URL.
+            prompt_dir: Prompt template directory.
+        """
         super().__init__(prompt_dir=prompt_dir)
 
         self.model = model_name or os.getenv("OLLAMA_MODEL", "llava")
         base_url = os.getenv(base_url_env, "http://localhost:11434")
 
         print(
-            f"Initializing Ollama client with model={self.model}, base_url={base_url}"
+            "Initializing Ollama client with "
+            f"model={self.model}, base_url={base_url}"
         )
 
         try:
@@ -33,6 +48,7 @@ class OllamaLLM(LLMInterface):
             ) from e
 
     async def generate(self, prompt: str, **kwargs: Any) -> str:
+        """Generate text from the Ollama service for a user prompt."""
         debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
         print(f"Ollama generating text for prompt: {debug_prompt}")
 
@@ -55,6 +71,7 @@ class OllamaLLM(LLMInterface):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> T:
+        """Generate structured output and validate it with the given schema."""
         print("Ollama structured generation requested.")
 
         full_prompt = (
@@ -79,7 +96,7 @@ class OllamaLLM(LLMInterface):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> str:
-        """Generate a description of the image."""
+        """Generate a description for an image using the Ollama client."""
         try:
             img_path = str(Path(image_path))
 
