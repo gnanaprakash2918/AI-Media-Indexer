@@ -1,16 +1,16 @@
-from abc import ABC, abstractmethod
 import json
 import os
 import re
-from typing import Any, Type, TypeVar, Dict
-from pydantic import BaseModel
+from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
 class LLMInterface(ABC):
-    """
-    Base class that combines:
+    """Base class that combines:
     1. Abstract methods for Generation (interface).
     2. Concrete methods for Prompt Loading with caching.
     """
@@ -23,7 +23,7 @@ class LLMInterface(ABC):
         else:
             self.prompt_dir = prompt_dir
 
-        self._prompt_cache: Dict[str, str] = {}
+        self._prompt_cache: dict[str, str] = {}
 
         if not self.prompt_dir.exists():
             print(f"Prompt directory '{self.prompt_dir}' does not exist. Creating it.")
@@ -44,7 +44,7 @@ class LLMInterface(ABC):
         if file_path.exists():
             print(f"Loading prompt from '{file_path}'")
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     content = f.read()
                     self._prompt_cache[filename] = content
                     return content
@@ -56,7 +56,7 @@ class LLMInterface(ABC):
             f"Prompt '{filename}' not found on disk or in defaults."
         )
 
-    def parse_json_response(self, response_text: str, schema: Type[T]) -> T:
+    def parse_json_response(self, response_text: str, schema: type[T]) -> T:
         """Extracts JSON from text and validates against Pydantic."""
         clean_text = (
             re.sub(r"```[a-zA-Z]*", "", response_text).replace("```", "").strip()
@@ -78,7 +78,7 @@ class LLMInterface(ABC):
             raise RuntimeError(f"Parsed JSON did not match schema: {e}")
 
     def construct_system_prompt(
-        self, schema: Type[BaseModel], filename: str = "system_prompt.txt"
+        self, schema: type[BaseModel], filename: str = "system_prompt.txt"
     ) -> str:
         raw_prompt = self.load_prompt(filename)
         schema_json = json.dumps(schema.model_json_schema(), indent=2)
@@ -104,7 +104,7 @@ class LLMInterface(ABC):
 
     @abstractmethod
     async def generate_structured(
-        self, schema: Type[T], prompt: str, system_prompt: str = "", **kwargs: Any
+        self, schema: type[T], prompt: str, system_prompt: str = "", **kwargs: Any
     ) -> T:
         raise NotImplementedError
 

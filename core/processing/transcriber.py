@@ -4,10 +4,11 @@ This module provides a small wrapper around Faster Whisper optimized for
 local execution with fallback to online download.
 """
 
+import io
 import os
 import sys
-import io
 from pathlib import Path
+
 
 def _add_torch_libs_to_path() -> None:
     try:
