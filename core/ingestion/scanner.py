@@ -131,17 +131,11 @@ class LibraryScanner:
             IsADirectoryError,
             OSError,
         ) as exc:
-            print(
-                f"[ERROR:{type(exc).__name__}] "
-                f"Cannot read '{directory_path}': {exc}"
-            )
+            print(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
             return
 
         except Exception as exc:  # pylint: disable=broad-except
-            print(
-                f"[ERROR:{type(exc).__name__}] "
-                f"Cannot read '{directory_path}': {exc}"
-            )
+            print(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
             return
 
 
@@ -151,6 +145,5 @@ if __name__ == "__main__":
 
     for media_asset in scanner.scan(file_path):
         print(
-            f"[{media_asset.media_type.value.upper()}] "
-            f"found: {media_asset.file_path}"
+            f"[{media_asset.media_type.value.upper()}] found: {media_asset.file_path}"
         )

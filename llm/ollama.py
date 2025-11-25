@@ -34,8 +34,7 @@ class OllamaLLM(LLMInterface):
         base_url = os.getenv(base_url_env, "http://localhost:11434")
 
         print(
-            "Initializing Ollama client with "
-            f"model={self.model}, base_url={base_url}"
+            f"Initializing Ollama client with model={self.model}, base_url={base_url}"
         )
 
         try:

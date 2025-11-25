@@ -30,12 +30,12 @@ dependencies = [
 dev = ["black>=24.4.0", "mypy>=1.10.0"]
 
 [tool.black]
-line-length = 80
+line-length = 88
 target-version = ["py312"]
 skip-string-normalization = false
 
 [tool.ruff]
-line-length = 80
+line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
