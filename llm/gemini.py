@@ -1,3 +1,9 @@
+"""Gemini LLM integration using langchain-google-genai.
+
+This module adapts the ChatGoogleGenerativeAI client into the project's
+LLMInterface.
+"""
+
 import asyncio
 import base64
 import mimetypes
@@ -12,6 +18,8 @@ from .interface import LLMInterface, T
 
 
 class GeminiLLM(LLMInterface):
+    """Adapter for the Google Gemini (Generative AI) LLM."""
+
     def __init__(
         self,
         model_name: str | None = None,
@@ -19,6 +27,14 @@ class GeminiLLM(LLMInterface):
         prompt_dir: str = "prompts",
         timeout: int = 60,
     ):
+        """Initialize the Gemini client.
+
+        Args:
+            model_name: Optional model name to override env.
+            api_key_env: Name of the environment variable containing the API key.
+            prompt_dir: Directory for prompt templates.
+            timeout: Request timeout in seconds.
+        """
         print("Initializing Gemini LLM Interface")
         super().__init__(prompt_dir=prompt_dir)
 
@@ -39,6 +55,7 @@ class GeminiLLM(LLMInterface):
         )
 
     async def generate(self, prompt: str, **kwargs: Any) -> str:
+        """Generate text for a plain prompt and return it as a string."""
         try:
             debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
             print(f"Generating text with prompt: {debug_prompt}")
@@ -59,6 +76,11 @@ class GeminiLLM(LLMInterface):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> T:
+        """Generate structured output validated against a Pydantic schema.
+
+        If the structured output feature is not available or validation fails,
+        a fallback to manual JSON parsing is attempted.
+        """
         try:
             debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
             print(f"Generating structured output with prompt: {debug_prompt}")
@@ -97,14 +119,18 @@ class GeminiLLM(LLMInterface):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> str:
-        """Generate a description of the image non-blockingly."""
+        """Generate a description of an image without blocking the event loop.
+
+        The image is read on a thread and encoded as a data URL for the
+        Gemini client.
+        """
         debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
         print(f"Generating text with prompt: {debug_prompt}")
 
         image_path = Path(image_path)
 
-        # Run file I/O in a thread to avoid blocking the event loop
-        def read_image_file():
+        # Run file I/O in a thread to avoid blocking the event loop.
+        def read_image_file() -> bytes:
             with open(image_path, "rb") as f:
                 return f.read()
 
