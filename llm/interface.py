@@ -1,3 +1,10 @@
+"""Abstract LLM interface and common prompt utilities.
+
+This module provides an abstract base class that concrete LLM adapters must
+implement, plus helper methods for loading prompts and parsing structured
+JSON responses returned by language models.
+"""
+
 import json
 import os
 import re
@@ -11,12 +18,18 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMInterface(ABC):
-    """Base class that combines:
-    1. Abstract methods for Generation (interface).
-    2. Concrete methods for Prompt Loading with caching.
+    """Base class that combines abstract generation methods and prompt helpers.
+
+    This class implements prompt loading with an in-memory cache and provides
+    utilities for parsing JSON responses into Pydantic models.
     """
 
     def __init__(self, prompt_dir: str | Path = "./prompts"):
+        """Initialize prompt directory and in-memory prompt cache.
+
+        Args:
+            prompt_dir: Path to the directory containing prompt templates.
+        """
         if isinstance(prompt_dir, str):
             if prompt_dir.strip() == "":
                 raise ValueError("prompt_dir cannot be an empty string")
@@ -27,18 +40,32 @@ class LLMInterface(ABC):
         self._prompt_cache: dict[str, str] = {}
 
         if not self.prompt_dir.exists():
+            # Create the prompt directory if it does not exist.
             print(
-                f"Prompt directory '{self.prompt_dir}' does not exist. Creating it."
+                f"Prompt directory '{self.prompt_dir}' does not exist. "
+                "Creating it."
             )
             try:
                 os.makedirs(self.prompt_dir, exist_ok=True)
                 print(f"Prompt directory '{self.prompt_dir}' created.")
-            except OSError:
+            except OSError as exc:
                 print(f"Failed to create prompt directory '{self.prompt_dir}'.")
-                raise
+                raise OSError(
+                    f"Failed to create prompt directory '{self.prompt_dir}'."
+                ) from exc
 
     def load_prompt(self, filename: str) -> str:
-        """Loads a prompt template from memory cache or disk."""
+        """Load a prompt template from cache or disk.
+
+        Args:
+            filename: Name of the template file relative to prompt_dir.
+
+        Returns:
+            The loaded prompt content as a string.
+
+        Raises:
+            FileNotFoundError: If the file is not present on disk.
+        """
         if filename in self._prompt_cache:
             return self._prompt_cache[filename]
 
@@ -51,23 +78,30 @@ class LLMInterface(ABC):
                     content = f.read()
                     self._prompt_cache[filename] = content
                     return content
-            except Exception:
+            except Exception as exc:
                 print(f"Failed to load prompt from '{file_path}'.")
-                raise
+                raise FileNotFoundError(
+                    f"Failed to load prompt from '{file_path}'."
+                ) from exc
 
         raise FileNotFoundError(
             f"Prompt '{filename}' not found on disk or in defaults."
         )
 
     def parse_json_response(self, response_text: str, schema: type[T]) -> T:
-        """Extracts JSON from text and validates against Pydantic."""
+        """Extract JSON from a model response and validate via Pydantic.
+
+        The method strips common markdown fences and attempts to find the first
+        JSON object in the text. Validation errors are raised as RuntimeError
+        chained from the original exceptions.
+        """
         clean_text = (
             re.sub(r"```[a-zA-Z]*", "", response_text)
             .replace("```", "")
             .strip()
         )
 
-        match = re.search(r"(\{.*})", clean_text, re.DOTALL)
+        match = re.search(r"(\{.*\})", clean_text, re.DOTALL)
         if match:
             clean_text = match.group(1)
 
@@ -77,14 +111,19 @@ class LLMInterface(ABC):
         except json.JSONDecodeError as e:
             print(f"JSON Parsing Failed: {e}")
             print(f"Failed Payload: {clean_text}")
-            raise RuntimeError("Invalid JSON format received from LLM")
+            raise RuntimeError("Invalid JSON format received from LLM") from e
         except Exception as e:
             print(f"Schema Validation Failed: {e}")
-            raise RuntimeError(f"Parsed JSON did not match schema: {e}")
+            raise RuntimeError(f"Parsed JSON did not match schema: {e}") from e
 
     def construct_system_prompt(
         self, schema: type[BaseModel], filename: str = "system_prompt.txt"
     ) -> str:
+        """Construct a system prompt that includes the JSON schema.
+
+        If the prompt template contains the token {{JSON_SCHEMA}} it will be
+        replaced; otherwise a small schema footer is appended.
+        """
         raw_prompt = self.load_prompt(filename)
         schema_json = json.dumps(schema.model_json_schema(), indent=2)
 
@@ -94,6 +133,7 @@ class LLMInterface(ABC):
         return f"{raw_prompt}\n\n## JSON Output Schema\n{schema_json}"
 
     def construct_user_prompt(self, filename: str = "user_prompt.txt") -> str:
+        """Construct a user prompt inserting few-shot examples if present."""
         template = self.load_prompt(filename)
         try:
             few_shot = self.load_prompt("few_shot_examples.txt")
@@ -105,6 +145,7 @@ class LLMInterface(ABC):
 
     @abstractmethod
     async def generate(self, prompt: str, **kwargs: Any) -> str:
+        """Generate a string response for the provided prompt."""
         raise NotImplementedError
 
     @abstractmethod
@@ -115,6 +156,7 @@ class LLMInterface(ABC):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> T:
+        """Generate a structured response and validate it against the schema."""
         raise NotImplementedError
 
     @abstractmethod
@@ -125,4 +167,5 @@ class LLMInterface(ABC):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> str:
+        """Describe an image and return the textual description."""
         raise NotImplementedError
