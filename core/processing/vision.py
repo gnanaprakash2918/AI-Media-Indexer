@@ -25,8 +25,7 @@ class VisionAnalyzer:
             )
 
     async def describe(self, image_path: Path) -> str:
-        """
-        Async method to describe an image.
+        """Async method to describe an image.
         Note: Removed asyncio.run() to prevent event loop conflicts.
         """
         image_path = Path(image_path)

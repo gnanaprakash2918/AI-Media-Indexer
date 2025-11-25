@@ -13,8 +13,7 @@ class LLMFactory:
         prompt_dir: str = "./prompts",
         **kwargs,
     ) -> LLMInterface:
-        """
-        Factory method to create an LLM instance based on the provider.
+        """Factory method to create an LLM instance based on the provider.
         """
         provider = cast(Literal["gemini", "ollama"], provider.lower())
         print(f"LLMFactory: Creating LLM for provider '{provider}'")
@@ -28,8 +27,7 @@ class LLMFactory:
 
     @staticmethod
     def get_default_llm(prompt_dir: str = "./prompts") -> LLMInterface:
-        """
-        Returns the default LLM based on environment variables.
+        """Returns the default LLM based on environment variables.
         """
         provider = os.getenv("LLM_PROVIDER", "gemini")
         provider = provider.lower()
