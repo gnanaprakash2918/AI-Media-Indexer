@@ -1,7 +1,7 @@
+import asyncio
 import shutil
-import subprocess
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 
@@ -14,30 +14,24 @@ class FrameExtractor:
             self._active = True
 
         def cleanup(self):
-            """Manually delete the cache."""
             if self._active and self.path.exists():
                 shutil.rmtree(self.path, ignore_errors=True)
-
             self._active = False
 
-        # This is to enable context within 'with'
         def __enter__(self):
             return self.path
 
         def __exit__(self, exc_type, exc, tb):
             self.cleanup()
 
-    def extract(
+    async def extract(
         self, video_path: str | Path, interval: int = 2
-    ) -> Generator[Path, None, None]:
-        # Convert a video file into sequence of frames at regular intervals
-        # interval=2 means "Take a screenshot every 2 seconds."
-
+    ) -> AsyncGenerator[Path, None]:
+        # Non-blocking async generator for frame extraction
         try:
             if isinstance(video_path, str):
                 if video_path.strip() == "":
                     raise ValueError("Provided path is empty or whitespace.")
-
                 path_obj = Path(video_path)
             else:
                 path_obj = video_path
@@ -53,7 +47,6 @@ class FrameExtractor:
             if not path_obj.is_file():
                 raise FileNotFoundError(f"Path is not a file: {path_obj}")
 
-            # Extract frames into temporary cache directory
             with FrameExtractor.FrameCache() as cache_dir:
                 output_pattern = cache_dir / "frame_%04d.jpg"
 
@@ -70,22 +63,25 @@ class FrameExtractor:
                     str(output_pattern),
                 ]
 
-                process = subprocess.run(
-                    args_to_ffmpeg,
-                    capture_output=True,
-                    text=True,
-                    shell=False,
-                    check=False,
+                print(f"Starting async ffmpeg process for {path_obj.name}")
+                process = await asyncio.create_subprocess_exec(
+                    *args_to_ffmpeg,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
+
+                _, stderr = await process.communicate()
 
                 if process.returncode != 0:
                     print(
                         f"[ERROR:FFmpeg] Failed to extract frames from '{video_path}': "
-                        f"{process.stderr.strip() if process.stderr else ''}"
+                        f"{stderr.decode().strip() if stderr else ''}"
                     )
                     return
 
-                for frame_path in sorted(cache_dir.glob("frame_*.jpg")):
+                # Sort and yield
+                frames = sorted(cache_dir.glob("frame_*.jpg"))
+                for frame_path in frames:
                     yield frame_path
 
         except (
@@ -97,20 +93,22 @@ class FrameExtractor:
             OSError,
         ) as exc:
             print(
-                f"[ERROR:{type(exc).__name__}] "
-                f"Cannot read '{video_path}': {exc}"
+                f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}"
             )
             return
 
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             print(
-                f"[ERROR:{type(exc).__name__}] "
-                f"Unexpected error for '{video_path}': {exc}"
+                f"[ERROR:{type(exc).__name__}] Unexpected error processing '{video_path}': {exc}"
             )
             return
 
 
 if __name__ == "__main__":
-    frame_ext = FrameExtractor.FrameCache()
-    print(frame_ext.path)
-    frame_ext.cleanup()
+
+    async def main():
+        extractor = FrameExtractor()
+        async for frame in extractor.extract("test_video.mp4"):
+            print(f"Got frame: {frame}")
+
+    # asyncio.run(main())
