@@ -1,3 +1,9 @@
+"""Image analysis utilities that use an LLM to describe images.
+
+The VisionAnalyzer provides a small async wrapper to construct prompts and
+request image descriptions from the configured LLM.
+"""
+
 import asyncio
 from pathlib import Path
 
@@ -6,11 +12,17 @@ from llm.interface import LLMInterface
 
 
 class VisionAnalyzer:
+    """High-level helper to create descriptive text for an image for indexing."""
+
     def __init__(
         self,
         llm: LLMInterface | None = None,
         prompt_filename: str = "vision_prompt.txt",
     ):
+        """Initialize the analyzer and load the prompt template.
+
+        If the prompt template does not exist, a default template is used.
+        """
         self.llm = llm or LLMFactory.create_llm(provider="ollama")
         self.prompt_filename = prompt_filename
 
@@ -25,8 +37,16 @@ class VisionAnalyzer:
             )
 
     async def describe(self, image_path: Path) -> str:
-        """Async method to describe an image.
-        Note: Removed asyncio.run() to prevent event loop conflicts.
+        """Asynchronously describe an image using the configured LLM.
+
+        Args:
+            image_path: Path to the image file to describe.
+
+        Returns:
+            A textual description produced by the LLM.
+
+        Raises:
+            FileNotFoundError: If the provided image file does not exist.
         """
         image_path = Path(image_path)
         if not image_path.exists() or not image_path.is_file():
@@ -47,7 +67,8 @@ if __name__ == "__main__":
 
     img_path = Path(sys.argv[1])
 
-    async def main():
+    async def main() -> None:
+        """CLI helper that calls the async describe method and prints result."""
         analyzer = VisionAnalyzer()
         description = await analyzer.describe(img_path)
         print(description)
