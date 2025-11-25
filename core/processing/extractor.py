@@ -71,3 +71,17 @@ class FrameExtractor:
                 f"Cannot read '{video_path}': {exc}"
             )
             return
+
+
+if __name__ == "__main__":
+    frame_ext = FrameExtractor().FrameCache()
+    with frame_ext as cache:
+        import time
+
+        time.sleep(3)
+        print(cache)
+
+    print(frame_ext.path)
+
+    # manual delete
+    frame_ext.cleanup()
