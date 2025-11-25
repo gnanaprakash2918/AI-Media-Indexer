@@ -1,12 +1,15 @@
-from pathlib import Path
-from collections.abc import Generator
 import shutil
+from collections.abc import Generator
+from pathlib import Path
+import subprocess
+from typing import Any
 
 class FrameExtractor:
     class FrameCache:
-        def __init__(self, base: str | Path = "."):
+        """Dont clutter the user's video folder with thousands of JPEGs."""
+        def __init__(self, base: str | Path = ".", folder_name: str = ".frame_cache"):
             self.base = Path(base).resolve()
-            self.path = self.base / ".frame_cache"
+            self.path = self.base / folder_name
 
             # Fresh directory
             if self.path.exists():
@@ -29,13 +32,15 @@ class FrameExtractor:
         def __exit__(self, exc_type, exc, tb):
             self.cleanup()
 
-    def extract(video_path: str | Path, interval: int = 2) -> Generator[Path, None, None]:
+    def extract(
+        video_path: str | Path, interval: int = 2
+    ) -> Generator[Path, None, None]:
         # Convert a video file into sequence of frames at regular intervals
         # interval=2 means "Take a screenshot every 2 seconds."
 
         try:
             if isinstance(video_path, str):
-                if video_path.strip() == '':
+                if video_path.strip() == "":
                     raise ValueError("Provided path is empty or whitespace.")
 
                 path_obj = Path(video_path)
@@ -43,21 +48,17 @@ class FrameExtractor:
                 path_obj = video_path
 
             if not path_obj.exists():
-                raise FileNotFoundError(
-                    f"Path does not exist: {video_path}"
-                )
+                raise FileNotFoundError(f"Path does not exist: {video_path}")
 
             if not path_obj.is_dir():
-                raise IsADirectoryError(
-                    f"Path is not a directory: {path_obj}"
-                )
+                raise IsADirectoryError(f"Path is not a directory: {path_obj}")
         except (
-                ValueError,
-                NotADirectoryError,
-                FileNotFoundError,
-                PermissionError,
-                IsADirectoryError,
-                OSError,
+            ValueError,
+            NotADirectoryError,
+            FileNotFoundError,
+            PermissionError,
+            IsADirectoryError,
+            OSError,
         ) as exc:
             print(
                 f"[ERROR:{type(exc).__name__}] "
