@@ -31,7 +31,7 @@ class GeminiLLM(LLMInterface):
 
         Args:
             model_name: Optional model name to override env.
-            api_key_env: Name of the environment variable containing the API key.
+            api_key_env: Name of the environment variable having the API key.
             prompt_dir: Directory for prompt templates.
             timeout: Request timeout in seconds.
         """
@@ -98,9 +98,7 @@ class GeminiLLM(LLMInterface):
 
         except Exception as e:
             print(f"Structured generation failed: {e}")
-            full_prompt = (
-                f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-            )
+            full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
             response_text = await self.generate(full_prompt)
 
             try:
@@ -152,9 +150,7 @@ class GeminiLLM(LLMInterface):
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{base64_image}"
-                        },
+                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
                     },
                 ]
             )

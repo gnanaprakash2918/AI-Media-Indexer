@@ -14,14 +14,10 @@ def _add_torch_libs_to_path() -> None:
     try:
         # Navigate from: core/processing/transcriber.py -> project_root -> .venv
         project_root = Path(__file__).resolve().parent.parent.parent
-        torch_lib = (
-            project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
-        )
+        torch_lib = project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
 
         if torch_lib.exists():
-            os.environ["PATH"] = (
-                str(torch_lib) + os.pathsep + os.environ["PATH"]
-            )
+            os.environ["PATH"] = str(torch_lib) + os.pathsep + os.environ["PATH"]
     except Exception:
         pass
 
@@ -76,9 +72,7 @@ class AudioTranscriber:
         else:
             self.device = "cpu"
             self.compute_type = "int8"
-            print(
-                f"[{self.__class__.__name__}] CUDA not found. Running on CPU."
-            )
+            print(f"[{self.__class__.__name__}] CUDA not found. Running on CPU.")
 
         try:
             if is_local_available:

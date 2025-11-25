@@ -43,9 +43,7 @@ class OllamaLLM(LLMInterface):
             print("Ollama AsyncClient initialized successfully.")
         except Exception as e:
             print(f"Failed to construct Ollama AsyncClient: {e}")
-            raise RuntimeError(
-                f"Failed to construct Ollama AsyncClient: {e}"
-            ) from e
+            raise RuntimeError(f"Failed to construct Ollama AsyncClient: {e}") from e
 
     async def generate(self, prompt: str, **kwargs: Any) -> str:
         """Generate text from the Ollama service for a user prompt."""
@@ -75,9 +73,7 @@ class OllamaLLM(LLMInterface):
         print("Ollama structured generation requested.")
 
         full_prompt = (
-            f"{system_prompt}\nUser Request:\n{prompt}"
-            if system_prompt
-            else prompt
+            f"{system_prompt}\nUser Request:\n{prompt}" if system_prompt else prompt
         )
 
         try:
@@ -85,9 +81,7 @@ class OllamaLLM(LLMInterface):
             return self.parse_json_response(response_text, schema)
         except Exception as e:
             print(f"Ollama structured generation failed: {e}")
-            raise RuntimeError(
-                f"Ollama structured generation failed: {e}"
-            ) from e
+            raise RuntimeError(f"Ollama structured generation failed: {e}") from e
 
     async def describe_image(
         self,

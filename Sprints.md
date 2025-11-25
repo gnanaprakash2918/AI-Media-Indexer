@@ -81,3 +81,4 @@
 - For my case, the CUDA version was 13.0. So I downloaded `uv add torch --index-url https://download.pytorch.org/whl/cu121`
 - Change the Global Hugging Face Path `$env:HF_HOME = "D:\huggingface_cache"` Or set it permanently in Windows: `Variable name: HF_HOME`
 - `chcp 65001` Use this command in powershell to properly display unicode characters like tamil.
+- Add black to format `black . --line-length 88`

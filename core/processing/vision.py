@@ -12,7 +12,7 @@ from llm.interface import LLMInterface
 
 
 class VisionAnalyzer:
-    """High-level helper to create descriptive text for an image for indexing."""
+    """Helper to create descriptive text for an image for indexing."""
 
     def __init__(
         self,

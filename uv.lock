@@ -12,6 +12,7 @@ name = "ai-media-indexer"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "black" },
     { name = "faster-whisper" },
     { name = "langchain-core" },
     { name = "langchain-google-genai" },
@@ -33,6 +34,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "black", specifier = ">=25.11.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.4.0" },
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "langchain-core", specifier = ">=1.1.0" },
