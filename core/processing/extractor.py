@@ -62,18 +62,10 @@ class FrameExtractor:
             return_code = process.returncode
 
             if return_code != 0:
-                raise MediaProbeError(
-                    "ffmpeg failed to execute",
-                    code="media_probe_error",
-                    details={
-                        "return_code": return_code,
-                        "stderr": err.strip() if err else "",
-                        "stdout": out.strip() if out else "",
-                    },
-                )
+                raise
 
         except Exception as exc:
-            raise MediaProbeError(f"Subprocess failed: {exc}") from exc
+            raise
 
         frames = sorted(frame_cache_path.glob("frame_*.jpg"))
         return frames
@@ -93,11 +85,12 @@ class FrameExtractor:
             else:
                 path_obj = video_path
 
-            if not path_obj.exists():
-                raise FileNotFoundError(f"Path does not exist: {video_path}")
+            if path_obj.is_dir():
+                raise IsADirectoryError(f"Expected a file, but got a directory: {path_obj}")
 
-            if not path_obj.is_dir():
-                raise IsADirectoryError(f"Path is not a directory: {path_obj}")
+            if not path_obj.is_file():
+                raise FileNotFoundError(f"Path is not a file: {path_obj}")
+
         except (
             ValueError,
             NotADirectoryError,
