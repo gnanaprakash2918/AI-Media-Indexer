@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
+
 class LLMInterface(ABC):
     """Base class that combines:
     1. Abstract methods for Generation (interface).
@@ -26,7 +27,9 @@ class LLMInterface(ABC):
         self._prompt_cache: dict[str, str] = {}
 
         if not self.prompt_dir.exists():
-            print(f"Prompt directory '{self.prompt_dir}' does not exist. Creating it.")
+            print(
+                f"Prompt directory '{self.prompt_dir}' does not exist. Creating it."
+            )
             try:
                 os.makedirs(self.prompt_dir, exist_ok=True)
                 print(f"Prompt directory '{self.prompt_dir}' created.")
@@ -59,7 +62,9 @@ class LLMInterface(ABC):
     def parse_json_response(self, response_text: str, schema: type[T]) -> T:
         """Extracts JSON from text and validates against Pydantic."""
         clean_text = (
-            re.sub(r"```[a-zA-Z]*", "", response_text).replace("```", "").strip()
+            re.sub(r"```[a-zA-Z]*", "", response_text)
+            .replace("```", "")
+            .strip()
         )
 
         match = re.search(r"(\{.*})", clean_text, re.DOTALL)
@@ -104,12 +109,20 @@ class LLMInterface(ABC):
 
     @abstractmethod
     async def generate_structured(
-        self, schema: type[T], prompt: str, system_prompt: str = "", **kwargs: Any
+        self,
+        schema: type[T],
+        prompt: str,
+        system_prompt: str = "",
+        **kwargs: Any,
     ) -> T:
         raise NotImplementedError
 
     @abstractmethod
     async def describe_image(
-        self, prompt: str, image_path: str | Path, system_prompt: str = "", **kwargs: Any
+        self,
+        prompt: str,
+        image_path: str | Path,
+        system_prompt: str = "",
+        **kwargs: Any,
     ) -> str:
         raise NotImplementedError

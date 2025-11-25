@@ -14,12 +14,17 @@ def _add_torch_libs_to_path() -> None:
     try:
         # Navigate from: core/processing/transcriber.py -> project_root -> .venv
         project_root = Path(__file__).resolve().parent.parent.parent
-        torch_lib = project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
+        torch_lib = (
+            project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
+        )
 
         if torch_lib.exists():
-            os.environ["PATH"] = str(torch_lib) + os.pathsep + os.environ["PATH"]
+            os.environ["PATH"] = (
+                str(torch_lib) + os.pathsep + os.environ["PATH"]
+            )
     except Exception:
         pass
+
 
 _add_torch_libs_to_path()
 
@@ -71,29 +76,37 @@ class AudioTranscriber:
         else:
             self.device = "cpu"
             self.compute_type = "int8"
-            print(f"[{self.__class__.__name__}] CUDA not found. Running on CPU.")
+            print(
+                f"[{self.__class__.__name__}] CUDA not found. Running on CPU."
+            )
 
         try:
             if is_local_available:
-                print(f"[{self.__class__.__name__}] Found local model at: {self.local_model_path}")
+                print(
+                    f"[{self.__class__.__name__}] Found local model at: {self.local_model_path}"
+                )
                 print(f"[{self.__class__.__name__}] Loading offline...")
 
                 # PASSING A PATH forces offline loading
                 self.model = WhisperModel(
                     str(self.local_model_path),
                     device=self.device,
-                    compute_type=self.compute_type
+                    compute_type=self.compute_type,
                 )
             else:
-                print(f"[{self.__class__.__name__}] Local model not found at: {self.local_model_path}")
-                print(f"[{self.__class__.__name__}] Downloading {self.model_size} from Hugging Face...")
+                print(
+                    f"[{self.__class__.__name__}] Local model not found at: {self.local_model_path}"
+                )
+                print(
+                    f"[{self.__class__.__name__}] Downloading {self.model_size} from Hugging Face..."
+                )
 
                 # We set download_root so it saves to D: drive (models folder)
                 self.model = WhisperModel(
                     self.model_size,
                     device=self.device,
                     compute_type=self.compute_type,
-                    download_root=str(self.model_root_dir)
+                    download_root=str(self.model_root_dir),
                 )
 
         except Exception as exc:  # pylint: disable=broad-except
@@ -141,9 +154,7 @@ class AudioTranscriber:
             audio_path,
             beam_size=5,
             vad_filter=True,  # remove bg noise
-            vad_parameters={
-                "min_silence_duration_ms": 500
-            },
+            vad_parameters={"min_silence_duration_ms": 500},
             task="transcribe",
         )
 
