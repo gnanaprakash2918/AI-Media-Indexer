@@ -1,18 +1,31 @@
 """Audio transcription utilities using Faster Whisper.
 
 This module provides a small wrapper around Faster Whisper optimized for
-local execution.
+local execution with fallback to online download.
 """
 
-import io
 import os
 import sys
+import io
 from pathlib import Path
+
+def _add_torch_libs_to_path() -> None:
+    try:
+        # Navigate from: core/processing/transcriber.py -> project_root -> .venv
+        project_root = Path(__file__).resolve().parent.parent.parent
+        torch_lib = project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
+
+        if torch_lib.exists():
+            os.environ["PATH"] = str(torch_lib) + os.pathsep + os.environ["PATH"]
+    except Exception:
+        pass
+
+_add_torch_libs_to_path()
 
 import torch
 from faster_whisper import WhisperModel
 
-# Force stdout to handle UTF-8 characters properly
+# Force stdout to handle UTF-8 characters properly (Fixes Windows Terminal display)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 
@@ -28,15 +41,28 @@ class AudioTranscriber:
         model: Underlying WhisperModel instance.
     """
 
-    def __init__(self, model_size: str = "small") -> None:
+    def __init__(self, model_size: str = "large-v2") -> None:
         """Initialize the Faster Whisper model.
+
+        Checks for a local manual download first. If not found, attempts
+        to download from Hugging Face to the local 'models' directory.
 
         Args:
             model_size: One of "tiny", "base", "small", "medium", "large-v2".
-                "small" is recommended for a balance of speed and accuracy.
         """
         self.model_size = model_size
 
+        project_root = Path(__file__).resolve().parent.parent.parent
+        self.model_root_dir = project_root / "models"
+        self.model_root_dir.mkdir(exist_ok=True)
+
+        print(f"[{self.__class__.__name__}] Models dir: {self.model_root_dir}")
+
+        self.local_model_path = self.model_root_dir / model_size
+
+        is_local_available = (self.local_model_path / "model.bin").exists()
+
+        # 3. Auto-detect GPU
         if torch.cuda.is_available():
             self.device = "cuda"
             self.compute_type = "float16"
@@ -44,26 +70,36 @@ class AudioTranscriber:
         else:
             self.device = "cpu"
             self.compute_type = "int8"
-            print(
-                f"[{self.__class__.__name__}] CUDA not found. Running on CPU."
-            )
+            print(f"[{self.__class__.__name__}] CUDA not found. Running on CPU.")
 
         try:
-            print(
-                f"[{self.__class__.__name__}] Loading model: {self.model_size}"
-            )
+            if is_local_available:
+                print(f"[{self.__class__.__name__}] Found local model at: {self.local_model_path}")
+                print(f"[{self.__class__.__name__}] Loading offline...")
 
-            self.model = WhisperModel(
-                self.model_size,
-                device=self.device,
-                compute_type=self.compute_type,
-            )
+                # PASSING A PATH forces offline loading
+                self.model = WhisperModel(
+                    str(self.local_model_path),
+                    device=self.device,
+                    compute_type=self.compute_type
+                )
+            else:
+                print(f"[{self.__class__.__name__}] Local model not found at: {self.local_model_path}")
+                print(f"[{self.__class__.__name__}] Downloading {self.model_size} from Hugging Face...")
+
+                # We set download_root so it saves to D: drive (models folder)
+                self.model = WhisperModel(
+                    self.model_size,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    download_root=str(self.model_root_dir)
+                )
 
         except Exception as exc:  # pylint: disable=broad-except
             print(f"Error loading model: {exc}")
             print(
-                "Tip: If this is a connection error, install 'huggingface-hub' "
-                "and check your internet connection."
+                "Tip: If downloading, check internet. "
+                "If local, check if 'model.bin' exists in 'models/large-v2/'."
             )
             raise
 
@@ -103,12 +139,11 @@ class AudioTranscriber:
         segments_generator, info = self.model.transcribe(
             audio_path,
             beam_size=5,
-            vad_filter=True,  # remove bg nosie
+            vad_filter=True,  # remove bg noise
             vad_parameters={
                 "min_silence_duration_ms": 500
-            },  # tweak silence detection
+            },
             task="transcribe",
-            language=None,  # auto-detect language 'ta' for Tamil, 'en' for English etc.
         )
 
         full_text_pieces = []
@@ -152,8 +187,10 @@ def main() -> None:
         print(f"Segments Count: {len(result['segments'])}")
     except FileNotFoundError:
         print(f"Test audio file not found: {test_path}")
-        return
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 
 if __name__ == "__main__":
+    print("Starting AudioTranscriber Test")
     main()
