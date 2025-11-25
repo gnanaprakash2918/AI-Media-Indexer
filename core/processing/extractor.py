@@ -1,7 +1,34 @@
 from pathlib import Path
 from collections.abc import Generator
+import shutil
 
 class FrameExtractor:
+    class FrameCache:
+        def __init__(self, base: str | Path = "."):
+            self.base = Path(base).resolve()
+            self.path = self.base / ".frame_cache"
+
+            # Fresh directory
+            if self.path.exists():
+                shutil.rmtree(self.path)
+            self.path.mkdir(parents=True, exist_ok=True)
+
+            self._active = True
+
+        def cleanup(self):
+            """Manually delete the cache."""
+            if self._active and self.path.exists():
+                shutil.rmtree(self.path, ignore_errors=True)
+
+            self._active = False
+
+        # This is to enable context within 'with'
+        def __enter__(self):
+            return self.path
+
+        def __exit__(self, exc_type, exc, tb):
+            self.cleanup()
+
     def extract(video_path: str | Path, interval: int = 2) -> Generator[Path, None, None]:
         # Convert a video file into sequence of frames at regular intervals
         # interval=2 means "Take a screenshot every 2 seconds."
