@@ -157,3 +157,10 @@
 - [ ] Add integration tests for the full pipeline.
 - [ ] Create API documentation.
 - [ ] Write user guide and deployment instructions.
+
+- `winget install --id Microsoft.VisualStudio.2022.BuildTools -e`
+- `winget install --id Kitware.CMake -e`
+- `winget install --id NinjaBuild.Ninja -e`
+- `winget install Ninja-build.Ninja`
+- `https://github.com/z-mahmud22/Dlib_Windows_Python3.x`
+- `uv add "dlib @ https://github.com/z-mahmud22/Dlib_Windows_Python3.x/raw/main/dlib-19.24.99-cp312-cp312-win_amd64.whl"`
