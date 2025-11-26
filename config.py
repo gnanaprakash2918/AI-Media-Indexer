@@ -1,4 +1,4 @@
-"""Configuration and environment-backed settings for the LLM adapters.
+"""Configuration and environment-backed settings for the LLM and Audio adapters.
 
 This module exposes a small Settings container and an LLMProvider enum used by
 the rest of the project to discover which LLM implementation to instantiate.
@@ -33,15 +33,21 @@ class Settings:
     DEFAULT_PROVIDER: LLMProvider = LLMProvider(os.getenv("LLM_PROVIDER", "gemini"))
     DEFAULT_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "120"))
 
+    # Gemini
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or os.getenv(
         "GOOGLE_API_KEY"
     )
-
-    # "gemini-2.5-pro", "gemini-1.5-flash"
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
+    # Ollama
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llava")
+
+    # Whisper (Audio)
+    # To use 'vasista22/whisper-tamil-large-v2', you must convert it first
+    WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
+    WHISPER_DEVICE: str | None = os.getenv("WHISPER_DEVICE", None)  # Auto-detect
+    WHISPER_COMPUTE_TYPE: str | None = os.getenv("WHISPER_COMPUTE_TYPE", None)
 
 
 settings = Settings()

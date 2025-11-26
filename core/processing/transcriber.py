@@ -14,6 +14,8 @@ from faster_whisper import WhisperModel
 
 from core.schemas import TranscriptionResult
 
+from ...config import settings
+
 
 class AudioTranscriber:
     """Audio transcriber using Faster Whisper.
@@ -24,37 +26,34 @@ class AudioTranscriber:
 
     def __init__(
         self,
-        model_size: str = "large-v2",
+        model_size: str | None = None,
         compute_type: str | None = None,
         device: str | None = None,
     ) -> None:
         """Initialize the Faster Whisper model.
 
         Args:
-            model_size: Model size (e.g., "base", "small", "large-v2").
+            model_size: Model size (e.g., "large-v3" or path to converted model).
             compute_type: Overrides auto-detection ("float16", "int8", "float32").
             device: Overrides auto-detection ("cuda" or "cpu").
 
         Raises:
             RuntimeError: If the model fails to load.
         """
-        self.model_size = model_size
-        self.project_root = self._find_project_root()
+        self.model_size = model_size or settings.WHISPER_MODEL
+        self.device = device or settings.WHISPER_DEVICE
+        self.compute_type = compute_type or settings.WHISPER_COMPUTE_TYPE
 
+        self.project_root = self._find_project_root()
         self.model_root_dir = self.project_root / "models"
         self.model_root_dir.mkdir(parents=True, exist_ok=True)
 
         self._add_torch_libs_to_path(self.project_root)
 
-        if device:
-            self.device = device
-        else:
+        if not self.device:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        if compute_type:
-            self.compute_type = compute_type
-        else:
-            # Fallback logic: int8 is faster on CPU, float16 best for CUDA
+        if not self.compute_type:
             self.compute_type = "float16" if self.device == "cuda" else "int8"
 
         print(
@@ -101,11 +100,22 @@ class AudioTranscriber:
                 return parent
         return current.parent.parent.parent
 
-    def transcribe(self, audio_path: str | Path) -> TranscriptionResult:
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        language: str | None = None,
+        initial_prompt: str | None = None,
+        beam_size: int = 5,
+        vad_filter: bool = True,
+    ) -> TranscriptionResult:
         """Transcribe audio and return recognized text with timestamps.
 
         Args:
             audio_path: Path to the input audio file.
+            language: Language code (e.g., "ta", "en"). If None, auto-detects.
+            initial_prompt: Text to provide context (fixes spellings/context).
+            beam_size: Beam search size (higher = better accuracy, slower).
+            vad_filter: Whether to filter out silence.
 
         Returns:
             TranscriptionResult: A Pydantic model containing text and metadata.
@@ -118,16 +128,21 @@ class AudioTranscriber:
         if not path_obj.exists():
             raise FileNotFoundError(f"Audio file not found: {path_obj}")
 
-        print(f"info: Transcribing: {path_obj.name}...", flush=True)
+        print(
+            f"info: Transcribing: {path_obj.name} | Lang: {language or 'Auto'} | "
+            f"Prompt: {bool(initial_prompt)}",
+            flush=True,
+        )
 
         try:
-            # beam_size=5 provides better accuracy
             segments_generator, info = self.model.transcribe(
                 str(path_obj),
-                beam_size=5,
-                vad_filter=True,  # Remove silence
-                vad_parameters={"min_silence_duration_ms": 500},
+                beam_size=beam_size,
+                vad_filter=vad_filter,
+                vad_parameters={"min_silence_duration_ms": 500} if vad_filter else None,
                 task="transcribe",
+                language=language,
+                initial_prompt=initial_prompt,
             )
 
             segments = list(segments_generator)
@@ -167,9 +182,14 @@ def main() -> None:
         return
 
     try:
-        # Use 'base' or 'tiny' for quick testing. Use 'large-v2' for prod.
-        transcriber = AudioTranscriber(model_size="large-v3")
-        res = transcriber.transcribe(test_path)
+        transcriber = AudioTranscriber()
+
+        res = transcriber.transcribe(
+            test_path,
+            language="ta",  # Specify "ta" for Tamil, "en" for English
+            initial_prompt="இது ஒரு தமிழ் ஆடியோ பதிவு.",  # Helps with context
+            beam_size=5,  # Higher beam_size = better accuracy
+        )
 
         print("\nFinal Output (Pydantic Model)", flush=True)
         print(f"Text Snippet: {res.text[:1000]}...", flush=True)
