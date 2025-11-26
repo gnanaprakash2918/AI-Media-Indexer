@@ -1,7 +1,6 @@
 """Configuration and environment-backed settings for the LLM and Audio adapters.
 
-This module exposes a small Settings container and an LLMProvider enum used by
-the rest of the project to discover which LLM implementation to instantiate.
+This module exposes a small Settings container and an LLMProvider enum.
 """
 
 from __future__ import annotations
@@ -23,37 +22,38 @@ class LLMProvider(str, Enum):
 
 
 def _parse_model_map(env_value: str | None) -> dict[str, list[str]]:
-    """Parse env variable into a mapping of language -> list of candidate models.
+    """Parse environment variable into a mapping of language -> list of candidate models.
 
-    The values are lists to support fallback hierarchies (Best -> Worst).
-
-    Hierarchy Strategy for Tamil ('ta') - Performance Based:
-      1. Tier 1 (Best WER): "ai4bharat/indicwav2vec-tamil"
-         - Architecture: Wav2Vec2 (Transformers)
-         - Notes: SOTA accuracy for Indian languages.
-      2. Tier 2 (Best Whisper): "jiviai/audioX-south-v1"
-         - Architecture: Whisper (Faster-Whisper)
-         - Notes: GATED model. High accuracy, includes punctuation.
-      3. Tier 3 (Reliable Open): "vasista22/whisper-tamil-large-v2"
-         - Architecture: Whisper (Faster-Whisper)
-         - Notes: Reliable, ungated, good instruction following.
-      4. Tier 4 (Fallback): "openai/whisper-large-v3"
-         - Architecture: Whisper
-         - Notes: Generic fallback.
+    Hierarchy for Tamil ('ta'):
+      1. TIER 0 (True SOTA): "ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large"
+         - Engine: NVIDIA NeMo
+         - Note: Complex install. Best accuracy for native Indian accents.
+      2. TIER 1 (Practical SOTA): "jiviai/audioX-south-v1"
+         - Engine: Transformers
+         - Note: Gated (Requires HF_TOKEN). Fine-tuned Whisper V3.
+      3. TIER 2 (Robust Open): "vasista22/whisper-tamil-large-v2"
+         - Engine: Transformers / Faster-Whisper
+         - Note: Standard 'IndicWhisper'.
+      4. TIER 3 (Fallback): "large-v3"
+         - Engine: Faster-Whisper
 
     Args:
-        env_value: Raw value of WHISPER_MODEL_MAP from environment.
+        env_value: Raw value from environment.
 
     Returns:
-        A dictionary mapping language codes to a LIST of model identifiers.
+        Dictionary of language code to list of model IDs.
     """
     mapping: dict[str, list[str]] = {
         "en": ["large-v3"],
         "ta": [
-            "ai4bharat/indicwav2vec-tamil",
+            # The True SOTA (NeMo)
+            "ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large",
+            # The Practical SOTA (Transformers)
             "jiviai/audioX-south-v1",
+            # The Reliable Open (Transformers/FW)
             "vasista22/whisper-tamil-large-v2",
-            "large-v3",
+            # Fallback
+            "openai/whisper-large-v3",
         ],
     }
 
@@ -62,11 +62,9 @@ def _parse_model_map(env_value: str | None) -> dict[str, list[str]]:
 
     value = env_value.strip()
 
-    # Attempt JSON first.
     try:
         parsed_json = json.loads(value)
         if isinstance(parsed_json, dict):
-            # Convert single strings to lists if needed
             cleaned: dict[str, list[str]] = {}
             for k, v in parsed_json.items():
                 if isinstance(v, str):
@@ -78,7 +76,6 @@ def _parse_model_map(env_value: str | None) -> dict[str, list[str]]:
     except Exception:
         pass
 
-    # Fallback: CSV-like parsing "ta:model1,en:model2" (Only supports 1 model per lang)
     try:
         items = [part.strip() for part in value.split(",") if part.strip()]
         for item in items:
@@ -130,10 +127,10 @@ class Settings:
     WHISPER_DEVICE: str | None = os.getenv("WHISPER_DEVICE")
     WHISPER_COMPUTE_TYPE: str | None = os.getenv("WHISPER_COMPUTE_TYPE")
 
-    # Hugging Face Token (Needed for JiviAI models)
+    # HF Token (Required for Tier 1 SOTA models like JiviAI)
     HF_TOKEN: str | None = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")
 
-    # Language-based mapping
+    # Model Mapping
     WHISPER_MODEL_MAP: dict[str, list[str]] = _parse_model_map(
         os.getenv("WHISPER_MODEL_MAP")
     )
