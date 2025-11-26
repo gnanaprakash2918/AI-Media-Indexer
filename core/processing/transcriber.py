@@ -4,199 +4,179 @@ This module provides a small wrapper around Faster Whisper optimized for
 local execution with fallback to online download.
 """
 
-import io
+from __future__ import annotations
+
 import os
-import sys
 from pathlib import Path
-
-
-def _add_torch_libs_to_path() -> None:
-    try:
-        # Navigate from: core/processing/transcriber.py -> project_root -> .venv
-        project_root = Path(__file__).resolve().parent.parent.parent
-        torch_lib = project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
-
-        if torch_lib.exists():
-            os.environ["PATH"] = str(torch_lib) + os.pathsep + os.environ["PATH"]
-    except Exception:
-        pass
-
-
-_add_torch_libs_to_path()
 
 import torch
 from faster_whisper import WhisperModel
 
-# Force stdout to handle UTF-8 characters properly (Fixes Windows Terminal display)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+from core.schemas import TranscriptionResult
 
 
 class AudioTranscriber:
     """Audio transcriber using Faster Whisper.
 
-    Attributes:
-        model_size: Model size identifier such as "tiny", "base", "small",
-            "medium", or "large-v2".
-        device: Device on which the model runs, e.g. "cuda" or "cpu".
-        compute_type: Compute precision used by the model, such as "float16"
-            or "int8".
-        model: Underlying WhisperModel instance.
+    Optimized for local execution with auto-GPU detection and specific
+    model caching strategies.
     """
 
-    def __init__(self, model_size: str = "large-v2") -> None:
+    def __init__(
+        self,
+        model_size: str = "large-v2",
+        compute_type: str | None = None,
+        device: str | None = None,
+    ) -> None:
         """Initialize the Faster Whisper model.
 
-        Checks for a local manual download first. If not found, attempts
-        to download from Hugging Face to the local 'models' directory.
-
         Args:
-            model_size: One of "tiny", "base", "small", "medium", "large-v2".
+            model_size: Model size (e.g., "base", "small", "large-v2").
+            compute_type: Overrides auto-detection ("float16", "int8", "float32").
+            device: Overrides auto-detection ("cuda" or "cpu").
+
+        Raises:
+            RuntimeError: If the model fails to load.
         """
         self.model_size = model_size
+        self.project_root = self._find_project_root()
 
-        project_root = Path(__file__).resolve().parent.parent.parent
-        self.model_root_dir = project_root / "models"
-        self.model_root_dir.mkdir(exist_ok=True)
+        self.model_root_dir = self.project_root / "models"
+        self.model_root_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"[{self.__class__.__name__}] Models dir: {self.model_root_dir}")
+        self._add_torch_libs_to_path(self.project_root)
 
-        self.local_model_path = self.model_root_dir / model_size
-
-        is_local_available = (self.local_model_path / "model.bin").exists()
-
-        # 3. Auto-detect GPU
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            self.compute_type = "float16"
-            print(f"[{self.__class__.__name__}] CUDA detected. Running on GPU.")
+        if device:
+            self.device = device
         else:
-            self.device = "cpu"
-            self.compute_type = "int8"
-            print(f"[{self.__class__.__name__}] CUDA not found. Running on CPU.")
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        if compute_type:
+            self.compute_type = compute_type
+        else:
+            # Fallback logic: int8 is faster on CPU, float16 best for CUDA
+            self.compute_type = "float16" if self.device == "cuda" else "int8"
+
+        print(
+            f"Initializing Whisper: Device={self.device}, "
+            f"Compute={self.compute_type}, Model={self.model_size}",
+            flush=True,
+        )
 
         try:
-            if is_local_available:
-                print(
-                    f"[{self.__class__.__name__}] Found local model at: {self.local_model_path}"
-                )
-                print(f"[{self.__class__.__name__}] Loading offline...")
-
-                # PASSING A PATH forces offline loading
-                self.model = WhisperModel(
-                    str(self.local_model_path),
-                    device=self.device,
-                    compute_type=self.compute_type,
-                )
-            else:
-                print(
-                    f"[{self.__class__.__name__}] Local model not found at: {self.local_model_path}"
-                )
-                print(
-                    f"[{self.__class__.__name__}] Downloading {self.model_size} from Hugging Face..."
-                )
-
-                # We set download_root so it saves to D: drive (models folder)
-                self.model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type=self.compute_type,
-                    download_root=str(self.model_root_dir),
-                )
-
-        except Exception as exc:  # pylint: disable=broad-except
-            print(f"Error loading model: {exc}")
-            print(
-                "Tip: If downloading, check internet. "
-                "If local, check if 'model.bin' exists in 'models/large-v2/'."
+            self.model = WhisperModel(
+                self.model_size,
+                device=self.device,
+                compute_type=self.compute_type,
+                download_root=str(self.model_root_dir),
             )
-            raise
+        except Exception as exc:
+            print(f"critical: Failed to load Whisper model: {exc}", flush=True)
+            raise RuntimeError("Could not initialize Whisper") from exc
 
-    def transcribe(self, audio_path: str | Path) -> dict:
+    def _add_torch_libs_to_path(self, project_root: Path) -> None:
+        """Fix specific to Windows + uv/venv to ensure Torch DLLs are found.
+
+        Args:
+            project_root: The root directory of the project containing .venv.
+        """
+        try:
+            torch_lib = (
+                project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
+            )
+            if torch_lib.exists():
+                os.environ["PATH"] = str(torch_lib) + os.pathsep + os.environ["PATH"]
+                print(f"Added Torch DLLs to PATH: {torch_lib}", flush=True)
+        except Exception as e:
+            print(f" Warning Could not add Torch libs to path: {e}", flush=True)
+
+    def _find_project_root(self) -> Path:
+        """Traverse up until we find pyproject.toml, .venv, or .git."""
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if any(
+                (parent / marker).exists()
+                for marker in ["pyproject.toml", ".venv", ".git"]
+            ):
+                return parent
+        return current.parent.parent.parent
+
+    def transcribe(self, audio_path: str | Path) -> TranscriptionResult:
         """Transcribe audio and return recognized text with timestamps.
 
         Args:
-            audio_path: Path to an audio file readable by Faster Whisper.
+            audio_path: Path to the input audio file.
 
         Returns:
-            A dictionary with the following keys:
-                text: Full transcribed text.
-                segments: List of segment dictionaries containing:
-                    start: Segment start time in seconds.
-                    end: Segment end time in seconds.
-                    text: Transcribed text for the segment.
-                language: Detected language code.
-                language_probability: Probability associated with the
-                    detected language.
+            TranscriptionResult: A Pydantic model containing text and metadata.
 
         Raises:
-            FileNotFoundError: If the audio file does not exist.
+            FileNotFoundError: If audio file does not exist.
+            RuntimeError: If transcription fails.
         """
-        if isinstance(audio_path, Path):
-            audio_path = str(audio_path)
+        path_obj = Path(audio_path)
+        if not path_obj.exists():
+            raise FileNotFoundError(f"Audio file not found: {path_obj}")
 
-        if not os.path.exists(audio_path):
-            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+        print(f"info: Transcribing: {path_obj.name}...", flush=True)
 
-        print(
-            f"[{self.__class__.__name__}] Transcribing: "
-            f"{os.path.basename(audio_path)}..."
-        )
-
-        # Perform transcription
-        # Using beam_size=5 for better accuracy
-        segments_generator, info = self.model.transcribe(
-            audio_path,
-            beam_size=5,
-            vad_filter=True,  # remove bg noise
-            vad_parameters={"min_silence_duration_ms": 500},
-            task="transcribe",
-        )
-
-        full_text_pieces = []
-        segments_data = []
-
-        for segment in segments_generator:
-            full_text_pieces.append(segment.text)
-            segments_data.append(
-                {
-                    "start": segment.start,
-                    "end": segment.end,
-                    "text": segment.text.strip(),
-                }
+        try:
+            # beam_size=5 provides better accuracy
+            segments_generator, info = self.model.transcribe(
+                str(path_obj),
+                beam_size=5,
+                vad_filter=True,  # Remove silence
+                vad_parameters={"min_silence_duration_ms": 500},
+                task="transcribe",
             )
 
-        return {
-            "text": "".join(full_text_pieces).strip(),
-            "segments": segments_data,
-            "language": info.language,
-            "language_probability": info.language_probability,
-        }
+            segments = list(segments_generator)
+            full_text = "".join([s.text for s in segments]).strip()
+
+            result = TranscriptionResult(
+                text=full_text,
+                segments=[
+                    {"start": s.start, "end": s.end, "text": s.text.strip()}
+                    for s in segments
+                ],
+                language=info.language,
+                language_probability=info.language_probability,
+                duration=info.duration,
+            )
+
+            print(
+                f"Complete. Lang: {info.language} ({info.language_probability:.2f}), "
+                f"Duration: {info.duration:.2f}s",
+                flush=True,
+            )
+            return result
+
+        except Exception as e:
+            print(f"error: Transcription failed for {path_obj.name}: {e}", flush=True)
+            raise RuntimeError(f"Transcription failed: {e}") from e
 
 
 def main() -> None:
-    """Simple manual test harness for AudioTranscriber.
+    """Manual test harness."""
+    print("Script Started", flush=True)
 
-    Initializes the transcriber and processes a test audio file.
-    """
-    transcriber = AudioTranscriber(model_size="large-v2")
-    test_path = r"C:\Users\Gnana Prakash M\Downloads\Music\clip.mp3"
+    test_path = Path(r"C:\\Users\\Gnana Prakash M\\Downloads\\Music\\clip.mp3")
+
+    if not test_path.exists():
+        print(f"warning: Test file not found at {test_path}", flush=True)
+        return
 
     try:
-        result = transcriber.transcribe(test_path)
+        # Use 'base' or 'tiny' for quick testing. Use 'large-v2' for prod.
+        transcriber = AudioTranscriber(model_size="large-v3")
+        res = transcriber.transcribe(test_path)
 
-        print("\n Transcription Result Summary:")
-        print(
-            f"Language: {result['language'].upper()} "
-            f"({result['language_probability']:.2%})"
-        )
-        print(f"Full Text: {result['text'][:200]}...")
-        print(f"Segments Count: {len(result['segments'])}")
-    except FileNotFoundError:
-        print(f"Test audio file not found: {test_path}")
+        print("\nFinal Output (Pydantic Model)", flush=True)
+        print(f"Text Snippet: {res.text[:1000]}...", flush=True)
+        print(f"Detected Language: {res.language}", flush=True)
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"error: Test run failed: {e}", flush=True)
 
 
 if __name__ == "__main__":
-    print("Starting AudioTranscriber Test")
     main()

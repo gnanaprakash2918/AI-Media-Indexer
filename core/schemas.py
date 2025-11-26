@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field, FilePath
 
@@ -46,3 +47,21 @@ class DetectedFace(BaseModel):
     )
     encoding: list[float] = Field(..., description="128-dimensional face vector")
     confidence: float = 1.0  # Placeholder for future use
+
+
+class TranscriptionResult(BaseModel):
+    """Result of transcribing an audio file.
+
+    Attributes:
+        text: The full transcription text.
+        segments: A list of segments with timing and text details.
+        language: Detected language code (e.g., 'en').
+        language_probability: Probability score for the detected language.
+        duration: Duration of the audio in seconds.
+    """
+
+    text: str
+    segments: list[dict[str, Any]]
+    language: str
+    language_probability: float
+    duration: float
