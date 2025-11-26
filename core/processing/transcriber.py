@@ -1,7 +1,20 @@
 """Audio transcription utilities using Faster Whisper.
 
-This module provides a small wrapper around Faster Whisper optimized for
-local execution with fallback to online download.
+This module provides a small wrapper around Faster Whisper optimized for local
+execution with fallback to online download. It adds language-driven model
+selection (for Tamil -> `vasista22/whisper-tamil-large-v2`) and optionally
+pre-downloads the model using huggingface_hub to show progress and speed up
+Faster Whisper initialization.
+
+Usage:
+    transcriber = AudioTranscriber()
+    result = transcriber.transcribe("path/to/file.mp3", language="ta")
+
+Notes:
+    * If you want to use the converted CT2 model for Tamil (recommended to
+      improve speed/efficiency), convert and place it under `models/whisper-tamil-ct2`
+      and the class will pick it automatically.
+    * To force a particular model, pass `model_size` during constructor.
 """
 
 from __future__ import annotations
@@ -22,6 +35,20 @@ class AudioTranscriber:
 
     Optimized for local execution with auto-GPU detection and specific
     model caching strategies.
+    """Transcribe audio using Faster Whisper with language-driven model choice.
+
+    The transcriber auto-detects a GPU (CUDA) and sets a sensible compute type.
+    If the requested language is Tamil ("ta"), it prefers the `vasista22`
+    model and will use a local converted model path if present. For English
+    or unspecified languages, it defaults to `large-v3`. Additional language
+    → model mappings can be added via `Settings.WHISPER_MODEL_MAP`.
+
+    Attributes:
+        model_size: The name of the Faster Whisper model or path to a local
+            converted model.
+        device: Device to load the model on ("cuda" or "cpu").
+        compute_type: Numeric precision used by the model ("float16", "int8",
+            "float32", etc.).
     """
 
     def __init__(
