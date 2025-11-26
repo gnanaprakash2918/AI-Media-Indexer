@@ -11,6 +11,9 @@ import os
 from enum import Enum
 from pathlib import Path
 
+# Enable hf_transfer for max speed
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
 
 class LLMProvider(str, Enum):
     """Enumeration of supported LLM providers."""
@@ -20,46 +23,49 @@ class LLMProvider(str, Enum):
 
 
 def _parse_model_map(env_value: str | None) -> dict[str, str]:
-    """Parse a compact environment variable into a language->model dict.
+    """Parse a compact environment variable into a mapping of language -> model.
 
-    Supports either JSON string
-        or simple comma-separated pairs "ta:vasista22/.,en:large-v3".
+    Supports:
+        * JSON: {"ta": "vasista22/...", "en": "large-v3"}
+        * CSV: "ta:vasista22/whisper-tamil-large-v2,en:large-v3"
 
     Args:
-        env_value: Environment variable string.
+        env_value: Raw value of WHISPER_MODEL_MAP from environment.
 
     Returns:
-        Mapping from language code to model identifier.
+        A dictionary mapping language codes to model identifiers.
     """
     if not env_value:
-        # Default mapping: Tamil -> vasista22, fallback handled elsewhere.
-        return {"ta": "vasista22/whisper-tamil-large-v2", "en": "large-v3"}
+        # Default mapping.
+        return {
+            "ta": "vasista22/whisper-tamil-large-v2",
+            "en": "large-v3",
+        }
 
-    env_value = env_value.strip()
-    # Try JSON first.
+    value = env_value.strip()
+
+    # Attempt JSON first.
     try:
-        parsed = json.loads(env_value)
-        if isinstance(parsed, dict):
-            return {k.lower(): str(v) for k, v in parsed.items()}
+        parsed_json = json.loads(value)
+        if isinstance(parsed_json, dict):
+            return {k.lower(): str(v) for k, v in parsed_json.items()}
     except Exception:
         pass
 
-    # Fallback: parse CSV-like pairs
+    # Fallback: CSV-like parsing.
     mapping: dict[str, str] = {}
     try:
-        pairs = [p.strip() for p in env_value.split(",") if p.strip()]
-        for pair in pairs:
-            if ":" in pair:
-                k, v = pair.split(":", 1)
-                mapping[k.strip().lower()] = v.strip()
+        items = [part.strip() for part in value.split(",") if part.strip()]
+        for item in items:
+            if ":" in item:
+                lang, model = item.split(":", 1)
+                mapping[lang.strip().lower()] = model.strip()
     except Exception:
         pass
 
-    # Ensure defaults exist
-    if "ta" not in mapping:
-        mapping.setdefault("ta", "vasista22/whisper-tamil-large-v2")
-    if "en" not in mapping:
-        mapping.setdefault("en", "large-v3")
+    # Ensure Tamil + English defaults exist.
+    mapping.setdefault("ta", "vasista22/whisper-tamil-large-v2")
+    mapping.setdefault("en", "large-v3")
     return mapping
 
 
@@ -74,14 +80,16 @@ class Settings:
         GEMINI_MODEL: Default Gemini model name.
         OLLAMA_BASE_URL: Base URL for Ollama service.
         OLLAMA_MODEL: Default Ollama model name.
-        WHISPER_MODEL: Default model id for whisper fallback if no mapping matches.
-        WHISPER_DEVICE: Preferred device for whisper ("cuda"/"cpu") None to autodetect.
-        WHISPER_COMPUTE_TYPE: Optional compute type override ("float16", "int8", ...).
-        WHISPER_MODEL_MAP: Language -> model id mapping parsed from env var.
+        WHISPER_MODEL: Default whisper model for general-purpose transcription.
+        WHISPER_DEVICE: Preferred device override ("cuda" or "cpu").
+        WHISPER_COMPUTE_TYPE: Compute precision override for Whisper.
+        WHISPER_MODEL_MAP: Mapping of language code -> Whisper model id.
     """
 
     PROMPT_DIR: Path = Path(os.getenv("PROMPT_DIR", "./prompts"))
-    DEFAULT_PROVIDER: LLMProvider = LLMProvider(os.getenv("LLM_PROVIDER", "gemini"))
+    DEFAULT_PROVIDER: LLMProvider = LLMProvider(
+        os.getenv("LLM_PROVIDER", "gemini").lower()
+    )
     DEFAULT_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "120"))
 
     # Gemini
@@ -94,19 +102,17 @@ class Settings:
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llava")
 
-    # Whisper (Audio)
-    # The default general-purpose model ID used when not choosing via language map.
+    # Whisper defaults
     WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
-    WHISPER_DEVICE: str | None = os.getenv("WHISPER_DEVICE", None)
-    WHISPER_COMPUTE_TYPE: str | None = os.getenv("WHISPER_COMPUTE_TYPE", None)
+    WHISPER_DEVICE: str | None = os.getenv("WHISPER_DEVICE")
+    WHISPER_COMPUTE_TYPE: str | None = os.getenv("WHISPER_COMPUTE_TYPE")
 
-    # Optional mapping from language (e.g., "ta") to model id. Parse from env var.
-    # WHISPER_MODEL_MAP accepts JSON or CSV-style "ta:vasista22/...,en:large-v3"
+    # Language-based mapping (Tamil & English by default)
     WHISPER_MODEL_MAP: dict[str, str] = _parse_model_map(os.getenv("WHISPER_MODEL_MAP"))
 
     @property
     def whisper_model_map(self) -> dict[str, str]:
-        """Return the whisper language->model mapping."""
+        """Return whisper language → model mapping."""
         return self.WHISPER_MODEL_MAP
 
 

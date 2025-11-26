@@ -20,9 +20,14 @@ Notes:
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 from pathlib import Path
 
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
 import torch
+from ctranslate2.converters import TransformersConverter
 from faster_whisper import WhisperModel
 from huggingface_hub import snapshot_download
 
@@ -72,7 +77,6 @@ class AudioTranscriber:
         self.device = device or settings.WHISPER_DEVICE
         self.compute_type = compute_type or settings.WHISPER_COMPUTE_TYPE
 
-        # Placeholder for loaded model and its id (populated on first load).
         self.model: WhisperModel | None = None
         self.model_id: str | None = None
 
@@ -80,35 +84,78 @@ class AudioTranscriber:
         self.model_root_dir = self.project_root / "models"
         self.model_root_dir.mkdir(parents=True, exist_ok=True)
 
-        # Windows-specific torch DLL fix (keeps structure intact).
         self._add_torch_libs_to_path(self.project_root)
 
         if not self.device:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         if not self.compute_type:
-            # Use float16 on CUDA, int8 on CPU as a reasonable default.
             self.compute_type = "float16" if self.device == "cuda" else "int8"
 
         print(
             f"Initializing Whisper: Device={self.device}, "
             f"Compute={self.compute_type}, Model={self.model_size}",
-            flush=True,
         )
 
-        # If the configured model_size is a mapping placeholder, leave as-is.
-        # The actual model will be loaded later when a language is known.
         self.model = None
-
-        # Optionally predownload the model (no model loaded yet)
         self._predownload_enabled = bool(predownload)
 
-    def _add_torch_libs_to_path(self, project_root: Path) -> None:
-        """Add Torch DLL directory to PATH on Windows virtualenvs.
+    def _ensure_ct2_model(
+        self, hf_model_id: str, ct2_dir: Path, quantization: str = "float16"
+    ) -> bool:
+        """Ensure CT2 model exists, convert if missing using Direct Python API."""
+        if ct2_dir.exists() and (ct2_dir / "model.bin").exists():
+            return True
 
-        Args:
-            project_root: Project root path that may contain `.venv`.
-        """
+        if TransformersConverter is None:
+            print("Error: ctranslate2 not installed or import failed.")
+            return False
+
+        print(
+            f"CT2 model not found at {ct2_dir}. Starting conversion pipeline...",
+        )
+
+        # 1. Download RAW model first (High Speed)
+        sanitized_name = hf_model_id.replace("/", "_")
+        raw_model_dir = self.model_root_dir / f"raw_{sanitized_name}"
+
+        try:
+            print(f"Phase 1: High-speed download of {hf_model_id}...")
+            snapshot_download(
+                repo_id=hf_model_id,
+                local_dir=raw_model_dir,
+                ignore_patterns=["*.msgpack", "*.h5", "*.tflite", "*.ot"],
+            )
+        except Exception as e:
+            print(f"Download failed: {e}")
+            return False
+
+        # 2. Convert LOCAL raw model to CT2 (Direct Call)
+        print("Phase 2: Converting local raw model to CT2 format...")
+        try:
+            # Initialize the converter with the path we just downloaded
+            converter = TransformersConverter(
+                str(raw_model_dir), low_cpu_mem_usage=True
+            )
+
+            # Run the conversion
+            converter.convert(str(ct2_dir), quantization=quantization, force=True)
+
+            print("CT2 conversion complete.")
+
+            # Optional: Remove raw model to save space
+            shutil.rmtree(raw_model_dir)
+
+            return ct2_dir.exists()
+
+        except Exception as exc:
+            print(f"CT2 conversion failed with error: {exc}")
+            # Cleanup failed conversion dir
+            if ct2_dir.exists():
+                shutil.rmtree(ct2_dir)
+            return False
+
+    def _add_torch_libs_to_path(self, project_root: Path) -> None:
         try:
             torch_lib = (
                 project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
@@ -118,9 +165,11 @@ class AudioTranscriber:
                     str(torch_lib) + os.pathsep + os.environ.get("PATH", "")
                 )
 
-                print(f"Added Torch DLLs to PATH: {torch_lib}", flush=True)
-        except Exception as exc:
-            print(f"Warning: Could not add Torch libs to path: {exc}", flush=True)
+                if str(torch_lib) not in sys.path:
+                    sys.path.append(str(torch_lib))
+        except Exception:
+            print("warning: Could not add torch libs to PATH.")
+            pass
 
     def _find_project_root(self) -> Path:
         """Find the project root by walking parents for pyproject.toml, .venv, or .git.
@@ -151,16 +200,24 @@ class AudioTranscriber:
             return self.model_size
 
         lang = (language or "").lower()
-        mapping = settings.WHISPER_MODEL_MAP or {}
+        mapping = getattr(settings, "WHISPER_MODEL_MAP", None) or {}
         model_choice = mapping.get(lang) or settings.WHISPER_MODEL or "large-v3"
 
-        # Hardcoded fallback for Tamil to use local converted model if present.
-        if (
-            model_choice.startswith("vasista22")
-            and (self.model_root_dir / "whisper-tamil-ct2").exists()
-        ):
-            local_path = str(self.model_root_dir / "whisper-tamil-ct2")
-            print(f"Using local converted Tamil model at: {local_path}", flush=True)
+        # Fallback for Tamil
+        if model_choice.startswith("vasista22"):
+            ct2_dir = self.model_root_dir / "whisper-tamil-ct2"
+
+            if not ct2_dir.exists() or not (ct2_dir / "model.bin").exists():
+                self._ensure_ct2_model(
+                    model_choice,
+                    ct2_dir,
+                    quantization="float16" if self.device == "cuda" else "int8",
+                )
+
+        """Attempt to pre-download the model files to the `models/` directory."""
+        if ct2_dir.exists():
+            local_path = str(ct2_dir)
+            print(f"Using local converted Tamil model at: {local_path}")
             return local_path
 
         return model_choice
@@ -177,39 +234,37 @@ class AudioTranscriber:
                 "openai/whisper-large-v3".
         """
         if not snapshot_download:
-            # huggingface_hub not installed
-            print("huggingface_hub not available; skipping pre-download.", flush=True)
             return
-
-        # Only attempt if model_id looks like a HF repo (contains a slash).
         if "/" not in model_id:
             return
 
-        try:
-            target_cache = str(self.model_root_dir / model_id.replace("/", "_"))
-            print(
-                f"Attempting to pre-download '{model_id}' into {target_cache}",
-                flush=True,
-            )
+        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN") or None
 
-            snapshot_download(repo_id=model_id, cache_dir=str(self.model_root_dir))
-            print(f"Pre-download complete for {model_id}", flush=True)
-        except Exception as exc:
-            print(f"Warning: pre-download failed for {model_id}: {exc}", flush=True)
+        allow_patterns = [
+            "config.json",
+            "generation_config.json",
+            "*.bin",
+            "*.pt",
+            "*.onnx",
+            "*.safetensors",
+            "pytorch_model*.bin",
+            "model.safetensors",
+            "tokenizer.json",
+            "vocab.json",
+            "tokenizer_config.json",
+            "preprocessor_config.json",
+        ]
+
+        try:
+            snapshot_download(
+                repo_id=model_id,
+                allow_patterns=allow_patterns,
+                token=token,
+            )
+        except Exception:
+            pass
 
     def _load_whisper_model(self, model_id: str) -> WhisperModel:
-        """Instantiate and return a WhisperModel from faster_whisper.
-
-        Args:
-            model_id: Model id or local path.
-
-        Returns:
-            WhisperModel instance.
-
-        Raises:
-            RuntimeError: If WhisperModel initialization fails.
-        """
-        # If predownload enabled, attempt to predownload (best-effort).
         if self._predownload_enabled:
             self._maybe_predownload(model_id)
 
@@ -231,7 +286,6 @@ class AudioTranscriber:
         except Exception as exc:
             print(
                 f"critical: Failed to load Whisper model '{model_id}': {exc}",
-                flush=True,
             )
             raise RuntimeError(
                 f"Could not initialize Whisper model '{model_id}'"
@@ -270,17 +324,14 @@ class AudioTranscriber:
         if not path_obj.exists():
             raise FileNotFoundError(f"Audio file not found: {path_obj}")
 
-        # Determine model based on language preference
         chosen_model = self._model_for_language(language)
         print(
             (
                 f"info: Transcribing '{path_obj.name}' | Lang: {language or 'Auto'}"
                 f" | Model: {chosen_model}"
             ),
-            flush=True,
         )
 
-        # Load model now (if not loaded or different)
         if (
             getattr(self, "model", None) is None
             or getattr(self, "model_id", None) != chosen_model
@@ -290,10 +341,7 @@ class AudioTranscriber:
 
         try:
             if self.model is None:
-                raise RuntimeError(
-                    "Whisper model not loaded. Call transcribe with a valid "
-                    "model available."
-                )
+                raise RuntimeError("Whisper model not loaded.")
 
             segments_generator, info = self.model.transcribe(
                 str(path_obj),
@@ -325,13 +373,12 @@ class AudioTranscriber:
                     f"({result.language_probability:.2f}), "
                     f"Duration: {result.duration:.2f}s"
                 ),
-                flush=True,
             )
 
             return result
 
         except Exception as exc:
-            print(f"error: Transcription failed for {path_obj.name}: {exc}", flush=True)
+            print(f"error: Transcription failed for {path_obj.name}: {exc}")
             raise RuntimeError(f"Transcription failed: {exc}") from exc
 
 
@@ -340,30 +387,25 @@ def main() -> None:
 
     Edit `test_path` to point to a real audio file on your machine to test.
     """
-    print("Script Started", flush=True)
-
+    print("Script Started")
     test_path = Path(r"C:\Users\Gnana Prakash M\Downloads\Music\clip.mp3")
-
     if not test_path.exists():
-        print(f"warning: Test file not found at {test_path}", flush=True)
+        print(f"warning: Test file not found at {test_path}")
         return
 
     try:
-        # The transcriber will pick Tamil model when language="ta"
         transcriber = AudioTranscriber(predownload=True)
-
         res = transcriber.transcribe(
             test_path,
-            language="ta",  # "ta" will pick the Tamil model mapping
-            initial_prompt="இது ஒரு தமிழ் ஆடியோ பதிவு.",  # Helps with Tamil context
+            language="ta",
+            initial_prompt="இது ஒரு தமிழ் ஆடியோ பதிவு.",
             beam_size=5,
         )
-
-        print("\nFinal Output (Pydantic Model)", flush=True)
-        print(f"Text Snippet: {res.text[:1000]}...", flush=True)
-        print(f"Detected Language: {res.language}", flush=True)
+        print("\nFinal Output (Pydantic Model)")
+        print(f"Text Snippet: {res.text[:1000]}...")
+        print(f"Detected Language: {res.language}")
     except Exception as exc:
-        print(f"error: Test run failed: {exc}", flush=True)
+        print(f"error: Test run failed: {exc}")
 
 
 if __name__ == "__main__":

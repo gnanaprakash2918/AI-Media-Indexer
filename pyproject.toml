@@ -17,6 +17,7 @@ dependencies = [
     "dlib",
     "face-recognition>=1.3.0",
     "faster-whisper>=1.2.1",
+    "hf-transfer>=0.1.9",
     "langchain-core>=1.1.0",
     "langchain-google-genai>=3.2.0",
     "ninja>=1.13.0",
@@ -27,9 +28,10 @@ dependencies = [
     "python-magic-bin>=0.4.14",
     "ruff>=0.14.6",
     "scikit-learn>=1.7.2",
-    "torch>=2.5.1",
-    "torchaudio>=2.5.1",
-    "torchvision>=0.20.1",
+    "torch>=2.6.0",
+    "torchaudio>=2.6.0",
+    "torchvision>=0.21.0",
+    "transformers>=4.57.3",
 ]
 
 [project.optional-dependencies]
@@ -76,7 +78,8 @@ line-ending = "lf"
 # 1. Define the PyTorch CUDA index
 [[tool.uv.index]]
 name = "pytorch"
-url = "https://download.pytorch.org/whl/cu121"
+# cu121 -> cu124 to ensure 2.6 builds
+url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
 # 2. Tell uv to pull torch packages from that specific index
@@ -85,3 +88,5 @@ torch = [{ index = "pytorch" }]
 torchvision = [{ index = "pytorch" }]
 torchaudio = [{ index = "pytorch" }]
 dlib = { url = "https://github.com/z-mahmud22/Dlib_Windows_Python3.x/raw/main/dlib-19.24.99-cp312-cp312-win_amd64.whl" }
+
+# uv sync --upgrade
