@@ -28,3 +28,18 @@ class MediaAsset(BaseModel):
     media_type: MediaType
     file_size_bytes: int = Field(..., description="Size in bytes")
     last_modified: datetime
+
+
+class DetectedFace(BaseModel):
+    """Represents a single detected face in an image.
+
+    Attributes:
+        box:
+            The bounding box as a 4-tuple (top, right, bottom, left) in pixel
+            coordinates relative to the original image.
+        encoding:
+            The 128-d face embedding as a 1D numpy array of shape (128,).
+    """
+
+    box: tuple[int, int, int, int]
+    encoding: list[float]
