@@ -394,7 +394,7 @@ def main() -> None:
     Edit `test_path` to point to a real audio file on your machine to test.
     """
     print("Script Started")
-    test_path = Path(r"C:\Users\Gnana Prakash M\Downloads\Music\clip.mp3")
+    test_path = Path(r"C:\Users\Gnana Prakash M\Downloads\Programs\endgame-english.mp3")
     if not test_path.exists():
         print(f"warning: Test file not found at {test_path}")
         return
@@ -407,9 +407,28 @@ def main() -> None:
             initial_prompt="இது ஒரு தமிழ் ஆடியோ பதிவு.",
             beam_size=5,
         )
-        print("\nFinal Output (Pydantic Model)")
-        print(f"Text Snippet: {res.text[:1000]}...")
-        print(f"Detected Language: {res.language}")
+
+        print("\n=== Transcription Result ===\n")
+        try:
+            print(res.model_dump_json(indent=2, ensure_ascii=False))
+        except Exception:
+            print(f"Text:\n{getattr(res, 'text', '')}\n")
+            print(f"Detected Language: {getattr(res, 'language', '')}")
+            prob = getattr(res, "language_probability", 0.0)
+
+            print(f"Language Probability: {prob:.4f}")
+            duration = getattr(res, "duration", 0.0)
+
+            print(f"Duration: {duration:.2f}s")
+            print("\nSegments:")
+
+            for seg in getattr(res, "segments", []) or []:
+                start = seg.get("start", 0.0)
+                end = seg.get("end", 0.0)
+                text = seg.get("text", "").strip()
+                print(f" - [{start:.2f}s -> {end:.2f}s] {text}")
+
+        print("\n=== End of Result ===")
     except Exception as exc:
         print(f"error: Test run failed: {exc}")
 
