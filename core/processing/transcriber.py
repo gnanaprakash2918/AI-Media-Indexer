@@ -1,60 +1,48 @@
-"""Audio transcription utilities using Faster Whisper.
+"""Audio transcription utilities supporting Hybrid Engines (Whisper & Wav2Vec).
 
-This module provides a small wrapper around Faster Whisper optimized for local
-execution with fallback to online download. It adds language-driven model
-selection (for Tamil -> `vasista22/whisper-tamil-large-v2`) and optionally
-pre-downloads the model using huggingface_hub to show progress and speed up
-Faster Whisper initialization.
+This module provides a unified wrapper that supports:
+1. Transformers (Wav2Vec2): For AI4Bharat/IndicWav2Vec models (Tier 1 Performance).
+2. Faster-Whisper (CTranslate2): For JiviAI, Vasista, OpenAI models.
+
+It implements a "Best -> Worst" fallback strategy based on performance.
 
 Usage:
     transcriber = AudioTranscriber()
     result = transcriber.transcribe("path/to/file.mp3", language="ta")
-
-Notes:
-    * If you want to use the converted CT2 model for Tamil (recommended to
-      improve speed/efficiency), convert and place it under `models/whisper-tamil-ct2`
-      and the class will pick it automatically.
-    * To force a particular model, pass `model_size` during constructor.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 import warnings
 from pathlib import Path
+from typing import Any
 
+import librosa
 import torch
-from ctranslate2.converters import TransformersConverter
 from faster_whisper import WhisperModel
 from huggingface_hub import snapshot_download
+from transformers import AutoModelForCTC, AutoProcessor
 
 from config import settings
 from core.schemas import TranscriptionResult
 
-# Filter 'pkg_resources' deprecation warning from ctranslate2/setuptools
+# Filter warnings
 warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="ctranslate2")
+warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 
 class AudioTranscriber:
-    """Transcribe audio using Faster Whisper with language-driven model choice.
-
-    The transcriber auto-detects a GPU (CUDA) and sets a sensible compute type.
-    If the requested language is Tamil ("ta"), it prefers the `vasista22`
-    model and will use a local converted model path if present. For English
-    or unspecified languages, it defaults to `large-v3`. Additional language
-    -> model mappings can be added via `Settings.WHISPER_MODEL_MAP`.
+    """Hybrid Transcriber supporting Faster-Whisper and Wav2Vec2 architectures.
 
     Attributes:
-        model_size: The name of the Faster Whisper model or path to a local
-            converted model.
-        device: Device to load the model on ("cuda" or "cpu").
-        compute_type: Numeric precision used by the model ("float16", "int8",
-            "float32", etc.).
+        active_engine: "whisper" or "wav2vec".
+        model: The loaded model object (WhisperModel or HF Model).
+        processor: The HF Processor (only for Wav2Vec).
     """
 
     def __init__(
@@ -67,221 +55,117 @@ class AudioTranscriber:
         """Initialize the transcriber.
 
         Args:
-            model_size: Explicit model ID or local path. If None, model is chosen
-                based on settings and language mappings.
-            compute_type: Precision override (e.g., "float16", "int8",
-                "float32"). If None it is inferred from device.
-            device: Device override ("cuda" or "cpu"). If None it is autodetected.
-            predownload: If True, attempt to pre-download the HF model with
-                progress to `models/` to speed up Faster Whisper load.
-
-        Raises:
-            RuntimeError: If the Whisper model fails to load.
+            model_size: Explicit model ID. If None, it is chosen dynamically based
+                on the language during `transcribe()`.
+            compute_type: Precision override (e.g., "float16", "int8").
+            device: "cuda" or "cpu".
+            predownload: Enable HF pre-downloading.
         """
-        self.model_size = model_size or settings.WHISPER_MODEL
+        self.explicit_model = model_size
         self.device = device or settings.WHISPER_DEVICE
-        self.compute_type = compute_type or settings.WHISPER_COMPUTE_TYPE
+        if not self.device:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.model: WhisperModel | None = None
+        self.compute_type = compute_type or settings.WHISPER_COMPUTE_TYPE
+        if not self.compute_type:
+            self.compute_type = "float16" if self.device == "cuda" else "int8"
+
+        self.model: Any = None
+        # For Wav2Vec
+        self.processor: Any = None
+
         self.model_id: str | None = None
+
+        # "whisper" or "wav2vec"
+        self.active_engine: str = "whisper"
 
         self.project_root = self._find_project_root()
         self.model_root_dir = self.project_root / "models"
         self.model_root_dir.mkdir(parents=True, exist_ok=True)
+        self._predownload_enabled = predownload
 
         self._add_torch_libs_to_path(self.project_root)
 
-        if not self.device:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if self.explicit_model:
+            self._load_with_fallback([self.explicit_model])
 
-        if not self.compute_type:
-            self.compute_type = "float16" if self.device == "cuda" else "int8"
+    def _determine_engine(self, model_id: str) -> str:
+        """Heuristic to decide if model is Whisper or Wav2Vec."""
+        lower = model_id.lower()
+        if "wav2vec" in lower or "indicconformer" in lower:
+            return "wav2vec"
 
-        print(
-            f"Initializing Whisper: Device={self.device}, "
-            f"Compute={self.compute_type}, Model={self.model_size}"
-        )
+        # JiviAI audioX is Whisper based
+        if "audiox" in lower or "whisper" in lower or "distil" in lower:
+            return "whisper"
+        # Default to Whisper for unknown names
+        return "whisper"
 
-        self._predownload_enabled = predownload
+    def _load_with_fallback(self, candidates: list[str]) -> None:
+        """Try loading models from the list one by one until success."""
+        errors: list[str] = []
+        for model_id in candidates:
+            engine = self._determine_engine(model_id)
+            print(f"info: Attempting to load '{model_id}' (Engine: {engine})...")
 
-    def _ensure_ct2_model(
-        self, hf_model_id: str, ct2_dir: Path, quantization: str = "float16"
-    ) -> bool:
-        """Ensure CT2 model exists, convert if missing using Direct Python API."""
-        if ct2_dir.exists() and (ct2_dir / "model.bin").exists():
-            return True
+            try:
+                if engine == "whisper":
+                    self._load_whisper_model(model_id)
+                else:
+                    self._load_wav2vec_model(model_id)
 
-        print(f"CT2 model not found at {ct2_dir}. Starting conversion pipeline...")
+                self.model_id = model_id
+                self.active_engine = engine
+                print(f"success: Loaded '{model_id}'.")
+                return
+            except Exception as e:
+                print(f"warning: Failed to load '{model_id}': {e}")
+                errors.append(f"{model_id}: {str(e)}")
+                continue
 
-        # 1. Download RAW model first (High Speed)
-        sanitized_name = hf_model_id.replace("/", "_")
-        raw_model_dir = self.model_root_dir / f"raw_{sanitized_name}"
+        raise RuntimeError(f"All model candidates failed to load: {errors}")
 
-        try:
-            print(f"Phase 1: High-speed download of {hf_model_id}...")
-            snapshot_download(
-                repo_id=hf_model_id,
-                local_dir=raw_model_dir,
-                ignore_patterns=["*.msgpack", "*.h5", "*.tflite", "*.ot"],
-            )
-        except Exception as e:
-            print(f"Download failed: {e}")
-            return False
-
-        # 2. Convert LOCAL raw model to CT2 (Direct Call)
-        print("Phase 2: Converting local raw model to CT2 format...")
-        try:
-            # Initialize the converter with the path we just downloaded
-            converter = TransformersConverter(
-                str(raw_model_dir), low_cpu_mem_usage=True
-            )
-
-            # Run the conversion
-            converter.convert(str(ct2_dir), quantization=quantization, force=True)
-
-            print("CT2 conversion complete.")
-
-            # Optional: Remove raw model to save space
-            shutil.rmtree(raw_model_dir)
-
-            return ct2_dir.exists()
-
-        except Exception as exc:
-            print(f"CT2 conversion failed with error: {exc}")
-            # Cleanup failed conversion dir
-            if ct2_dir.exists():
-                shutil.rmtree(ct2_dir)
-            return False
-
-    def _add_torch_libs_to_path(self, project_root: Path) -> None:
-        try:
-            torch_lib = (
-                project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
-            )
-            if torch_lib.exists():
-                torch_lib_str = str(torch_lib)
-                os.environ["PATH"] = (
-                    torch_lib_str + os.pathsep + os.environ.get("PATH", "")
-                )
-
-                if torch_lib_str not in sys.path:
-                    sys.path.append(torch_lib_str)
-        except Exception:
-            print("warning: Could not add torch libs to PATH.")
-
-    def _find_project_root(self) -> Path:
-        """Find the project root by walking parents for pyproject.toml, .venv, or .git.
-
-        Returns:
-            Path pointing at the project root. Falls back to ancestor if none found.
-        """
-        current = Path(__file__).resolve()
-        for parent in current.parents:
-            if any(
-                (parent / marker).exists()
-                for marker in ["pyproject.toml", ".venv", ".git"]
-            ):
-                return parent
-        return current.parent.parent.parent
-
-    def _model_for_language(self, language: str | None) -> str:
-        """Choose model ID or path based on language and settings.
-
-        Args:
-            language: ISO language code, e.g., "ta", "en".
-
-        Returns:
-            Model id or local path to model directory.
-        """
-        # If explicit model_size passed in constructor, it always wins.
-        if self.model_size and self.model_size != settings.WHISPER_MODEL:
-            return self.model_size
-
-        lang = (language or "").lower()
-        mapping = getattr(settings, "WHISPER_MODEL_MAP", None) or {}
-        model_choice = mapping.get(lang) or settings.WHISPER_MODEL or "large-v3"
-
-        # Fallback for Tamil
-        ct2_dir = None
-        if model_choice.startswith("vasista22"):
-            ct2_dir = self.model_root_dir / "whisper-tamil-ct2"
-
-            if not ct2_dir.exists() or not (ct2_dir / "model.bin").exists():
-                self._ensure_ct2_model(
-                    model_choice,
-                    ct2_dir,
-                    quantization="float16" if self.device == "cuda" else "int8",
-                )
-
-        # Attempt to pre-download the model files to the `models/` directory.
-        if ct2_dir and ct2_dir.exists():
-            local_path = str(ct2_dir)
-            print(f"Using local converted Tamil model at: {local_path}")
-            return local_path
-
-        return model_choice
-
-    def _maybe_predownload(self, model_id: str) -> None:
-        """Attempt to pre-download the model files to the `models/` directory.
-
-        This uses huggingface_hub.snapshot_download when available to show progress
-        and improve downstream load time for Faster Whisper.
-
-        Args:
-            model_id: HF model id, for example:
-                "vasista22/whisper-tamil-large-v2" or
-                "openai/whisper-large-v3".
-        """
-        if "/" not in model_id:
-            return
-
-        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN") or None
-
-        allow_patterns = [
-            "config.json",
-            "generation_config.json",
-            "*.bin",
-            "*.pt",
-            "*.onnx",
-            "*.safetensors",
-            "pytorch_model*.bin",
-            "model.safetensors",
-            "tokenizer.json",
-            "vocab.json",
-            "tokenizer_config.json",
-            "preprocessor_config.json",
-        ]
-
-        try:
-            snapshot_download(
-                repo_id=model_id,
-                allow_patterns=allow_patterns,
-                token=token,
-            )
-        except Exception:
-            # If pre-download fails, we fail silently and let faster_whisper handle it
-            pass
-
-    def _load_whisper_model(self, model_id: str) -> WhisperModel:
+    def _load_whisper_model(self, model_id: str) -> None:
+        """Load Faster-Whisper model."""
         if self._predownload_enabled:
             self._maybe_predownload(model_id)
 
-        try:
-            device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
-            compute = self.compute_type or ("float16" if device == "cuda" else "int8")
+        device = (
+            self.device
+            if self.device is not None
+            else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
 
-            model = WhisperModel(
-                model_id,
-                device=device,
-                compute_type=compute,
-                download_root=str(self.model_root_dir),
+        compute_type = (
+            self.compute_type
+            if self.compute_type is not None
+            else ("float16" if device == "cuda" else "int8")
+        )
+
+        self.model = WhisperModel(
+            model_id,
+            device=device,
+            compute_type=compute_type,
+            download_root=str(self.model_root_dir),
+        )
+        self.processor = None
+
+    def _load_wav2vec_model(self, model_id: str) -> None:
+        """Load Transformers Wav2Vec2 model."""
+        print(f"info: Loading Transformers pipeline for {model_id}...")
+        try:
+            self.processor = AutoProcessor.from_pretrained(
+                model_id, token=settings.HF_TOKEN
             )
-            return model
-        except Exception as exc:
-            print(f"critical: Failed to load Whisper model '{model_id}': {exc}")
-            raise RuntimeError(
-                f"Could not initialize Whisper model '{model_id}'"
-            ) from exc
+            self.model = AutoModelForCTC.from_pretrained(
+                model_id, token=settings.HF_TOKEN
+            )
+            if self.device == "cuda":
+                self.model.to("cuda")
+        except OSError as e:
+            if "gated" in str(e).lower() or "token" in str(e).lower():
+                raise PermissionError(f"Access denied (Gated Model?): {e}") from e
+            raise e
 
     def transcribe(
         self,
@@ -291,122 +175,205 @@ class AudioTranscriber:
         beam_size: int = 5,
         vad_filter: bool = True,
     ) -> TranscriptionResult:
-        """Transcribe an audio file and return recognized text with timestamps.
-
-        This method will select an appropriate model based on the provided
-        `language`. If the model for the language is not yet loaded, it will
-        be loaded now (with a pre-download step if enabled).
+        """Transcribe audio using the best available model for the language.
 
         Args:
-            audio_path: Path to the input audio file.
-            language: Language code (e.g., "ta", "en"). If None, autodetect.
-            initial_prompt: A text prompt used by the model to bias recognition.
-            beam_size: Beam search size (higher may improve accuracy at cost of speed).
-            vad_filter: Whether to filter out silence using VAD.
+            audio_path: Path to input audio.
+            language: ISO language code (e.g., 'ta').
+            initial_prompt: Optional prompt (Whisper only).
+            beam_size: Beam search width (Whisper only).
+            vad_filter: Enable VAD (Whisper only).
 
         Returns:
-            TranscriptionResult: Pydantic model containing text, segments, language
-                and metadata.
-
-        Raises:
-            FileNotFoundError: If the audio file does not exist.
-            RuntimeError: If transcription fails.
+            TranscriptionResult object.
         """
         path_obj = Path(audio_path)
         if not path_obj.exists():
             raise FileNotFoundError(f"Audio file not found: {path_obj}")
 
-        chosen_model = self._model_for_language(language)
-        print(
-            f"info: Transcribing '{path_obj.name}' | "
-            f"Lang: {language or 'Auto'} | Model: {chosen_model}"
+        # 1. Determine Candidates
+        candidates: list[str] = []
+        if self.explicit_model:
+            candidates = [self.explicit_model]
+        else:
+            lang_key = (language or "en").lower()
+            candidates = settings.whisper_model_map.get(
+                lang_key, [settings.WHISPER_MODEL]
+            )
+
+        # 2. Check if current loaded model is usable
+        # If current model is not in candidates, we must reload.
+        if self.model_id not in candidates:
+            print(
+                f"info: Switching model for language '{language}'. "
+                f"Candidates: {candidates}"
+            )
+            self._load_with_fallback(candidates)
+
+        # 3. Apply Tamil Prompt Fix (Whisper only)
+        if self.active_engine == "whisper" and language == "ta" and not initial_prompt:
+            initial_prompt = "வணக்கம், இது ஒரு தமிழ் உரையாடல் பதிவு."
+
+        # 4. Dispatch
+        if self.active_engine == "whisper":
+            return self._transcribe_whisper(
+                path_obj, language, initial_prompt, beam_size, vad_filter
+            )
+        else:
+            return self._transcribe_wav2vec(path_obj, language)
+
+    def _transcribe_whisper(
+        self,
+        audio_path: Path,
+        language: str | None,
+        prompt: str | None,
+        beam: int,
+        vad: bool,
+    ) -> TranscriptionResult:
+        """Internal handler for Faster-Whisper."""
+        if not isinstance(self.model, WhisperModel):
+            raise RuntimeError("Engine mismatch: Expected WhisperModel")
+
+        segments_generator, info = self.model.transcribe(
+            str(audio_path),
+            beam_size=beam,
+            vad_filter=vad,
+            vad_parameters={"min_silence_duration_ms": 500} if vad else None,
+            task="transcribe",
+            language=language,
+            initial_prompt=prompt,
         )
 
-        if self.model is None or self.model_id != chosen_model:
-            self.model = self._load_whisper_model(chosen_model)
-            self.model_id = chosen_model
+        segments = list(segments_generator)
+        full_text = "".join([s.text for s in segments]).strip()
 
+        return TranscriptionResult(
+            text=full_text,
+            segments=[
+                {"start": s.start, "end": s.end, "text": s.text.strip()}
+                for s in segments
+            ],
+            language=getattr(info, "language", language or ""),
+            language_probability=getattr(info, "language_probability", 0.0),
+            duration=getattr(info, "duration", 0.0),
+        )
+
+    def _transcribe_wav2vec(
+        self, audio_path: Path, language: str | None
+    ) -> TranscriptionResult:
+        """Internal handler for Wav2Vec2/IndicConformer."""
+        if self.processor is None or self.model is None:
+            raise RuntimeError("Engine mismatch: Transformers model not loaded")
+
+        # Wav2Vec requires 16kHz
         try:
-            # Type checker guard
-            if self.model is None:
-                raise RuntimeError("Whisper model not loaded.")
+            audio_input, sr = librosa.load(str(audio_path), sr=16000)
+        except Exception as e:
+            raise RuntimeError(f"Librosa load failed: {e}") from e
 
-            segments_generator, info = self.model.transcribe(
-                str(path_obj),
-                beam_size=beam_size,
-                vad_filter=vad_filter,
-                vad_parameters={"min_silence_duration_ms": 500} if vad_filter else None,
-                task="transcribe",
-                language=language,
-                initial_prompt=initial_prompt,
-            )
+        duration = librosa.get_duration(y=audio_input, sr=16000)
 
-            segments = list(segments_generator)
-            full_text = "".join([s.text for s in segments]).strip()
+        # Tokenize
+        inputs = self.processor(audio_input, sampling_rate=16000, return_tensors="pt")
+        if self.device == "cuda":
+            inputs = inputs.to("cuda")
 
-            result = TranscriptionResult(
-                text=full_text,
-                segments=[
-                    {"start": s.start, "end": s.end, "text": s.text.strip()}
-                    for s in segments
+        # Inference
+        with torch.no_grad():
+            logits = self.model(**inputs).logits
+
+        # Decode
+        predicted_ids = torch.argmax(logits, dim=-1)
+        # skip_special_tokens=True removes padding/CTC tokens
+        transcription_list = self.processor.batch_decode(
+            predicted_ids, skip_special_tokens=True
+        )
+        transcription = str(transcription_list[0]) if transcription_list else ""
+
+        # Wav2Vec doesn't provide segments naturally.
+        # We create a single segment for schema compatibility.
+        return TranscriptionResult(
+            text=transcription,
+            segments=[{"start": 0.0, "end": duration, "text": transcription}],
+            language=language or "ta",
+            language_probability=1.0,
+            duration=duration,
+        )
+
+    def _maybe_predownload(self, model_id: str) -> None:
+        """Attempt to pre-download HF model."""
+        if "/" not in model_id:
+            return
+        try:
+            snapshot_download(
+                repo_id=model_id,
+                allow_patterns=[
+                    "config.json",
+                    "*.bin",
+                    "*.pt",
+                    "*.safetensors",
+                    "tokenizer.json",
+                    "vocab.json",
                 ],
-                language=getattr(info, "language", language or ""),
-                language_probability=getattr(info, "language_probability", 0.0),
-                duration=getattr(info, "duration", 0.0),
+                token=settings.HF_TOKEN,
             )
+        except Exception:
+            pass
 
-            print(
-                f"Complete. Lang: {result.language} "
-                f"({result.language_probability:.2f}), "
-                f"Duration: {result.duration:.2f}s"
+    def _add_torch_libs_to_path(self, project_root: Path) -> None:
+        try:
+            torch_lib = (
+                project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
             )
+            if torch_lib.exists():
+                os.environ["PATH"] = (
+                    str(torch_lib) + os.pathsep + os.environ.get("PATH", "")
+                )
+                if str(torch_lib) not in sys.path:
+                    sys.path.append(str(torch_lib))
+        except Exception:
+            pass
 
-            return result
-
-        except Exception as exc:
-            print(f"error: Transcription failed for {path_obj.name}: {exc}")
-            raise RuntimeError(f"Transcription failed: {exc}") from exc
+    def _find_project_root(self) -> Path:
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if any(
+                (parent / marker).exists()
+                for marker in ["pyproject.toml", ".venv", ".git"]
+            ):
+                return parent
+        return current.parent.parent.parent
 
 
 def main() -> None:
-    """Small manual test harness.
-
-    Edit `test_path` to point to a real audio file on your machine to test.
-    """
+    """Small manual test harness."""
     print("Script Started")
+    # Test path
     test_path = Path(r"C:\Users\Gnana Prakash M\Downloads\Programs\endgame-english.mp3")
-    if not test_path.exists():
-        print(f"warning: Test file not found at {test_path}")
-        return
 
     try:
+        # Initialize
         transcriber = AudioTranscriber(predownload=True)
-        res = transcriber.transcribe(
-            test_path,
-            language="ta",
-            initial_prompt="இது ஒரு தமிழ் ஆடியோ பதிவு.",
-            beam_size=5,
-        )
 
-        print("\n=== Transcription Result ===\n")
-        try:
-            # Assuming Pydantic V2
-            print(res.model_dump_json(indent=2, ensure_ascii=False))
-        except Exception:
-            # Fallback manual print
-            print(f"Text:\n{res.text}\n")
-            print(f"Detected Language: {res.language}")
-            print(f"Language Probability: {res.language_probability:.4f}")
-            print(f"Duration: {res.duration:.2f}s")
+        print("\n--- Testing Tamil Transcription (Hybrid Fallback) ---")
+        if test_path.exists():
+            # Should try AI4Bharat (Wav2Vec) first, then JiviAI, then Vasista
+            res = transcriber.transcribe(
+                test_path,
+                language="ta",
+                beam_size=5,
+            )
+            print(f"Result (First 10000 chars): {res.text[:10000]}...")
+            print(f"Active Engine used: {transcriber.active_engine}")
+            print(f"Active Model: {transcriber.model_id}")
+
             print("\nSegments:")
-
             for seg in res.segments or []:
                 start = seg.get("start", 0.0)
                 end = seg.get("end", 0.0)
-                text = seg.get("text", "").strip()
-                print(f" - [{start:.2f}s -> {end:.2f}s] {text}")
+                txt = seg.get("text", "").strip()
+                print(f" - [{start:.2f}s -> {end:.2f}s] {txt}")
 
-        print("\n=== End of Result ===")
     except Exception as exc:
         print(f"error: Test run failed: {exc}")
 

@@ -22,25 +22,43 @@ class LLMProvider(str, Enum):
     OLLAMA = "ollama"
 
 
-def _parse_model_map(env_value: str | None) -> dict[str, str]:
-    """Parse a compact environment variable into a mapping of language -> model.
+def _parse_model_map(env_value: str | None) -> dict[str, list[str]]:
+    """Parse env variable into a mapping of language -> list of candidate models.
 
-    Supports:
-        * JSON: {"ta": "vasista22/...", "en": "large-v3"}
-        * CSV: "ta:vasista22/whisper-tamil-large-v2,en:large-v3"
+    The values are lists to support fallback hierarchies (Best -> Worst).
+
+    Hierarchy Strategy for Tamil ('ta') - Performance Based:
+      1. Tier 1 (Best WER): "ai4bharat/indicwav2vec-tamil"
+         - Architecture: Wav2Vec2 (Transformers)
+         - Notes: SOTA accuracy for Indian languages.
+      2. Tier 2 (Best Whisper): "jiviai/audioX-south-v1"
+         - Architecture: Whisper (Faster-Whisper)
+         - Notes: GATED model. High accuracy, includes punctuation.
+      3. Tier 3 (Reliable Open): "vasista22/whisper-tamil-large-v2"
+         - Architecture: Whisper (Faster-Whisper)
+         - Notes: Reliable, ungated, good instruction following.
+      4. Tier 4 (Fallback): "openai/whisper-large-v3"
+         - Architecture: Whisper
+         - Notes: Generic fallback.
 
     Args:
         env_value: Raw value of WHISPER_MODEL_MAP from environment.
 
     Returns:
-        A dictionary mapping language codes to model identifiers.
+        A dictionary mapping language codes to a LIST of model identifiers.
     """
+    mapping: dict[str, list[str]] = {
+        "en": ["large-v3"],
+        "ta": [
+            "ai4bharat/indicwav2vec-tamil",
+            "jiviai/audioX-south-v1",
+            "vasista22/whisper-tamil-large-v2",
+            "large-v3",
+        ],
+    }
+
     if not env_value:
-        # Default mapping.
-        return {
-            "ta": "vasista22/whisper-tamil-large-v2",
-            "en": "large-v3",
-        }
+        return mapping
 
     value = env_value.strip()
 
@@ -48,24 +66,28 @@ def _parse_model_map(env_value: str | None) -> dict[str, str]:
     try:
         parsed_json = json.loads(value)
         if isinstance(parsed_json, dict):
-            return {k.lower(): str(v) for k, v in parsed_json.items()}
+            # Convert single strings to lists if needed
+            cleaned: dict[str, list[str]] = {}
+            for k, v in parsed_json.items():
+                if isinstance(v, str):
+                    cleaned[k.lower()] = [v]
+                elif isinstance(v, list):
+                    cleaned[k.lower()] = [str(x) for x in v]
+            mapping.update(cleaned)
+            return mapping
     except Exception:
         pass
 
-    # Fallback: CSV-like parsing.
-    mapping: dict[str, str] = {}
+    # Fallback: CSV-like parsing "ta:model1,en:model2" (Only supports 1 model per lang)
     try:
         items = [part.strip() for part in value.split(",") if part.strip()]
         for item in items:
             if ":" in item:
                 lang, model = item.split(":", 1)
-                mapping[lang.strip().lower()] = model.strip()
+                mapping[lang.strip().lower()] = [model.strip()]
     except Exception:
         pass
 
-    # Ensure Tamil + English defaults exist.
-    mapping.setdefault("ta", "vasista22/whisper-tamil-large-v2")
-    mapping.setdefault("en", "large-v3")
     return mapping
 
 
@@ -83,7 +105,8 @@ class Settings:
         WHISPER_MODEL: Default whisper model for general-purpose transcription.
         WHISPER_DEVICE: Preferred device override ("cuda" or "cpu").
         WHISPER_COMPUTE_TYPE: Compute precision override for Whisper.
-        WHISPER_MODEL_MAP: Mapping of language code -> Whisper model id.
+        HF_TOKEN: Hugging Face token for gated models.
+        WHISPER_MODEL_MAP: Mapping of language code -> List of models.
     """
 
     PROMPT_DIR: Path = Path(os.getenv("PROMPT_DIR", "./prompts"))
@@ -107,12 +130,17 @@ class Settings:
     WHISPER_DEVICE: str | None = os.getenv("WHISPER_DEVICE")
     WHISPER_COMPUTE_TYPE: str | None = os.getenv("WHISPER_COMPUTE_TYPE")
 
-    # Language-based mapping (Tamil & English by default)
-    WHISPER_MODEL_MAP: dict[str, str] = _parse_model_map(os.getenv("WHISPER_MODEL_MAP"))
+    # Hugging Face Token (Needed for JiviAI models)
+    HF_TOKEN: str | None = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")
+
+    # Language-based mapping
+    WHISPER_MODEL_MAP: dict[str, list[str]] = _parse_model_map(
+        os.getenv("WHISPER_MODEL_MAP")
+    )
 
     @property
-    def whisper_model_map(self) -> dict[str, str]:
-        """Return whisper language → model mapping."""
+    def whisper_model_map(self) -> dict[str, list[str]]:
+        """Return whisper language → [model_candidates] mapping."""
         return self.WHISPER_MODEL_MAP
 
 
