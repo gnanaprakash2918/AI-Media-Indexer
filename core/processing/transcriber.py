@@ -22,9 +22,8 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import warnings
 from pathlib import Path
-
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 import torch
 from ctranslate2.converters import TransformersConverter
@@ -33,6 +32,13 @@ from huggingface_hub import snapshot_download
 
 from config import settings
 from core.schemas import TranscriptionResult
+
+# Filter 'pkg_resources' deprecation warning from ctranslate2/setuptools
+warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="ctranslate2")
+
+
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 
 class AudioTranscriber:
