@@ -22,7 +22,8 @@ class LLMProvider(str, Enum):
 def _parse_model_map(env_value: str | None) -> dict[str, str]:
     """Parse a compact environment variable into a language->model dict.
 
-    Supports either JSON string or simple comma-separated pairs "ta:vasista22/.,en:large-v3".
+    Supports either JSON string
+        or simple comma-separated pairs "ta:vasista22/.,en:large-v3".
 
     Args:
         env_value: Environment variable string.
@@ -74,7 +75,7 @@ class Settings:
         OLLAMA_BASE_URL: Base URL for Ollama service.
         OLLAMA_MODEL: Default Ollama model name.
         WHISPER_MODEL: Default model id for whisper fallback if no mapping matches.
-        WHISPER_DEVICE: Preferred device for whisper ("cuda" or "cpu") None to autodetect.
+        WHISPER_DEVICE: Preferred device for whisper ("cuda"/"cpu") None to autodetect.
         WHISPER_COMPUTE_TYPE: Optional compute type override ("float16", "int8", ...).
         WHISPER_MODEL_MAP: Language -> model id mapping parsed from env var.
     """
