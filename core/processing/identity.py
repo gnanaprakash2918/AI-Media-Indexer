@@ -9,10 +9,14 @@ This module provides the `FaceManager` class, which can:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import face_recognition
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from schemas import DetectedFace
+from sklearn.cluster import DBSCAN
 
 
 class FaceManager:
@@ -73,3 +77,59 @@ class FaceManager:
             )
 
         return results
+
+    def cluster_faces(
+        self,
+        all_encodings: Sequence[ArrayLike],
+    ) -> NDArray[np.int64]:
+        """Cluster face encodings into identities using DBSCAN.
+
+        Args:
+            all_encodings: A sequence of 128-d face encodings.
+
+        Returns:
+            A 1D numpy array of shape (n_samples,) with the cluster label for
+            each encoding. ``-1`` indicates noise or outliers.
+        """
+        if not all_encodings:
+            msg = "No encodings provided for clustering."
+            raise ValueError(msg)
+
+        encodings_array = self._to_2d_array(all_encodings)
+
+        dbscan = DBSCAN(
+            eps=self.dbscan_eps,
+            min_samples=self.dbscan_min_samples,
+            metric=self.dbscan_metric,
+        )
+        dbscan.fit(encodings_array)
+
+        return dbscan.labels_
+
+    @staticmethod
+    def _to_2d_array(encodings: Sequence[ArrayLike]) -> NDArray[np.float64]:
+        """Convert a sequence of encodings into a 2D numpy array.
+
+        Args:
+            encodings: Sequence of encodings (each 1D, length 128).
+
+        Returns:
+            2D numpy array of shape (n_samples, 128).
+        """
+        processed: list[NDArray[np.float64]] = []
+        for idx, enc in enumerate(encodings):
+            arr = np.asarray(enc, dtype=np.float64)
+            if arr.ndim != 1:
+                msg = f"Encoding at index {idx} is not 1D. Got shape {arr.shape!r}."
+                raise ValueError(msg)
+            processed.append(arr)
+
+        lengths = {arr.shape[0] for arr in processed}
+        if len(lengths) != 1:
+            msg = (
+                f"Encodings have inconsistent lengths: {sorted(lengths)}. "
+                "All encodings must be the same dimensionality."
+            )
+            raise ValueError(msg)
+
+        return np.vstack(processed)
