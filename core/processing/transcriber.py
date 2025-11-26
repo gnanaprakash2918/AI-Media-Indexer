@@ -37,7 +37,6 @@ from core.schemas import TranscriptionResult
 warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="ctranslate2")
 
-
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 
@@ -48,7 +47,7 @@ class AudioTranscriber:
     If the requested language is Tamil ("ta"), it prefers the `vasista22`
     model and will use a local converted model path if present. For English
     or unspecified languages, it defaults to `large-v3`. Additional language
-    → model mappings can be added via `Settings.WHISPER_MODEL_MAP`.
+    -> model mappings can be added via `Settings.WHISPER_MODEL_MAP`.
 
     Attributes:
         model_size: The name of the Faster Whisper model or path to a local
@@ -100,11 +99,10 @@ class AudioTranscriber:
 
         print(
             f"Initializing Whisper: Device={self.device}, "
-            f"Compute={self.compute_type}, Model={self.model_size}",
+            f"Compute={self.compute_type}, Model={self.model_size}"
         )
 
-        self.model = None
-        self._predownload_enabled = bool(predownload)
+        self._predownload_enabled = predownload
 
     def _ensure_ct2_model(
         self, hf_model_id: str, ct2_dir: Path, quantization: str = "float16"
@@ -113,13 +111,7 @@ class AudioTranscriber:
         if ct2_dir.exists() and (ct2_dir / "model.bin").exists():
             return True
 
-        if TransformersConverter is None:
-            print("Error: ctranslate2 not installed or import failed.")
-            return False
-
-        print(
-            f"CT2 model not found at {ct2_dir}. Starting conversion pipeline...",
-        )
+        print(f"CT2 model not found at {ct2_dir}. Starting conversion pipeline...")
 
         # 1. Download RAW model first (High Speed)
         sanitized_name = hf_model_id.replace("/", "_")
@@ -167,15 +159,15 @@ class AudioTranscriber:
                 project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
             )
             if torch_lib.exists():
+                torch_lib_str = str(torch_lib)
                 os.environ["PATH"] = (
-                    str(torch_lib) + os.pathsep + os.environ.get("PATH", "")
+                    torch_lib_str + os.pathsep + os.environ.get("PATH", "")
                 )
 
-                if str(torch_lib) not in sys.path:
-                    sys.path.append(str(torch_lib))
+                if torch_lib_str not in sys.path:
+                    sys.path.append(torch_lib_str)
         except Exception:
             print("warning: Could not add torch libs to PATH.")
-            pass
 
     def _find_project_root(self) -> Path:
         """Find the project root by walking parents for pyproject.toml, .venv, or .git.
@@ -210,6 +202,7 @@ class AudioTranscriber:
         model_choice = mapping.get(lang) or settings.WHISPER_MODEL or "large-v3"
 
         # Fallback for Tamil
+        ct2_dir = None
         if model_choice.startswith("vasista22"):
             ct2_dir = self.model_root_dir / "whisper-tamil-ct2"
 
@@ -220,8 +213,8 @@ class AudioTranscriber:
                     quantization="float16" if self.device == "cuda" else "int8",
                 )
 
-        """Attempt to pre-download the model files to the `models/` directory."""
-        if ct2_dir.exists():
+        # Attempt to pre-download the model files to the `models/` directory.
+        if ct2_dir and ct2_dir.exists():
             local_path = str(ct2_dir)
             print(f"Using local converted Tamil model at: {local_path}")
             return local_path
@@ -239,8 +232,6 @@ class AudioTranscriber:
                 "vasista22/whisper-tamil-large-v2" or
                 "openai/whisper-large-v3".
         """
-        if not snapshot_download:
-            return
         if "/" not in model_id:
             return
 
@@ -268,6 +259,7 @@ class AudioTranscriber:
                 token=token,
             )
         except Exception:
+            # If pre-download fails, we fail silently and let faster_whisper handle it
             pass
 
     def _load_whisper_model(self, model_id: str) -> WhisperModel:
@@ -276,11 +268,7 @@ class AudioTranscriber:
 
         try:
             device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
-            compute = (
-                self.compute_type
-                if self.compute_type
-                else ("float16" if device == "cuda" else "int8")
-            )
+            compute = self.compute_type or ("float16" if device == "cuda" else "int8")
 
             model = WhisperModel(
                 model_id,
@@ -290,9 +278,7 @@ class AudioTranscriber:
             )
             return model
         except Exception as exc:
-            print(
-                f"critical: Failed to load Whisper model '{model_id}': {exc}",
-            )
+            print(f"critical: Failed to load Whisper model '{model_id}': {exc}")
             raise RuntimeError(
                 f"Could not initialize Whisper model '{model_id}'"
             ) from exc
@@ -332,20 +318,16 @@ class AudioTranscriber:
 
         chosen_model = self._model_for_language(language)
         print(
-            (
-                f"info: Transcribing '{path_obj.name}' | Lang: {language or 'Auto'}"
-                f" | Model: {chosen_model}"
-            ),
+            f"info: Transcribing '{path_obj.name}' | "
+            f"Lang: {language or 'Auto'} | Model: {chosen_model}"
         )
 
-        if (
-            getattr(self, "model", None) is None
-            or getattr(self, "model_id", None) != chosen_model
-        ):
+        if self.model is None or self.model_id != chosen_model:
             self.model = self._load_whisper_model(chosen_model)
             self.model_id = chosen_model
 
         try:
+            # Type checker guard
             if self.model is None:
                 raise RuntimeError("Whisper model not loaded.")
 
@@ -374,11 +356,9 @@ class AudioTranscriber:
             )
 
             print(
-                (
-                    f"Complete. Lang: {result.language} "
-                    f"({result.language_probability:.2f}), "
-                    f"Duration: {result.duration:.2f}s"
-                ),
+                f"Complete. Lang: {result.language} "
+                f"({result.language_probability:.2f}), "
+                f"Duration: {result.duration:.2f}s"
             )
 
             return result
@@ -410,19 +390,17 @@ def main() -> None:
 
         print("\n=== Transcription Result ===\n")
         try:
+            # Assuming Pydantic V2
             print(res.model_dump_json(indent=2, ensure_ascii=False))
         except Exception:
-            print(f"Text:\n{getattr(res, 'text', '')}\n")
-            print(f"Detected Language: {getattr(res, 'language', '')}")
-            prob = getattr(res, "language_probability", 0.0)
-
-            print(f"Language Probability: {prob:.4f}")
-            duration = getattr(res, "duration", 0.0)
-
-            print(f"Duration: {duration:.2f}s")
+            # Fallback manual print
+            print(f"Text:\n{res.text}\n")
+            print(f"Detected Language: {res.language}")
+            print(f"Language Probability: {res.language_probability:.4f}")
+            print(f"Duration: {res.duration:.2f}s")
             print("\nSegments:")
 
-            for seg in getattr(res, "segments", []) or []:
+            for seg in res.segments or []:
                 start = seg.get("start", 0.0)
                 end = seg.get("end", 0.0)
                 text = seg.get("text", "").strip()
