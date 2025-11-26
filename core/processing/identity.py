@@ -15,8 +15,9 @@ from pathlib import Path
 import face_recognition
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from schemas import DetectedFace
 from sklearn.cluster import DBSCAN
+
+from core.schemas import DetectedFace
 
 
 class FaceManager:
@@ -27,6 +28,7 @@ class FaceManager:
         dbscan_eps: float = 0.5,
         dbscan_min_samples: int = 3,
         dbscan_metric: str = "euclidean",
+        use_gpu: bool = True,
     ) -> None:
         """Initialize the FaceManager with default DBSCAN hyperparameters.
 
@@ -36,10 +38,12 @@ class FaceManager:
             dbscan_min_samples: Minimum number of samples required to form a
                 dense region (cluster).
             dbscan_metric: Distance metric to use for DBSCAN.
+            use_gpu: Whether to attempt using GPU for face detection.
         """
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
         self.dbscan_metric = dbscan_metric
+        self.use_gpu = use_gpu
 
     def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
         """Detect faces in an image and compute their 128-d encodings.
@@ -55,7 +59,8 @@ class FaceManager:
         path = Path(image_path)
 
         if not path.exists():
-            raise FileNotFoundError(f"Image file not found: {path}")
+            msg = f"Image file not found: {path}"
+            raise FileNotFoundError(msg)
 
         try:
             image = face_recognition.load_image_file(str(path))
@@ -63,20 +68,49 @@ class FaceManager:
             msg = f"Failed to load image: {path}"
             raise ValueError(msg) from exc
 
-        boxes = face_recognition.face_locations(image)
+        boxes = self._detect_face_boxes(image)
+
+        if not boxes:
+            return []
+
         encodings = face_recognition.face_encodings(image, boxes)
 
         results: list[DetectedFace] = []
-        for loc, enc in zip(boxes, encodings, strict=False):
-            top, right, bottom, left = loc
+        for box, enc in zip(boxes, encodings, strict=True):
+            top, right, bottom, left = box
             results.append(
                 DetectedFace(
                     box=(int(top), int(right), int(bottom), int(left)),
                     encoding=enc.tolist(),
-                )
+                ),
             )
 
         return results
+
+    def _detect_face_boxes(
+        self,
+        image: NDArray[np.uint8],
+    ) -> list[tuple[int, int, int, int]]:
+        """Detect face bounding boxes using GPU if available, with CPU fallback."""
+        boxes: list[tuple[int, int, int, int]] = []
+
+        if self.use_gpu:
+            try:
+                boxes = face_recognition.face_locations(image, model="cnn")
+            except Exception:  # noqa: BLE001
+                print(
+                    "GPU detection failed or not available. Falling back to CPU (HOG)."
+                )
+                boxes = []
+
+        # If GPU failed (exception) or found 0 faces, or if use_gpu is False, try HOG
+        if not boxes:
+            boxes = face_recognition.face_locations(image, model="hog")
+
+        return [
+            (int(top), int(right), int(bottom), int(left))
+            for top, right, bottom, left in boxes
+        ]
 
     def cluster_faces(
         self,
@@ -92,31 +126,34 @@ class FaceManager:
             each encoding. ``-1`` indicates noise or outliers.
         """
         if not all_encodings:
-            msg = "No encodings provided for clustering."
-            raise ValueError(msg)
+            return np.array([], dtype=np.int64)
 
-        encodings_array = self._to_2d_array(all_encodings)
+        data = self._to_2d_array(all_encodings)
 
         dbscan = DBSCAN(
             eps=self.dbscan_eps,
             min_samples=self.dbscan_min_samples,
             metric=self.dbscan_metric,
         )
-        dbscan.fit(encodings_array)
+
+        dbscan.fit(data)
 
         return dbscan.labels_
 
     @staticmethod
-    def _to_2d_array(encodings: Sequence[ArrayLike]) -> NDArray[np.float64]:
-        """Convert a sequence of encodings into a 2D numpy array.
+    def _to_2d_array(
+        encodings: Sequence[ArrayLike],
+    ) -> NDArray[np.float64]:
+        """Validate and stack face encodings into a 2D numpy array.
 
         Args:
-            encodings: Sequence of encodings (each 1D, length 128).
+            encodings: A sequence of 128-d face encodings.
 
         Returns:
-            2D numpy array of shape (n_samples, 128).
+            A 2D numpy array of shape (n_samples, 128).
         """
         processed: list[NDArray[np.float64]] = []
+
         for idx, enc in enumerate(encodings):
             arr = np.asarray(enc, dtype=np.float64)
             if arr.ndim != 1:
