@@ -164,3 +164,8 @@
 - `winget install Ninja-build.Ninja`
 - `https://github.com/z-mahmud22/Dlib_Windows_Python3.x`
 - `uv add "dlib @ https://github.com/z-mahmud22/Dlib_Windows_Python3.x/raw/main/dlib-19.24.99-cp312-cp312-win_amd64.whl"`
+- `ct2-transformers-converter --model vasista22/whisper-tamil-large-v2 --output_dir models/whisper-tamil-ct2 --quantization float16`
+- Faster-Whisper: A Beginners Installation Guide : `https://www.youtube.com/watch?v=Kyc0AgMIBSU`
+- `https://github.com/SYSTRAN/faster-whisper`
+- `https://huggingface.co/vasista22/whisper-tamil-large-v2`
+- Faster Whisper CTranslate2 (Speech to Text) : `https://www.youtube.com/watch?v=eFmql0NqacU`
