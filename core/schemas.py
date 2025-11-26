@@ -41,5 +41,8 @@ class DetectedFace(BaseModel):
             The 128-d face embedding as a 1D numpy array of shape (128,).
     """
 
-    box: tuple[int, int, int, int]
-    encoding: list[float]
+    box: tuple[int, int, int, int] = Field(
+        ..., description="(top, right, bottom, left)"
+    )
+    encoding: list[float] = Field(..., description="128-dimensional face vector")
+    confidence: float = 1.0  # Placeholder for future use
