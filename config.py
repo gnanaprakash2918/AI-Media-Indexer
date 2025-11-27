@@ -10,6 +10,10 @@ import os
 from enum import Enum
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Enable hf_transfer for max speed
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
@@ -22,7 +26,7 @@ class LLMProvider(str, Enum):
 
 
 def _parse_model_map(env_value: str | None) -> dict[str, list[str]]:
-    """Parse environment variable into a mapping of language -> list of candidate models.
+    """Parse env vars into a mapping of language -> list of candidate models.
 
     Hierarchy for Tamil ('ta'):
       1. TIER 0 (True SOTA): "ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large"

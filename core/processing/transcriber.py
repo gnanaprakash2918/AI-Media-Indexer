@@ -7,19 +7,22 @@ and NVIDIA NeMo for specific SOTA Tamil models when required.
 
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 from typing import Any, Literal
 
 import torch
 from faster_whisper import WhisperModel
-from huggingface_hub import hf_hub_download, list_repo_files
+from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
 
 from config import settings
 
 # Suppress external library warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 
 class AudioTranscriber:
@@ -238,21 +241,36 @@ class AudioTranscriber:
         try:
             from transformers.pipelines import pipeline
 
+            print(f"info: Pre-downloading '{model_id}' using HF Transfer (Fast)...")
+            # Explicitly download first to ensure HF_TRANSFER is used and to avoid
+            # pipeline timeouts.
+            local_model_path = snapshot_download(
+                repo_id=model_id,
+                token=settings.HF_TOKEN,
+                # Force download to a specific folder so we can pass that path to pipeline
+                # if needed, but snapshot_download handles caching automatically.
+            )
+            print(f"info: Model downloaded to {local_model_path}")
+
             print("info: Initializing Transformers pipeline...")
 
             torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
+
             self.model = pipeline(
                 "automatic-speech-recognition",
-                model=model_id,
+                model=local_model_path,  # Load from local cache
                 device=self.device,
                 torch_dtype=torch_dtype,
                 token=settings.HF_TOKEN,
-                model_kwargs={"use_safetensors": True},
+                model_kwargs={"use_safetensors": False},
             )
         except ImportError as e:
             raise ImportError(
-                "Please install 'transformers' and 'accelerate' for this model."
+                "Please install 'transformers', 'accelerate', and 'hf_transfer' "
+                "for this model."
             ) from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to load Transformers model: {e}") from e
 
     def _load_nemo(self, model_id: str) -> None:
         """Load an NVIDIA NeMo model.
@@ -380,13 +398,17 @@ class AudioTranscriber:
 
 def main() -> None:
     """Test entry point for the module."""
-    print(" Audio Transcriber Test ")
+    print("--- Audio Transcriber Test ---")
 
     # User Configuration
-    test_file = Path("C:/Users/Gnana Prakash M/Downloads/Programs/panther.m4a")
+    test_file = Path("test_audio.mp3")  # Replace with actual file if needed
 
-    # Initialize with defaults (Faster-Whisper base)
-    transcriber = AudioTranscriber(model_size="large-v3")
+    # FIX: Use 'vasista22/whisper-tamil-large-v2' (Robust Open SOTA)
+    # This automatically routes to the 'transformers' engine.
+    model_choice = "vasista22/whisper-tamil-large-v2"
+
+    print(f"info: Initializing with model '{model_choice}' for better accuracy...")
+    transcriber = AudioTranscriber(model_size=model_choice)
 
     if not test_file.exists():
         print(f"warning: Test file '{test_file}' not found. Exiting.")
@@ -395,7 +417,8 @@ def main() -> None:
     try:
         result = transcriber.transcribe(test_file, language="ta")
 
-        out_path = Path("output.txt")
+        # FIX: Save output to the same directory as the audio file
+        out_path = test_file.with_suffix(".txt")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(result["text"])
 
