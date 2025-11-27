@@ -47,7 +47,8 @@ def _parse_model_map(env_value: str | None) -> dict[str, list[str]]:
         "en": ["large-v3"],
         "ta": [
             # The True SOTA (NeMo)
-            "ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large",
+            # "ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large",
+            "ai4bharat/indic-conformer-600m-multilingual",
             # The Practical SOTA (Transformers)
             "jiviai/audioX-south-v1",
             # The Reliable Open (Transformers/FW)
