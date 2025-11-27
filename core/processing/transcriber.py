@@ -1,686 +1,411 @@
-"""Audio transcription utilities using a Tri-Hybrid Engine.
+"""Audio transcription module using Faster-Whisper with multi-backend support.
 
-This module supports the full spectrum of modern ASR architectures:
-1. NVIDIA NeMo: For AI4Bharat IndicConformer (Complex SOTA).
-2. Transformers: For JiviAI/Vasista (Practical SOTA).
-3. Faster-Whisper: For OpenAI models (Speed/General).
+This module implements a robust transcription service that defaults to
+Faster-Whisper for speed and local execution but supports Transformers
+and NVIDIA NeMo for specific SOTA Tamil models when required.
 """
 
 from __future__ import annotations
 
-import os
-import sys
 import warnings
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
-# --- 1. Suppress Python 3.12 SyntaxWarnings from Dependencies ---
-warnings.filterwarnings("ignore", category=SyntaxWarning)
+import torch
+from faster_whisper import WhisperModel
+from huggingface_hub import hf_hub_download, list_repo_files
+
+from config import settings
+
+# Suppress external library warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-import librosa
-import torch
-import torchaudio
-from faster_whisper import WhisperModel
-from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
-from transformers import (
-    AutoModel,
-    AutoModelForSpeechSeq2Seq,
-    AutoProcessor,
-)
-from transformers.pipelines import pipeline
-
-from config import settings
-from core.schemas import TranscriptionResult
-
-# Lazy import placeholder for NeMo
-nemo_asr = None
-
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-
 
 class AudioTranscriber:
-    """Tri-Hybrid Transcriber (NeMo, Transformers, Faster-Whisper)."""
+    """Handles audio transcription with automatic backend selection.
+
+    This class manages the loading of different ASR backends (Faster-Whisper,
+    Transformers, NeMo) based on the requested model type and handles the
+    transcription process, including language detection and segmentation.
+
+    Attributes:
+        device (str): The computing device ('cuda' or 'cpu').
+        compute_type (str): The quantization type (e.g., 'float16', 'int8').
+        model_root (Path): Directory where models are stored.
+        model_id (str): The ID or path of the loaded model.
+        model (Any): The loaded model instance (type varies by backend).
+        engine (Literal): The active backend engine.
+    """
 
     def __init__(
         self,
-        model_size: str | None = None,
-        compute_type: str | None = None,
+        model_size: str = "base",
         device: str | None = None,
-        predownload: bool = True,
-        enable_language_detection: bool = True,
-        preferred_tamil_provider: Literal[
-            "ai4bharat", "whisper", "transformers", "auto"
-        ] = "ai4bharat",
+        compute_type: str | None = None,
+        download_root: str | Path | None = None,
     ) -> None:
-        self.explicit_model = model_size
-        self.device = device or settings.WHISPER_DEVICE
-        if not self.device:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        """Initialize the transcriber and load the default model.
 
-        self.torch_device: torch.device = torch.device(self.device)
+        Args:
+            model_size: Name of the model (e.g., 'base', 'small', 'large-v3')
+                or a HuggingFace path. Defaults to "base".
+            device: 'cuda' or 'cpu'. Auto-detected if None.
+            compute_type: 'float16', 'int8_float16', or 'int8'. Auto-selected
+                based on device if None.
+            download_root: Custom path to store models. If None, uses
+                project_root/models.
+        """
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.compute_type = compute_type or (
+            "float16" if self.device == "cuda" else "int8"
+        )
 
-        self.compute_type = compute_type or settings.WHISPER_COMPUTE_TYPE
-        if not self.compute_type:
-            self.compute_type = "float16" if self.device == "cuda" else "float32"
+        # Set up model storage in project_root/models
+        if download_root:
+            self.model_root = Path(download_root)
+        else:
+            self.model_root = self._find_project_root() / "models"
+        self.model_root.mkdir(parents=True, exist_ok=True)
 
+        self.model_id = model_size
         self.model: Any = None
-        self.processor: Any = None
-        self.model_id: str | None = None
-        self.active_engine: Literal["nemo", "transformers", "faster-whisper"] = (
-            "faster-whisper"
+        self.engine: Literal["faster_whisper", "transformers", "nemo"] = (
+            "faster_whisper"
         )
 
-        self.enable_language_detection = enable_language_detection
-        self.preferred_tamil_provider = preferred_tamil_provider
-
-        self._lang_detect_model: WhisperModel | None = None
-
-        self.project_root = self._find_project_root()
-        self.model_root_dir = self.project_root / "models"
-        self.model_root_dir.mkdir(parents=True, exist_ok=True)
-        self._predownload_enabled = predownload
-
-        self._add_torch_libs_to_path(self.project_root)
-        self._try_import_nemo()
-
-        # Set HF Cache paths
-        os.environ["HF_HOME"] = str(self.model_root_dir)
-        os.environ["XDG_CACHE_HOME"] = str(self.model_root_dir)
-        os.environ["TRANSFORMERS_CACHE"] = str(self.model_root_dir)
-        os.environ["HF_HUB_CACHE"] = str(self.model_root_dir)
-
-        if self.explicit_model:
-            self._load_with_fallback([self.explicit_model])
-
-    def _try_import_nemo(self) -> None:
-        global nemo_asr
-        try:
-            import nemo.collections.asr as nemo_lib
-
-            nemo_asr = nemo_lib
-        except ImportError:
-            nemo_asr = None
-
-    def _determine_engine(self, model_id: str) -> str:
-        lower = model_id.lower()
-        if "indicconformer_stt_ta_hybrid_ctc_rnnt_large" in lower:
-            raise RuntimeError("Old NeMo-based IndicConformer Tamil model is disabled.")
-        if "indic-conformer-600m-multilingual" in lower:
-            return "transformers"
-        if "jiviai" in lower or "audiox" in lower:
-            return "transformers"
-        if "vasista" in lower or "indicwhisper" in lower:
-            return "transformers"
-        if "large-v3" in lower or "medium" in lower or "base" in lower:
-            if "/" not in model_id:
-                return "faster-whisper"
-        return "faster-whisper"
-
-    def _load_with_fallback(self, candidates: list[str]) -> None:
-        errors: list[str] = []
-        for model_id in candidates:
-            engine = self._determine_engine(model_id)
-            print(f"info: Attempting to load '{model_id}' (Engine: {engine})...")
-
-            try:
-                if engine == "nemo":
-                    self._load_nemo_model(model_id)
-                elif engine == "transformers":
-                    self._load_transformers_pipeline(model_id)
-                else:
-                    self._load_faster_whisper_model(model_id)
-
-                self.model_id = model_id
-                self.active_engine = cast(
-                    Literal["nemo", "transformers", "faster-whisper"], engine
-                )
-                print(f"success: Loaded '{model_id}'.")
-                return
-
-            except KeyboardInterrupt:
-                print(f"\n\n[!] Download cancelled by user for '{model_id}'.")
-                raise
-            except Exception as e:
-                msg = str(e)
-                print(f"warning: Failed to load '{model_id}': {msg}")
-                errors.append(f"{model_id}: {msg}")
-                continue
-
-        raise RuntimeError(f"All model candidates failed: {errors}")
-
-    def _load_nemo_model(self, model_id: str) -> None:
-        if nemo_asr is None:
-            raise ImportError("NVIDIA NeMo is not installed.")
-        try:
-            print(f"info: Searching for .nemo file in '{model_id}'...")
-            files = list_repo_files(model_id, token=settings.HF_TOKEN)
-            nemo_files = [f for f in files if f.endswith(".nemo")]
-
-            if not nemo_files:
-                raise FileNotFoundError(f"No .nemo file found in {model_id}")
-
-            target_file = nemo_files[0]
-            print(f"info: Found '{target_file}'. Downloading...")
-
-            ckpt_path = hf_hub_download(
-                repo_id=model_id, filename=target_file, token=settings.HF_TOKEN
-            )
-            print(f"info: Restoring NeMo model from: {ckpt_path}")
-            self.model = nemo_asr.models.ASRModel.restore_from(
-                restore_path=ckpt_path, map_location=torch.device(self.torch_device)
-            )
-        except Exception as e:
-            print(
-                f"warning: Manual .nemo load failed ({e}), trying standard fallback..."
-            )
-            self.model = nemo_asr.models.ASRModel.from_pretrained(model_name=model_id)
-
-        if self.device == "cuda":
-            self.model.cuda()
-        self.model.freeze()
-
-    def _load_transformers_pipeline(self, model_id: str) -> None:
-        """Load a Transformers-based ASR model or pipeline."""
-        if "indic-conformer-600m-multilingual" in model_id:
-            torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
-            self.model = AutoModel.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-                torch_dtype=torch_dtype,
-                token=settings.HF_TOKEN,
-            ).to(self.torch_device)
-            self.processor = None
-            return
-
-        torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
-
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_id,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-            token=settings.HF_TOKEN,
-        )
-        model.to(self.torch_device)
-
-        # --- FIX FOR TIMESTAMP ERROR (Vasista/Whisper specific) ---
-        if "whisper" in model_id.lower():
-            try:
-                # Force update the generation config
-                # 50363 is the <|notimestamps|> token for Whisper V2 models
-                model.generation_config.no_timestamps_token_id = 50363
-                model.config.no_timestamps_token_id = 50363
-
-                # Clear forced settings that might conflict with pipeline
-                if hasattr(model.generation_config, "forced_decoder_ids"):
-                    model.generation_config.forced_decoder_ids = None
-
-            except Exception as e:
-                print(f"warning: Could not patch generation config: {e}")
-                pass
-        # -------------------------------
-
-        processor = AutoProcessor.from_pretrained(model_id, token=settings.HF_TOKEN)
-
-        self.model = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            chunk_length_s=30,
-            batch_size=16,
-            torch_dtype=torch_dtype,
-            device=self.device,
-        )
-        self.processor = processor
-
-    def _load_faster_whisper_model(self, model_id: str) -> None:
-        if self._predownload_enabled:
-            self._maybe_predownload(model_id)
-        compute = "float16" if self.device == "cuda" else "int8"
-        self.model = WhisperModel(
-            model_id,
-            device=self.device or "cpu",
-            compute_type=compute,
-            download_root=str(self.model_root_dir),
-        )
+        # Determine engine and load
+        self._load_model(self.model_id)
 
     def transcribe(
         self,
         audio_path: str | Path,
         language: str | None = None,
-        initial_prompt: str | None = None,
         beam_size: int = 5,
         vad_filter: bool = True,
-        prefer_ai4bharat: bool | None = None,
-    ) -> TranscriptionResult:
+    ) -> dict[str, Any]:
+        """Transcribe audio file and return text with segments.
+
+        Args:
+            audio_path: Path to the audio file.
+            language: Language code (e.g., 'en', 'ta'). Auto-detects if None.
+            beam_size: Beam size for decoding. Defaults to 5.
+            vad_filter: Whether to filter silence (VAD). Defaults to True.
+
+        Returns:
+            dict[str, Any]: A dictionary containing:
+                - text (str): The full transcribed text.
+                - segments (list): List of segment dicts with start, end, and text.
+                - language (str): The detected or specified language code.
+                - duration (float): The total duration of the audio.
+
+        Raises:
+            FileNotFoundError: If the audio file does not exist.
+        """
         path_obj = Path(audio_path)
         if not path_obj.exists():
             raise FileNotFoundError(f"Audio file not found: {path_obj}")
 
-        if language is not None:
-            normalized_lang = self._normalize_language_code(language)
-        else:
-            auto_lang = self._detect_language_from_audio(path_obj)
-            normalized_lang = self._normalize_language_code(auto_lang)
+        # Auto-detect language if not provided
+        effective_lang = language
 
-        lang_key = (normalized_lang or "en").lower()
+        print(f"info: Transcribing '{path_obj.name}' using {self.engine.upper()}...")
 
-        effective_prefer_ai4bharat = (
-            prefer_ai4bharat
-            if prefer_ai4bharat is not None
-            else self.preferred_tamil_provider == "ai4bharat"
-        )
-
-        candidates: list[str] = []
-        if self.explicit_model:
-            candidates = [self.explicit_model]
-        else:
-            candidates = settings.whisper_model_map.get(
-                lang_key, [settings.WHISPER_MODEL]
-            )
-
-        if lang_key == "ta":
-            candidates = self._reorder_tamil_candidates(
-                candidates, effective_prefer_ai4bharat
-            )
-
-        if self.model_id not in candidates:
-            print(
-                f"info: Switching model for '{normalized_lang}'. Candidates: {candidates}"
-            )
-            self._load_with_fallback(candidates)
-
-        if normalized_lang == "ta" and not initial_prompt:
-            initial_prompt = "வணக்கம், இது ஒரு தமிழ் உரையாடல் பதிவு."
-
-        if self.active_engine == "nemo":
+        if self.engine == "nemo":
             return self._transcribe_nemo(path_obj)
-        if self.active_engine == "transformers":
-            if self.model_id and "indic-conformer-600m-multilingual" in self.model_id:
-                return self._transcribe_indic_conformer(path_obj, normalized_lang)
-            return self._transcribe_transformers(path_obj, normalized_lang)
-        return self._transcribe_fw(
-            path_obj, normalized_lang, initial_prompt, beam_size, vad_filter
+        if self.engine == "transformers":
+            return self._transcribe_transformers(path_obj, effective_lang)
+
+        return self._transcribe_faster_whisper(
+            path_obj, effective_lang, beam_size, vad_filter
         )
 
-    def _transcribe_nemo(self, audio_path: Path) -> TranscriptionResult:
-        try:
-            files = [str(audio_path)]
-            results = self.model.transcribe(paths2audio_files=files, batch_size=1)
-            text = results[0] if isinstance(results, list) else str(results)
-            return TranscriptionResult(
-                text=text,
-                segments=[{"start": 0.0, "end": 0.0, "text": text}],
-                language="ta",
-                language_probability=1.0,
-                duration=librosa.get_duration(path=str(audio_path)),
-            )
-        except Exception as e:
-            raise RuntimeError(f"NeMo Transcription failed: {e}")
+    def _transcribe_faster_whisper(
+        self, path: Path, language: str | None, beam_size: int, vad_filter: bool
+    ) -> dict[str, Any]:
+        """Execute transcription using the Faster-Whisper backend.
 
-    def _transcribe_indic_conformer(
-        self, audio_path: Path, language: str | None
-    ) -> TranscriptionResult:
-        if self.model is None:
-            raise RuntimeError("Indic-Conformer model not loaded")
+        Args:
+            path: Path to the audio file.
+            language: Language code.
+            beam_size: Beam size for decoding.
+            vad_filter: Whether to apply VAD filtering.
 
-        wav, sr = torchaudio.load(str(audio_path))
-        if wav.dtype != torch.float32:
-            wav = wav.to(torch.float32)
+        Returns:
+            dict[str, Any]: Transcription result with text, segments, and metadata.
+        """
+        segments_generator, info = self.model.transcribe(
+            str(path),
+            beam_size=beam_size,
+            language=language,
+            vad_filter=vad_filter,
+            vad_parameters={"min_silence_duration_ms": 500} if vad_filter else None,
+        )
 
-        target_sr = 16000
-        if sr != target_sr:
-            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=target_sr)
-            wav = resampler(wav)
-
-        if wav.ndim == 1:
-            wav = wav.unsqueeze(0)
-        elif wav.ndim == 2 and wav.size(0) > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-
-        max_val = float(wav.abs().max()) if wav.numel() > 0 else 0.0
-        if max_val > 1.0:
-            wav = wav / max_val
-
-        lang_code = self._normalize_language_code(language) or "ta"
-
-        chunk_duration_s = 30
-        overlap_s = 1
-        hop_s = max(1, chunk_duration_s - overlap_s)
-        chunk_samples = int(chunk_duration_s * target_sr)
-        hop_samples = int(hop_s * target_sr)
-        total_samples = wav.shape[1]
-
-        full_text_parts: list[str] = []
-        segments: list[dict[str, Any]] = []
-
+        detected_lang = info.language
         print(
-            f"info: Processing {total_samples / target_sr:.2f}s audio in {chunk_duration_s}s chunks..."
+            f"info: Language detected: '{detected_lang}' "
+            f"(Prob: {info.language_probability:.2f})"
         )
+        print("info: Starting transcription loop...")
 
-        for start in range(0, total_samples, hop_samples):
-            end = min(start + chunk_samples, total_samples)
-            chunk_wav = wav[:, start:end]
-            if chunk_wav.numel() == 0:
-                continue
+        segments_list = []
+        full_text_parts = []
 
-            chunk_wav = chunk_wav.to(self.torch_device)
-            start_time = start / target_sr
-            end_time = end / target_sr
+        # Iterate generator to process segments and print progress
+        for segment in segments_generator:
+            start, end, text = segment.start, segment.end, segment.text.strip()
+            print(f"  [{start:.2f}s -> {end:.2f}s] {text}")
 
-            try:
-                with torch.no_grad():
-                    chunk_text = self.model(chunk_wav, lang_code, "rnnt")
+            segments_list.append({"start": start, "end": end, "text": text})
+            full_text_parts.append(text)
 
-                if isinstance(chunk_text, (list, tuple)) and chunk_text:
-                    text_value = str(chunk_text[0]).strip()
-                else:
-                    text_value = str(chunk_text).strip()
-
-                if not text_value:
-                    continue
-
-                if full_text_parts and text_value.startswith(
-                    full_text_parts[-1].split()[-3:][0]
-                    if full_text_parts[-1].split()
-                    else ""
-                ):
-                    pass
-
-                print(f"  [{start_time:.1f}s -> {end_time:.1f}s]: {text_value[:50]}...")
-                full_text_parts.append(text_value)
-                segments.append(
-                    {"start": start_time, "end": end_time, "text": text_value}
-                )
-
-            except Exception as e:
-                print(f"warning: Chunk failed at {start_time}s: {e}")
-                continue
-
-            if end >= total_samples:
-                break
-
-        final_text = " ".join(full_text_parts).strip()
-        try:
-            duration = librosa.get_duration(path=str(audio_path))
-        except Exception:
-            duration = float(total_samples) / target_sr
-
-        return TranscriptionResult(
-            text=final_text,
-            segments=segments,
-            language=lang_code,
-            language_probability=1.0,
-            duration=duration,
-        )
-
-    def _transcribe_transformers(
-        self, audio_path: Path, language: str | None
-    ) -> TranscriptionResult:
-        # --- CONFIGURING GENERATION KWARGS ---
-        generate_kwargs: dict[str, Any] = {
-            "task": "transcribe",
-            "language": "tamil" if language == "ta" else language,
-            # CRITICAL FIX: Explicitly pass the missing token ID here
-            # This overrides whatever is missing in the config
-            "no_timestamps_token_id": 50363,
+        return {
+            "text": " ".join(full_text_parts),
+            "segments": segments_list,
+            "language": detected_lang,
+            "duration": info.duration,
         }
 
+    def _load_model(self, model_id: str) -> None:
+        """Determines the correct engine and loads the model.
+
+        Args:
+            model_id: The model identifier string.
+        """
+        print(f"info: Loading model '{model_id}' on {self.device.upper()}...")
+
+        self.engine = self._determine_engine(model_id)
+
+        if self.engine == "nemo":
+            self._load_nemo(model_id)
+        elif self.engine == "transformers":
+            self._load_transformers(model_id)
+        else:
+            self._load_faster_whisper(model_id)
+
+    def _determine_engine(
+        self, model_id: str
+    ) -> Literal["faster_whisper", "transformers", "nemo"]:
+        """Determine which backend engine to use based on the model ID.
+
+        Args:
+            model_id: The model identifier string.
+
+        Returns:
+            Literal: The engine name ('faster_whisper', 'transformers', or 'nemo').
+        """
+        lower = model_id.lower()
+        if "indicconformer" in lower or "ai4bharat" in lower:
+            # NVIDIA NeMo check
+            if "rnnt" in lower or "nemo" in lower:
+                return "nemo"
+            return "transformers"  # Fallback for newer HF-compatible IndicConformers
+        if "jiviai" in lower or "vasista" in lower or "audiox" in lower:
+            return "transformers"
+        return "faster_whisper"
+
+    def _load_faster_whisper(self, model_id: str) -> None:
+        """Load a Faster-Whisper model.
+
+        Args:
+            model_id: The model identifier.
+
+        Raises:
+            RuntimeError: If model loading fails.
+        """
+        try:
+            self.model = WhisperModel(
+                model_id,
+                device=self.device,
+                compute_type=self.compute_type,
+                download_root=str(self.model_root),
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load Faster-Whisper model '{model_id}': {e}"
+            ) from e
+
+    def _load_transformers(self, model_id: str) -> None:
+        """Load a Transformers pipeline model.
+
+        Args:
+            model_id: The model identifier.
+
+        Raises:
+            ImportError: If dependencies are missing.
+        """
+        try:
+            from transformers.pipelines import pipeline
+
+            print("info: Initializing Transformers pipeline...")
+
+            torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
+            self.model = pipeline(
+                "automatic-speech-recognition",
+                model=model_id,
+                device=self.device,
+                torch_dtype=torch_dtype,
+                token=settings.HF_TOKEN,
+                model_kwargs={"use_safetensors": True},
+            )
+        except ImportError as e:
+            raise ImportError(
+                "Please install 'transformers' and 'accelerate' for this model."
+            ) from e
+
+    def _load_nemo(self, model_id: str) -> None:
+        """Load an NVIDIA NeMo model.
+
+        Args:
+            model_id: The model identifier.
+
+        Raises:
+            ImportError: If NeMo is not installed.
+            RuntimeError: If model loading fails.
+        """
+        try:
+            import nemo.collections.asr as nemo_asr
+        except ImportError as e:
+            raise ImportError(
+                "NVIDIA NeMo is not installed. Please install it for AI4Bharat models."
+            ) from e
+
+        print("info: Fetching NeMo model file...")
+        try:
+            # Find .nemo file
+            files = list_repo_files(model_id, token=settings.HF_TOKEN)
+            nemo_file = next((f for f in files if f.endswith(".nemo")), None)
+
+            if not nemo_file:
+                # Fallback: try loading directly via class
+                self.model = nemo_asr.models.ASRModel.from_pretrained(
+                    model_name=model_id
+                )
+            else:
+                ckpt = hf_hub_download(
+                    model_id,
+                    nemo_file,
+                    token=settings.HF_TOKEN,
+                    cache_dir=self.model_root,
+                )
+                # Fix: Explicitly wrap device string in torch.device
+                self.model = nemo_asr.models.ASRModel.restore_from(
+                    restore_path=ckpt, map_location=torch.device(self.device)
+                )
+
+            if self.device == "cuda":
+                self.model.cuda()
+            self.model.freeze()
+        except Exception as e:
+            raise RuntimeError(f"NeMo load failed: {e}") from e
+
+    def _transcribe_transformers(
+        self, path: Path, language: str | None
+    ) -> dict[str, Any]:
+        """Execute transcription using the Transformers backend.
+
+        Args:
+            path: Path to the audio file.
+            language: Language code.
+
+        Returns:
+            dict[str, Any]: Transcription result.
+        """
+        # Transformers specific kwargs
+        gen_kwargs = {"task": "transcribe"}
+        if language:
+            gen_kwargs["language"] = language
+
+        # Patch for some models missing timestamps
         result = self.model(
-            str(audio_path), return_timestamps=True, generate_kwargs=generate_kwargs
+            str(path), return_timestamps=True, generate_kwargs=gen_kwargs
         )
 
         text = result.get("text", "").strip()
         chunks = result.get("chunks", [])
         segments = [
             {
-                "start": c.get("timestamp", (0.0, 0.0))[0],
-                "end": c.get("timestamp", (0.0, 0.0))[1] or 0.0,
-                "text": c.get("text", "").strip(),
+                "start": c["timestamp"][0],
+                "end": c["timestamp"][1] or 0.0,
+                "text": c["text"],
             }
             for c in chunks
         ]
+        return {
+            "text": text,
+            "segments": segments,
+            "language": language or "unknown",
+            "duration": segments[-1]["end"] if segments else 0.0,
+        }
 
-        duration = segments[-1]["end"] if segments else 0.0
-        if duration == 0.0:
-            duration = librosa.get_duration(path=str(audio_path))
+    def _transcribe_nemo(self, path: Path) -> dict[str, Any]:
+        """Execute transcription using the NeMo backend.
 
-        return TranscriptionResult(
-            text=text,
-            segments=segments,
-            language=language or "unknown",
-            language_probability=1.0,
-            duration=duration,
-        )
+        Args:
+            path: Path to the audio file.
 
-    def _transcribe_fw(
-        self,
-        audio_path: Path,
-        language: str | None,
-        prompt: str | None,
-        beam: int,
-        vad: bool,
-    ) -> TranscriptionResult:
-        if not self.model:
-            raise RuntimeError("FW Model not loaded")
+        Returns:
+            dict[str, Any]: Transcription result.
+        """
+        # NeMo usually does batch inference and doesn't return easy timestamps
+        # without complex forced alignment. Returning full text for now.
+        files = [str(path)]
+        text_result = self.model.transcribe(paths2audio_files=files, batch_size=1)[0]
 
-        def _segments_to_list(segments_gen):
-            segs = list(segments_gen)
-            out = []
-            for s in segs:
-                if hasattr(s, "text"):
-                    text = getattr(s, "text", "")
-                    start = getattr(s, "start", 0.0)
-                    end = getattr(s, "end", 0.0)
-                elif isinstance(s, dict):
-                    text = s.get("text", "")
-                    start = s.get("start", 0.0)
-                    end = s.get("end", 0.0)
-                else:
-                    text = str(s)
-                    start = 0.0
-                    end = 0.0
-                out.append(
-                    {
-                        "start": float(start or 0.0),
-                        "end": float(end or 0.0),
-                        "text": str(text or "").strip(),
-                    }
-                )
-            return out
+        # Determine duration
+        import librosa
 
-        segments_gen, info = self.model.transcribe(
-            str(audio_path),
-            beam_size=beam,
-            vad_filter=vad,
-            vad_parameters={"min_silence_duration_ms": 500} if vad else None,
-            task="transcribe",
-            language=language,
-            initial_prompt=prompt,
-        )
-        segments_list = _segments_to_list(segments_gen)
+        dur = librosa.get_duration(path=path)
 
-        if not segments_list and vad:
-            try:
-                segments_gen2, info = self.model.transcribe(
-                    str(audio_path),
-                    beam_size=max(1, beam),
-                    vad_filter=False,
-                    task="transcribe",
-                    language=language,
-                    initial_prompt=prompt,
-                )
-                segments_list = _segments_to_list(segments_gen2)
-            except Exception:
-                pass
-
-        full_text = " ".join([s["text"] for s in segments_list if s["text"]]).strip()
-        lang = getattr(info, "language", language or "")
-        lang_prob = getattr(info, "language_probability", 0.0)
-        duration = getattr(info, "duration", 0.0)
-        if not duration:
-            try:
-                duration = librosa.get_duration(path=str(audio_path))
-            except Exception:
-                duration = 0.0
-
-        return TranscriptionResult(
-            text=full_text,
-            segments=segments_list,
-            language=lang,
-            language_probability=lang_prob,
-            duration=duration,
-        )
-
-    def _maybe_predownload(self, model_id: str) -> None:
-        if "/" not in model_id:
-            return
-        try:
-            snapshot_download(repo_id=model_id, token=settings.HF_TOKEN)
-        except Exception:
-            pass
-
-    def _add_torch_libs_to_path(self, project_root: Path) -> None:
-        try:
-            torch_lib = (
-                project_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
-            )
-            if torch_lib.exists():
-                os.environ["PATH"] = (
-                    str(torch_lib) + os.pathsep + os.environ.get("PATH", "")
-                )
-                if str(torch_lib) not in sys.path:
-                    sys.path.append(str(torch_lib))
-        except Exception:
-            pass
+        return {
+            "text": str(text_result),
+            "segments": [{"start": 0.0, "end": dur, "text": str(text_result)}],
+            "language": "ta",
+            "duration": dur,
+        }
 
     def _find_project_root(self) -> Path:
+        """Find the project root by looking for marker files.
+
+        Returns:
+            Path: The detected project root directory.
+        """
         current = Path(__file__).resolve()
         for parent in current.parents:
-            if any(
-                (parent / marker).exists()
-                for marker in ["pyproject.toml", ".venv", ".git"]
-            ):
+            if (parent / ".git").exists() or (parent / "config.py").exists():
                 return parent
         return current.parent.parent.parent
 
-    def _normalize_language_code(self, language: str | None) -> str | None:
-        if language is None:
-            return None
-        code = language.strip().lower()
-        alias_map = getattr(settings, "LANGUAGE_CODE_ALIASES", None)
-        if isinstance(alias_map, dict):
-            mapped = alias_map.get(code)
-            if isinstance(mapped, str) and mapped:
-                return mapped
-        if len(code) == 2:
-            return code
-        if "-" in code:
-            parts = code.split("-")
-            if parts and len(parts[0]) == 2:
-                return parts[0]
-        return code
-
-    def _reorder_tamil_candidates(
-        self, candidates: list[str], prefer_ai4bharat: bool
-    ) -> list[str]:
-        if not candidates:
-            return candidates
-        ai4bharat_models: list[str] = []
-        whisper_models: list[str] = []
-        transformer_others: list[str] = []
-        remaining: list[str] = []
-
-        for m in candidates:
-            lower = m.lower()
-            if "ai4bharat" in lower:
-                ai4bharat_models.append(m)
-            elif "whisper" in lower or "large-v3" in lower:
-                whisper_models.append(m)
-            elif "jiviai" in lower or "audiox" in lower or "vasista" in lower:
-                transformer_others.append(m)
-            else:
-                remaining.append(m)
-
-        if prefer_ai4bharat:
-            ordered = ai4bharat_models + transformer_others + whisper_models + remaining
-        else:
-            ordered = transformer_others + whisper_models + ai4bharat_models + remaining
-        if not ordered:
-            return candidates
-        return ordered
-
-    def _detect_language_from_audio(self, audio_path: Path) -> str | None:
-        if not self.enable_language_detection:
-            return None
-        try:
-            if self._lang_detect_model is None:
-                model_id = getattr(settings, "LANGUAGE_DETECT_MODEL", "tiny")
-                self._lang_detect_model = WhisperModel(
-                    model_id,
-                    device="cpu",
-                    compute_type="int8",
-                    download_root=str(self.model_root_dir),
-                )
-            segments_gen, info = self._lang_detect_model.transcribe(
-                str(audio_path),
-                beam_size=1,
-                vad_filter=False,
-                task="transcribe",
-            )
-            _ = list(segments_gen)
-            lang = getattr(info, "language", None)
-            if isinstance(lang, str) and lang:
-                return lang
-        except Exception:
-            return None
-        return None
-
 
 def main() -> None:
-    print("Script Started")
-    test_path = Path(r"C:\Users\Gnana Prakash M\Downloads\Programs\avengers.mp3")
+    """Test entry point for the module."""
+    print(" Audio Transcriber Test ")
+
+    # User Configuration
+    test_file = Path("C:/Users/Gnana Prakash M/Downloads/Programs/panther.m4a")
+
+    # Initialize with defaults (Faster-Whisper base)
+    transcriber = AudioTranscriber(model_size="large-v3")
+
+    if not test_file.exists():
+        print(f"warning: Test file '{test_file}' not found. Exiting.")
+        return
 
     try:
-        # CHANGE: Use 'large-v3' (OpenAI's latest) with the 'auto' provider.
-        # This routes the logic to the 'faster-whisper' engine, which is bug-free for timestamps.
-        transcriber = AudioTranscriber(
-            model_size="large-v3",
-            predownload=True,
-            preferred_tamil_provider="auto",  # Allows switching to faster-whisper
-        )
+        result = transcriber.transcribe(test_file, language="ta")
 
-        print("\n--- Testing Robust Tamil Transcription (Faster-Whisper) ---")
-        if test_path.exists():
-            # vad_filter=True helps skip the silence/music in your 2min clip
-            res = transcriber.transcribe(
-                test_path, language="ta", vad_filter=True, beam_size=5
-            )
+        out_path = Path("output.txt")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(result["text"])
 
-            print(f"Engine: {transcriber.active_engine.upper()}")
-            print(f"Model:  {transcriber.model_id}")
-
-            output_file = test_path.with_suffix(".txt")
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(res.text)
-
-            print(f"\n[+] Saved full transcript to: {output_file}")
-            print(f"[+] Total Characters: {len(res.text)}")
-            print(f"[+] Total Segments (Frames): {len(res.segments)}")
-
-            if res.segments:
-                print("\n--- Frame Preview (Timestamps) ---")
-                for seg in res.segments:
-                    # Print all segments since it's only 2 mins
-                    print(f"[{seg['start']:.2f}s -> {seg['end']:.2f}s]: {seg['text']}")
+        print(f"\nSuccess! Transcript saved to {out_path}")
+        print(f"Duration: {result['duration']:.2f}s")
 
     except KeyboardInterrupt:
-        print("\n\n[!] Script Interrupted by User.")
-    except Exception as exc:
-        print(f"error: Test run failed: {exc}")
+        print("\nAborted by user.")
+    except Exception as e:
+        print(f"\nError: {e}")
 
 
 if __name__ == "__main__":
