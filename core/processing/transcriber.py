@@ -7,14 +7,25 @@ and NVIDIA NeMo for specific SOTA Tamil models when required.
 
 from __future__ import annotations
 
+import json
 import os
+import tempfile
 import warnings
 from pathlib import Path
 from typing import Any, Literal
 
+import librosa
 import torch
 from faster_whisper import WhisperModel
 from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    GenerationConfig,  # type: ignore
+    Wav2Vec2CTCTokenizer,
+    Wav2Vec2FeatureExtractor,
+    pipeline,  # type: ignore
+)
 
 from config import settings
 
@@ -39,6 +50,9 @@ class AudioTranscriber:
         model (Any): The loaded model instance (type varies by backend).
         engine (Literal): The active backend engine.
         generation_config (Any): Patched config for Transformers.
+        tokenizer (Any): Manually loaded tokenizer for custom models.
+        feature_extractor (Any): Manually loaded featurizer for custom models.
+        use_pipeline (bool): Whether to use the HF pipeline or manual inference.
     """
 
     def __init__(
@@ -72,7 +86,10 @@ class AudioTranscriber:
 
         self.model_id = model_size
         self.model: Any = None
+        self.tokenizer: Any = None
+        self.feature_extractor: Any = None
         self.generation_config: Any = None
+        self.use_pipeline: bool = True
         self.engine: Literal["faster_whisper", "transformers", "nemo"] = (
             "faster_whisper"
         )
@@ -231,14 +248,6 @@ class AudioTranscriber:
         Raises:
             ImportError: If dependencies are missing.
         """
-        try:
-            from transformers import AutoConfig, GenerationConfig
-            from transformers.pipelines import pipeline
-        except ImportError:
-            raise ImportError(
-                "Please install 'transformers', 'accelerate' to use this model."
-            )
-
         print(f"info: Ensuring '{model_id}' is available in {self.model_root}...")
         try:
             local_model_path = snapshot_download(
@@ -255,46 +264,128 @@ class AudioTranscriber:
         torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
 
         try:
-            self.model = pipeline(
-                "automatic-speech-recognition",
-                model=local_model_path,
-                device=device_arg,
-                torch_dtype=torch_dtype,
-                token=getattr(settings, "HF_TOKEN", None),
-            )
+            if "indic-conformer" in model_id.lower():
+                print("info: Explicitly loading IndicConformer backend...")
+                self.use_pipeline = False
+
+                self.model = AutoModel.from_pretrained(
+                    model_id,
+                    cache_dir=str(self.model_root),
+                    trust_remote_code=True,
+                    torch_dtype=torch_dtype,
+                )
+                # Try to move to GPU
+                if self.device == "cuda":
+                    try:
+                        self.model.cuda()
+                    except Exception:
+                        pass
+
+                # Locate and sanitize vocab
+                vocab_path = Path(local_model_path) / "vocab.json"
+                if not vocab_path.exists():
+                    vocab_path = Path(local_model_path) / "assets" / "vocab.json"
+
+                print(f"info: Loading and sanitizing vocab from {vocab_path}...")
+                with open(vocab_path, "r", encoding="utf-8") as f:
+                    vocab_dict = json.load(f)
+
+                cleaned_vocab = {}
+                for k, v in vocab_dict.items():
+                    # Handle {"ID": ["Token", Score]} format
+                    if isinstance(v, list):
+                        token = v[0]
+                        try:
+                            token_id = int(k)
+                            # Invert to {"Token": ID} for Tokenizer
+                            cleaned_vocab[str(token)] = token_id
+                        except ValueError:
+                            # If k is not ID, assume {"Token": [ID, Score]}
+                            if isinstance(v[0], int):
+                                cleaned_vocab[str(k)] = int(v[0])
+                    else:
+                        # Handle standard {"Token": ID}
+                        try:
+                            cleaned_vocab[k] = int(v)
+                        except ValueError:
+                            continue
+
+                # Detect special tokens
+                unk = "<unk>" if "<unk>" in cleaned_vocab else "[UNK]"
+                pad = "<pad>" if "<pad>" in cleaned_vocab else "[PAD]"
+                bos = "<s>" if "<s>" in cleaned_vocab else "[BOS]"
+                eos = "</s>" if "</s>" in cleaned_vocab else "[EOS]"
+
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", delete=False, suffix=".json"
+                ) as tmp_vocab:
+                    json.dump(cleaned_vocab, tmp_vocab, ensure_ascii=False)
+                    tmp_vocab_path = tmp_vocab.name
+
+                try:
+                    self.tokenizer = Wav2Vec2CTCTokenizer(
+                        vocab_file=tmp_vocab_path,
+                        unk_token=unk,
+                        pad_token=pad,
+                        bos_token=bos,
+                        eos_token=eos,
+                        word_delimiter_token="|",
+                    )
+                finally:
+                    try:
+                        os.unlink(tmp_vocab_path)
+                    except OSError:
+                        pass
+
+                try:
+                    self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
+                        str(local_model_path)
+                    )
+                except Exception:
+                    print(
+                        "warning: Could not load feature extractor config. "
+                        "Using default."
+                    )
+                    self.feature_extractor = Wav2Vec2FeatureExtractor(
+                        feature_size=80,
+                        sampling_rate=16000,
+                        padding_value=0.0,
+                        do_normalize=True,
+                        return_attention_mask=True,
+                    )
+            else:
+                self.use_pipeline = True
+                self.model = pipeline(
+                    "automatic-speech-recognition",
+                    model=local_model_path,
+                    device=device_arg,
+                    torch_dtype=torch_dtype,
+                    token=getattr(settings, "HF_TOKEN", None),
+                    trust_remote_code=True,
+                )
         except Exception as e:
             raise RuntimeError(f"Pipeline init failed: {e}") from e
 
-        # Many fine-tuned models (like vasista22) have broken config files
-        # that prevent timestamps from working in newer Transformers.
-        try:
-            print("info: Applying config patch for timestamps...")
+        if "whisper" in model_id.lower() and self.use_pipeline:
+            try:
+                print("info: Detected Whisper model. Checking config health...")
 
-            # 1. Load the "Healthy" Base Configs from OpenAI
-            base_gen_config = GenerationConfig.from_pretrained(
-                "openai/whisper-large-v2", cache_dir=str(self.model_root)
-            )
-            base_config = AutoConfig.from_pretrained(
-                "openai/whisper-large-v2", cache_dir=str(self.model_root)
-            )
+                base_gen_config = GenerationConfig.from_pretrained(
+                    "openai/whisper-large-v2", cache_dir=str(self.model_root)
+                )
+                base_config = AutoConfig.from_pretrained(
+                    "openai/whisper-large-v2", cache_dir=str(self.model_root)
+                )
 
-            model_instance = self.model.model
-            model_instance.generation_config = base_gen_config
-
-            if hasattr(base_config, "alignment_heads"):
-                model_instance.config.alignment_heads = base_config.alignment_heads
-
-            model_instance.config.return_timestamps = True
-
-            self.generation_config = base_gen_config
-
-            print(
-                "info: Config patched successfully using openai/whisper-large-v2 defaults."
-            )
-
-        except Exception as e:
-            print(f"warning: Config patch failed: {e}")
-            print("warning: Timestamps might fail if config is broken.")
+                model_instance = self.model.model
+                model_instance.generation_config = base_gen_config
+                if hasattr(base_config, "alignment_heads"):
+                    model_instance.config.alignment_heads = base_config.alignment_heads
+                model_instance.config.return_timestamps = True
+                self.generation_config = base_gen_config
+                print("info: Whisper config patched successfully.")
+            except Exception as e:
+                print(f"warning: Whisper config patch failed: {e}")
 
     def _load_nemo(self, model_id: str) -> None:
         """Load an NVIDIA NeMo model."""
@@ -343,6 +434,57 @@ class AudioTranscriber:
         Returns:
             dict[str, Any]: Transcription result.
         """
+        # Manual Inference for Custom Models (IndicConformer)
+        if not self.use_pipeline:
+            try:
+                if not language:
+                    raise ValueError(
+                        "Language code (e.g 'ta', 'hi') is required for IndicConformer."
+                    )
+
+                # Load audio at 16k
+                speech, _ = librosa.load(str(path), sr=16000)
+
+                # Preprocess
+                input_values = self.feature_extractor(
+                    speech, sampling_rate=16000, return_tensors="pt"
+                ).input_values
+
+                if self.device == "cuda":
+                    input_values = input_values.to("cuda")
+
+                # Inference
+                with torch.no_grad():
+                    output = self.model(input_values, lang=language)
+
+                # Determine output type and extract text
+                transcription = ""
+                if isinstance(output, str):
+                    transcription = output
+                elif isinstance(output, list) and len(output) > 0:
+                    transcription = output[0] if isinstance(output[0], str) else ""
+                elif hasattr(output, "logits"):
+                    logits = output.logits  # type: ignore
+                    predicted_ids = torch.argmax(logits, dim=-1)
+                    transcription = self.tokenizer.batch_decode(predicted_ids)[0]
+
+                if not transcription and hasattr(output, "text"):
+                    transcription = output.text  # type: ignore
+
+                duration = librosa.get_duration(y=speech, sr=16000)
+
+                return {
+                    "text": transcription,
+                    "segments": [
+                        {"start": 0.0, "end": duration, "text": transcription}
+                    ],
+                    "language": language or "unknown",
+                    "duration": duration,
+                }
+            except Exception as e:
+                raise RuntimeError(f"Manual inference failed: {e}") from e
+
+        # Standard Pipeline Inference
         gen_kwargs = {"task": "transcribe"}
         if language:
             gen_kwargs["language"] = language
@@ -352,7 +494,6 @@ class AudioTranscriber:
 
         print(f"info: Generating with kwargs: {list(gen_kwargs.keys())}")
 
-        # Run inference
         result = self.model(
             str(path), return_timestamps=True, generate_kwargs=gen_kwargs
         )
@@ -362,11 +503,9 @@ class AudioTranscriber:
 
         segments = []
         for c in chunks:
-            # Handle potential None timestamps safely
             start = c["timestamp"][0] if c.get("timestamp") else 0.0
             end = c["timestamp"][1] if c.get("timestamp") else 0.0
 
-            # If end is None (common in last chunk), approximate it
             if end is None:
                 end = start + 2.0
 
@@ -394,8 +533,6 @@ class AudioTranscriber:
         # without complex forced alignment. Returning full text for now.
         files = [str(path)]
         text_result = self.model.transcribe(paths2audio_files=files, batch_size=1)[0]
-
-        import librosa
 
         dur = librosa.get_duration(path=path)
 
@@ -425,7 +562,9 @@ def main() -> None:
 
     test_file = Path("C:\\Users\\Gnana Prakash M\\Downloads\\dudeoutput.mp3")
 
-    model_choice = "ai4bharat/indic-conformer-600m-multilingual"
+    # CASE 1: Robust Tamil Whisper (Vasista)
+    # model_choice = "vasista22/whisper-tamil-large-v2"
+    model_choice = "vasista22/whisper-tamil-large-v2"
 
     print(f"info: Initializing with model '{model_choice}'...")
     transcriber = AudioTranscriber(model_size=model_choice)
