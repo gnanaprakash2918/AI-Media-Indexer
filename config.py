@@ -1,12 +1,12 @@
 """Configuration settings for the ASR and LLM pipeline.
 
-This module defines the strict schema for configuration, handling environment
-variables, default values, and hardware detection automatically.
+Defines strict schema for configuration using Pydantic.
+Handles environment variables, hardware detection, and project-root path management.
 """
 
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Optional
 
 import torch
 from pydantic import Field, computed_field
@@ -27,51 +27,73 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
     )
 
-    # --- Paths ---
-    prompt_dir: Path = Field(default=Path("./prompts"))
+    @property
+    def project_root(self) -> Path:
+        """Finds the project root by looking for .git, .env or common folders."""
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / ".git").exists() or (parent / ".env").exists():
+                return parent
+        return current.parent.parent
 
-    # --- LLM Configuration ---
-    llm_provider: LLMProvider = Field(default=LLMProvider.GEMINI)
+    @computed_field  # type: ignore
+    @property
+    def model_cache_dir(self) -> Path:
+        """Returns path to project_root/models."""
+        path = self.project_root / "models"
+        path.mkdir(exist_ok=True)
+        return path
+
+    @computed_field  # type: ignore
+    @property
+    def prompt_dir(self) -> Path:
+        """Returns path to project_root/prompts."""
+        path = self.project_root / "prompts"
+        path.mkdir(exist_ok=True)
+        return path
+
+    llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
     llm_timeout: int = Field(default=120)
 
-    # Gemini
-    gemini_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
+    gemini_api_key: Optional[str] = Field(
+        default=None, validation_alias="GOOGLE_API_KEY"
+    )
     gemini_model: str = Field(default="gemini-1.5-flash")
 
-    # Ollama
     ollama_base_url: str = Field(default="http://localhost:11434")
     ollama_model: str = Field(default="llava")
 
-    # --- ASR / Whisper Configuration ---
-    # Default fallback model if map lookup fails
-    model_id: str = Field(default="vasista22/whisper-tamil-large-v2")
+    fallback_model_id: str = Field(default="large-v3")
 
-    # Tiered Model Map (JSON or Dict structure supported via env vars)
     whisper_model_map: Dict[str, List[str]] = Field(
         default={
             "ta": [
-                "vasista22/whisper-tamil-large-v2",  # Best Open
-                "jiviai/audioX-south-v1",  # SOTA (Gated)
-                "large-v3",  # Fallback
+                "large-v3",
+                "vasista22/whisper-tamil-large-v2",
+                "base",
+                # "openai/whisper-large-v3",
             ],
-            "en": ["openai/whisper-large-v3", "distil-whisper/distil-large-v3"],
+            "en": [
+                "large-v3",
+                # "openai/whisper-large-v3",
+                # "distil-whisper/distil-large-v3",
+                "small",
+            ],
         }
     )
 
-    # Core ASR Params
-    language: str = Field(default="ta", description="Target language code")
+    language: str = Field(default="ta", description="Default target language code")
     batch_size: int = Field(default=8, ge=1)
     chunk_length_s: int = Field(default=30, ge=1)
-    hf_token: str | None = Field(default=None)
+    hf_token: Optional[str] = Field(default=None)
 
-    # --- Hardware Overrides ---
-    device_override: Literal["cuda", "cpu", "mps", None] = None
-    compute_type_override: Literal["float16", "float32", None] = None
+    device_override: Optional[Literal["cuda", "cpu", "mps"]] = None
+    compute_type_override: Optional[Literal["float16", "float32"]] = None
 
     @computed_field  # type: ignore
     @property
     def device(self) -> str:
-        """Determines the best available hardware device."""
+        """Determines the device string (cuda/cpu/mps)."""
         if self.device_override:
             return self.device_override
         if torch.cuda.is_available():
@@ -82,8 +104,14 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore
     @property
+    def device_index(self) -> int:
+        """Returns integer device index for Pipeline (0 for GPU, -1 for CPU)."""
+        return 0 if self.device == "cuda" else -1
+
+    @computed_field  # type: ignore
+    @property
     def torch_dtype(self) -> torch.dtype:
-        """Determines the optimal torch data type."""
+        """Determines optimal torch data type."""
         if self.compute_type_override == "float32":
             return torch.float32
         if self.compute_type_override == "float16":
@@ -91,5 +119,4 @@ class Settings(BaseSettings):
         return torch.float16 if self.device == "cuda" else torch.float32
 
 
-# Global settings instance
 settings = Settings()
