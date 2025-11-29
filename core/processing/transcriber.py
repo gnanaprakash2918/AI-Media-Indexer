@@ -1,10 +1,10 @@
-"""Robust Audio Transcriber with Subtitle Fallback and HF Patching.
+"""Robust Audio Transcriber with Subtitle Fallback and RTX Optimization.
 
 Features:
 - Smart Caching: Project Local > Global Cache > Download.
-- Prioritizes existing subtitles (User > Sidecar > Embedded).
-- CRITICAL FIX: Replaces outdated generation configs for fine-tuned models.
-- Dynamic Model Selection based on Language.
+- Self-Healing: Automatically retries next model if one fails or returns empty data.
+- Prioritizes existing subtitles (User provided > Sidecar > Embedded).
+- Optimizes for RTX 40-series using SDPA (Scaled Dot Product Attention).
 """
 
 import gc
@@ -15,7 +15,7 @@ import sys
 import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, List, Optional
+from typing import Any
 
 import torch
 from huggingface_hub import snapshot_download
@@ -23,45 +23,46 @@ from transformers import (
     AutoModelForSpeechSeq2Seq,
     AutoProcessor,
     AutoTokenizer,
-    GenerationConfig,  # type: ignore
 )
+from transformers.generation.configuration_utils import GenerationConfig
 from transformers.pipelines import pipeline
+from transformers.pipelines.base import Pipeline
 from transformers.utils import logging as hf_logging
 
 from config import settings
 
-# Clean up console output
+# Cleanup console output
 warnings.filterwarnings("ignore")
 hf_logging.set_verbosity_error()
 
 
 class AudioTranscriber:
-    """Main transcription class handling ASR lifecycle."""
+    """Main transcription class handling ASR lifecycle and subtitle extraction."""
 
     def __init__(self) -> None:
-        """Initialize transcriber."""
-        self._pipe: Any = None
-        self._current_model_id: Optional[str] = None
+        """Initialize the transcriber state."""
+        self._pipe: Pipeline | None = None
+        self._current_model_id: str | None = None
         print(
-            "[INFO] Initialized Transcriber "
-            f"(Device: {settings.device}, Index: {settings.device_index})"
+            f"[INFO] Initialized Transcriber (Device: {settings.device}, "
+            f"Dtype: {settings.torch_dtype})"
         )
 
     def _get_ffmpeg_cmd(self) -> str:
-        """Locate FFmpeg executable."""
+        """Locates FFmpeg executable."""
         cmd = shutil.which("ffmpeg")
         if not cmd:
             raise RuntimeError("FFmpeg not found. Please install it to system PATH.")
         return cmd
 
-    def _extract_existing_subtitles(
+    def _find_existing_subtitles(
         self,
         input_path: Path,
         output_path: Path,
-        user_sub_path: Optional[Path],
+        user_sub_path: Path | None,
         language: str,
     ) -> bool:
-        """Try to find/extract subtitles from various sources."""
+        """Probes for existing subtitles in user input, sidecars, embedded streams."""
         print("[INFO] Probing for existing subtitles...")
 
         # 1. User Provided
@@ -71,11 +72,10 @@ class AudioTranscriber:
             return True
 
         # 2. Sidecar Files
-        candidates = [
+        for sidecar in [
             input_path.with_suffix(f".{language}.srt"),
             input_path.with_suffix(".srt"),
-        ]
-        for sidecar in candidates:
+        ]:
             if sidecar.exists() and sidecar != output_path:
                 print(f"[SUCCESS] Found sidecar: {sidecar}")
                 shutil.copy(sidecar, output_path)
@@ -106,10 +106,8 @@ class AudioTranscriber:
         print("[INFO] No existing subtitles found. Proceeding to ASR.")
         return False
 
-    def _slice_audio(
-        self, input_path: Path, start: float, end: Optional[float]
-    ) -> Path:
-        """Slice audio safely using a named temporary file."""
+    def _slice_audio(self, input_path: Path, start: float, end: float | None) -> Path:
+        """Slices audio safely using FFmpeg into a temp file."""
         with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             output_slice = Path(tmp.name)
 
@@ -125,146 +123,146 @@ class AudioTranscriber:
         ]
         if end:
             cmd.extend(["-to", str(end)])
+
         cmd.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
 
         print(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
-    def _download_model(self, model_id: str) -> Path:
-        """Smart Download: Local Project -> Global Cache -> Download to Local."""
-        # Check Local
-        try:
+    def _resolve_model_path(self, model_id: str) -> str:
+        """Resolves model path: Local Project -> Global Cache -> Download."""
+
+        def _try_download(
+            local_only: bool = False, cache_dir: Path | None = None
+        ) -> Path:
             return Path(
                 snapshot_download(
                     repo_id=model_id,
-                    cache_dir=settings.model_cache_dir,
+                    cache_dir=cache_dir,
                     token=settings.hf_token,
-                    local_files_only=True,
+                    local_files_only=local_only,
+                    ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
                 )
             )
+
+        # 1. Check Project Cache
+        try:
+            path = _try_download(local_only=True, cache_dir=settings.model_cache_dir)
+            print(f"[INFO] Found '{model_id}' in project cache.")
+            return str(path)
         except Exception:
             pass
 
-        # Check Global
+        # 2. Check Global Cache
         try:
             print(f"[INFO] Checking global cache for '{model_id}'...")
-            return Path(
-                snapshot_download(
-                    repo_id=model_id,
-                    cache_dir=None,
-                    token=settings.hf_token,
-                    local_files_only=True,
-                )
-            )
+            path = _try_download(local_only=True, cache_dir=None)
+            print(f"[INFO] Found '{model_id}' in global cache.")
+            return str(path)
         except Exception:
             pass
 
-        # Download
+        # 3. Download to Project Cache
         print(f"[INFO] Downloading '{model_id}' to '{settings.model_cache_dir}'...")
         try:
-            return Path(
-                snapshot_download(
-                    repo_id=model_id,
-                    cache_dir=settings.model_cache_dir,
-                    token=settings.hf_token,
-                    resume_download=True,
-                )
-            )
+            path = _try_download(local_only=False, cache_dir=settings.model_cache_dir)
+            return str(path)
         except Exception as e:
-            print(f"[ERROR] Download failed: {e}")
-            sys.exit(1)
+            raise RuntimeError(f"Failed to download model '{model_id}': {e}") from e
 
-    def _patch_model_config(self, model: Any, tokenizer: Any, language: str) -> None:
-        """Replace broken generation configs with clean standard ones."""
-        # We MUST load a fresh config from the base architecture (OpenAI).
-        try:
-            # Determine base model size (Vasista is Large-v2)
-            base_config_id = "openai/whisper-large-v2"
-            if "large-v3" in getattr(model.config, "_name_or_path", "").lower():
-                base_config_id = "openai/whisper-large-v3"
+    def _patch_config(self, model: Any, tokenizer: Any, language: str) -> None:
+        """Applies critical fixes to GenerationConfig for fine-tuned models."""
+        # Use Any to bypass Pylance strict checks on dynamic attributes
+        gen_config: Any = model.generation_config
 
-            print(f"[DEBUG] Forcing clean GenerationConfig from '{base_config_id}'...")
-
-            # Load clean config (Transformers handles caching this automatically)
-            clean_config = GenerationConfig.from_pretrained(base_config_id)
-            model.generation_config = clean_config
-
-        except Exception as e:
-            print(
-                f"[WARN] Failed to load base config: {e}. Using existing (may crash)."
-            )
-        # --- CRITICAL FIX END ---
-
-        gen_config = model.generation_config
-
-        # 1. Fix 'no_timestamps_token_id'
         if not getattr(gen_config, "no_timestamps_token_id", None):
-            notimestamp_token = "<|notimestamps|>"
-            token_id = tokenizer.convert_tokens_to_ids(notimestamp_token)
-            unk_id = getattr(tokenizer, "unk_token_id", None)
-            if token_id is not None and token_id != unk_id:
-                gen_config.no_timestamps_token_id = token_id  # type: ignore
+            try:
+                base = "openai/whisper-large-v2"
+                if "large-v3" in getattr(model.config, "_name_or_path", "").lower():
+                    base = "openai/whisper-large-v3"
+                model.generation_config = GenerationConfig.from_pretrained(base)
+                gen_config = model.generation_config
+            except Exception:
+                pass
 
-        # 2. Clear forced_decoder_ids (Transformers will regenerate it for target lang)
-        if hasattr(gen_config, "forced_decoder_ids"):
-            gen_config.forced_decoder_ids = None  # type: ignore
+        gen_config.language = language
+        gen_config.task = "transcribe"
+        gen_config.forced_decoder_ids = None
 
-        # 3. Explicitly set Language & Task
-        gen_config.language = language  # type: ignore
-        gen_config.task = "transcribe"  # type: ignore
-        gen_config.is_multilingual = True  # type: ignore
+        if hasattr(tokenizer, "convert_tokens_to_ids"):
+            notimestamp_id = tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+            if notimestamp_id is not None:
+                gen_config.no_timestamps_token_id = notimestamp_id
 
-    def _load_pipeline(self, language: str) -> None:
-        """Load ASR pipeline dynamically."""
+    def _load_pipeline(self, language: str, exclude_models: list[str]) -> str:
+        """Loads best available ASR model, skipping excluded ones. Returns model_id."""
         candidates = settings.whisper_model_map.get(language, [])
-        model_id = candidates[0] if candidates else settings.fallback_model_id
+        if settings.fallback_model_id not in candidates:
+            candidates.append(settings.fallback_model_id)
 
-        if self._pipe and self._current_model_id == model_id:
-            return
+        valid_candidates = [m for m in candidates if m not in exclude_models]
 
+        if not valid_candidates:
+            raise RuntimeError(f"All model candidates failed for language '{language}'")
+
+        for model_id in valid_candidates:
+            if self._pipe and self._current_model_id == model_id:
+                return model_id
+
+            try:
+                self._attempt_load_model(model_id, language)
+                return model_id
+            except Exception as e:
+                print(f"[WARN] Failed to load '{model_id}': {e}")
+                print("[INFO] Attempting next candidate...")
+                self._clear_gpu()
+
+        raise RuntimeError(f"All valid candidates failed for language '{language}'")
+
+    def _attempt_load_model(self, model_id: str, language: str) -> None:
+        """Helper to load a specific model."""
+        self._clear_gpu()
+
+        model_dir = self._resolve_model_path(model_id)
+
+        tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        processor = AutoProcessor.from_pretrained(model_dir)
+
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_dir,
+            torch_dtype=settings.torch_dtype,
+            low_cpu_mem_usage=True,
+            attn_implementation="sdpa",
+        )
+        model.to(settings.device)
+
+        self._patch_config(model, tokenizer, language)
+
+        self._pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=tokenizer,
+            feature_extractor=processor.feature_extractor,
+            chunk_length_s=settings.chunk_length_s,
+            batch_size=settings.batch_size,
+            torch_dtype=settings.torch_dtype,
+            device=settings.device_index,
+        )
+        self._current_model_id = model_id
+        print(f"[SUCCESS] Loaded Model: {model_id}")
+
+    def _clear_gpu(self) -> None:
+        """Clears GPU memory."""
         if self._pipe:
-            print("[INFO] Switching models... clearing VRAM.")
             del self._pipe
-            gc.collect()
-            torch.cuda.empty_cache()
-            self._pipe = None
-
-        snapshot_dir = self._download_model(model_id)
-        print(f"[INFO] Loading '{model_id}' from {snapshot_dir}...")
-
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(snapshot_dir)
-            processor = AutoProcessor.from_pretrained(snapshot_dir)
-
-            # Using standard loading (removed use_safetensors to fix previous error)
-            model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                snapshot_dir,
-                torch_dtype=settings.torch_dtype,
-                low_cpu_mem_usage=True,
-            )
-            model.to(settings.device)
-
-            # Apply the Critical Fix
-            self._patch_model_config(model, tokenizer, language)
-
-            self._pipe = pipeline(
-                "automatic-speech-recognition",
-                model=model,
-                tokenizer=tokenizer,
-                feature_extractor=processor.feature_extractor,
-                chunk_length_s=settings.chunk_length_s,
-                batch_size=settings.batch_size,
-                torch_dtype=settings.torch_dtype,
-                device=settings.device_index,
-            )
-            self._current_model_id = model_id
-        except Exception as e:
-            print(f"[ERROR] Failed to load pipeline: {e}")
-            sys.exit(1)
+        self._pipe = None
+        self._current_model_id = None
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def _format_timestamp(self, seconds: float) -> str:
-        """SRT Timestamp format."""
+        """Formats seconds into SRT timestamp."""
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         secs = seconds % 60
@@ -274,84 +272,131 @@ class AudioTranscriber:
             millis = 0
         return f"{hours:02}:{minutes:02}:{int(secs):02},{millis:03}"
 
-    def _write_srt(self, chunks: List[dict], output_path: Path, offset: float) -> None:
-        """Write SRT file."""
-        with open(output_path, "w", encoding="utf-8") as f:
+    def _write_srt(
+        self, chunks: list[dict[str, Any]], path: Path, offset: float
+    ) -> int:
+        """Writes chunks to SRT. Returns number of lines written."""
+        count = 0
+        with open(path, "w", encoding="utf-8") as f:
             for idx, chunk in enumerate(chunks, start=1):
                 text = chunk.get("text", "").strip()
                 timestamp = chunk.get("timestamp")
-                if not text or not timestamp:
+
+                if not text or timestamp is None:
                     continue
 
-                start, end = timestamp
+                try:
+                    start, end = timestamp
+                except ValueError:
+                    continue
+
+                if start is None:
+                    continue
                 if end is None:
                     end = start + 2.0
 
                 f.write(
-                    f"{idx}\n{self._format_timestamp(start + offset)} --> "
-                    f"{self._format_timestamp(end + offset)}\n{text}\n\n"
+                    f"{idx}\n"
+                    f"{self._format_timestamp(start + offset)} --> "
+                    f"{self._format_timestamp(end + offset)}\n"
+                    f"{text}\n\n"
                 )
+                count += 1
+        return count
 
     def transcribe(
         self,
         audio_path: Path,
-        language: Optional[str] = None,
-        subtitle_path: Optional[Path] = None,
-        output_path: Optional[Path] = None,
+        language: str | None = None,
+        subtitle_path: Path | None = None,
+        output_path: Path | None = None,
         start_time: float = 0.0,
-        end_time: Optional[float] = None,
+        end_time: float | None = None,
     ) -> None:
-        """Execute transcription."""
+        """Executes the transcription workflow with robustness loops."""
         if not audio_path.exists():
-            print(f"[ERROR] File {audio_path} not found.")
+            print(f"[ERROR] Audio file not found: {audio_path}")
             return
 
-        lang = language if language else settings.language
-        out = output_path if output_path else audio_path.with_suffix(".srt")
+        lang = language or settings.language
+        out_srt = output_path or audio_path.with_suffix(".srt")
 
-        # 1. Check Subtitles
+        # 1. Check existing subtitles
         if start_time == 0.0 and end_time is None:
-            if self._extract_existing_subtitles(audio_path, out, subtitle_path, lang):
+            if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
                 return
 
-        # 2. Slice Audio
+        # 2. Prepare Audio
         proc_path = audio_path
         is_sliced = False
         if start_time > 0 or end_time is not None:
             proc_path = self._slice_audio(audio_path, start_time, end_time)
             is_sliced = True
 
-        # 3. Transcribe
-        self._load_pipeline(lang)
-        if not self._pipe:
-            return
+        # 3. Robust Transcription Loop
+        exclude_models: list[str] = []
 
-        print(f"[INFO] Transcribing (Lang: {lang})...")
         try:
-            res = self._pipe(
-                str(proc_path),
-                return_timestamps=True,
-                generate_kwargs={"language": lang, "task": "transcribe"},
-            )
-            self._write_srt(res.get("chunks", []), out, offset=start_time)  # type: ignore
-            print(f"[SUCCESS] Saved to {out}")
-        except Exception as e:
-            print(f"[ERROR] Inference failed: {e}")
+            while True:
+                try:
+                    current_model = self._load_pipeline(lang, exclude_models)
+                except RuntimeError as e:
+                    print(f"[ERROR] Transcription failed: {e}")
+                    break
+
+                print(f"[INFO] Transcribing (Lang: {lang}) with {current_model}...")
+
+                if self._pipe is None:
+                    print("[ERROR] Pipeline is unexpectedly None.")
+                    break
+
+                try:
+                    result = self._pipe(
+                        str(proc_path),
+                        return_timestamps=True,
+                        generate_kwargs={"language": lang, "task": "transcribe"},
+                    )
+                    chunks = (
+                        result.get("chunks", []) if isinstance(result, dict) else []
+                    )
+
+                    print(f"[DEBUG] Raw chunks generated: {len(chunks)}")
+
+                    # Write and Validate
+                    lines_written = self._write_srt(chunks, out_srt, offset=start_time)
+
+                    if lines_written > 0:
+                        print(
+                            f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}"
+                        )
+                        break
+                    else:
+                        print(
+                            f"[WARN] Model {current_model} produced empty/invalid SRT. "
+                            "Retrying next model..."
+                        )
+                        exclude_models.append(current_model)
+                        continue
+
+                except Exception as e:
+                    print(f"[ERROR] Inference error with {current_model}: {e}")
+                    exclude_models.append(current_model)
+                    continue
+
         finally:
             if is_sliced and proc_path.exists():
                 try:
                     proc_path.unlink()
-                except:
+                except Exception:
                     pass
 
 
 def main() -> None:
-    """Command-line interface for AudioTranscriber."""
+    """CLI Entry point."""
     if len(sys.argv) < 2:
         print(
-            "Usage: "
-            "python -m core.processing.transcriber "
-            "<audio_file> [start] [end] [subtitle_file] [lang]"
+            "Usage: python -m core.processing.transcriber "
+            "<audio> [start] [end] [subtitle] [lang]"
         )
         sys.exit(1)
 
@@ -365,9 +410,7 @@ def main() -> None:
     lang = args[5] if len(args) > 5 else None
 
     app = AudioTranscriber()
-    app.transcribe(
-        audio, language=lang, subtitle_path=sub, start_time=start, end_time=end
-    )
+    app.transcribe(audio, lang, sub, output_path=None, start_time=start, end_time=end)
 
 
 if __name__ == "__main__":
