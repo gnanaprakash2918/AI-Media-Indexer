@@ -233,7 +233,7 @@ class AudioTranscriber:
         """
         try:
             from transformers import AutoConfig, GenerationConfig
-            from trasnformers.pipeline import pipeline
+            from transformers.pipelines import pipeline
         except ImportError:
             raise ImportError(
                 "Please install 'transformers', 'accelerate' to use this model."
@@ -425,7 +425,7 @@ def main() -> None:
 
     test_file = Path("C:\\Users\\Gnana Prakash M\\Downloads\\dudeoutput.mp3")
 
-    model_choice = "vasista22/whisper-tamil-large-v2"
+    model_choice = "ai4bharat/indic-conformer-600m-multilingual"
 
     print(f"info: Initializing with model '{model_choice}'...")
     transcriber = AudioTranscriber(model_size=model_choice)
