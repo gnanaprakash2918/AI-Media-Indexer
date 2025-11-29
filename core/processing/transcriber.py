@@ -18,7 +18,6 @@ from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
 
 from config import settings
 
-# Suppress external library warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -39,6 +38,7 @@ class AudioTranscriber:
         model_id (str): The ID or path of the loaded model.
         model (Any): The loaded model instance (type varies by backend).
         engine (Literal): The active backend engine.
+        generation_config (Any): Patched config for Transformers.
     """
 
     def __init__(
@@ -64,7 +64,6 @@ class AudioTranscriber:
             "float16" if self.device == "cuda" else "int8"
         )
 
-        # Set up model storage in project_root/models
         if download_root:
             self.model_root = Path(download_root)
         else:
@@ -73,6 +72,7 @@ class AudioTranscriber:
 
         self.model_id = model_size
         self.model: Any = None
+        self.generation_config: Any = None
         self.engine: Literal["faster_whisper", "transformers", "nemo"] = (
             "faster_whisper"
         )
@@ -109,9 +109,7 @@ class AudioTranscriber:
         if not path_obj.exists():
             raise FileNotFoundError(f"Audio file not found: {path_obj}")
 
-        # Auto-detect language if not provided
         effective_lang = language
-
         print(f"info: Transcribing '{path_obj.name}' using {self.engine.upper()}...")
 
         if self.engine == "nemo":
@@ -150,16 +148,13 @@ class AudioTranscriber:
             f"info: Language detected: '{detected_lang}' "
             f"(Prob: {info.language_probability:.2f})"
         )
-        print("info: Starting transcription loop...")
 
         segments_list = []
         full_text_parts = []
 
-        # Iterate generator to process segments and print progress
         for segment in segments_generator:
             start, end, text = segment.start, segment.end, segment.text.strip()
             print(f"  [{start:.2f}s -> {end:.2f}s] {text}")
-
             segments_list.append({"start": start, "end": end, "text": text})
             full_text_parts.append(text)
 
@@ -177,7 +172,6 @@ class AudioTranscriber:
             model_id: The model identifier string.
         """
         print(f"info: Loading model '{model_id}' on {self.device.upper()}...")
-
         self.engine = self._determine_engine(model_id)
 
         if self.engine == "nemo":
@@ -200,10 +194,9 @@ class AudioTranscriber:
         """
         lower = model_id.lower()
         if "indicconformer" in lower or "ai4bharat" in lower:
-            # NVIDIA NeMo check
             if "rnnt" in lower or "nemo" in lower:
                 return "nemo"
-            return "transformers"  # Fallback for newer HF-compatible IndicConformers
+            return "transformers"
         if "jiviai" in lower or "vasista" in lower or "audiox" in lower:
             return "transformers"
         return "faster_whisper"
@@ -239,49 +232,72 @@ class AudioTranscriber:
             ImportError: If dependencies are missing.
         """
         try:
-            from transformers.pipelines import pipeline
+            from transformers import AutoConfig, GenerationConfig
+            from trasnformers.pipeline import pipeline
+        except ImportError:
+            raise ImportError(
+                "Please install 'transformers', 'accelerate' to use this model."
+            )
 
-            print(f"info: Pre-downloading '{model_id}' using HF Transfer (Fast)...")
-            # Explicitly download first to ensure HF_TRANSFER is used and to avoid
-            # pipeline timeouts.
+        print(f"info: Ensuring '{model_id}' is available in {self.model_root}...")
+        try:
             local_model_path = snapshot_download(
                 repo_id=model_id,
-                token=settings.HF_TOKEN,
-                # Force download to a specific folder so we can pass that path to pipeline
-                # if needed, but snapshot_download handles caching automatically.
+                token=getattr(settings, "HF_TOKEN", None),
+                cache_dir=str(self.model_root),
             )
-            print(f"info: Model downloaded to {local_model_path}")
+        except Exception as e:
+            print(f"warning: Snapshot download failed: {e}. Falling back to hub ID.")
+            local_model_path = model_id
 
-            print("info: Initializing Transformers pipeline...")
+        print(f"info: Initializing Transformers pipeline from {local_model_path}...")
+        device_arg = 0 if self.device == "cuda" else -1
+        torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
 
-            torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
-
+        try:
             self.model = pipeline(
                 "automatic-speech-recognition",
-                model=local_model_path,  # Load from local cache
-                device=self.device,
+                model=local_model_path,
+                device=device_arg,
                 torch_dtype=torch_dtype,
-                token=settings.HF_TOKEN,
-                model_kwargs={"use_safetensors": False},
+                token=getattr(settings, "HF_TOKEN", None),
             )
-        except ImportError as e:
-            raise ImportError(
-                "Please install 'transformers', 'accelerate', and 'hf_transfer' "
-                "for this model."
-            ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to load Transformers model: {e}") from e
+            raise RuntimeError(f"Pipeline init failed: {e}") from e
+
+        # Many fine-tuned models (like vasista22) have broken config files
+        # that prevent timestamps from working in newer Transformers.
+        try:
+            print("info: Applying config patch for timestamps...")
+
+            # 1. Load the "Healthy" Base Configs from OpenAI
+            base_gen_config = GenerationConfig.from_pretrained(
+                "openai/whisper-large-v2", cache_dir=str(self.model_root)
+            )
+            base_config = AutoConfig.from_pretrained(
+                "openai/whisper-large-v2", cache_dir=str(self.model_root)
+            )
+
+            model_instance = self.model.model
+            model_instance.generation_config = base_gen_config
+
+            if hasattr(base_config, "alignment_heads"):
+                model_instance.config.alignment_heads = base_config.alignment_heads
+
+            model_instance.config.return_timestamps = True
+
+            self.generation_config = base_gen_config
+
+            print(
+                "info: Config patched successfully using openai/whisper-large-v2 defaults."
+            )
+
+        except Exception as e:
+            print(f"warning: Config patch failed: {e}")
+            print("warning: Timestamps might fail if config is broken.")
 
     def _load_nemo(self, model_id: str) -> None:
-        """Load an NVIDIA NeMo model.
-
-        Args:
-            model_id: The model identifier.
-
-        Raises:
-            ImportError: If NeMo is not installed.
-            RuntimeError: If model loading fails.
-        """
+        """Load an NVIDIA NeMo model."""
         try:
             import nemo.collections.asr as nemo_asr
         except ImportError as e:
@@ -291,12 +307,10 @@ class AudioTranscriber:
 
         print("info: Fetching NeMo model file...")
         try:
-            # Find .nemo file
             files = list_repo_files(model_id, token=settings.HF_TOKEN)
             nemo_file = next((f for f in files if f.endswith(".nemo")), None)
 
             if not nemo_file:
-                # Fallback: try loading directly via class
                 self.model = nemo_asr.models.ASRModel.from_pretrained(
                     model_name=model_id
                 )
@@ -307,7 +321,6 @@ class AudioTranscriber:
                     token=settings.HF_TOKEN,
                     cache_dir=self.model_root,
                 )
-                # Fix: Explicitly wrap device string in torch.device
                 self.model = nemo_asr.models.ASRModel.restore_from(
                     restore_path=ckpt, map_location=torch.device(self.device)
                 )
@@ -330,31 +343,42 @@ class AudioTranscriber:
         Returns:
             dict[str, Any]: Transcription result.
         """
-        # Transformers specific kwargs
         gen_kwargs = {"task": "transcribe"}
         if language:
             gen_kwargs["language"] = language
 
-        # Patch for some models missing timestamps
+        if self.generation_config:
+            gen_kwargs["generation_config"] = self.generation_config
+
+        print(f"info: Generating with kwargs: {list(gen_kwargs.keys())}")
+
+        # Run inference
         result = self.model(
             str(path), return_timestamps=True, generate_kwargs=gen_kwargs
         )
 
         text = result.get("text", "").strip()
         chunks = result.get("chunks", [])
-        segments = [
-            {
-                "start": c["timestamp"][0],
-                "end": c["timestamp"][1] or 0.0,
-                "text": c["text"],
-            }
-            for c in chunks
-        ]
+
+        segments = []
+        for c in chunks:
+            # Handle potential None timestamps safely
+            start = c["timestamp"][0] if c.get("timestamp") else 0.0
+            end = c["timestamp"][1] if c.get("timestamp") else 0.0
+
+            # If end is None (common in last chunk), approximate it
+            if end is None:
+                end = start + 2.0
+
+            segments.append({"start": start, "end": end, "text": c["text"]})
+
+        duration = segments[-1]["end"] if segments else 0.0
+
         return {
             "text": text,
             "segments": segments,
             "language": language or "unknown",
-            "duration": segments[-1]["end"] if segments else 0.0,
+            "duration": duration,
         }
 
     def _transcribe_nemo(self, path: Path) -> dict[str, Any]:
@@ -371,7 +395,6 @@ class AudioTranscriber:
         files = [str(path)]
         text_result = self.model.transcribe(paths2audio_files=files, batch_size=1)[0]
 
-        # Determine duration
         import librosa
 
         dur = librosa.get_duration(path=path)
@@ -400,14 +423,11 @@ def main() -> None:
     """Test entry point for the module."""
     print("--- Audio Transcriber Test ---")
 
-    # User Configuration
-    test_file = Path("test_audio.mp3")  # Replace with actual file if needed
+    test_file = Path("C:\\Users\\Gnana Prakash M\\Downloads\\dudeoutput.mp3")
 
-    # FIX: Use 'vasista22/whisper-tamil-large-v2' (Robust Open SOTA)
-    # This automatically routes to the 'transformers' engine.
     model_choice = "vasista22/whisper-tamil-large-v2"
 
-    print(f"info: Initializing with model '{model_choice}' for better accuracy...")
+    print(f"info: Initializing with model '{model_choice}'...")
     transcriber = AudioTranscriber(model_size=model_choice)
 
     if not test_file.exists():
@@ -417,7 +437,6 @@ def main() -> None:
     try:
         result = transcriber.transcribe(test_file, language="ta")
 
-        # FIX: Save output to the same directory as the audio file
         out_path = test_file.with_suffix(".txt")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(result["text"])
@@ -425,8 +444,10 @@ def main() -> None:
         print(f"\nSuccess! Transcript saved to {out_path}")
         print(f"Duration: {result['duration']:.2f}s")
 
-    except KeyboardInterrupt:
-        print("\nAborted by user.")
+        print("\nFirst 3 segments:")
+        for seg in result["segments"][:3]:
+            print(f"  [{seg['start']:.2f}-{seg['end']:.2f}] {seg['text']}")
+
     except Exception as e:
         print(f"\nError: {e}")
 
