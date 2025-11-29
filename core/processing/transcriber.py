@@ -1,14 +1,15 @@
 """Robust Audio Transcriber with Subtitle Fallback and RTX Optimization.
 
 Features:
+- Fast Downloads: Uses hf_transfer (Rust) and resumable downloads.
 - Smart Caching: Project Local > Global Cache > Download.
-- Self-Healing: Automatically retries next model if one fails or returns empty data.
-- Prioritizes existing subtitles (User provided > Sidecar > Embedded).
-- Optimizes for RTX 40-series using SDPA (Scaled Dot Product Attention).
+- Self-Healing: Retries download if cache is corrupted.
+- Anti-Hallucination: Disables previous text conditioning.
 """
 
 import gc
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -35,12 +36,16 @@ from config import settings
 warnings.filterwarnings("ignore")
 hf_logging.set_verbosity_error()
 
+# Enable High-Performance Transfer & Timeouts
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
+
 
 class AudioTranscriber:
-    """Main transcription class handling ASR lifecycle and subtitle extraction."""
+    """Main transcription class handling ASR lifecycle."""
 
     def __init__(self) -> None:
-        """Initialize the transcriber state."""
+        """Initialize the transcriber."""
         self._pipe: Pipeline | None = None
         self._current_model_id: str | None = None
         print(
@@ -62,7 +67,7 @@ class AudioTranscriber:
         user_sub_path: Path | None,
         language: str,
     ) -> bool:
-        """Probes for existing subtitles in user input, sidecars, embedded streams."""
+        """Probes for existing subtitles in input, sidecars, or embedded streams."""
         print("[INFO] Probing for existing subtitles...")
 
         # 1. User Provided
@@ -130,57 +135,61 @@ class AudioTranscriber:
         subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
-    def _resolve_model_path(self, model_id: str) -> str:
-        """Resolves model path: Local Project -> Global Cache -> Download."""
+    def _resolve_model_path(self, model_id: str, force_download: bool = False) -> str:
+        """Resolves model path: Project Cache > Global Cache > Download."""
+        common_kwargs = {
+            "repo_id": model_id,
+            "token": settings.hf_token,
+            "ignore_patterns": ["*.msgpack", "*.h5", "*.ot"],
+        }
 
-        def _try_download(
-            local_only: bool = False, cache_dir: Path | None = None
-        ) -> Path:
-            return Path(
-                snapshot_download(
-                    repo_id=model_id,
-                    cache_dir=cache_dir,
-                    token=settings.hf_token,
-                    local_files_only=local_only,
-                    ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
+        # If repairing, skip local checks and go straight to download
+        if not force_download:
+            # 1. Check Project Cache (Local Only)
+            try:
+                path = snapshot_download(
+                    **common_kwargs,
+                    cache_dir=settings.model_cache_dir,
+                    local_files_only=True,
                 )
-            )
+                print(f"[INFO] Found '{model_id}' in project cache.")
+                return str(path)
+            except (OSError, ValueError):
+                pass
 
-        # 1. Check Project Cache
-        try:
-            path = _try_download(local_only=True, cache_dir=settings.model_cache_dir)
-            print(f"[INFO] Found '{model_id}' in project cache.")
-            return str(path)
-        except Exception:
-            pass
+            # 2. Check Global Cache (Local Only)
+            try:
+                path = snapshot_download(
+                    **common_kwargs,
+                    cache_dir=None,
+                    local_files_only=True,
+                )
+                print(f"[INFO] Found '{model_id}' in global cache.")
+                return str(path)
+            except (OSError, ValueError):
+                pass
 
-        # 2. Check Global Cache
-        try:
-            print(f"[INFO] Checking global cache for '{model_id}'...")
-            path = _try_download(local_only=True, cache_dir=None)
-            print(f"[INFO] Found '{model_id}' in global cache.")
-            return str(path)
-        except Exception:
-            pass
-
-        # 3. Download to Project Cache
+        # 3. Download to Project Cache (Online)
         print(f"[INFO] Downloading '{model_id}' to '{settings.model_cache_dir}'...")
         try:
-            path = _try_download(local_only=False, cache_dir=settings.model_cache_dir)
+            path = snapshot_download(
+                **common_kwargs,
+                cache_dir=settings.model_cache_dir,
+                local_files_only=False,
+                resume_download=True,
+                max_workers=8,
+            )
             return str(path)
         except Exception as e:
-            raise RuntimeError(f"Failed to download model '{model_id}': {e}") from e
+            raise RuntimeError(f"Failed to download '{model_id}': {e}") from e
 
     def _patch_config(self, model: Any, tokenizer: Any, language: str) -> None:
         """Applies critical fixes to GenerationConfig for fine-tuned models."""
-        # Use Any to bypass Pylance strict checks on dynamic attributes
         gen_config: Any = model.generation_config
 
         if not getattr(gen_config, "no_timestamps_token_id", None):
             try:
-                base = "openai/whisper-large-v2"
-                if "large-v3" in getattr(model.config, "_name_or_path", "").lower():
-                    base = "openai/whisper-large-v3"
+                base = "openai/whisper-large-v3"
                 model.generation_config = GenerationConfig.from_pretrained(base)
                 gen_config = model.generation_config
             except Exception:
@@ -190,13 +199,17 @@ class AudioTranscriber:
         gen_config.task = "transcribe"
         gen_config.forced_decoder_ids = None
 
+        # Fix Hallucination Loops: Set strictly in config, NOT in generate_kwargs
+        if hasattr(gen_config, "condition_on_previous_text"):
+            gen_config.condition_on_previous_text = False
+
         if hasattr(tokenizer, "convert_tokens_to_ids"):
             notimestamp_id = tokenizer.convert_tokens_to_ids("<|notimestamps|>")
             if notimestamp_id is not None:
                 gen_config.no_timestamps_token_id = notimestamp_id
 
     def _load_pipeline(self, language: str, exclude_models: list[str]) -> str:
-        """Loads best available ASR model, skipping excluded ones. Returns model_id."""
+        """Loads best available ASR model, skipping excluded ones."""
         candidates = settings.whisper_model_map.get(language, [])
         if settings.fallback_model_id not in candidates:
             candidates.append(settings.fallback_model_id)
@@ -211,46 +224,63 @@ class AudioTranscriber:
                 return model_id
 
             try:
-                self._attempt_load_model(model_id, language)
+                # First attempt: Regular Load
+                self._attempt_load_model(model_id, language, force_download=False)
                 return model_id
             except Exception as e:
+                # Second attempt: Force Repair (Download)
                 print(f"[WARN] Failed to load '{model_id}': {e}")
-                print("[INFO] Attempting next candidate...")
+                print(
+                    "[INFO] Cache might be corrupt. Attempting repair (re-download)..."
+                )
                 self._clear_gpu()
+                try:
+                    self._attempt_load_model(model_id, language, force_download=True)
+                    return model_id
+                except Exception as e2:
+                    print(f"[ERROR] Repair failed for '{model_id}': {e2}")
+                    print("[INFO] Moving to next candidate...")
+                    self._clear_gpu()
+                    continue
 
-        raise RuntimeError(f"All valid candidates failed for language '{language}'")
+        raise RuntimeError(f"All candidates failed for language '{language}'")
 
-    def _attempt_load_model(self, model_id: str, language: str) -> None:
-        """Helper to load a specific model."""
+    def _attempt_load_model(
+        self, model_id: str, language: str, force_download: bool
+    ) -> None:
+        """Helper to download and load a specific model."""
         self._clear_gpu()
 
-        model_dir = self._resolve_model_path(model_id)
+        model_dir = self._resolve_model_path(model_id, force_download=force_download)
 
-        tokenizer = AutoTokenizer.from_pretrained(model_dir)
-        processor = AutoProcessor.from_pretrained(model_dir)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            processor = AutoProcessor.from_pretrained(model_dir)
 
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_dir,
-            torch_dtype=settings.torch_dtype,
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-        )
-        model.to(settings.device)
+            model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_dir,
+                torch_dtype=settings.torch_dtype,
+                low_cpu_mem_usage=True,
+                attn_implementation="sdpa",
+            )
+            model.to(settings.device)
 
-        self._patch_config(model, tokenizer, language)
+            self._patch_config(model, tokenizer, language)
 
-        self._pipe = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=tokenizer,
-            feature_extractor=processor.feature_extractor,
-            chunk_length_s=settings.chunk_length_s,
-            batch_size=settings.batch_size,
-            torch_dtype=settings.torch_dtype,
-            device=settings.device_index,
-        )
-        self._current_model_id = model_id
-        print(f"[SUCCESS] Loaded Model: {model_id}")
+            self._pipe = pipeline(
+                "automatic-speech-recognition",
+                model=model,
+                tokenizer=tokenizer,
+                feature_extractor=processor.feature_extractor,
+                chunk_length_s=settings.chunk_length_s,
+                batch_size=settings.batch_size,
+                torch_dtype=settings.torch_dtype,
+                device=settings.device_index,
+            )
+            self._current_model_id = model_id
+            print(f"[SUCCESS] Loaded Model: {model_id}")
+        except Exception as e:
+            raise RuntimeError(f"Pipeline init failed: {e}") from e
 
     def _clear_gpu(self) -> None:
         """Clears GPU memory."""
@@ -347,14 +377,19 @@ class AudioTranscriber:
                 print(f"[INFO] Transcribing (Lang: {lang}) with {current_model}...")
 
                 if self._pipe is None:
-                    print("[ERROR] Pipeline is unexpectedly None.")
                     break
 
                 try:
+                    gen_kwargs = {
+                        "language": lang,
+                        "task": "transcribe",
+                        "temperature": 0.0,
+                    }
+
                     result = self._pipe(
                         str(proc_path),
                         return_timestamps=True,
-                        generate_kwargs={"language": lang, "task": "transcribe"},
+                        generate_kwargs=gen_kwargs,
                     )
                     chunks = (
                         result.get("chunks", []) if isinstance(result, dict) else []
@@ -362,13 +397,10 @@ class AudioTranscriber:
 
                     print(f"[DEBUG] Raw chunks generated: {len(chunks)}")
 
-                    # Write and Validate
                     lines_written = self._write_srt(chunks, out_srt, offset=start_time)
 
                     if lines_written > 0:
-                        print(
-                            f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}"
-                        )
+                        print(f"[SUCCESS]Saved {lines_written} subtitles to: {out_srt}")
                         break
                     else:
                         print(

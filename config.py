@@ -1,8 +1,4 @@
-"""Configuration settings for the ASR and LLM pipeline.
-
-Defines strict schema for configuration using Pydantic.
-Handles environment variables, hardware detection, and project-root path management.
-"""
+"""Configuration settings for the ASR and LLM pipeline."""
 
 from enum import Enum
 from pathlib import Path
@@ -27,7 +23,7 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
     )
 
-    # --- Paths ---
+    #  Paths
     @property
     def project_root(self) -> Path:
         """Finds project root by looking for .git or .env files."""
@@ -53,7 +49,7 @@ class Settings(BaseSettings):
         path.mkdir(exist_ok=True)
         return path
 
-    # --- LLM Config ---
+    #  LLM Config
     llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
     llm_timeout: int = Field(default=120)
     gemini_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
@@ -61,34 +57,30 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llava"
 
-    # --- ASR Config ---
-    # Default fallback if language detection fails or model is missing
-    fallback_model_id: str = "openai/whisper-large-v3"
+    #  ASR Config
+    fallback_model_id: str = "openai/whisper-large-v3-turbo"
 
-    # Priority list for model selection
     whisper_model_map: dict[str, list[str]] = Field(
         default={
             "ta": [
-                "vasista22/whisper-tamil-large-v2",
+                "openai/whisper-large-v3-turbo",
                 "openai/whisper-large-v3",
-                "openai/whisper-large-v2",
+                "vasista22/whisper-tamil-large-v2",
             ],
             "en": [
-                "openai/whisper-large-v3",
-                "openai/whisper-large-v2",
+                "openai/whisper-large-v3-turbo",
                 "distil-whisper/distil-large-v3",
+                "openai/whisper-large-v3",
             ],
         }
     )
 
-    language: str = Field(default="ta", description="Default target language code")
-    batch_size: int = Field(
-        default=24, ge=1, description="Higher batch size for RTX GPUs"
-    )
+    language: str = Field(default="ta", description="Target language code")
+    batch_size: int = Field(default=24, ge=1)
     chunk_length_s: int = Field(default=30, ge=1)
     hf_token: str | None = None
 
-    # --- Hardware ---
+    #  Hardware
     device_override: Literal["cuda", "cpu", "mps"] | None = None
     compute_type_override: Literal["float16", "float32"] | None = None
 
@@ -113,7 +105,7 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def torch_dtype(self) -> torch.dtype:
-        """Determines optimal torch data type (float16 for GPU)."""
+        """Determines optimal torch data type."""
         if self.compute_type_override == "float32":
             return torch.float32
         if self.compute_type_override == "float16":
