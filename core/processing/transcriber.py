@@ -8,15 +8,22 @@ Features:
 - Pipeline Ready: Returns in-memory chunks for Vector DB ingestion.
 """
 
-import gc
+# Ensure environment hints are set before torch is imported.
 import os
+
+# Mitigate fragmentation (helps allocation stability on CUDA).
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# If you want to force CPU for quick debugging, uncomment:
+# os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+import gc
 import shutil
 import subprocess
 import sys
 import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, cast
+from typing import Any, Any as _Any, cast, cast as _cast
 
 import torch
 from huggingface_hub import snapshot_download
@@ -34,13 +41,14 @@ from transformers.pipelines.automatic_speech_recognition import (
 from transformers.pipelines.base import Pipeline
 from transformers.utils import logging as hf_logging
 
-from config import settings
+import config as _config
 
-# Cleanup console output
+settings = _cast(_Any, _config.settings)
+
 warnings.filterwarnings("ignore")
 hf_logging.set_verbosity_error()
 
-# Enable High-Performance Transfer & Timeouts
+# Enable High-Performance Transfer & Timeouts (HF hub)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
 
@@ -49,7 +57,10 @@ class AudioTranscriber:
     """Main transcription class handling ASR lifecycle."""
 
     def __init__(self) -> None:
-        """Initialize the transcriber."""
+        """Initialize the AudioTranscriber instance.
+
+        Initializes internal pipeline references and prints device information.
+        """
         self._pipe: Pipeline | None = None
         self._current_model_id: str | None = None
         print(
@@ -58,7 +69,14 @@ class AudioTranscriber:
         )
 
     def _get_ffmpeg_cmd(self) -> str:
-        """Locate FFmpeg executable."""
+        """Locate the ffmpeg executable in system PATH.
+
+        Returns:
+            str: Full path to the ffmpeg executable.
+
+        Raises:
+            RuntimeError: If ffmpeg is not installed or not found in PATH.
+        """
         cmd = shutil.which("ffmpeg")
         if not cmd:
             raise RuntimeError("FFmpeg not found. Please install it to system PATH.")
@@ -71,7 +89,17 @@ class AudioTranscriber:
         user_sub_path: Path | None,
         language: str,
     ) -> bool:
-        """Probes for existing subtitles in input, sidecars, or embedded streams."""
+        """Search for subtitles: user-provided, sidecar files, or embedded streams.
+
+        Args:
+            input_path (Path): Video/audio input file.
+            output_path (Path): Target subtitle output path.
+            user_sub_path (Path | None): Optional user override subtitle file.
+            language (str): Language specifier (e.g., "en", "ta").
+
+        Returns:
+            bool: True if subtitles were found/extracted; False otherwise.
+        """
         print("[INFO] Probing for existing subtitles...")
 
         # 1. User Provided
@@ -80,6 +108,7 @@ class AudioTranscriber:
             shutil.copy(user_sub_path, output_path)
             return True
 
+        # 2. Sidecar files
         for sidecar in [
             input_path.with_suffix(f".{language}.srt"),
             input_path.with_suffix(".srt"),
@@ -89,6 +118,7 @@ class AudioTranscriber:
                 shutil.copy(sidecar, output_path)
                 return True
 
+        # 3. Embedded subtitles extraction
         cmd = [
             self._get_ffmpeg_cmd(),
             "-y",
@@ -114,7 +144,16 @@ class AudioTranscriber:
         return False
 
     def _slice_audio(self, input_path: Path, start: float, end: float | None) -> Path:
-        """Slice audio safely using FFmpeg into a temp file."""
+        """Slice audio using ffmpeg into a temporary WAV file.
+
+        Args:
+            input_path (Path): Original audio file.
+            start (float): Start time in seconds.
+            end (float | None): End time in seconds or None for full remaining audio.
+
+        Returns:
+            Path: Path to the temporary sliced audio file.
+        """
         with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             output_slice = Path(tmp.name)
 
@@ -137,7 +176,18 @@ class AudioTranscriber:
         return output_slice
 
     def _resolve_model_path(self, model_id: str, force_download: bool = False) -> str:
-        """Resolve model path: Project Cache > Global Cache > Download."""
+        """Resolve a model path from project cache, global cache, or download.
+
+        Args:
+            model_id (str): HuggingFace model ID.
+            force_download (bool): If True, forces re-download.
+
+        Returns:
+            str: Filesystem path to the resolved model.
+
+        Raises:
+            RuntimeError: If the model fails to download.
+        """
         kwargs = {
             "repo_id": model_id,
             "token": settings.hf_token,
@@ -179,7 +229,16 @@ class AudioTranscriber:
             raise RuntimeError(f"Download failed: {e}") from e
 
     def _patch_config(self, model: Any, tokenizer: Any, language: str) -> None:
-        """Apply critical fixes to GenerationConfig for fine-tuned models."""
+        """Apply Whisper-generation config patches for fine-tuned models.
+
+        Args:
+            model (Any): Loaded ASR model.
+            tokenizer (Any): Model tokenizer.
+            language (str): Target language code.
+
+        Notes:
+            This modifies dynamic attributes on the model's GenerationConfig.
+        """
         gen_config = model.generation_config
         if not getattr(gen_config, "no_timestamps_token_id", None):
             try:
@@ -190,7 +249,6 @@ class AudioTranscriber:
             except Exception:
                 pass
 
-        # Type ignores added because Pylance struggles with dynamic config attributes
         gen_config.language = language  # type: ignore
         gen_config.task = "transcribe"  # type: ignore
         gen_config.forced_decoder_ids = None  # type: ignore
@@ -205,7 +263,16 @@ class AudioTranscriber:
     def _attempt_load_model(
         self, model_id: str, language: str, force_download: bool
     ) -> None:
-        """Helper to download and load a specific model."""
+        """Load a model from cache or download, then build the ASR pipeline.
+
+        Args:
+            model_id (str): Model identifier.
+            language (str): Target transcription language.
+            force_download (bool): Whether to force model download.
+
+        Raises:
+            RuntimeError: If model initialization fails.
+        """
         self._clear_gpu()
         model_dir = self._resolve_model_path(model_id, force_download)
 
@@ -222,9 +289,14 @@ class AudioTranscriber:
 
             if settings.device == "cuda":
                 try:
-                    model = torch.compile(  # type: ignore
-                        model, mode="reduce-overhead", fullgraph=True
-                    )
+                    try:
+                        total_mem = torch.cuda.get_device_properties(0).total_memory
+                    except Exception:
+                        total_mem = 0
+                    if total_mem >= 16 * 1024**3:
+                        model = torch.compile(  # type: ignore
+                            model, mode="reduce-overhead", fullgraph=True
+                        )
                 except Exception:
                     pass
 
@@ -247,7 +319,18 @@ class AudioTranscriber:
             raise RuntimeError(f"Init failed: {e}") from e
 
     def _load_pipeline(self, language: str, exclude_models: list[str]) -> str:
-        """Load best available ASR model, skipping excluded ones."""
+        """Load the best available model pipeline, skipping excluded ones.
+
+        Args:
+            language (str): Target transcription language.
+            exclude_models (list[str]): Models previously attempted or failed.
+
+        Returns:
+            str: The model ID successfully loaded.
+
+        Raises:
+            RuntimeError: If all model candidates fail to load.
+        """
         candidates = settings.whisper_model_map.get(language, [])
         if settings.fallback_model_id not in candidates:
             candidates.append(settings.fallback_model_id)
@@ -263,6 +346,7 @@ class AudioTranscriber:
                 self._attempt_load_model(model_id, language, False)
                 return model_id
             except Exception:
+                # Retry by forcing a download if the first attempt fails.
                 print(f"[WARN] Load failed '{model_id}', retrying download...")
                 try:
                     self._attempt_load_model(model_id, language, True)
@@ -273,7 +357,7 @@ class AudioTranscriber:
         raise RuntimeError("All models failed.")
 
     def _clear_gpu(self) -> None:
-        """Clear GPU memory."""
+        """Release GPU memory and clear pipeline references."""
         if self._pipe:
             del self._pipe
         self._pipe = None
@@ -282,7 +366,14 @@ class AudioTranscriber:
         torch.cuda.empty_cache()
 
     def _format_timestamp(self, seconds: float) -> str:
-        """Format seconds into SRT timestamp."""
+        """Convert seconds into SRT timestamp format.
+
+        Args:
+            seconds (float): Seconds value.
+
+        Returns:
+            str: Formatted timestamp ("HH:MM:SS,mmm").
+        """
         hours, remainder = divmod(seconds, 3600)
         minutes, secs = divmod(remainder, 60)
         millis = int(round((secs - int(secs)) * 1000))
@@ -291,7 +382,16 @@ class AudioTranscriber:
     def _write_srt(
         self, chunks: list[dict[str, Any]], path: Path, offset: float
     ) -> int:
-        """Write chunks to SRT with Hallucination Filtering."""
+        """Write ASR output chunks to an SRT subtitle file.
+
+        Args:
+            chunks (list[dict]): List of timestamped transcribed segments.
+            path (Path): Output SRT file path.
+            offset (float): Offset to apply to timestamps.
+
+        Returns:
+            int: Number of subtitle entries written.
+        """
         count = 0
         last_text = ""
         with open(path, "w", encoding="utf-8") as f:
@@ -305,10 +405,17 @@ class AudioTranscriber:
                     start, end = timestamp
                 except ValueError:
                     continue
+
+                # Maintain previous behavior: skip if start missing
                 if start is None:
                     continue
+                # Provide default end when missing
                 if end is None:
                     end = start + 2.0
+
+                # Make types explicit for the type-checker and for arithmetic
+                start = float(start)
+                end = float(end)
 
                 if (end - start) < 0.2:
                     continue
@@ -325,6 +432,165 @@ class AudioTranscriber:
                 last_text = text
         return count
 
+    def _split_long_chunks(
+        self, chunks: list[dict[str, Any]], max_segment_s: float = 8.0
+    ) -> list[dict[str, Any]]:
+        """Split chunks longer than `max_segment_s` into smaller subchunks.
+
+        The text is split approximately proportionally across time bins by word
+        count. This is a heuristic to avoid extremely long subtitle segments.
+
+        Args:
+            chunks (list[dict]): Original chunks from the pipeline.
+            max_segment_s (float): Maximum allowed duration per SRT entry.
+
+        Returns:
+            list[dict]: New list of chunks where long entries are subdivided.
+        """
+        out: list[dict[str, Any]] = []
+        for ch in chunks:
+            text = (ch.get("text") or "").strip()
+            timestamp = ch.get("timestamp")
+            if not text or not timestamp:
+                continue
+            try:
+                start, end = timestamp
+            except Exception:
+                out.append(ch)
+                continue
+
+            if start is None:
+                continue
+            if end is None:
+                end = start + 2.0
+
+            start = float(start)
+            end = float(end)
+
+            duration = end - start
+            if duration <= max_segment_s:
+                out.append(ch)
+                continue
+
+            # number of splits (ceil)
+            n = int((duration + max_segment_s - 1e-9) // max_segment_s) + 1
+            n = max(1, n)
+            words = text.split()
+            if not words:
+                # no words present, fallback to original chunk
+                out.append(ch)
+                continue
+
+            # compute per-split approximate word counts
+            per = max(1, len(words) // n)
+            ptr = 0
+            for i in range(n):
+                sub_words = words[ptr : ptr + per]
+                ptr += per
+                if not sub_words:
+                    continue
+                sub_text = " ".join(sub_words)
+                sub_start = start + i * (duration / n)
+                sub_end = start + (i + 1) * (duration / n)
+                out.append({"text": sub_text, "timestamp": (sub_start, sub_end)})
+
+            # attach leftovers to last
+            if ptr < len(words) and out:
+                out[-1]["text"] = out[-1]["text"] + " " + " ".join(words[ptr:])
+
+        return out
+
+    def _rebuild_chunks_from_word_items(self, result: Any) -> list[dict[str, Any]]:
+        """Rebuild chunks using per-word/token items when available.
+
+        This tries to preserve tokens/words exactly as produced by the model
+        instead of relying on the normalized `chunk['text']`. This helps keep
+        English words and token-level outputs unchanged.
+
+        Args:
+            result (Any): The raw result returned by the ASR pipeline. Usually a
+                dict.
+
+        Returns:
+            list[dict]: Normalized chunks with `text` and `timestamp` keys.
+        """
+        rebuilt: list[dict[str, Any]] = []
+
+        chunks = []
+        if isinstance(result, dict) and "chunks" in result:
+            chunks = result.get("chunks", []) or []
+        elif isinstance(result, list):
+            chunks = result
+        else:
+            return rebuilt
+
+        for ch in chunks:
+            text = ""
+            timestamp = ch.get("timestamp")
+
+            words_field = (
+                ch.get("words") or ch.get("word_timestamps") or ch.get("tokens")
+            )
+
+            if (
+                words_field
+                and isinstance(words_field, (list, tuple))
+                and len(words_field) > 0
+            ):
+                pieces: list[str] = []
+                w_start = None
+                w_end = None
+                for item in words_field:
+                    if isinstance(item, dict):
+                        token_text = (
+                            item.get("text")
+                            or item.get("word")
+                            or item.get("token")
+                            or ""
+                        )
+                        if token_text is None:
+                            token_text = ""
+                        pieces.append(token_text)
+
+                        istart = item.get("start")
+                        iend = item.get("end")
+
+                        if w_start is None and istart is not None:
+                            w_start = float(istart)
+                        if iend is not None:
+                            w_end = float(iend)
+                    else:
+                        pieces.append(str(item))
+
+                text = " ".join([p for p in pieces if p is not None and p != ""])
+
+                if (not timestamp or timestamp is None) and (
+                    w_start is not None and w_end is not None
+                ):
+                    timestamp = (w_start, w_end)
+            else:
+                text = (ch.get("text") or "").strip()
+
+            if not timestamp:
+                continue
+
+            try:
+                s, e = timestamp
+            except Exception:
+                continue
+
+            if s is None:
+                continue
+            if e is None:
+                e = s + 2.0
+
+            s = float(s)
+            e = float(e)
+
+            rebuilt.append({"text": text, "timestamp": (s, e)})
+
+        return rebuilt
+
     def transcribe(
         self,
         audio_path: Path,
@@ -334,17 +600,32 @@ class AudioTranscriber:
         start_time: float = 0.0,
         end_time: float | None = None,
     ) -> list[dict[str, Any]] | None:
-        """Execute the transcription workflow with robustness loops."""
+        """Main entry point: Transcribe audio and generate SRT subtitles.
+
+        Args:
+            audio_path (Path): Path to the input audio/video file.
+            language (str | None): Target language code or fallback setting.
+            subtitle_path (Path | None): Optional external subtitle to override.
+            output_path (Path | None): Output SRT destination (auto if None).
+            start_time (float): Start offset in seconds.
+            end_time (float | None): End offset in seconds.
+
+        Returns:
+            list[dict[str, Any]] | None: List of ASR chunks, or None if subtitle
+                fallback was used.
+        """
         if not audio_path.exists():
             return None
 
         lang = language or settings.language
         out_srt = output_path or audio_path.with_suffix(".srt")
 
+        # Existing subtitle detection
         if start_time == 0.0 and end_time is None:
             if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
                 return None
 
+        # Slice audio if required
         proc_path = audio_path
         is_sliced = False
         if start_time > 0 or end_time is not None:
@@ -376,12 +657,13 @@ class AudioTranscriber:
                         try:
                             prompt_ids = typed_pipe.tokenizer.get_prompt_ids(  # type: ignore
                                 prompt, return_tensors="pt"
-                            ).to(settings.device)
+                            )
+                            if prompt_ids is not None:
+                                prompt_ids = prompt_ids.to(settings.device)
                         except AttributeError:
                             pass
 
-                    gen_kwargs = {
-                        "language": lang,
+                    gen_kwargs: dict[str, Any] = {
                         "task": "transcribe",
                         "temperature": 0.2,
                         "repetition_penalty": 1.2,
@@ -389,14 +671,42 @@ class AudioTranscriber:
                         "prompt_ids": prompt_ids,
                     }
 
-                    result = asr_pipeline(
-                        str(proc_path),
-                        return_timestamps=True,
-                        generate_kwargs=gen_kwargs,
-                    )
-                    chunks = (
-                        result.get("chunks", []) if isinstance(result, dict) else []
-                    )
+                    use_word_timestamps = False
+                    if self._current_model_id:
+                        mid = self._current_model_id.lower()
+                        if "large" not in mid:
+                            use_word_timestamps = True
+
+                    try:
+                        if use_word_timestamps:
+                            result = asr_pipeline(
+                                str(proc_path),
+                                return_timestamps="word",
+                                generate_kwargs=gen_kwargs,
+                            )
+                        else:
+                            result = asr_pipeline(
+                                str(proc_path),
+                                return_timestamps=True,
+                                generate_kwargs=gen_kwargs,
+                            )
+                    except TypeError:
+                        result = asr_pipeline(
+                            str(proc_path),
+                            return_timestamps=True,
+                            generate_kwargs=gen_kwargs,
+                        )
+
+                    chunks = self._rebuild_chunks_from_word_items(result)
+
+                    if not chunks:
+                        if isinstance(result, dict):
+                            chunks = result.get("chunks", []) or []
+                        else:
+                            chunks = []
+
+                    # Split long chunks into shorter ones (heuristic)
+                    chunks = self._split_long_chunks(chunks, max_segment_s=8.0)
 
                     if self._write_srt(chunks, out_srt, offset=start_time) > 0:
                         print(f"[SUCCESS] Saved subtitles: {out_srt}")
@@ -417,7 +727,11 @@ class AudioTranscriber:
 
 
 def main() -> None:
-    """CLI Entry point."""
+    """CLI entry point to run the AudioTranscriber via command-line args.
+
+    Usage:
+        python script.py <audio> [start] [end] [subtitle] [language]
+    """
     if len(sys.argv) < 2:
         sys.exit(1)
     args = sys.argv
