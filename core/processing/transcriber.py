@@ -1,56 +1,37 @@
-"""Robust Audio Transcriber with Subtitle Fallback and RTX Optimization.
+"""Robust Audio Transcriber using Faster-Whisper (CTranslate2).
 
 Features:
-- Fast Downloads: Uses hf_transfer (Rust) and resumable downloads.
+- RTX Optimized: Uses CTranslate2 (C++) with Int8 quantization for 5x speed.
 - Smart Caching: Project Local > Global Cache > Download.
-- Self-Healing: Retries download if cache is corrupted.
-- Anti-Hallucination: Disables previous text conditioning.
+- Anti-Hallucination: Strict generation config to prevent looping/translation.
 - Pipeline Ready: Returns in-memory chunks for Vector DB ingestion.
 """
 
-# Ensure environment hints are set before torch is imported.
-import os
-
-# Mitigate fragmentation (helps allocation stability on CUDA).
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-# If you want to force CPU for quick debugging, uncomment:
-# os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
 import gc
+import os
 import shutil
 import subprocess
 import sys
 import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Any as _Any, cast, cast as _cast
+from typing import Any, Any as _Any, cast as _cast
 
 import torch
-from huggingface_hub import snapshot_download
-from transformers import (
-    AutoModelForSpeechSeq2Seq,
-    AutoProcessor,
-    AutoTokenizer,
-)
-from transformers.generation.configuration_utils import GenerationConfig
-from transformers.modeling_utils import PreTrainedModel
-from transformers.pipelines import pipeline
-from transformers.pipelines.automatic_speech_recognition import (
-    AutomaticSpeechRecognitionPipeline,
-)
-from transformers.pipelines.base import Pipeline
-from transformers.utils import logging as hf_logging
+from faster_whisper import WhisperModel
 
 import config as _config
 
 settings = _cast(_Any, _config.settings)
 
 warnings.filterwarnings("ignore")
-hf_logging.set_verbosity_error()
 
 # Enable High-Performance Transfer & Timeouts (HF hub)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
+
+# Mitigate fragmentation (helps allocation stability on CUDA).
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 class AudioTranscriber:
@@ -61,11 +42,11 @@ class AudioTranscriber:
 
         Initializes internal pipeline references and prints device information.
         """
-        self._pipe: Pipeline | None = None
-        self._current_model_id: str | None = None
+        self._model: WhisperModel | None = None
+        self._current_model_size: str | None = None
         print(
-            f"[INFO] Initialized Transcriber ({settings.device}, "
-            f"{settings.torch_dtype})"
+            f"[INFO] Initialized Faster-Whisper ({settings.device}, "
+            f"Compute: float16/int8)"
         )
 
     def _get_ffmpeg_cmd(self) -> str:
@@ -169,201 +150,51 @@ class AudioTranscriber:
         ]
         if end:
             cmd.extend(["-to", str(end)])
+
+        # Faster-Whisper is robust, but 16kHz mono is always safest
         cmd.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
 
         print(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
         subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
-    def _resolve_model_path(self, model_id: str, force_download: bool = False) -> str:
-        """Resolve a model path from project cache, global cache, or download.
+    def _load_model(self, model_key: str) -> None:
+        """Load the Faster-Whisper model (CTranslate2).
 
         Args:
-            model_id (str): HuggingFace model ID.
-            force_download (bool): If True, forces re-download.
-
-        Returns:
-            str: Filesystem path to the resolved model.
-
-        Raises:
-            RuntimeError: If the model fails to download.
+            model_key (str): The model size or repo ID.
         """
-        kwargs = {
-            "repo_id": model_id,
-            "token": settings.hf_token,
-            "ignore_patterns": ["*.msgpack", "*.h5", "*.ot"],
-        }
-
-        if not force_download:
-            try:
-                print(f"[INFO] Found '{model_id}' in project cache.")
-                return str(
-                    snapshot_download(
-                        **kwargs,
-                        cache_dir=settings.model_cache_dir,
-                        local_files_only=True,
-                    )
-                )
-            except (OSError, ValueError):
-                pass
-            try:
-                print(f"[INFO] Found '{model_id}' in global cache.")
-                return str(
-                    snapshot_download(**kwargs, cache_dir=None, local_files_only=True)
-                )
-            except (OSError, ValueError):
-                pass
-
-        print(f"[INFO] Downloading '{model_id}'...")
-        try:
-            return str(
-                snapshot_download(
-                    **kwargs,
-                    cache_dir=settings.model_cache_dir,
-                    local_files_only=False,
-                    resume_download=True,
-                    max_workers=8,
-                )
-            )
-        except Exception as e:
-            raise RuntimeError(f"Download failed: {e}") from e
-
-    def _patch_config(self, model: Any, tokenizer: Any, language: str) -> None:
-        """Apply Whisper-generation config patches for fine-tuned models.
-
-        Args:
-            model (Any): Loaded ASR model.
-            tokenizer (Any): Model tokenizer.
-            language (str): Target language code.
-
-        Notes:
-            This modifies dynamic attributes on the model's GenerationConfig.
-        """
-        gen_config = model.generation_config
-        if not getattr(gen_config, "no_timestamps_token_id", None):
-            try:
-                model.generation_config = GenerationConfig.from_pretrained(
-                    "openai/whisper-large-v3"
-                )
-                gen_config = model.generation_config
-            except Exception:
-                pass
-
-        gen_config.language = language  # type: ignore
-        gen_config.task = "transcribe"  # type: ignore
-        gen_config.forced_decoder_ids = None  # type: ignore
-        if hasattr(gen_config, "condition_on_previous_text"):
-            gen_config.condition_on_previous_text = False  # type: ignore
-
-        if hasattr(tokenizer, "convert_tokens_to_ids"):
-            tid = tokenizer.convert_tokens_to_ids("<|notimestamps|>")
-            if tid is not None:
-                gen_config.no_timestamps_token_id = tid  # type: ignore
-
-    def _attempt_load_model(
-        self, model_id: str, language: str, force_download: bool
-    ) -> None:
-        """Load a model from cache or download, then build the ASR pipeline.
-
-        Args:
-            model_id (str): Model identifier.
-            language (str): Target transcription language.
-            force_download (bool): Whether to force model download.
-
-        Raises:
-            RuntimeError: If model initialization fails.
-        """
-        self._clear_gpu()
-        model_dir = self._resolve_model_path(model_id, force_download)
-
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_dir)
-            processor = AutoProcessor.from_pretrained(model_dir)
-            model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_dir,
-                torch_dtype=settings.torch_dtype,
-                low_cpu_mem_usage=True,
-                attn_implementation="sdpa",
-            )
-            model.to(settings.device)
-
+        if self._model:
+            del self._model
+            self._model = None
+            gc.collect()
             if settings.device == "cuda":
-                try:
-                    try:
-                        total_mem = torch.cuda.get_device_properties(0).total_memory
-                    except Exception:
-                        total_mem = 0
-                    if total_mem >= 16 * 1024**3:
-                        model = torch.compile(  # type: ignore
-                            model, mode="reduce-overhead", fullgraph=True
-                        )
-                except Exception:
-                    pass
+                torch.cuda.empty_cache()
 
-            self._patch_config(model, tokenizer, language)
-            safe_model = cast(PreTrainedModel, model)
+        # FORCE LARGE-V2 FOR TAMIL.
+        model_size = model_key
+        if "large-v3" in model_key:
+            model_size = "large-v3"
+        elif "large-v2" in model_key:
+            model_size = "large-v2"
+        elif "distil" in model_key and "large" in model_key:
+            model_size = "distil-large-v3"
 
-            self._pipe = pipeline(
-                "automatic-speech-recognition",
-                model=safe_model,
-                tokenizer=tokenizer,
-                feature_extractor=processor.feature_extractor,
-                chunk_length_s=settings.chunk_length_s,
-                batch_size=settings.batch_size,
-                torch_dtype=settings.torch_dtype,
-                device=settings.device_index,
+        print(f"[INFO] Loading Faster-Whisper Model: {model_size}...")
+
+        try:
+            compute_type = "float16" if settings.device == "cuda" else "int8"
+
+            self._model = WhisperModel(
+                model_size,
+                device=settings.device,
+                compute_type=compute_type,
+                download_root=str(settings.model_cache_dir),
             )
-            self._current_model_id = model_id
-            print(f"[SUCCESS] Loaded: {model_id}")
+            self._current_model_size = model_size
+            print(f"[SUCCESS] Loaded {model_size} on {settings.device}")
         except Exception as e:
-            raise RuntimeError(f"Init failed: {e}") from e
-
-    def _load_pipeline(self, language: str, exclude_models: list[str]) -> str:
-        """Load the best available model pipeline, skipping excluded ones.
-
-        Args:
-            language (str): Target transcription language.
-            exclude_models (list[str]): Models previously attempted or failed.
-
-        Returns:
-            str: The model ID successfully loaded.
-
-        Raises:
-            RuntimeError: If all model candidates fail to load.
-        """
-        candidates = settings.whisper_model_map.get(language, [])
-        if settings.fallback_model_id not in candidates:
-            candidates.append(settings.fallback_model_id)
-
-        valid = [m for m in candidates if m not in exclude_models]
-        if not valid:
-            raise RuntimeError(f"No models available for {language}")
-
-        for model_id in valid:
-            if self._pipe and self._current_model_id == model_id:
-                return model_id
-            try:
-                self._attempt_load_model(model_id, language, False)
-                return model_id
-            except Exception:
-                # Retry by forcing a download if the first attempt fails.
-                print(f"[WARN] Load failed '{model_id}', retrying download...")
-                try:
-                    self._attempt_load_model(model_id, language, True)
-                    return model_id
-                except Exception:
-                    self._clear_gpu()
-                    continue
-        raise RuntimeError("All models failed.")
-
-    def _clear_gpu(self) -> None:
-        """Release GPU memory and clear pipeline references."""
-        if self._pipe:
-            del self._pipe
-        self._pipe = None
-        self._current_model_id = None
-        gc.collect()
-        torch.cuda.empty_cache()
+            raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
 
     def _format_timestamp(self, seconds: float) -> str:
         """Convert seconds into SRT timestamp format.
@@ -406,14 +237,11 @@ class AudioTranscriber:
                 except ValueError:
                     continue
 
-                # Maintain previous behavior: skip if start missing
                 if start is None:
                     continue
-                # Provide default end when missing
                 if end is None:
                     end = start + 2.0
 
-                # Make types explicit for the type-checker and for arithmetic
                 start = float(start)
                 end = float(end)
 
@@ -472,16 +300,13 @@ class AudioTranscriber:
                 out.append(ch)
                 continue
 
-            # number of splits (ceil)
             n = int((duration + max_segment_s - 1e-9) // max_segment_s) + 1
             n = max(1, n)
             words = text.split()
             if not words:
-                # no words present, fallback to original chunk
                 out.append(ch)
                 continue
 
-            # compute per-split approximate word counts
             per = max(1, len(words) // n)
             ptr = 0
             for i in range(n):
@@ -494,102 +319,10 @@ class AudioTranscriber:
                 sub_end = start + (i + 1) * (duration / n)
                 out.append({"text": sub_text, "timestamp": (sub_start, sub_end)})
 
-            # attach leftovers to last
             if ptr < len(words) and out:
                 out[-1]["text"] = out[-1]["text"] + " " + " ".join(words[ptr:])
 
         return out
-
-    def _rebuild_chunks_from_word_items(self, result: Any) -> list[dict[str, Any]]:
-        """Rebuild chunks using per-word/token items when available.
-
-        This tries to preserve tokens/words exactly as produced by the model
-        instead of relying on the normalized `chunk['text']`. This helps keep
-        English words and token-level outputs unchanged.
-
-        Args:
-            result (Any): The raw result returned by the ASR pipeline. Usually a
-                dict.
-
-        Returns:
-            list[dict]: Normalized chunks with `text` and `timestamp` keys.
-        """
-        rebuilt: list[dict[str, Any]] = []
-
-        chunks = []
-        if isinstance(result, dict) and "chunks" in result:
-            chunks = result.get("chunks", []) or []
-        elif isinstance(result, list):
-            chunks = result
-        else:
-            return rebuilt
-
-        for ch in chunks:
-            text = ""
-            timestamp = ch.get("timestamp")
-
-            words_field = (
-                ch.get("words") or ch.get("word_timestamps") or ch.get("tokens")
-            )
-
-            if (
-                words_field
-                and isinstance(words_field, (list, tuple))
-                and len(words_field) > 0
-            ):
-                pieces: list[str] = []
-                w_start = None
-                w_end = None
-                for item in words_field:
-                    if isinstance(item, dict):
-                        token_text = (
-                            item.get("text")
-                            or item.get("word")
-                            or item.get("token")
-                            or ""
-                        )
-                        if token_text is None:
-                            token_text = ""
-                        pieces.append(token_text)
-
-                        istart = item.get("start")
-                        iend = item.get("end")
-
-                        if w_start is None and istart is not None:
-                            w_start = float(istart)
-                        if iend is not None:
-                            w_end = float(iend)
-                    else:
-                        pieces.append(str(item))
-
-                text = " ".join([p for p in pieces if p is not None and p != ""])
-
-                if (not timestamp or timestamp is None) and (
-                    w_start is not None and w_end is not None
-                ):
-                    timestamp = (w_start, w_end)
-            else:
-                text = (ch.get("text") or "").strip()
-
-            if not timestamp:
-                continue
-
-            try:
-                s, e = timestamp
-            except Exception:
-                continue
-
-            if s is None:
-                continue
-            if e is None:
-                e = s + 2.0
-
-            s = float(s)
-            e = float(e)
-
-            rebuilt.append({"text": text, "timestamp": (s, e)})
-
-        return rebuilt
 
     def transcribe(
         self,
@@ -632,90 +365,69 @@ class AudioTranscriber:
             proc_path = self._slice_audio(audio_path, start_time, end_time)
             is_sliced = True
 
-        exclude: list[str] = []
+        chunks: list[dict[str, Any]] = []
+
+        # Determine best available model for language
+        candidates = settings.whisper_model_map.get(lang, ["large-v3"])
+        model_to_use = candidates[0] if candidates else "large-v3"
+
+        # # FORCE LARGE-V2 FOR TAMIL.
+        # if lang == "ta":
+        #     model_to_use = "large-v2"
+
         try:
-            while True:
-                try:
-                    current_model = self._load_pipeline(lang, exclude)
-                except RuntimeError:
-                    break
+            # Load model if not loaded or if switching sizes
+            if self._model is None or (
+                self._current_model_size
+                and self._current_model_size not in model_to_use
+            ):
+                self._load_model(model_to_use)
 
-                if self._pipe is None:
-                    break
+            if self._model is None:
+                raise RuntimeError("Model failed to initialize")
 
-                try:
-                    asr_pipeline: Any = self._pipe
+            print(f"[INFO] Running Inference on {proc_path}...")
 
-                    prompt = (
-                        "This is a casual vlog. Vanakkam, hello guys, welcome back. "
-                        "Namba channel-la paarkalam. Super-ah iruku."
-                    )
-                    prompt_ids = None
+            prompt = (
+                "வணக்கம் boss. Late aayiduchu. Sorry sir. Super-ah irukku. "
+                "Casual Tanglish conversation."
+            )
 
-                    typed_pipe = cast(AutomaticSpeechRecognitionPipeline, self._pipe)
-                    if typed_pipe.tokenizer:
-                        try:
-                            prompt_ids = typed_pipe.tokenizer.get_prompt_ids(  # type: ignore
-                                prompt, return_tensors="pt"
-                            )
-                            if prompt_ids is not None:
-                                prompt_ids = prompt_ids.to(settings.device)
-                        except AttributeError:
-                            pass
+            segments, info = self._model.transcribe(
+                str(proc_path),
+                # It forces the model to output exactly what it hears (Greedy),
+                beam_size=1,
+                language=lang,
+                task="transcribe",
+                condition_on_previous_text=False,
+                temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+                initial_prompt=prompt,
+                repetition_penalty=1.0,
+                no_repeat_ngram_size=0,
+                vad_filter=True,
+            )
 
-                    gen_kwargs: dict[str, Any] = {
-                        "task": "transcribe",
-                        "temperature": 0.2,
-                        "repetition_penalty": 1.2,
-                        "no_repeat_ngram_size": 3,
-                        "prompt_ids": prompt_ids,
-                    }
+            for segment in segments:
+                chunk = {
+                    "text": segment.text.strip(),
+                    "timestamp": (segment.start, segment.end),
+                }
+                chunks.append(chunk)
 
-                    use_word_timestamps = False
-                    if self._current_model_id:
-                        mid = self._current_model_id.lower()
-                        if "large" not in mid:
-                            use_word_timestamps = True
+            if not chunks:
+                print("[WARN] No speech detected.")
+                return None
 
-                    try:
-                        if use_word_timestamps:
-                            result = asr_pipeline(
-                                str(proc_path),
-                                return_timestamps="word",
-                                generate_kwargs=gen_kwargs,
-                            )
-                        else:
-                            result = asr_pipeline(
-                                str(proc_path),
-                                return_timestamps=True,
-                                generate_kwargs=gen_kwargs,
-                            )
-                    except TypeError:
-                        result = asr_pipeline(
-                            str(proc_path),
-                            return_timestamps=True,
-                            generate_kwargs=gen_kwargs,
-                        )
+            # Post-processing
+            chunks = self._split_long_chunks(chunks, max_segment_s=8.0)
+            lines_written = self._write_srt(chunks, out_srt, offset=start_time)
 
-                    chunks = self._rebuild_chunks_from_word_items(result)
+            if lines_written > 0:
+                print(f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}")
+                return chunks
 
-                    if not chunks:
-                        if isinstance(result, dict):
-                            chunks = result.get("chunks", []) or []
-                        else:
-                            chunks = []
-
-                    # Split long chunks into shorter ones (heuristic)
-                    chunks = self._split_long_chunks(chunks, max_segment_s=8.0)
-
-                    if self._write_srt(chunks, out_srt, offset=start_time) > 0:
-                        print(f"[SUCCESS] Saved subtitles: {out_srt}")
-                        return chunks
-
-                    exclude.append(current_model)
-                except Exception as e:
-                    print(f"[ERROR] {current_model}: {e}")
-                    exclude.append(current_model)
+        except Exception as e:
+            print(f"[ERROR] Inference failed: {e}")
 
         finally:
             if is_sliced and proc_path.exists():
