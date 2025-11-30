@@ -1,166 +1,463 @@
 # Sprints for the Project
 
-## Sprint 1
+## Repository Information
 
-### Task 1.1 - Project Initialization (COMPLETED)
+- **Repository**: [gnanaprakash2918/AI-Media-Indexer](https://github.com/gnanaprakash2918/AI-Media-Indexer)
+- **Main Branches**: `main`, `sprint-1`, `sprint-2`, `sprint-2-bug`
+- **Tech Stack**:
+  - Orchestrator: Google ADK (Agent Development Kit)
+  - Ingestion Engine: Python with FFmpeg
+  - LLM: Ollama (local) + Google Gemini API
+  - Memory: Qdrant with Docker for Vector Store
+  - Backend: FastAPI
 
-- ✅ Project scaffold and basic tooling.
-  - Created the repository structure with `core/`, `tests/`, and top-level `main.py`.
-  - Added `pyproject.toml` with project metadata and dev tooling.
-  - Runtime dependency: `pydantic`.
-  - Dev tools: `ruff` (linting) and `black` (optional formatting).
-  - Ruff configured to enforce Google-style docstrings and an 80-character line length.
+---
 
-### Task 1.2 - Media Prober (COMPLETED)
+## Sprint 1 (Branch: `sprint-1`)
 
-- ✅ Implemented `MediaProber` in `core/processing/prober.py`.
+### Commit History
 
-  - Provides `probe(file_path: str) -> dict` which runs `ffprobe` to produce
-    JSON-formatted metadata (streams + format).
-  - Uses `subprocess` directly for transparent, reproducible FFmpeg calls.
-  - Errors from `ffprobe` are captured and re-raised as `MediaProbeError` to
-    avoid crashing callers.
-  - Added Google-style docstrings to `MediaProber`, `MediaProbeError`, and the
-    `probe` method, documenting Args, Returns, and Raises.
+#### Commit `28eb302` - Initial Project Setup (2025-11-23)
+**Author**: gnanaprakash2918  
+**Message**: Initial commit
 
-  Topics covered:
+**Changes**:
+- Created initial repository structure
+- Added `.gitignore` with basic Python exclusions
+- Created `README.md` with project overview
+- Established project foundation
 
-  - `subprocess.run` vs `subprocess.Popen` and error handling patterns.
-  - `capture_output=True` and `text=True` for capturing `ffprobe` output.
-  - FFmpeg/ffprobe flags: `-v quiet`, `-print_format json`, `-show_format`,
-    `-show_streams`.
+**Files Added**:
+- `.gitignore`
+- `README.md`
 
-### Task 1.3 - Library Scanner (COMPLETED)
+---
 
-- ✅ Implemented `LibraryScanner` in `core/ingestion/scanner.py`.
+#### Commit `acfa0d6` - Sprint 1 Folder Structure (2025-11-23)
+**Author**: gnanaprakash2918  
+**Message**: Added Sprint 1, Folder Structure
 
-  - Implements `scan(self, root_path: str) -> Generator[Path, None, None]`
-    to recursively discover media files without loading results into memory.
-  - Uses `pathlib.Path` for path operations and yields `Path` objects.
-  - Skips excluded directories and handles `PermissionError` gracefully.
-  - Uses `python-magic` where available to determine mime types and file
-    thresholds for media detection.
-  - Google-style docstrings and linting applied.
+**Changes**:
+- Established modular project structure
+- Created core processing modules
+- Set up ingestion and storage layers
+- Added initial Sprints.md documentation
 
-  Notes:
+**Files Added/Modified**:
+- `core/` directory structure
+- `core/ingestion/scanner.py`
+- `core/processing/prober.py`
+- `core/processing/extractor.py`
+- `core/processing/transcriber.py`
+- `core/schemas.py`
+- `Sprints.md`
+- `pyproject.toml`
 
-  - The scanner yields `(Path, mime_type)` in some helper modes to allow
-    downstream code to make quick decisions without re-probing the file.
-  - Excluded directories are configurable to avoid scanning large system
-    folders (e.g., program files, node_modules, etc.).
+---
 
-## Sprint 2
+#### Commit `7d35ca6` - Prober Refactoring (2025-11-24)
+**Author**: Gnana Prakash M  
+**Message**: Replaces If-else checks with simple loop
 
-### Task 2.1 - Audio Transcription (COMPLETED)
+**Changes**:
+- Refactored `MediaProber` to use loop-based binary checking
+- Improved code readability and maintainability
+- Simplified FFmpeg binary validation logic
 
-- ✅ Add a transcriber file to `core/processing/transcriber.py`.
-  - Implemented `AudioTranscriber` class using Hugging Face's `faster-whisper` model.
-  - Supports GPU acceleration via CUDA.
-- ✅ CUDA Setup:
-  - Used `nvidia-smi` to check CUDA version (13.0 in this case).
-  - Downloaded PyTorch with CUDA 12.1 support: `uv add torch --index-url https://download.pytorch.org/whl/cu121`
-- ✅ Environment Configuration:
-  - Set Hugging Face cache path: `$env:HF_HOME = "D:\huggingface_cache"`
-  - Enabled Unicode support: `chcp 65001` in PowerShell for proper Tamil/Unicode display.
-- ✅ Code Formatting:
-  - Applied Black formatter with 88-character line length: `black . --line-length 88`
-  - Applied Ruff linting and fixes: `ruff check . --fix --unsafe-fixes`
+**Files Modified**:
+- `core/processing/prober.py`
 
-### Task 2.2 - Frame Extraction (COMPLETED)
+---
 
-- ✅ Add frame extraction to `core/processing/extractor.py`.
-  - Implemented `FrameExtractor` class using FFmpeg to extract video frames.
-  - Uses `subprocess` to invoke FFmpeg for transparent, non-abstracted control.
-- ✅ Features:
-  - Extracts frames at specified intervals or as keyframes.
-  - Handles frame caching using `FrameCache` class for temporary storage.
-  - Non-blocking process execution with proper error handling.
-- ✅ Integration:
-  - Proper error handling and path validation.
-  - JPEG frame output format for efficient storage and processing.
+#### Commit `a5d3e40` - FFprobe Binary Validation (2025-11-24)
+**Author**: Gnana Prakash M  
+**Message**: Added a decorator to perform ffprobe binary checks
 
-### Task 2.3 - Vision Processing (COMPLETED)
+**Changes**:
+- Implemented decorator pattern for FFprobe binary validation
+- Added `@require_ffprobe` decorator
+- Enhanced error handling for missing FFmpeg binaries
+- Improved robustness of media probing operations
 
-- ✅ Add vision processing to `core/processing/vision.py`.
-  - Implemented `VisionProcessor` class for analyzing extracted video frames.
-  - Supports multiple LLM backends for vision analysis.
-- ✅ Features:
-  - Processes video frames using state-of-the-art vision models.
-  - Integrates with LLM factory for flexible model selection.
-  - Google-style docstrings and proper error handling.
+**Files Modified**:
+- `core/processing/prober.py` (31 insertions, 4 deletions)
 
-### Task 2.4 - LLM Factory Pattern (COMPLETED)
+---
 
-- ✅ Implement LLM abstraction layer in `llm/` package.
-  - Created `llm/interface.py` with abstract `LLMInterface` base class.
-  - Implements prompt loading with in-memory caching.
-  - Provides JSON parsing utilities for structured responses.
-- ✅ LLM Implementations:
-  - `llm/gemini.py`: Google Gemini API adapter.
-  - `llm/ollama.py`: Local Ollama model adapter.
-  - Both implement the `LLMInterface` contract.
-- ✅ Factory Pattern:
-  - Created `llm/factory.py` with `LLMFactory` for provider instantiation.
-  - Dynamic provider selection based on configuration.
-- ✅ Configuration Management:
-  - `config.py`: Centralized settings with `Settings` class and `LLMProvider` enum.
-  - Environment-backed configuration for API keys, model names, and URLs.
+#### Commit `289fa39` - Prober Testing (2025-11-24)
+**Author**: Gnana Prakash M  
+**Message**: Added Test Main block for prober
 
-### Task 2.5 - Schemas and Data Validation (COMPLETED)
+**Changes**:
+- Added test/demo code to `prober.py`
+- Implemented `if __name__ == "__main__"` block
+- Enabled standalone testing of MediaProber functionality
 
-- ✅ Created `core/schemas.py` with Pydantic models for data validation.
-  - Defined schemas for media metadata, transcription results, and analysis outputs.
-  - Used Pydantic for runtime validation and IDE type hints.
+**Files Modified**:
+- `core/processing/prober.py`
 
-### Task 2.6 - Code Quality and Linting (COMPLETED)
+---
 
-- ✅ Applied Google Python Style Guide throughout:
-  - All files conform to Google-style docstrings.
-  - 80-character line length enforced via Ruff configuration.
-  - Proper import organization and unused code removal.
-- ✅ Configuration in `pyproject.toml`:
-  - Ruff configured with `pydocstyle` rule set for Google-style docstrings.
-  - Line length set to 80 characters.
-  - Black formatter set to 88 characters for additional formatting.
+#### Commit `f8e38be` - Sprint 1 Completion (2025-11-24)
+**Author**: Gnana Prakash M  
+**Message**: SPRINT 1 COMPLETE
 
-## Sprint 3
+**Changes**:
+- Finalized Sprint 1 deliverables
+- Updated Sprints.md with completed tasks
+- Consolidated all Sprint 1 features
+- Prepared for Sprint 2 development
+
+**Files Modified**:
+- `Sprints.md` (71 insertions)
+- `.idea/AI-Media-Indexer.iml`
+- Multiple configuration files
+
+**Total Sprint 1 Changes**: 677 insertions, 279 deletions across 8 files
+
+---
+
+### Sprint 1 Completed Tasks
+
+#### Task 1.1 - Project Initialization ✅
+
+- ✅ Project scaffold and basic tooling
+  - Created repository structure: `core/`, `tests/`, `main.py`
+  - Added `pyproject.toml` with project metadata
+  - Runtime dependency: `pydantic`
+  - Dev tools: `ruff` (linting), `black` (formatting)
+  - Ruff configured for Google-style docstrings (80-char line length)
+
+#### Task 1.2 - Media Prober ✅
+
+- ✅ Implemented `MediaProber` in `core/processing/prober.py`
+  - Provides `probe(file_path: str) -> dict` using `ffprobe`
+  - JSON-formatted metadata extraction (streams + format)
+  - Uses `subprocess` for transparent FFmpeg calls
+  - Custom `MediaProbeError` exception handling
+  - Google-style docstrings with Args, Returns, Raises
+  - Decorator-based FFprobe binary validation
+
+**Technical Details**:
+- `subprocess.run` with `capture_output=True` and `text=True`
+- FFmpeg flags: `-v quiet`, `-print_format json`, `-show_format`, `-show_streams`
+- Robust error handling and binary availability checks
+
+#### Task 1.3 - Library Scanner ✅
+
+- ✅ Implemented `LibraryScanner` in `core/ingestion/scanner.py`
+  - Generator-based file discovery: `scan(root_path) -> Generator[Path, None, None]`
+  - Uses `pathlib.Path` for cross-platform compatibility
+  - Configurable directory exclusions (system folders, node_modules, etc.)
+  - Graceful `PermissionError` handling
+  - Optional `python-magic` integration for MIME type detection
+  - Memory-efficient streaming approach
+
+---
+
+## Sprint 2 (Branch: `sprint-2`)
+
+### Commit History
+
+#### Commit `fa49693` - Sprint 2 Implementation (2025-11-26)
+**Author**: Gnana Prakash M  
+**Message**: SPRINT 2 COMPLETE
+
+**Changes**:
+- Implemented LLM factory pattern with multiple providers
+- Added configuration management system
+- Enhanced vision processing capabilities
+- Updated transcriber with improved settings
+- Comprehensive Sprint 2 documentation
+
+**Files Added**:
+- `config.py` - Centralized configuration management
+- `llm/__init__.py` - LLM package initialization
+- `llm/interface.py` - Abstract LLM interface
+- `llm/factory.py` - LLM factory pattern implementation
+- `llm/gemini.py` - Google Gemini API adapter
+- `llm/ollama.py` - Ollama local model adapter
+
+**Files Modified**:
+- `.gitignore` (3 insertions)
+- `Sprints.md` (156 insertions, 85 deletions)
+- `core/ingestion/scanner.py`
+- `core/processing/extractor.py`
+- `core/processing/transcriber.py`
+- `core/processing/vision.py`
+- `core/schemas.py`
+- `pyproject.toml`
+- `uv.lock`
+
+**Total Sprint 2 Changes**: 1,126 insertions, 156 deletions across 15 files
+
+---
+
+### Sprint 2 Completed Tasks
+
+#### Task 2.1 - Audio Transcription ✅
+
+- ✅ Implemented `AudioTranscriber` in `core/processing/transcriber.py`
+  - Hugging Face `faster-whisper` integration
+  - GPU acceleration via CUDA support
+  - Configurable model selection via environment variables
+
+**CUDA Setup**:
+- Verified CUDA 13.0 with `nvidia-smi`
+- Installed PyTorch with CUDA 12.1:
+  ```bash
+  uv add torch --index-url https://download.pytorch.org/whl/cu121
+  ```
+
+**Environment Configuration**:
+- Hugging Face cache: `$env:HF_HOME = "D:\huggingface_cache"`
+- Unicode support: `chcp 65001` (Tamil/multilingual text)
+
+**Code Quality**:
+- Black formatter: `black . --line-length 88`
+- Ruff linting: `ruff check . --fix --unsafe-fixes`
+
+**References**:
+- [PyTorch CUDA Downloads](https://download.pytorch.org/whl/cu121)
+- [Faster Whisper](https://github.com/guillaumekln/faster-whisper)
+
+---
+
+#### Task 2.2 - Frame Extraction ✅
+
+- ✅ Implemented `FrameExtractor` in `core/processing/extractor.py`
+  - FFmpeg-based video frame extraction
+  - Direct `subprocess` invocation (no abstraction layers)
+  - Configurable extraction intervals and keyframe detection
+  - `FrameCache` class for temporary storage management
+  - Non-blocking process execution
+  - JPEG output format for efficiency
+
+---
+
+#### Task 2.3 - Vision Processing ✅
+
+- ✅ Implemented `VisionProcessor` in `core/processing/vision.py`
+  - Multi-modal vision analysis of video frames
+  - LLM factory integration for flexible backend selection
+  - Support for both Gemini and Ollama vision models
+  - Google-style docstrings and error handling
+
+---
+
+#### Task 2.4 - LLM Factory Pattern ✅
+
+- ✅ Created `llm/` package with abstraction layer
+  
+**`llm/interface.py`**:
+- Abstract `LLMInterface` base class
+- Prompt loading with in-memory caching
+- JSON parsing utilities for structured LLM responses
+- Common error handling patterns
+
+**`llm/gemini.py`**:
+- Google Gemini API adapter
+- Implements `LLMInterface` contract
+- Supports text and vision models
+- API key management via environment variables
+
+**`llm/ollama.py`**:
+- Local Ollama model adapter
+- Implements `LLMInterface` contract
+- Configurable base URL and model selection
+- Supports vision models (e.g., `llava`)
+
+**`llm/factory.py`**:
+- `LLMFactory` class for provider instantiation
+- Dynamic provider selection based on configuration
+- Singleton pattern for efficient resource usage
+
+**`config.py`**:
+- Centralized `Settings` class
+- `LLMProvider` enum (GEMINI, OLLAMA)
+- Environment-backed configuration:
+  - `GEMINI_API_KEY` / `GOOGLE_API_KEY`
+  - `GEMINI_MODEL` (default: `gemini-1.5-flash`)
+  - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
+  - `OLLAMA_MODEL` (default: `llava`)
+  - `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`
+  - `PROMPT_DIR` for external prompt templates
+
+**References**:
+- [Google Gemini API](https://ai.google.dev/)
+- [Ollama](https://ollama.ai/)
+- [Ollama Python Library](https://github.com/ollama/ollama-python)
+
+---
+
+#### Task 2.5 - Schemas and Data Validation ✅
+
+- ✅ Enhanced `core/schemas.py` with Pydantic models
+  - Media metadata schemas
+  - Transcription result models
+  - Vision analysis output schemas
+  - Runtime validation and IDE type hints
+
+---
+
+#### Task 2.6 - Code Quality and Linting ✅
+
+- ✅ Applied Google Python Style Guide project-wide
+  - Google-style docstrings in all modules
+  - 80-character line length (Ruff)
+  - 88-character line length (Black)
+  - Proper import organization
+  - Unused code removal
+
+**Configuration** (`pyproject.toml`):
+- Ruff: `pydocstyle` rules, 80-char limit
+- Black: 88-char limit
+- Type checking preparation
+
+---
+
+## Sprint 2 Bug Fixes (Branch: `sprint-2-bug`)
+
+### Commit History
+
+#### Commit `c4ddbd3` - .gitignore Improvements (2025-11-30)
+**Author**: Gnana Prakash M  
+**Message**: Using .gitignore to get rid of .idea files Improved .gitignore to get rid of .idea files
+
+**Changes**:
+- Enhanced `.gitignore` to exclude IDE-specific files
+- Added comprehensive JetBrains `.idea/` exclusions
+- Improved repository cleanliness
+- Updated Sprints.md with bug fix documentation
+
+**Files Modified**:
+- `Sprints.md` (5 insertions, 1 deletion)
+- `config.py` (110 insertions, 64 deletions)
+- `core/processing/transcriber.py`
+- `pyproject.toml`
+- `uv.lock`
+
+**Total Bug Fix Changes**: Focused on configuration refinement and IDE file exclusions
+
+---
+
+## Sprint 3 (Planned)
 
 ### Task 3.1 - Database and Storage Layer
 
-- [ ] Implement SQLite database schema for media metadata storage.
-- [ ] Create `core/storage/db.py` for database operations.
-- [ ] Implement CRUD operations for media entries, transcriptions, and analysis results.
+- [ ] Implement SQLite database schema for media metadata
+- [ ] Create `core/storage/db.py` with database operations
+- [ ] CRUD operations for media entries, transcriptions, analysis results
+- [ ] Database migration system
 
 ### Task 3.2 - Main Processing Pipeline
 
-- [ ] Create unified `main.py` that orchestrates:
+- [ ] Unified `main.py` orchestration:
   - File scanning via `LibraryScanner`
   - Frame extraction via `FrameExtractor`
   - Transcription via `AudioTranscriber`
   - Vision analysis via `VisionProcessor`
-  - Results storage via database layer.
-- [ ] Implement batch processing with progress tracking.
-- [ ] Add error recovery and logging.
+  - Results storage via database layer
+- [ ] Batch processing with progress tracking
+- [ ] Error recovery and comprehensive logging
+- [ ] Async/concurrent processing optimization
 
 ### Task 3.3 - API and Web Interface
 
-- [ ] Implement FastAPI endpoints for:
+- [ ] FastAPI endpoints:
   - Media library browsing
   - Search and filtering
   - Analysis result retrieval
   - Indexing status monitoring
-- [ ] Create web UI for media index visualization.
+- [ ] Web UI for media index visualization
+- [ ] RESTful API documentation (OpenAPI/Swagger)
 
 ### Task 3.4 - Testing and Documentation
 
-- [ ] Write comprehensive unit tests for each module.
-- [ ] Add integration tests for the full pipeline.
-- [ ] Create API documentation.
-- [ ] Write user guide and deployment instructions.
+- [ ] Comprehensive unit tests for each module
+- [ ] Integration tests for full pipeline
+- [ ] API documentation (auto-generated)
+- [ ] User guide and deployment instructions
+- [ ] Performance benchmarking
 
-- `winget install --id Microsoft.VisualStudio.2022.BuildTools -e`
-- `winget install --id Kitware.CMake -e`
-- `winget install --id NinjaBuild.Ninja -e`
-- `winget install Ninja-build.Ninja`
-- `https://github.com/z-mahmud22/Dlib_Windows_Python3.x`
-- `uv add "dlib @ https://github.com/z-mahmud22/Dlib_Windows_Python3.x/raw/main/dlib-19.24.99-cp312-cp312-win_amd64.whl"`
+---
+
+## Development Tools and Dependencies
+
+### Build Tools (Windows)
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e
+winget install --id Kitware.CMake -e
+winget install --id NinjaBuild.Ninja -e
+winget install Ninja-build.Ninja
+```
+
+### Special Dependencies
+
+**dlib (Windows Python 3.12)**:
+- Repository: [z-mahmud22/Dlib_Windows_Python3.x](https://github.com/z-mahmud22/Dlib_Windows_Python3.x)
+- Installation:
+  ```bash
+  uv add "dlib @ https://github.com/z-mahmud22/Dlib_Windows_Python3.x/raw/main/dlib-19.24.99-cp312-cp312-win_amd64.whl"
+  ```
+
+### Key Python Packages
+- `pydantic` - Data validation
+- `torch` - Deep learning (CUDA 12.1)
+- `faster-whisper` - Audio transcription
+- `google-generativeai` - Gemini API
+- `ollama` - Local LLM integration
+- `python-magic` - MIME type detection
+- `ruff` - Linting
+- `black` - Code formatting
+
+---
+
+## Useful Commands
+
+### Environment Setup
+```powershell
+# Set Hugging Face cache directory
+$env:HF_HOME = "D:\huggingface_cache"
+
+# Enable Unicode support in PowerShell
+chcp 65001
+```
+
+### Code Quality
+```bash
+# Format code with Black
+black . --line-length 88
+
+# Lint and auto-fix with Ruff
+ruff check . --fix --unsafe-fixes
+
+# Check types (future)
+mypy .
+```
+
+### Git Workflow
+```bash
+# View all branches
+git branch -a
+
+# View commit history
+git log --all --graph --oneline --decorate
+
+# Compare branches
+git diff sprint-1..sprint-2 --stat
+```
+
+---
+
+## References and Documentation
+
+- **FFmpeg**: [https://ffmpeg.org/](https://ffmpeg.org/)
+- **PyTorch CUDA**: [https://download.pytorch.org/whl/cu121](https://download.pytorch.org/whl/cu121)
+- **Faster Whisper**: [https://github.com/guillaumekln/faster-whisper](https://github.com/guillaumekln/faster-whisper)
+- **Google Gemini API**: [https://ai.google.dev/](https://ai.google.dev/)
+- **Ollama**: [https://ollama.ai/](https://ollama.ai/)
+- **Pydantic**: [https://docs.pydantic.dev/](https://docs.pydantic.dev/)
+- **FastAPI**: [https://fastapi.tiangolo.com/](https://fastapi.tiangolo.com/)
+- **Qdrant**: [https://qdrant.tech/](https://qdrant.tech/)
+- **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
