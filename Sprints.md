@@ -18,32 +18,38 @@
 ### Commit History
 
 #### Commit `28eb302` - Initial Project Setup (2025-11-23)
+
 **Author**: gnanaprakash2918  
 **Message**: Initial commit
 
 **Changes**:
+
 - Created initial repository structure
 - Added `.gitignore` with basic Python exclusions
 - Created `README.md` with project overview
 - Established project foundation
 
 **Files Added**:
+
 - `.gitignore`
 - `README.md`
 
 ---
 
 #### Commit `acfa0d6` - Sprint 1 Folder Structure (2025-11-23)
+
 **Author**: gnanaprakash2918  
 **Message**: Added Sprint 1, Folder Structure
 
 **Changes**:
+
 - Established modular project structure
 - Created core processing modules
 - Set up ingestion and storage layers
 - Added initial Sprints.md documentation
 
 **Files Added/Modified**:
+
 - `core/` directory structure
 - `core/ingestion/scanner.py`
 - `core/processing/prober.py`
@@ -56,59 +62,71 @@
 ---
 
 #### Commit `7d35ca6` - Prober Refactoring (2025-11-24)
+
 **Author**: Gnana Prakash M  
 **Message**: Replaces If-else checks with simple loop
 
 **Changes**:
+
 - Refactored `MediaProber` to use loop-based binary checking
 - Improved code readability and maintainability
 - Simplified FFmpeg binary validation logic
 
 **Files Modified**:
+
 - `core/processing/prober.py`
 
 ---
 
 #### Commit `a5d3e40` - FFprobe Binary Validation (2025-11-24)
+
 **Author**: Gnana Prakash M  
 **Message**: Added a decorator to perform ffprobe binary checks
 
 **Changes**:
+
 - Implemented decorator pattern for FFprobe binary validation
 - Added `@require_ffprobe` decorator
 - Enhanced error handling for missing FFmpeg binaries
 - Improved robustness of media probing operations
 
 **Files Modified**:
+
 - `core/processing/prober.py` (31 insertions, 4 deletions)
 
 ---
 
 #### Commit `289fa39` - Prober Testing (2025-11-24)
+
 **Author**: Gnana Prakash M  
 **Message**: Added Test Main block for prober
 
 **Changes**:
+
 - Added test/demo code to `prober.py`
 - Implemented `if __name__ == "__main__"` block
 - Enabled standalone testing of MediaProber functionality
 
 **Files Modified**:
+
 - `core/processing/prober.py`
 
 ---
 
 #### Commit `f8e38be` - Sprint 1 Completion (2025-11-24)
+
 **Author**: Gnana Prakash M  
 **Message**: SPRINT 1 COMPLETE
 
 **Changes**:
+
 - Finalized Sprint 1 deliverables
 - Updated Sprints.md with completed tasks
 - Consolidated all Sprint 1 features
 - Prepared for Sprint 2 development
 
 **Files Modified**:
+
 - `Sprints.md` (71 insertions)
 - `.idea/AI-Media-Indexer.iml`
 - Multiple configuration files
@@ -139,6 +157,7 @@
   - Decorator-based FFprobe binary validation
 
 **Technical Details**:
+
 - `subprocess.run` with `capture_output=True` and `text=True`
 - FFmpeg flags: `-v quiet`, `-print_format json`, `-show_format`, `-show_streams`
 - Robust error handling and binary availability checks
@@ -160,10 +179,12 @@
 ### Commit History
 
 #### Commit `fa49693` - Sprint 2 Implementation (2025-11-26)
+
 **Author**: Gnana Prakash M  
 **Message**: SPRINT 2 COMPLETE
 
 **Changes**:
+
 - Implemented LLM factory pattern with multiple providers
 - Added configuration management system
 - Enhanced vision processing capabilities
@@ -171,6 +192,7 @@
 - Comprehensive Sprint 2 documentation
 
 **Files Added**:
+
 - `config.py` - Centralized configuration management
 - `llm/__init__.py` - LLM package initialization
 - `llm/interface.py` - Abstract LLM interface
@@ -179,6 +201,7 @@
 - `llm/ollama.py` - Ollama local model adapter
 
 **Files Modified**:
+
 - `.gitignore` (3 insertions)
 - `Sprints.md` (156 insertions, 85 deletions)
 - `core/ingestion/scanner.py`
@@ -203,6 +226,7 @@
   - Configurable model selection via environment variables
 
 **CUDA Setup**:
+
 - Verified CUDA 13.0 with `nvidia-smi`
 - Installed PyTorch with CUDA 12.1:
   ```bash
@@ -210,14 +234,17 @@
   ```
 
 **Environment Configuration**:
+
 - Hugging Face cache: `$env:HF_HOME = "D:\huggingface_cache"`
 - Unicode support: `chcp 65001` (Tamil/multilingual text)
 
 **Code Quality**:
+
 - Black formatter: `black . --line-length 88`
 - Ruff linting: `ruff check . --fix --unsafe-fixes`
 
 **References**:
+
 - [PyTorch CUDA Downloads](https://download.pytorch.org/whl/cu121)
 - [Faster Whisper](https://github.com/guillaumekln/faster-whisper)
 
@@ -248,31 +275,36 @@
 #### Task 2.4 - LLM Factory Pattern ✅
 
 - ✅ Created `llm/` package with abstraction layer
-  
+
 **`llm/interface.py`**:
+
 - Abstract `LLMInterface` base class
 - Prompt loading with in-memory caching
 - JSON parsing utilities for structured LLM responses
 - Common error handling patterns
 
 **`llm/gemini.py`**:
+
 - Google Gemini API adapter
 - Implements `LLMInterface` contract
 - Supports text and vision models
 - API key management via environment variables
 
 **`llm/ollama.py`**:
+
 - Local Ollama model adapter
 - Implements `LLMInterface` contract
 - Configurable base URL and model selection
 - Supports vision models (e.g., `llava`)
 
 **`llm/factory.py`**:
+
 - `LLMFactory` class for provider instantiation
 - Dynamic provider selection based on configuration
 - Singleton pattern for efficient resource usage
 
 **`config.py`**:
+
 - Centralized `Settings` class
 - `LLMProvider` enum (GEMINI, OLLAMA)
 - Environment-backed configuration:
@@ -284,6 +316,7 @@
   - `PROMPT_DIR` for external prompt templates
 
 **References**:
+
 - [Google Gemini API](https://ai.google.dev/)
 - [Ollama](https://ollama.ai/)
 - [Ollama Python Library](https://github.com/ollama/ollama-python)
@@ -310,6 +343,7 @@
   - Unused code removal
 
 **Configuration** (`pyproject.toml`):
+
 - Ruff: `pydocstyle` rules, 80-char limit
 - Black: 88-char limit
 - Type checking preparation
@@ -321,16 +355,19 @@
 ### Commit History
 
 #### Commit `c4ddbd3` - .gitignore Improvements (2025-11-30)
+
 **Author**: Gnana Prakash M  
 **Message**: Using .gitignore to get rid of .idea files Improved .gitignore to get rid of .idea files
 
 **Changes**:
+
 - Enhanced `.gitignore` to exclude IDE-specific files
 - Added comprehensive JetBrains `.idea/` exclusions
 - Improved repository cleanliness
 - Updated Sprints.md with bug fix documentation
 
 **Files Modified**:
+
 - `Sprints.md` (5 insertions, 1 deletion)
 - `config.py` (110 insertions, 64 deletions)
 - `core/processing/transcriber.py`
@@ -385,6 +422,7 @@
 ## Development Tools and Dependencies
 
 ### Build Tools (Windows)
+
 ```powershell
 winget install --id Microsoft.VisualStudio.2022.BuildTools -e
 winget install --id Kitware.CMake -e
@@ -395,6 +433,7 @@ winget install Ninja-build.Ninja
 ### Special Dependencies
 
 **dlib (Windows Python 3.12)**:
+
 - Repository: [z-mahmud22/Dlib_Windows_Python3.x](https://github.com/z-mahmud22/Dlib_Windows_Python3.x)
 - Installation:
   ```bash
@@ -402,6 +441,7 @@ winget install Ninja-build.Ninja
   ```
 
 ### Key Python Packages
+
 - `pydantic` - Data validation
 - `torch` - Deep learning (CUDA 12.1)
 - `faster-whisper` - Audio transcription
@@ -416,6 +456,7 @@ winget install Ninja-build.Ninja
 ## Useful Commands
 
 ### Environment Setup
+
 ```powershell
 # Set Hugging Face cache directory
 $env:HF_HOME = "D:\huggingface_cache"
@@ -425,6 +466,7 @@ chcp 65001
 ```
 
 ### Code Quality
+
 ```bash
 # Format code with Black
 black . --line-length 88
@@ -437,6 +479,7 @@ mypy .
 ```
 
 ### Git Workflow
+
 ```bash
 # View all branches
 git branch -a

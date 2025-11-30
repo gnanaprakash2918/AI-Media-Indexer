@@ -1,53 +1,114 @@
-"""Configuration and environment-backed settings for the LLM and Audio adapters.
+"""Configuration settings for the ASR and LLM pipeline."""
 
-This module exposes a small Settings container and an LLMProvider enum used by
-the rest of the project to discover which LLM implementation to instantiate.
-"""
-
-import os
 from enum import Enum
 from pathlib import Path
+from typing import Literal
+
+import torch
+from pydantic import Field, computed_field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LLMProvider(str, Enum):
-    """Enumeration of supported LLM providers."""
+    """Supported LLM providers."""
 
     GEMINI = "gemini"
     OLLAMA = "ollama"
 
 
-class Settings:
-    """Runtime configuration values loaded from environment variables.
+class Settings(BaseSettings):
+    """Application settings, hardware config, and external keys."""
 
-    Attributes:
-        PROMPT_DIR: Directory where prompt templates are stored.
-        DEFAULT_PROVIDER: Default LLM provider to use.
-        DEFAULT_TIMEOUT: Default request timeout in seconds.
-        GEMINI_API_KEY: API key for Gemini (or GOOGLE_API_KEY fallback).
-        GEMINI_MODEL: Default Gemini model name.
-        OLLAMA_BASE_URL: Base URL for Ollama service.
-        OLLAMA_MODEL: Default Ollama model name.
-    """
-
-    PROMPT_DIR: Path = Path(os.getenv("PROMPT_DIR", "./prompts"))
-    DEFAULT_PROVIDER: LLMProvider = LLMProvider(os.getenv("LLM_PROVIDER", "gemini"))
-    DEFAULT_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "120"))
-
-    # Gemini
-    GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or os.getenv(
-        "GOOGLE_API_KEY"
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
     )
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
-    # Ollama
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llava")
+    #  Paths
+    @property
+    def project_root(self) -> Path:
+        """Finds project root by looking for .git or .env files."""
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / ".git").exists() or (parent / ".env").exists():
+                return parent
+        return current.parent.parent
 
-    # Whisper (Audio)
-    # To use 'vasista22/whisper-tamil-large-v2', you must convert it first
-    WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
-    WHISPER_DEVICE: str | None = os.getenv("WHISPER_DEVICE", None)  # Auto-detect
-    WHISPER_COMPUTE_TYPE: str | None = os.getenv("WHISPER_COMPUTE_TYPE", None)
+    @computed_field
+    @property
+    def model_cache_dir(self) -> Path:
+        """Path to project_root/models (primary cache)."""
+        path = self.project_root / "models"
+        path.mkdir(exist_ok=True)
+        return path
+
+    @computed_field
+    @property
+    def prompt_dir(self) -> Path:
+        """Path to project_root/prompts."""
+        path = self.project_root / "prompts"
+        path.mkdir(exist_ok=True)
+        return path
+
+    # LLM Config
+    llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
+    llm_timeout: int = Field(default=120)
+    gemini_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
+    gemini_model: str = "gemini-1.5-flash"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llava"
+
+    # ASR Config
+    fallback_model_id: str = "openai/whisper-large-v3-turbo"
+    whisper_model_map: dict[str, list[str]] = Field(
+        default={
+            "ta": [
+                "openai/whisper-large-v2",
+                "vasista22/whisper-tamil-large-v2",
+                "openai/whisper-large-v3-turbo",
+            ],
+            "en": [
+                "openai/whisper-large-v3-turbo",
+                "distil-whisper/distil-large-v3",
+            ],
+        }
+    )
+
+    language: str = Field(default="ta", description="Target language code")
+    batch_size: int = Field(default=24, ge=1)
+    chunk_length_s: int = Field(default=30, ge=1)
+    hf_token: str | None = None
+
+    # Hardware
+    device_override: Literal["cuda", "cpu", "mps"] | None = None
+    compute_type_override: Literal["float16", "float32"] | None = None
+
+    @computed_field
+    @property
+    def device(self) -> str:
+        """Determines the torch device string."""
+        if self.device_override:
+            return self.device_override
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    @computed_field
+    @property
+    def device_index(self) -> int:
+        """Returns integer device index for Pipeline (0 for GPU, -1 for CPU)."""
+        return 0 if self.device == "cuda" else -1
+
+    @computed_field
+    @property
+    def torch_dtype(self) -> torch.dtype:
+        """Determines optimal torch data type."""
+        if self.compute_type_override == "float32":
+            return torch.float32
+        if self.compute_type_override == "float16":
+            return torch.float16
+        return torch.float16 if self.device == "cuda" else torch.float32
 
 
 settings = Settings()
