@@ -4,7 +4,8 @@ Features:
 - Fast Downloads: Uses hf_transfer (Rust) and resumable downloads.
 - Smart Caching: Project Local > Global Cache > Download.
 - Self-Healing: Retries download if cache is corrupted.
-- Anti-Hallucination: Disables previous text conditioning.
+- Anti-Hallucination: Disables previous text conditioning & penalizes repetition.
+- Pipeline Ready: Returns in-memory chunks for Vector DB ingestion.
 """
 
 import gc
@@ -202,7 +203,7 @@ class AudioTranscriber:
         gen_config.task = "transcribe"
         gen_config.forced_decoder_ids = None
 
-        # Fix Hallucination Loops: Set strictly in config, NOT in generate_kwargs
+        # Fix Hallucination Loops: Set strictly in config
         if hasattr(gen_config, "condition_on_previous_text"):
             gen_config.condition_on_previous_text = False
 
@@ -356,11 +357,11 @@ class AudioTranscriber:
         output_path: Path | None = None,
         start_time: float = 0.0,
         end_time: float | None = None,
-    ) -> None:
+    ) -> list[dict[str, Any]] | None:
         """Executes the transcription workflow with robustness loops."""
         if not audio_path.exists():
             print(f"[ERROR] Audio file not found: {audio_path}")
-            return
+            return None
 
         lang = language or settings.language
         out_srt = output_path or audio_path.with_suffix(".srt")
@@ -368,7 +369,7 @@ class AudioTranscriber:
         # 1. Check existing subtitles
         if start_time == 0.0 and end_time is None:
             if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
-                return
+                return None
 
         # 2. Prepare Audio
         proc_path = audio_path
@@ -413,11 +414,10 @@ class AudioTranscriber:
                     gen_kwargs = {
                         "language": lang,
                         "task": "transcribe",
-                        "temperature": 0.2,
-                        "repetition_penalty": 1.2,
-                        "no_repeat_ngram_size": 3,
-                        # "condition_on_previous_text": False,
-                        "prompt_ids": prompt_ids if language == "ta" else None,
+                        "temperature": 0.2,  # Slight randomness for colloquialism
+                        "repetition_penalty": 1.2,  # Penalty for loops
+                        "no_repeat_ngram_size": 3,  # Penalty for phrase loops
+                        "prompt_ids": prompt_ids,
                     }
 
                     result = asr_pipeline(
@@ -435,8 +435,12 @@ class AudioTranscriber:
                     lines_written = self._write_srt(chunks, out_srt, offset=start_time)
 
                     if lines_written > 0:
-                        print(f"[SUCCESS]Saved {lines_written} subtitles to: {out_srt}")
-                        break
+                        print(
+                            f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}"
+                        )
+
+                        # Return data for Vector DB Ingestion
+                        return chunks
                     else:
                         print(
                             f"[WARN] Model {current_model} produced empty/invalid SRT. "
@@ -456,6 +460,8 @@ class AudioTranscriber:
                     proc_path.unlink()
                 except Exception:
                     pass
+
+        return None
 
 
 def main() -> None:
