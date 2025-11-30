@@ -16,7 +16,7 @@ import sys
 import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import Any, cast
 
 import torch
 from huggingface_hub import snapshot_download
@@ -27,6 +27,9 @@ from transformers import (
 )
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.pipelines import pipeline
+from transformers.pipelines.automatic_speech_recognition import (
+    AutomaticSpeechRecognitionPipeline,
+)
 from transformers.pipelines.base import Pipeline
 from transformers.utils import logging as hf_logging
 
@@ -391,16 +394,33 @@ class AudioTranscriber:
                     break
 
                 try:
+                    asr_pipeline = cast(AutomaticSpeechRecognitionPipeline, self._pipe)
+
+                    prompt = (
+                        "This is a casual vlog. Vanakkam, hello guys, welcome back."
+                        " Namba channel-la paarkalam. Super-ah iruku."
+                    )
+
+                    prompt_ids = None
+                    if asr_pipeline.tokenizer:
+                        try:
+                            prompt_ids = asr_pipeline.tokenizer.get_prompt_ids(
+                                prompt, return_tensors="pt"
+                            ).to(settings.device)  # type: ignore
+                        except AttributeError:
+                            pass
+
                     gen_kwargs = {
                         "language": lang,
                         "task": "transcribe",
-                        "temperature": 0.0,
+                        "temperature": 0.2,
                         "repetition_penalty": 1.2,
-                        "no_repeat_ngram_size": 0,
+                        "no_repeat_ngram_size": 3,
                         # "condition_on_previous_text": False,
+                        "prompt_ids": prompt_ids,
                     }
 
-                    result = self._pipe(
+                    result = asr_pipeline(
                         str(proc_path),
                         return_timestamps=True,
                         generate_kwargs=gen_kwargs,
