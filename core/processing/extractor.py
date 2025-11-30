@@ -35,7 +35,7 @@ class FrameExtractor:
     async def extract(
         self, video_path: str | Path, interval: int = 2
     ) -> AsyncGenerator[Path, None]:
-        """Async generator that extracts frames from a video file at specified intervals.
+        """Generator that extracts frames from a video file at specified intervals.
 
         Args:
             video_path: Path to the video file.
@@ -120,7 +120,8 @@ class FrameExtractor:
 
         except Exception as exc:
             print(
-                f"[ERROR:{type(exc).__name__}] Unexpected error processing '{video_path}': {exc}"
+                f"[ERROR:{type(exc).__name__}] Unexpected error "
+                f"processing '{video_path}': {exc}"
             )
             return
 
