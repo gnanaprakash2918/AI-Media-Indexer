@@ -305,10 +305,12 @@ class AudioTranscriber:
     def _write_srt(
         self, chunks: list[dict[str, Any]], path: Path, offset: float
     ) -> int:
-        """Writes chunks to SRT. Returns number of lines written."""
+        """Writes chunks to SRT with Hallucination Filtering."""
         count = 0
+        last_text = ""
+
         with open(path, "w", encoding="utf-8") as f:
-            for idx, chunk in enumerate(chunks, start=1):
+            for chunk in chunks:
                 text = chunk.get("text", "").strip()
                 timestamp = chunk.get("timestamp")
 
@@ -325,6 +327,13 @@ class AudioTranscriber:
                 if end is None:
                     end = start + 2.0
 
+                if (end - start) < 0.2:
+                    continue
+
+                if text == last_text:
+                    continue
+
+                idx = count + 1
                 f.write(
                     f"{idx}\n"
                     f"{self._format_timestamp(start + offset)} --> "
@@ -332,6 +341,8 @@ class AudioTranscriber:
                     f"{text}\n\n"
                 )
                 count += 1
+                last_text = text
+
         return count
 
     def transcribe(
@@ -384,6 +395,9 @@ class AudioTranscriber:
                         "language": lang,
                         "task": "transcribe",
                         "temperature": 0.0,
+                        "repetition_penalty": 1.2,
+                        "no_repeat_ngram_size": 0,
+                        # "condition_on_previous_text": False,
                     }
 
                     result = self._pipe(
@@ -391,6 +405,7 @@ class AudioTranscriber:
                         return_timestamps=True,
                         generate_kwargs=gen_kwargs,
                     )
+
                     chunks = (
                         result.get("chunks", []) if isinstance(result, dict) else []
                     )

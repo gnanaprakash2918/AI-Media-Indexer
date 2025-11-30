@@ -64,8 +64,8 @@ class Settings(BaseSettings):
         default={
             "ta": [
                 "openai/whisper-large-v3-turbo",
-                "openai/whisper-large-v3",
                 "vasista22/whisper-tamil-large-v2",
+                "openai/whisper-large-v3",
             ],
             "en": [
                 "openai/whisper-large-v3-turbo",
