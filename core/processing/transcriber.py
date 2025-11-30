@@ -417,7 +417,7 @@ class AudioTranscriber:
                         "repetition_penalty": 1.2,
                         "no_repeat_ngram_size": 3,
                         # "condition_on_previous_text": False,
-                        "prompt_ids": prompt_ids,
+                        "prompt_ids": prompt_ids if language == "ta" else None,
                     }
 
                     result = asr_pipeline(
