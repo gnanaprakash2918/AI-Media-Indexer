@@ -49,7 +49,7 @@ class Settings(BaseSettings):
         path.mkdir(exist_ok=True)
         return path
 
-    #  LLM Config
+    # LLM Config
     llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
     llm_timeout: int = Field(default=120)
     gemini_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
@@ -57,21 +57,18 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llava"
 
-    #  ASR Config
+    # ASR Config
     fallback_model_id: str = "openai/whisper-large-v3-turbo"
-
     whisper_model_map: dict[str, list[str]] = Field(
         default={
             "ta": [
-                "openai/whisper-large-v3",
                 "openai/whisper-large-v2",
-                "openai/whisper-large-v3-turbo",
                 "vasista22/whisper-tamil-large-v2",
+                "openai/whisper-large-v3-turbo",
             ],
             "en": [
                 "openai/whisper-large-v3-turbo",
                 "distil-whisper/distil-large-v3",
-                "openai/whisper-large-v3",
             ],
         }
     )
@@ -81,7 +78,7 @@ class Settings(BaseSettings):
     chunk_length_s: int = Field(default=30, ge=1)
     hf_token: str | None = None
 
-    #  Hardware
+    # Hardware
     device_override: Literal["cuda", "cpu", "mps"] | None = None
     compute_type_override: Literal["float16", "float32"] | None = None
 
