@@ -1,13 +1,18 @@
 """Robust Audio Transcriber using Faster-Whisper (CTranslate2).
 
 Features:
-- RTX Optimized: Uses CTranslate2 (C++) with Int8 quantization for 5x speed.
+- RTX Optimized: Uses CTranslate2 (C++) with Int8/Float16 quantization.
 - Smart Caching: Project Local > Global Cache > Download.
+- High-Speed Download: Uses hf_transfer and parallel workers.
+- Auto-Conversion: Automatically converts PyTorch models to CTranslate2.
 - Anti-Hallucination: Strict generation config to prevent looping/translation.
 - Pipeline Ready: Returns in-memory chunks for Vector DB ingestion.
+- Tanglish Fixed: Uses "Mixed-Script Anchoring" prompt to prevent translation.
+- Self-Healing: Automatically repairs corrupted model caches.
 """
 
 import gc
+import json
 import os
 import shutil
 import subprocess
@@ -15,22 +20,19 @@ import sys
 import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Any as _Any, cast as _cast
+from typing import Any
 
+import ctranslate2.converters
 import torch
-from faster_whisper import WhisperModel
+from faster_whisper import BatchedInferencePipeline, WhisperModel
+from huggingface_hub import snapshot_download
 
-import config as _config
-
-settings = _cast(_Any, _config.settings)
+from config import settings
 
 warnings.filterwarnings("ignore")
 
-# Enable High-Performance Transfer & Timeouts (HF hub)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
-
-# Mitigate fragmentation (helps allocation stability on CUDA).
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
@@ -43,14 +45,19 @@ class AudioTranscriber:
         Initializes internal pipeline references and prints device information.
         """
         self._model: WhisperModel | None = None
+        self._batched_model: BatchedInferencePipeline | None = None
         self._current_model_size: str | None = None
+
+        self.device = settings.device
+        self.compute_type: str = "float16" if self.device == "cuda" else "int8"
+
         print(
-            f"[INFO] Initialized Faster-Whisper ({settings.device}, "
-            f"Compute: float16/int8)"
+            f"[INFO] Initialized Faster-Whisper ({self.device}, "
+            f"Compute: {self.compute_type})"
         )
 
     def _get_ffmpeg_cmd(self) -> str:
-        """Locate the ffmpeg executable in system PATH.
+        """Locates the ffmpeg executable in system PATH.
 
         Returns:
             str: Full path to the ffmpeg executable.
@@ -70,7 +77,7 @@ class AudioTranscriber:
         user_sub_path: Path | None,
         language: str,
     ) -> bool:
-        """Search for subtitles: user-provided, sidecar files, or embedded streams.
+        """Searches for subtitles: user-provided, sidecar files, or embedded streams.
 
         Args:
             input_path (Path): Video/audio input file.
@@ -83,13 +90,11 @@ class AudioTranscriber:
         """
         print("[INFO] Probing for existing subtitles...")
 
-        # 1. User Provided
         if user_sub_path and user_sub_path.exists():
             print(f"[SUCCESS] Using provided subtitle: {user_sub_path}")
             shutil.copy(user_sub_path, output_path)
             return True
 
-        # 2. Sidecar files
         for sidecar in [
             input_path.with_suffix(f".{language}.srt"),
             input_path.with_suffix(".srt"),
@@ -99,7 +104,6 @@ class AudioTranscriber:
                 shutil.copy(sidecar, output_path)
                 return True
 
-        # 3. Embedded subtitles extraction
         cmd = [
             self._get_ffmpeg_cmd(),
             "-y",
@@ -151,48 +155,100 @@ class AudioTranscriber:
         if end:
             cmd.extend(["-to", str(end)])
 
-        # Faster-Whisper is robust, but 16kHz mono is always safest
         cmd.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
 
         print(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
         subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
-    def _load_model(self, model_key: str) -> None:
-        """Load the Faster-Whisper model (CTranslate2).
+    def _convert_and_cache_model(self, model_id: str) -> str:
+        """Downloads/converts models using HF transfer and CTranslate2."""
+        sanitized_name = model_id.replace("/", "_")
+        ct2_output_dir = settings.model_cache_dir / "converted_models" / sanitized_name
+        raw_model_dir = settings.model_cache_dir / "raw_models" / sanitized_name
 
-        Args:
-            model_key (str): The model size or repo ID.
-        """
-        if self._model:
-            del self._model
-            self._model = None
-            gc.collect()
-            if settings.device == "cuda":
-                torch.cuda.empty_cache()
+        if (ct2_output_dir / "config.json").exists():
+            try:
+                with open(ct2_output_dir / "config.json", "r", encoding="utf-8") as f:
+                    conf = json.load(f)
+                    if "architectures" in conf or "_name_or_path" in conf:
+                        print(f"[WARN] Corrupted config in {ct2_output_dir}. Purging.")
+                        shutil.rmtree(ct2_output_dir)
+            except Exception:
+                shutil.rmtree(ct2_output_dir, ignore_errors=True)
 
-        # FORCE LARGE-V2 FOR TAMIL.
-        model_size = model_key
-        if "large-v3" in model_key:
-            model_size = "large-v3"
-        elif "large-v2" in model_key:
-            model_size = "large-v2"
-        elif "distil" in model_key and "large" in model_key:
-            model_size = "distil-large-v3"
+        if (ct2_output_dir / "model.bin").exists():
+            needed_files = ["tokenizer.json", "vocab.json"]
+            if "large-v3" in model_id:
+                needed_files.append("preprocessor_config.json")
 
-        print(f"[INFO] Loading Faster-Whisper Model: {model_size}...")
+            for fname in needed_files:
+                if not (ct2_output_dir / fname).exists():
+                    if (raw_model_dir / fname).exists():
+                        shutil.copy(raw_model_dir / fname, ct2_output_dir / fname)
+            return str(ct2_output_dir)
+
+        print(f"[INFO] Model {model_id} needs conversion.")
+        print(f"[INFO] Step 1: High-Speed Download to {raw_model_dir}...")
 
         try:
-            compute_type = "float16" if settings.device == "cuda" else "int8"
+            snapshot_download(
+                repo_id=model_id,
+                local_dir=str(raw_model_dir),
+                local_dir_use_symlinks=False,
+                resume_download=True,
+                max_workers=8,
+                token=settings.hf_token,
+                ignore_patterns=["*.msgpack", "*.h5", "*.tflite", "*.ot"],
+            )
+            print("[SUCCESS] Download complete.")
+            print(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
 
+            converter = ctranslate2.converters.TransformersConverter(
+                str(raw_model_dir), load_as_float16=True
+            )
+            converter.convert(str(ct2_output_dir), quantization="float16", force=True)
+
+            for file_name in [
+                "preprocessor_config.json",
+                "tokenizer.json",
+                "vocab.json",
+            ]:
+                src = raw_model_dir / file_name
+                if src.exists():
+                    shutil.copy(src, ct2_output_dir / file_name)
+
+            print("[SUCCESS] Model converted and patched successfully.")
+            return str(ct2_output_dir)
+
+        except Exception as e:
+            print(f"[ERROR] Model download/conversion failed: {e}")
+            raise RuntimeError(f"Could not prepare {model_id}.") from e
+
+    def _load_model(self, model_key: str) -> None:
+        """Loads the Faster-Whisper model."""
+        if self._model:
+            del self._model
+            del self._batched_model
+            self._model = None
+            self._batched_model = None
+            gc.collect()
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+
+        print(f"[INFO] Requesting Model: {model_key}...")
+        final_model_path = self._convert_and_cache_model(model_key)
+
+        try:
             self._model = WhisperModel(
-                model_size,
-                device=settings.device,
-                compute_type=compute_type,
+                final_model_path,
+                device=self.device,
+                compute_type=self.compute_type,
                 download_root=str(settings.model_cache_dir),
             )
-            self._current_model_size = model_size
-            print(f"[SUCCESS] Loaded {model_size} on {settings.device}")
+            self._batched_model = BatchedInferencePipeline(model=self._model)
+            self._current_model_size = model_key
+            print(f"[SUCCESS] Loaded {model_key} on {self.device}")
         except Exception as e:
             raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
 
@@ -348,17 +404,16 @@ class AudioTranscriber:
                 fallback was used.
         """
         if not audio_path.exists():
+            print(f"[ERROR] Input file not found: {audio_path}")
             return None
 
         lang = language or settings.language
         out_srt = output_path or audio_path.with_suffix(".srt")
 
-        # Existing subtitle detection
         if start_time == 0.0 and end_time is None:
             if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
                 return None
 
-        # Slice audio if required
         proc_path = audio_path
         is_sliced = False
         if start_time > 0 or end_time is not None:
@@ -366,45 +421,41 @@ class AudioTranscriber:
             is_sliced = True
 
         chunks: list[dict[str, Any]] = []
-
-        # Determine best available model for language
-        candidates = settings.whisper_model_map.get(lang, ["large-v3"])
-        model_to_use = candidates[0] if candidates else "large-v3"
-
-        # # FORCE LARGE-V2 FOR TAMIL.
-        # if lang == "ta":
-        #     model_to_use = "large-v2"
+        candidates = settings.whisper_model_map.get(lang, [settings.fallback_model_id])
+        model_to_use = candidates[0] if candidates else settings.fallback_model_id
 
         try:
-            # Load model if not loaded or if switching sizes
-            if self._model is None or (
-                self._current_model_size
-                and self._current_model_size not in model_to_use
+            if self._batched_model is None or (
+                self._current_model_size != model_to_use
             ):
                 self._load_model(model_to_use)
 
-            if self._model is None:
+            if self._batched_model is None:
                 raise RuntimeError("Model failed to initialize")
 
-            print(f"[INFO] Running Inference on {proc_path}...")
+            print(f"[INFO] Running Inference on {proc_path} with {model_to_use}...")
 
             prompt = (
-                "வணக்கம் boss. Late aayiduchu. Sorry sir. Super-ah irukku. "
-                "Casual Tanglish conversation."
+                "வணக்கம். Hello sir. என்ன late ஆயிடுச்சு? பரவாயில்லை. "
+                "Project details பேசலாம். Okay, let's start."
             )
 
-            segments, info = self._model.transcribe(
+            segments, info = self._batched_model.transcribe(
                 str(proc_path),
-                # It forces the model to output exactly what it hears (Greedy),
-                beam_size=1,
+                batch_size=settings.batch_size,
                 language=lang,
                 task="transcribe",
+                beam_size=5,
                 condition_on_previous_text=False,
-                temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
                 initial_prompt=prompt,
-                repetition_penalty=1.0,
-                no_repeat_ngram_size=0,
+                repetition_penalty=1.2,
                 vad_filter=True,
+                vad_parameters={
+                    "min_speech_duration_ms": 250,
+                    "min_silence_duration_ms": 2000,
+                    "speech_pad_ms": 500,
+                    "threshold": 0.4,
+                },
             )
 
             for segment in segments:
@@ -418,8 +469,13 @@ class AudioTranscriber:
                 print("[WARN] No speech detected.")
                 return None
 
-            # Post-processing
-            chunks = self._split_long_chunks(chunks, max_segment_s=8.0)
+            print(
+                f"[SUCCESS] Transcription complete. Prob: {info.language_probability}"
+            )
+
+            chunks = self._split_long_chunks(
+                chunks, max_segment_s=settings.chunk_length_s
+            )
             lines_written = self._write_srt(chunks, out_srt, offset=start_time)
 
             if lines_written > 0:
@@ -428,6 +484,7 @@ class AudioTranscriber:
 
         except Exception as e:
             print(f"[ERROR] Inference failed: {e}")
+            raise
 
         finally:
             if is_sliced and proc_path.exists():
@@ -453,7 +510,7 @@ def main() -> None:
     sub = (
         Path(args[4]).resolve() if len(args) > 4 and args[4].lower() != "none" else None
     )
-    lang = args[5] if len(args) > 5 else None
+    lang = args[5] if len(args) > 5 else "ta"
 
     AudioTranscriber().transcribe(audio, lang, sub, None, start, end)
 
