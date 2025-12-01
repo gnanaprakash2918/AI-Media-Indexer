@@ -193,3 +193,38 @@ class VectorDB:
             )
 
         return results
+
+    def upsert_media_frame(
+        self,
+        point_id: str,
+        vector: list[float],
+        video_path: str,
+        timestamp: float,
+        action: str | None = None,
+        dialogue: str | None = None,
+    ) -> None:
+        if len(vector) != self.MEDIA_VECTOR_SIZE:
+            raise ValueError(
+                f"media frame vector dim mismatch: expected {self.MEDIA_VECTOR_SIZE}, "
+                f"got {len(vector)}"
+            )
+
+        payload = {
+            "video_path": video_path,
+            "timestamp": timestamp,
+            "action": action,
+            "dialogue": dialogue,
+        }
+
+        self.client.upsert(
+            collection_name=self.MEDIA_COLLECTION,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload=payload,
+                )
+            ],
+        )
+
+        print(f"[VectorDB] Upserted media frame id={point_id}")
