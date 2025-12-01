@@ -228,3 +228,36 @@ class VectorDB:
         )
 
         print(f"[VectorDB] Upserted media frame id={point_id}")
+
+    def insert_face(
+        self,
+        face_encoding: list[float],
+        name: str | None = None,
+        cluster_id: int | None = None,
+    ) -> str:
+        if len(face_encoding) != self.FACE_VECTOR_SIZE:
+            raise ValueError(
+                f"face vector dim mismatch: expected {self.FACE_VECTOR_SIZE}, "
+                f"got {len(face_encoding)}"
+            )
+
+        point_id = str(uuid.uuid4())
+
+        payload = {
+            "name": name,
+            "cluster_id": cluster_id,
+        }
+
+        self.client.upsert(
+            collection_name=self.FACES_COLLECTION,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector=face_encoding,
+                    payload=payload,
+                )
+            ],
+        )
+
+        print(f"[VectorDB] Upserted face id={point_id}, name={name}")
+        return point_id
