@@ -504,3 +504,5 @@ git diff sprint-1..sprint-2 --stat
 - **FastAPI**: [https://fastapi.tiangolo.com/](https://fastapi.tiangolo.com/)
 - **Qdrant**: [https://qdrant.tech/](https://qdrant.tech/)
 - **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
+
+- `docker compose -f docker-compose.qdrant.yaml up -d`

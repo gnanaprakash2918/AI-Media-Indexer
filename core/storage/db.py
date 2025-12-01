@@ -1,4 +1,4 @@
-"""Vector database utilities for media, faces, and documents using Qdrant."""
+"""Vector database utilities for media, faces using Qdrant."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ class VectorDB:
     Manages:
     - Embedded or remote Qdrant initialization
     - Collection setup
-    - Text segment insertion and search
     - Media frame upsert
     - Face insertion and search
     - Local SentenceTransformer model loading
@@ -30,7 +29,6 @@ class VectorDB:
         MEDIA_SEGMENTS_COLLECTION: Collection name for media text segments.
         MEDIA_COLLECTION: Collection name for media frame vectors.
         FACES_COLLECTION: Collection name for face embeddings.
-        DOCS_COLLECTION: Collection name for document embeddings.
         MEDIA_VECTOR_SIZE: Expected dimension of media frame vectors.
         FACE_VECTOR_SIZE: Expected dimension of face embeddings.
         TEXT_DIM: Expected dimension of text embeddings.
@@ -40,9 +38,8 @@ class VectorDB:
     MEDIA_SEGMENTS_COLLECTION = "media_segments"
     MEDIA_COLLECTION = "media_frames"
     FACES_COLLECTION = "faces"
-    DOCS_COLLECTION = "docs"
 
-    MEDIA_VECTOR_SIZE = 768
+    MEDIA_VECTOR_SIZE = 384
     FACE_VECTOR_SIZE = 128
     TEXT_DIM = 384
 
@@ -55,7 +52,7 @@ class VectorDB:
         backend: str = "memory",
         host: str = "localhost",
         port: int = 6333,
-        path: str = "qdrant_data",
+        path: str = "qdrant_data_embedded",
     ) -> None:
         """Initialize the vector database.
 
@@ -163,16 +160,6 @@ class VectorDB:
                 vectors_config=models.VectorParams(
                     size=self.FACE_VECTOR_SIZE,
                     distance=models.Distance.EUCLID,
-                ),
-            )
-
-        if not self.client.collection_exists(self.DOCS_COLLECTION):
-            print("docs collection not found. Creating it.")
-            self.client.create_collection(
-                collection_name=self.DOCS_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.TEXT_DIM,
-                    distance=models.Distance.COSINE,
                 ),
             )
 
@@ -483,7 +470,7 @@ class VectorDB:
 
 
 if __name__ == "__main__":
-    db = VectorDB(backend="memory")
+    db = VectorDB(backend="docker")
 
     try:
         db.insert_media_segments(

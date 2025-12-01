@@ -44,6 +44,7 @@ source = { editable = "." }
 dependencies = [
     { name = "black" },
     { name = "cmake" },
+    { name = "ctranslate2" },
     { name = "cython" },
     { name = "dlib" },
     { name = "face-recognition" },
@@ -86,6 +87,7 @@ requires-dist = [
     { name = "black", specifier = ">=24.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
     { name = "cmake", specifier = ">=3.20.0" },
+    { name = "ctranslate2", specifier = ">=4.6.1" },
     { name = "cython", specifier = ">=3.0.0" },
     { name = "dlib", url = "https://github.com/z-mahmud22/Dlib_Windows_Python3.x/raw/main/dlib-19.24.99-cp312-cp312-win_amd64.whl" },
     { name = "face-recognition", specifier = ">=1.3.0" },
