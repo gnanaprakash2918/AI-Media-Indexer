@@ -1,3 +1,6 @@
+import uuid
+from typing import Any
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
@@ -87,3 +90,50 @@ class VectorDB:
 
     def list_collections(self):
         return self.client.get_collections()
+
+    def insert_media_segments(
+        self, video_path: str, segments: list[dict[str, Any]]
+    ) -> None:
+        if not segments:
+            return
+
+        print(f"Encoding {len(segments)} segments for {video_path}...")
+
+        texts = [s.get("text", "") for s in segments]
+        embeddings = self.encoder.encode(texts, show_progress_bar=False)
+
+        if len(embeddings[0]) != self.TEXT_DIM:
+            raise ValueError(
+                f"Text embedding dimension mismatch: expected {self.TEXT_DIM}, "
+                f"got {len(embeddings[0])}"
+            )
+
+        points: list[models.PointStruct] = []
+
+        for i, segment in enumerate(segments):
+            start_time = segment.get("start", 0.0)
+            unique_str = f"{video_path}_{start_time}"
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
+
+            payload = {
+                "video_path": str(video_path),
+                "text": segment.get("text"),
+                "start": start_time,
+                "end": segment.get("end"),
+                "type": segment.get("type", "dialogue"),
+            }
+
+            points.append(
+                models.PointStruct(
+                    id=point_id,
+                    vector=embeddings[i].tolist(),
+                    payload=payload,
+                )
+            )
+
+        self.client.upsert(
+            collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+            points=points,
+        )
+
+        print(f"Inserted {len(points)} segments into Qdrant.")
