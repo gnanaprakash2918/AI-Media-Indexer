@@ -137,3 +137,59 @@ class VectorDB:
         )
 
         print(f"Inserted {len(points)} segments into Qdrant.")
+
+    def search_media(
+        self,
+        query: str,
+        limit: int = 5,
+        score_threshold: float | None = None,
+        video_path: str | None = None,
+        segment_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query_vector = self.encoder.encode(query).tolist()
+
+        conditions: list[models.Condition] = []
+
+        if video_path is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="video_path",
+                    match=models.MatchValue(value=video_path),
+                )
+            )
+
+        if segment_type is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="type",
+                    match=models.MatchValue(value=segment_type),
+                )
+            )
+
+        qdrant_filter = models.Filter(must=conditions) if conditions else None
+
+        resp = self.client.query_points(
+            collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+            query=query_vector,
+            limit=limit,
+            score_threshold=score_threshold,
+            query_filter=qdrant_filter,
+        )
+
+        hits = resp.points
+
+        results: list[dict[str, Any]] = []
+        for hit in hits:
+            payload = hit.payload or {}
+            results.append(
+                {
+                    "score": hit.score,
+                    "text": payload.get("text"),
+                    "start": payload.get("start"),
+                    "end": payload.get("end"),
+                    "video_path": payload.get("video_path"),
+                    "type": payload.get("type"),
+                }
+            )
+
+        return results
