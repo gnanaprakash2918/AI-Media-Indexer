@@ -261,3 +261,68 @@ class VectorDB:
 
         print(f"[VectorDB] Upserted face id={point_id}, name={name}")
         return point_id
+
+    def search_face(
+        self,
+        face_encoding: list[float],
+        limit: int = 5,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
+        if len(face_encoding) != self.FACE_VECTOR_SIZE:
+            raise ValueError(
+                f"face query vector dim mismatch: expected {self.FACE_VECTOR_SIZE}, "
+                f"got {len(face_encoding)}"
+            )
+
+        resp = self.client.query_points(
+            collection_name=self.FACES_COLLECTION,
+            query=face_encoding,
+            limit=limit,
+            score_threshold=score_threshold,
+        )
+
+        hits = resp.points
+
+        results: list[dict[str, Any]] = []
+        for hit in hits:
+            payload = hit.payload or {}
+            results.append(
+                {
+                    "score": hit.score,
+                    "id": hit.id,
+                    "name": payload.get("name"),
+                    "cluster_id": payload.get("cluster_id"),
+                }
+            )
+
+        return results
+
+
+if __name__ == "__main__":
+    db = VectorDB(backend="memory")
+
+    db.insert_media_segments(
+        "test_video.mp4",
+        [
+            {
+                "text": "Hello world this is a test",
+                "start": 0.0,
+                "end": 2.0,
+                "type": "dialogue",
+            }
+        ],
+    )
+
+    print("Media search result (no filter):", db.search_media("Hello world"))
+    print(
+        "Media search result (filtered):",
+        db.search_media(
+            "Hello world", video_path="test_video.mp4", segment_type="dialogue"
+        ),
+    )
+
+    fake_face_vec = [0.01] * db.FACE_VECTOR_SIZE
+    db.insert_face(fake_face_vec, name="Test Person", cluster_id=0)
+
+    face_results = db.search_face(fake_face_vec, limit=3)
+    print("Face search result:", face_results)
