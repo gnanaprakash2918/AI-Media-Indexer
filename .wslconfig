@@ -1,0 +1,10 @@
+[wsl2]
+# Limit WSL to 8GB or 12GB (depending on your total RAM). 
+# This leaves RAM for Windows so it doesn't kill the WSL process.
+memory=12GB 
+
+# Add Swap space to handle the heavy PyTorch compilation
+swap=8GB
+
+# Release memory back to Windows when not in use
+autoMemoryReclaim=drop_cache
