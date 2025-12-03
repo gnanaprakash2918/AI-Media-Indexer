@@ -1,0 +1,15 @@
+# Build dependencies (Needed for NeMo compilation)
+cython
+packaging
+setuptools
+wheel
+
+# Core AI Libraries (The heavy stuff)
+torch
+torchaudio
+
+# Application Libraries
+nemo_toolkit[asr]
+faster-whisper
+huggingface_hub[hf_transfer]
+pydantic-settings

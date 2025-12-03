@@ -23,11 +23,15 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
     )
 
-    #  Paths
+    # Paths
     @property
     def project_root(self) -> Path:
-        """Finds project root by looking for .git or .env files."""
+        """Finds project root. In Docker, this is usually /app."""
         current = Path(__file__).resolve()
+        # Check if we are in Docker (/app) or local development
+        if current.parts[1] == "app":
+            return Path("/app")
+
         for parent in current.parents:
             if (parent / ".git").exists() or (parent / ".env").exists():
                 return parent
@@ -59,14 +63,17 @@ class Settings(BaseSettings):
 
     # ASR Config
     fallback_model_id: str = "openai/whisper-large-v3-turbo"
+
+    # NeMo Specific Config
+    nemo_repo_id: str = "ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large"
+    nemo_filename: str = "indicconformer_stt_ta_hybrid_rnnt_large.nemo"
+
     whisper_model_map: dict[str, list[str]] = Field(
         default={
             "ta": [
-                "openai/whisper-large-v2",
-                # "vasista22/whisper-tamil-large-v2",
-                # "openai/whisper-small",
-                "openai/whisper-large-v3",
+                "ai4bharat/indicconformer",  # Priority 1: NeMo Model
                 "openai/whisper-large-v3-turbo",
+                "openai/whisper-large-v3",
             ],
             "en": [
                 "openai/whisper-large-v3-turbo",
@@ -82,7 +89,7 @@ class Settings(BaseSettings):
 
     # Hardware
     device_override: Literal["cuda", "cpu", "mps"] | None = None
-    compute_type_override: Literal["float16", "float32"] | None = None
+    compute_type_override: Literal["float16", "float32", "int8"] | None = None
 
     @computed_field
     @property
@@ -92,8 +99,7 @@ class Settings(BaseSettings):
             return self.device_override
         if torch.cuda.is_available():
             return "cuda"
-        if torch.backends.mps.is_available():
-            return "mps"
+        # MPS is not supported in standardized Docker containers, defaulting to CPU
         return "cpu"
 
     @computed_field
@@ -104,13 +110,12 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
-    def torch_dtype(self) -> torch.dtype:
-        """Determines optimal torch data type."""
-        if self.compute_type_override == "float32":
-            return torch.float32
-        if self.compute_type_override == "float16":
-            return torch.float16
-        return torch.float16 if self.device == "cuda" else torch.float32
+    def compute_type(self) -> str:
+        """Determines optimal quantization type."""
+        if self.compute_type_override:
+            return self.compute_type_override
+        # NeMo handles precision internally; this logic primarily targets Faster-Whisper
+        return "float16" if self.device == "cuda" else "int8"
 
 
 settings = Settings()

@@ -1,0 +1,44 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: media_agent_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+
+  transcriber:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: ai-transcriber:latest
+    container_name: audio_transcriber
+    # High SHM size needed for PyTorch dataloaders
+    shm_size: "8gb"
+    volumes:
+      # Persist huge models on disk, not in container
+      - ./models:/app/models
+      # Mount code for live editing
+      - ./config.py:/app/config.py
+      - ./core:/app/core
+      # Windows Drives
+      # ...
+      - "C:/:/mnt/c:rw"
+      - "D:/:/mnt/d:rw"
+    env_file:
+      - .env
+    environment:
+      - HF_HOME=/app/models/huggingface
+      - QDRANT_URL=http://media_agent_qdrant:6333
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ["gpu"]
+    depends_on:
+      - qdrant
+    command: tail -f /dev/null

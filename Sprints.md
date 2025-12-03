@@ -491,7 +491,69 @@ git log --all --graph --oneline --decorate
 git diff sprint-1..sprint-2 --stat
 ```
 
----
+To properly run your transcriber with Qdrant in Docker and avoid errors, follow these clean steps:
+
+## Setup Files and Folder Structure
+
+- Place these files directly inside your project root folder (e.g., `D:\AI-Media-Indexer`):
+  - `docker-compose.yml` (with combined Qdrant and Transcriber config)
+  - `Dockerfile` (for the transcriber image build)
+- Make sure your folder structure looks like this:
+  ```
+  D:\AI-Media-Indexer\
+  ├── docker-compose.yml
+  ├── Dockerfile
+  ├── src\
+  │    └── transcriber.py
+  └── input_audio\  (for your audio files)
+  ```
+
+## Running the Stack (Full Mode)
+
+1. Open terminal in `D:\AI-Media-Indexer`.
+2. Start everything (database + transcriber containers) in detached mode, rebuilding images:
+   ```bash
+   docker compose up -d --build
+   ```
+3. Check both containers are running:
+   ```bash
+   docker compose ps
+   ```
+4. Copy your audio file (e.g., `dudeoutput.mp3`) into the `input_audio` folder, so Docker can access it.
+5. Run the transcriber inside its container, pointing to the audio:
+   ```bash
+   docker compose exec transcriber python src/transcriber.py "/app/input_audio/dudeoutput.mp3" 0 None None ta
+   ```
+
+## Running Transcriber Only (Test Mode)
+
+- To run only the transcriber container to test without starting Qdrant:
+  ```bash
+  docker compose run --rm --no-deps transcriber python src/transcriber.py "/app/input_audio/dudeoutput.mp3" 0 None None ta
+  ```
+
+## Stopping Containers
+
+- To stop and remove containers without deleting your data volumes:
+  ```bash
+  docker compose down
+  ```
+
+## Important Notes
+
+- Docker cannot see Windows user folders directly, so always copy audio files into your project’s `input_audio` folder.
+- Avoid placing `docker-compose.yml` and `Dockerfile` inside subfolders; keeping them in the root avoids path issues.
+- If you placed your docker files inside a folder like `docker`, you must specify the compose file path and include the `up` command explicitly:
+  ```bash
+  docker compose -f ./docker/docker-compose.yml up -d --build
+  ```
+  But this may break Python source path resolution, so it's better to keep files at the root.
+
+```
+docker compose exec transcriber python core/processing/transcriber.py "C:\Users\Gnana Prakash M\Downloads\Programs\unaku.mp3" 0 None None ta
+
+docker compose exec transcriber python core/processing/transcriber.py "C:\Users\Gnana Prakash M\Downloads\Programs\your_file_name.mp3" 0 None None en
+```
 
 ## References and Documentation
 

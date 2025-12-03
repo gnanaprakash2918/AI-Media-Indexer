@@ -1,0 +1,17 @@
+# Ignore git
+.git
+.gitignore
+
+# Ignore local Python junk
+__pycache__
+*.pyc
+.venv
+venv
+
+# Ignore huge data folders (They are mounted via Compose instead)
+models/
+qdrant_data/
+downloads/
+
+# Ignore local requirements to force usage of docker version
+requirements.txt

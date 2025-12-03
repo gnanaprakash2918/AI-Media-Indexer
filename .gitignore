@@ -5,6 +5,7 @@ __pycache__/
 
 # Custom
 models/
+qdrant_data/
 
 # C extensions
 *.so
