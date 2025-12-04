@@ -5,8 +5,8 @@ services:
     image: qdrant/qdrant:latest
     container_name: media_agent_qdrant
     ports:
-      - "6333:6333" # HTTP API
-      - "6334:6334" # gRPC API (optional for now)
+      - "6333:6333"   # HTTP API
+      - "6334:6334"   # gRPC API
     volumes:
       - ./qdrant_data:/qdrant/storage
     restart: unless-stopped
