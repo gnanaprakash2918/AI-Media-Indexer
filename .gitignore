@@ -5,7 +5,9 @@ __pycache__/
 
 # Custom
 models/
-qudrant_data
+qdrant_data/
+get_files.py
+analyze_branch.py
 
 # C extensions
 *.so
