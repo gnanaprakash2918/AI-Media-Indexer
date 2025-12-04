@@ -382,7 +382,7 @@
 - Local Ollama model adapter
 - Implements `LLMInterface` contract
 - Configurable base URL and model selection
-- Supports vision models (e.g., `llava`)
+- Supports vision models (e.g., `llava:7b`)
 
 **`llm/factory.py`**:
 
@@ -398,9 +398,72 @@
   - `GEMINI_API_KEY` / `GOOGLE_API_KEY`
   - `GEMINI_MODEL` (default: `gemini-1.5-flash`)
   - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
-  - `OLLAMA_MODEL` (default: `llava`)
+  - `OLLAMA_MODEL` (default: `llava:7b`)
   - `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`
   - `PROMPT_DIR` for external prompt templates
+
+# Running Ingestion pipeline
+
+Gotcha — Windows, and you only care about **Qdrant as a service**, no app container. Perfect, that’s actually simpler. 🙌
+
+You **do not need any Dockerfile** if you’re just running Qdrant — the official image already _is_ the Dockerfile. Your `docker-compose.yml` is enough.
+
+I’ll still show you:
+
+- How to **stop + clean everything** on Docker.
+- How to **run only Qdrant** via your `docker-compose.yml`.
+- (Optional) a minimal Dockerfile for Qdrant if you _really_ want one, but it’s redundant.
+
+---
+
+## 1️⃣ Stop everything + clean Docker (Windows)
+
+### 📌 In PowerShell
+
+Run these one by one:
+
+```powershell
+# 1. Stop all running containers
+docker ps -q | ForEach-Object { docker stop $_ }
+
+# 2. Remove all containers (stopped + running)
+docker ps -aq | ForEach-Object { docker rm $_ }
+
+# 3. Prune EVERYTHING unused: containers, images, networks, volumes, build cache
+#    WARNING: This will delete unused images and volumes for ALL projects.
+docker system prune -af --volumes
+```
+
+If you want to **wipe Qdrant data** as well (fresh DB):
+
+```powershell
+Remove-Item -Recurse -Force .\qdrant_data -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path .\qdrant_data | Out-Null
+```
+
+> Run those from your **project root** (where `docker-compose.yml` lives).
+
+---
+
+## 2️⃣ Run only Qdrant with docker-compose
+
+From the same folder:
+
+```powershell
+# If your Docker Desktop uses the new syntax:
+docker compose up -d
+
+# If that errors, use the old one:
+# docker-compose up -d
+```
+
+Check it’s running:
+
+```powershell
+docker ps
+```
+
+You should see `media_agent_qdrant` up with ports `6333` and `6334`.
 
 **References**:
 
@@ -443,7 +506,7 @@
 
 #### Commit `c4ddbd3` - .gitignore Improvements (2025-11-30)
 
-**Author**: Gnana Prakash M  
+**Author**: Gnana Prakash M
 **Message**: Using .gitignore to get rid of .idea files Improved .gitignore to get rid of .idea files
 
 **Changes**:
