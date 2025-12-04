@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
     gemini_model: str = "gemini-1.5-flash"
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llava"
+    ollama_model: str = "llava:7b"
 
     # ASR Config
     fallback_model_id: str = "openai/whisper-large-v3-turbo"
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
 
     language: str = Field(default="ta", description="Target language code")
     batch_size: int = Field(default=24, ge=1)
-    chunk_length_s: int = Field(default=30, ge=1)
+    chunk_length_s: int = Field(default=10, ge=1)
     hf_token: str | None = None
 
     # Hardware
