@@ -1,0 +1,1228 @@
+from enum import Enum
+from pathlib import Path
+from typing import Literal
+import torch
+from pydantic import Field, computed_field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+class LLMProvider(str, Enum):
+    GEMINI = "gemini"
+    OLLAMA = "ollama"
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+    )
+    @property
+    def project_root(self) -> Path:
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / ".git").exists() or (parent / ".env").exists():
+                return parent
+        return current.parent.parent
+    @computed_field
+    @property
+    def model_cache_dir(self) -> Path:
+        path = self.project_root / "models"
+        path.mkdir(exist_ok=True)
+        return path
+    @computed_field
+    @property
+    def prompt_dir(self) -> Path:
+        path = self.project_root / "prompts"
+        path.mkdir(exist_ok=True)
+        return path
+    llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
+    llm_timeout: int = Field(default=120)
+    gemini_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
+    gemini_model: str = "gemini-1.5-flash"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llava"
+    fallback_model_id: str = "openai/whisper-large-v3-turbo"
+    whisper_model_map: dict[str, list[str]] = Field(
+        default={
+            "ta": [
+                "openai/whisper-large-v2",
+                "openai/whisper-large-v3",
+                "openai/whisper-large-v3-turbo",
+            ],
+            "en": [
+                "openai/whisper-large-v3-turbo",
+                "distil-whisper/distil-large-v3",
+            ],
+        }
+    )
+    language: str = Field(default="ta", description="Target language code")
+    batch_size: int = Field(default=24, ge=1)
+    chunk_length_s: int = Field(default=30, ge=1)
+    hf_token: str | None = None
+    device_override: Literal["cuda", "cpu", "mps"] | None = None
+    compute_type_override: Literal["float16", "float32"] | None = None
+    @computed_field
+    @property
+    def device(self) -> str:
+        if self.device_override:
+            return self.device_override
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+    @computed_field
+    @property
+    def device_index(self) -> int:
+        return 0 if self.device == "cuda" else -1
+    @computed_field
+    @property
+    def torch_dtype(self) -> torch.dtype:
+        if self.compute_type_override == "float32":
+            return torch.float32
+        if self.compute_type_override == "float16":
+            return torch.float16
+        return torch.float16 if self.device == "cuda" else torch.float32
+settings = Settings()
+from core.ingestion.scanner import LibraryScanner
+from core.processing.prober import MediaProbeError, MediaProber
+def main():
+    scanner = LibraryScanner()
+    prober = MediaProber()
+    target_folder = "D:\\Hibernate"
+    print(f"Scanning: {target_folder}")
+    for asset in scanner.scan(target_folder):
+        print(f"Found {asset.media_type.value}: {asset.file_path.name}")
+        if asset.media_type == "video":
+            try:
+                meta = prober.probe(asset.file_path)
+                duration = meta.get("format", {}).get("duration", "N/A")
+                print(f"   --> Duration: {duration}s")
+            except MediaProbeError as e:
+                print(f"   --> Error probing: {e}")
+if __name__ == "__main__":
+    main()
+from datetime import datetime
+from enum import Enum
+from typing import Any
+from pydantic import BaseModel, Field, FilePath
+class MediaType(str, Enum):
+    VIDEO = "video"
+    AUDIO = "audio"
+    IMAGE = "image"
+class MediaAsset(BaseModel):
+    file_path: FilePath
+    media_type: MediaType
+    file_size_bytes: int = Field(..., description="Size in bytes")
+    last_modified: datetime
+class DetectedFace(BaseModel):
+    box: tuple[int, int, int, int] = Field(
+        ..., description="(top, right, bottom, left)"
+    )
+    encoding: list[float] = Field(..., description="128-dimensional face vector")
+    confidence: float = 1.0
+class TranscriptionResult(BaseModel):
+    text: str
+    segments: list[dict[str, Any]]
+    language: str
+    language_probability: float
+    duration: float
+import datetime
+import os
+from collections.abc import Generator, Iterable
+from pathlib import Path
+from core.schemas import MediaAsset, MediaType
+class LibraryScanner:
+    DEFAULT_EXCLUDES: set[str] = {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        ".env",
+        "env",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        "node_modules",
+        ".cache",
+        ".local",
+        ".Trash",
+        "lost+found",
+        ".DS_Store",
+        "__MACOSX",
+        "Thumbs.db",
+        "desktop.ini",
+        "dist",
+        "build",
+        ".egg-info",
+        ".idea",
+        ".vscode",
+    }
+    VIDEO_EXTS: set[str] = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
+    AUDIO_EXTS: set[str] = {".mp3", ".wav", ".aac", ".flac", ".m4a", ".ogg"}
+    IMAGE_EXTS: set[str] = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
+    def _get_media_type(self, extension: str) -> MediaType | None:
+        extension = extension.lower()
+        if extension in self.VIDEO_EXTS:
+            return MediaType.VIDEO
+        if extension in self.AUDIO_EXTS:
+            return MediaType.AUDIO
+        if extension in self.IMAGE_EXTS:
+            return MediaType.IMAGE
+        return None
+    def scan(
+        self,
+        root_path: str | Path,
+        excluded_dirs: Iterable[str] | None = None,
+    ) -> Generator[MediaAsset, None, None]:
+        directory_path = Path(root_path)
+        try:
+            if isinstance(root_path, str) and root_path.strip() == "":
+                raise ValueError("Provided path is empty or whitespace.")
+            if not directory_path.exists():
+                raise FileNotFoundError(f"Path does not exist: {directory_path}")
+            if not directory_path.is_dir():
+                raise NotADirectoryError(f"Path is not a directory: {directory_path}")
+            if excluded_dirs is None:
+                excluded_dirs = self.DEFAULT_EXCLUDES
+            excludes = set(excluded_dirs) if excluded_dirs else self.DEFAULT_EXCLUDES
+            for dirpath, dir_names, filenames in os.walk(directory_path):
+                dir_names[:] = [
+                    dir_name
+                    for dir_name in dir_names
+                    if dir_name not in excludes and not dir_name.startswith(".")
+                ]
+                for filename in filenames:
+                    if filename.startswith("."):
+                        continue
+                    full_file_path = Path(dirpath) / filename
+                    file_media_type = self._get_media_type(full_file_path.suffix)
+                    if file_media_type:
+                        stat = full_file_path.stat()
+                        last_modified_dt = datetime.datetime.fromtimestamp(
+                            stat.st_mtime
+                        )
+                        yield MediaAsset(
+                            file_path=full_file_path,
+                            media_type=file_media_type,
+                            file_size_bytes=stat.st_size,
+                            last_modified=last_modified_dt,
+                        )
+        except (
+            ValueError,
+            NotADirectoryError,
+            FileNotFoundError,
+            PermissionError,
+            IsADirectoryError,
+            OSError,
+        ) as exc:
+            print(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
+            return
+        except Exception as exc:
+            print(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
+            return
+if __name__ == "__main__":
+    scanner = LibraryScanner()
+    file_path = ""
+    for media_asset in scanner.scan(file_path):
+        print(
+            f"[{media_asset.media_type.value.upper()}] found: {media_asset.file_path}"
+        )
+import asyncio
+import shutil
+import tempfile
+from collections.abc import AsyncGenerator
+from pathlib import Path
+class FrameExtractor:
+    class FrameCache:
+        def __init__(self):
+            self.path = Path(tempfile.mkdtemp(prefix="media_agent_frames_"))
+            self._active = True
+        def cleanup(self):
+            if self._active and self.path.exists():
+                shutil.rmtree(self.path, ignore_errors=True)
+            self._active = False
+        def __enter__(self):
+            return self.path
+        def __exit__(self, exc_type, exc, tb):
+            self.cleanup()
+    async def extract(
+        self, video_path: str | Path, interval: int = 2
+    ) -> AsyncGenerator[Path, None]:
+        try:
+            if isinstance(video_path, str):
+                if video_path.strip() == "":
+                    raise ValueError("Provided path is empty or whitespace.")
+                path_obj = Path(video_path)
+            else:
+                path_obj = video_path
+            if not path_obj.exists():
+                raise FileNotFoundError(f"Path does not exist: {path_obj}")
+            if path_obj.is_dir():
+                raise IsADirectoryError(
+                    f"Expected a file, but got a directory: {path_obj}"
+                )
+            if not path_obj.is_file():
+                raise FileNotFoundError(f"Path is not a file: {path_obj}")
+            with FrameExtractor.FrameCache() as cache_dir:
+                output_pattern = cache_dir / "frame_%04d.jpg"
+                args_to_ffmpeg = [
+                    "ffmpeg",
+                    "-i",
+                    str(path_obj),
+                    "-vf",
+                    f"fps=1/{interval}",
+                    "-q:v",
+                    "2",
+                    "-f",
+                    "image2",
+                    str(output_pattern),
+                ]
+                print(f"Starting async ffmpeg process for {path_obj.name}")
+                process = await asyncio.create_subprocess_exec(
+                    *args_to_ffmpeg,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, stderr = await process.communicate()
+                if process.returncode != 0:
+                    print(
+                        f"[ERROR:FFmpeg] Failed to extract frames from '{video_path}': "
+                        f"{stderr.decode().strip() if stderr else ''}"
+                    )
+                    return
+                frames = sorted(cache_dir.glob("frame_*.jpg"))
+                for frame_path in frames:
+                    yield frame_path
+        except (
+            ValueError,
+            NotADirectoryError,
+            FileNotFoundError,
+            PermissionError,
+            IsADirectoryError,
+            OSError,
+        ) as exc:
+            print(f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}")
+            return
+        except Exception as exc:
+            print(
+                f"[ERROR:{type(exc).__name__}] Unexpected error "
+                f"processing '{video_path}': {exc}"
+            )
+            return
+if __name__ == "__main__":
+    async def main():
+        extractor = FrameExtractor()
+        async for frame in extractor.extract("test_video.mp4"):
+            print(f"Got frame: {frame}")
+from __future__ import annotations
+from collections.abc import Sequence
+from pathlib import Path
+import face_recognition
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
+from sklearn.cluster import DBSCAN
+from core.schemas import DetectedFace
+class FaceManager:
+    def __init__(
+        self,
+        dbscan_eps: float = 0.5,
+        dbscan_min_samples: int = 3,
+        dbscan_metric: str = "euclidean",
+        use_gpu: bool = True,
+    ) -> None:
+        self.dbscan_eps = dbscan_eps
+        self.dbscan_min_samples = dbscan_min_samples
+        self.dbscan_metric = dbscan_metric
+        self.use_gpu = use_gpu
+    def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
+        path = Path(image_path)
+        if not path.exists():
+            msg = f"Image file not found: {path}"
+            raise FileNotFoundError(msg)
+        try:
+            image = face_recognition.load_image_file(str(path))
+        except Exception as exc:
+            msg = f"Failed to load image: {path}"
+            raise ValueError(msg) from exc
+        boxes = self._detect_face_boxes(image)
+        if not boxes:
+            return []
+        encodings = face_recognition.face_encodings(image, boxes)
+        results: list[DetectedFace] = []
+        for box, enc in zip(boxes, encodings, strict=True):
+            top, right, bottom, left = box
+            results.append(
+                DetectedFace(
+                    box=(int(top), int(right), int(bottom), int(left)),
+                    encoding=enc.tolist(),
+                ),
+            )
+        return results
+    def _detect_face_boxes(
+        self,
+        image: NDArray[np.uint8],
+    ) -> list[tuple[int, int, int, int]]:
+        boxes: list[tuple[int, int, int, int]] = []
+        if self.use_gpu:
+            try:
+                boxes = face_recognition.face_locations(image, model="cnn")
+            except Exception:
+                print(
+                    "GPU detection failed or not available. Falling back to CPU (HOG)."
+                )
+                boxes = []
+        if not boxes:
+            boxes = face_recognition.face_locations(image, model="hog")
+        return [
+            (int(top), int(right), int(bottom), int(left))
+            for top, right, bottom, left in boxes
+        ]
+    def cluster_faces(
+        self,
+        all_encodings: Sequence[ArrayLike],
+    ) -> NDArray[np.int64]:
+        if not all_encodings:
+            return np.array([], dtype=np.int64)
+        data = self._to_2d_array(all_encodings)
+        dbscan = DBSCAN(
+            eps=self.dbscan_eps,
+            min_samples=self.dbscan_min_samples,
+            metric=self.dbscan_metric,
+        )
+        dbscan.fit(data)
+        return dbscan.labels_
+    @staticmethod
+    def _to_2d_array(
+        encodings: Sequence[ArrayLike],
+    ) -> NDArray[np.float64]:
+        processed: list[NDArray[np.float64]] = []
+        for idx, enc in enumerate(encodings):
+            arr = np.asarray(enc, dtype=np.float64)
+            if arr.ndim != 1:
+                msg = f"Encoding at index {idx} is not 1D. Got shape {arr.shape!r}."
+                raise ValueError(msg)
+            processed.append(arr)
+        lengths = {arr.shape[0] for arr in processed}
+        if len(lengths) != 1:
+            msg = (
+                f"Encodings have inconsistent lengths: {sorted(lengths)}. "
+                "All encodings must be the same dimensionality."
+            )
+            raise ValueError(msg)
+        return np.vstack(processed)
+import functools
+import json
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+def requires_ffprobe(func):
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if not shutil.which("ffprobe"):
+            raise RuntimeError("ffprobe is not installed or not in PATH.")
+        return func(self, *args, **kwargs)
+    return wrapper
+class MediaProbeError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "media_probe_error",
+        details: Any | None = None,
+    ) -> None:
+        self.code = code
+        self.message = message
+        self.details = details
+        super().__init__(message)
+    def __str__(self) -> str:
+        base = f"[{self.code}] {self.message}"
+        if self.details is not None:
+            return f"{base} | details={self.details!r}"
+        return base
+class MediaProber:
+    @requires_ffprobe
+    def probe(self, file_path: str | Path) -> dict[str, Any]:
+        if isinstance(file_path, str):
+            if file_path.strip() == "":
+                raise ValueError("Provided path is empty or whitespace.")
+            path_obj = Path(file_path)
+        else:
+            path_obj = file_path
+        if not path_obj.exists():
+            raise MediaProbeError(
+                f"File does not exist: {file_path}",
+                code="file_not_found",
+                details={"path": str(file_path)},
+            )
+        args_to_ffprobe = [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            str(file_path),
+        ]
+        try:
+            process = subprocess.Popen(
+                args=args_to_ffprobe,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False,
+            )
+            out, err = process.communicate()
+            return_code = process.returncode
+            if return_code != 0:
+                raise MediaProbeError(
+                    "ffprobe failed to execute",
+                    code="media_probe_error",
+                    details={
+                        "return_code": return_code,
+                        "stderr": err.strip() if err else "",
+                        "stdout": out.strip() if out else "",
+                    },
+                )
+        except Exception as exc:
+            raise MediaProbeError(f"Subprocess failed: {exc}") from exc
+        try:
+            result_dict: dict[str, Any] = json.loads(out)
+        except json.JSONDecodeError as exc:
+            raise MediaProbeError(
+                "Failed to parse ffprobe JSON output",
+                code="media_probe_error",
+                details={
+                    "stdout": out,
+                    "stderr": err,
+                },
+            ) from exc
+        return result_dict
+if __name__ == "__main__":
+    scanner = MediaProber()
+    path = ""
+    print(scanner.probe(path))
+import gc
+import json
+import os
+import shutil
+import subprocess
+import sys
+import warnings
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any
+import ctranslate2.converters
+import torch
+from faster_whisper import BatchedInferencePipeline, WhisperModel
+from huggingface_hub import snapshot_download
+from config import settings
+warnings.filterwarnings("ignore")
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+class AudioTranscriber:
+    def __init__(self) -> None:
+        self._model: WhisperModel | None = None
+        self._batched_model: BatchedInferencePipeline | None = None
+        self._current_model_size: str | None = None
+        self.device = settings.device
+        self.compute_type: str = "float16" if self.device == "cuda" else "int8"
+        print(
+            f"[INFO] Initialized Faster-Whisper ({self.device}, "
+            f"Compute: {self.compute_type})"
+        )
+    def _get_ffmpeg_cmd(self) -> str:
+        cmd = shutil.which("ffmpeg")
+        if not cmd:
+            raise RuntimeError("FFmpeg not found. Please install it to system PATH.")
+        return cmd
+    def _find_existing_subtitles(
+        self,
+        input_path: Path,
+        output_path: Path,
+        user_sub_path: Path | None,
+        language: str,
+    ) -> bool:
+        print("[INFO] Probing for existing subtitles...")
+        if user_sub_path and user_sub_path.exists():
+            print(f"[SUCCESS] Using provided subtitle: {user_sub_path}")
+            shutil.copy(user_sub_path, output_path)
+            return True
+        for sidecar in [
+            input_path.with_suffix(f".{language}.srt"),
+            input_path.with_suffix(".srt"),
+        ]:
+            if sidecar.exists() and sidecar != output_path:
+                print(f"[SUCCESS] Found sidecar: {sidecar}")
+                shutil.copy(sidecar, output_path)
+                return True
+        cmd = [
+            self._get_ffmpeg_cmd(),
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-map",
+            "0:s:0",
+            str(output_path),
+        ]
+        try:
+            subprocess.run(
+                cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            if output_path.exists() and output_path.stat().st_size > 0:
+                print("[SUCCESS] Extracted embedded subtitles.")
+                return True
+        except subprocess.CalledProcessError:
+            pass
+        print("[INFO] No existing subtitles found. Proceeding to ASR.")
+        return False
+    def _slice_audio(self, input_path: Path, start: float, end: float | None) -> Path:
+        with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            output_slice = Path(tmp.name)
+        cmd = [
+            self._get_ffmpeg_cmd(),
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-ss",
+            str(start),
+        ]
+        if end:
+            cmd.extend(["-to", str(end)])
+        cmd.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
+        print(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
+        subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
+        return output_slice
+    def _convert_and_cache_model(self, model_id: str) -> str:
+        sanitized_name = model_id.replace("/", "_")
+        ct2_output_dir = settings.model_cache_dir / "converted_models" / sanitized_name
+        raw_model_dir = settings.model_cache_dir / "raw_models" / sanitized_name
+        if (ct2_output_dir / "config.json").exists():
+            try:
+                with open(ct2_output_dir / "config.json", "r", encoding="utf-8") as f:
+                    conf = json.load(f)
+                    if "architectures" in conf or "_name_or_path" in conf:
+                        print(f"[WARN] Corrupted config in {ct2_output_dir}. Purging.")
+                        shutil.rmtree(ct2_output_dir)
+            except Exception:
+                shutil.rmtree(ct2_output_dir, ignore_errors=True)
+        if (ct2_output_dir / "model.bin").exists():
+            needed_files = ["tokenizer.json", "vocab.json"]
+            if "large-v3" in model_id:
+                needed_files.append("preprocessor_config.json")
+            for fname in needed_files:
+                if not (ct2_output_dir / fname).exists():
+                    if (raw_model_dir / fname).exists():
+                        shutil.copy(raw_model_dir / fname, ct2_output_dir / fname)
+            return str(ct2_output_dir)
+        print(f"[INFO] Model {model_id} needs conversion.")
+        print(f"[INFO] Step 1: High-Speed Download to {raw_model_dir}...")
+        try:
+            snapshot_download(
+                repo_id=model_id,
+                local_dir=str(raw_model_dir),
+                local_dir_use_symlinks=False,
+                resume_download=True,
+                max_workers=8,
+                token=settings.hf_token,
+                ignore_patterns=["*.msgpack", "*.h5", "*.tflite", "*.ot"],
+            )
+            print("[SUCCESS] Download complete.")
+            print(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
+            converter = ctranslate2.converters.TransformersConverter(
+                str(raw_model_dir), load_as_float16=True
+            )
+            converter.convert(str(ct2_output_dir), quantization="float16", force=True)
+            for file_name in [
+                "preprocessor_config.json",
+                "tokenizer.json",
+                "vocab.json",
+            ]:
+                src = raw_model_dir / file_name
+                if src.exists():
+                    shutil.copy(src, ct2_output_dir / file_name)
+            print("[SUCCESS] Model converted and patched successfully.")
+            return str(ct2_output_dir)
+        except Exception as e:
+            print(f"[ERROR] Model download/conversion failed: {e}")
+            raise RuntimeError(f"Could not prepare {model_id}.") from e
+    def _load_model(self, model_key: str) -> None:
+        if self._model:
+            del self._model
+            del self._batched_model
+            self._model = None
+            self._batched_model = None
+            gc.collect()
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+        print(f"[INFO] Requesting Model: {model_key}...")
+        final_model_path = self._convert_and_cache_model(model_key)
+        try:
+            self._model = WhisperModel(
+                final_model_path,
+                device=self.device,
+                compute_type=self.compute_type,
+                download_root=str(settings.model_cache_dir),
+            )
+            self._batched_model = BatchedInferencePipeline(model=self._model)
+            self._current_model_size = model_key
+            print(f"[SUCCESS] Loaded {model_key} on {self.device}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
+    def _format_timestamp(self, seconds: float) -> str:
+        hours, remainder = divmod(seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        millis = int(round((secs - int(secs)) * 1000))
+        return f"{int(hours):02}:{int(minutes):02}:{int(secs):02},{millis:03}"
+    def _write_srt(
+        self, chunks: list[dict[str, Any]], path: Path, offset: float
+    ) -> int:
+        count = 0
+        last_text = ""
+        with open(path, "w", encoding="utf-8") as f:
+            for chunk in chunks:
+                text = chunk.get("text", "").strip()
+                timestamp = chunk.get("timestamp")
+                if not text or not timestamp:
+                    continue
+                try:
+                    start, end = timestamp
+                except ValueError:
+                    continue
+                if start is None:
+                    continue
+                if end is None:
+                    end = start + 2.0
+                start = float(start)
+                end = float(end)
+                if (end - start) < 0.2:
+                    continue
+                if text == last_text:
+                    continue
+                f.write(
+                    f"{count + 1}\n"
+                    f"{self._format_timestamp(start + offset)} --> "
+                    f"{self._format_timestamp(end + offset)}\n"
+                    f"{text}\n\n"
+                )
+                count += 1
+                last_text = text
+        return count
+    def _split_long_chunks(
+        self, chunks: list[dict[str, Any]], max_segment_s: float = 8.0
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for ch in chunks:
+            text = (ch.get("text") or "").strip()
+            timestamp = ch.get("timestamp")
+            if not text or not timestamp:
+                continue
+            try:
+                start, end = timestamp
+            except Exception:
+                out.append(ch)
+                continue
+            if start is None:
+                continue
+            if end is None:
+                end = start + 2.0
+            start = float(start)
+            end = float(end)
+            duration = end - start
+            if duration <= max_segment_s:
+                out.append(ch)
+                continue
+            n = int((duration + max_segment_s - 1e-9) // max_segment_s) + 1
+            n = max(1, n)
+            words = text.split()
+            if not words:
+                out.append(ch)
+                continue
+            per = max(1, len(words) // n)
+            ptr = 0
+            for i in range(n):
+                sub_words = words[ptr : ptr + per]
+                ptr += per
+                if not sub_words:
+                    continue
+                sub_text = " ".join(sub_words)
+                sub_start = start + i * (duration / n)
+                sub_end = start + (i + 1) * (duration / n)
+                out.append({"text": sub_text, "timestamp": (sub_start, sub_end)})
+            if ptr < len(words) and out:
+                out[-1]["text"] = out[-1]["text"] + " " + " ".join(words[ptr:])
+        return out
+    def transcribe(
+        self,
+        audio_path: Path,
+        language: str | None = None,
+        subtitle_path: Path | None = None,
+        output_path: Path | None = None,
+        start_time: float = 0.0,
+        end_time: float | None = None,
+    ) -> list[dict[str, Any]] | None:
+        if not audio_path.exists():
+            print(f"[ERROR] Input file not found: {audio_path}")
+            return None
+        lang = language or settings.language
+        out_srt = output_path or audio_path.with_suffix(".srt")
+        if start_time == 0.0 and end_time is None:
+            if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
+                return None
+        proc_path = audio_path
+        is_sliced = False
+        if start_time > 0 or end_time is not None:
+            proc_path = self._slice_audio(audio_path, start_time, end_time)
+            is_sliced = True
+        chunks: list[dict[str, Any]] = []
+        candidates = settings.whisper_model_map.get(lang, [settings.fallback_model_id])
+        model_to_use = candidates[0] if candidates else settings.fallback_model_id
+        try:
+            if self._batched_model is None or (
+                self._current_model_size != model_to_use
+            ):
+                self._load_model(model_to_use)
+            if self._batched_model is None:
+                raise RuntimeError("Model failed to initialize")
+            print(f"[INFO] Running Inference on {proc_path} with {model_to_use}...")
+            prompt = (
+                "வணக்கம். Hello sir. என்ன late ஆயிடுச்சு? பரவாயில்லை. "
+                "Project details பேசலாம். Okay, let's start."
+            )
+            segments, info = self._batched_model.transcribe(
+                str(proc_path),
+                batch_size=settings.batch_size,
+                language=lang,
+                task="transcribe",
+                beam_size=5,
+                condition_on_previous_text=False,
+                initial_prompt=prompt,
+                repetition_penalty=1.2,
+                vad_filter=True,
+                vad_parameters={
+                    "min_speech_duration_ms": 250,
+                    "min_silence_duration_ms": 2000,
+                    "speech_pad_ms": 500,
+                    "threshold": 0.4,
+                },
+            )
+            for segment in segments:
+                chunk = {
+                    "text": segment.text.strip(),
+                    "timestamp": (segment.start, segment.end),
+                }
+                chunks.append(chunk)
+            if not chunks:
+                print("[WARN] No speech detected.")
+                return None
+            print(
+                f"[SUCCESS] Transcription complete. Prob: {info.language_probability}"
+            )
+            chunks = self._split_long_chunks(
+                chunks, max_segment_s=settings.chunk_length_s
+            )
+            lines_written = self._write_srt(chunks, out_srt, offset=start_time)
+            if lines_written > 0:
+                print(f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}")
+                return chunks
+        except Exception as e:
+            print(f"[ERROR] Inference failed: {e}")
+            raise
+        finally:
+            if is_sliced and proc_path.exists():
+                try:
+                    proc_path.unlink()
+                except Exception:
+                    pass
+        return None
+def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit(1)
+    args = sys.argv
+    audio = Path(args[1]).resolve()
+    start = float(args[2]) if len(args) > 2 else 0.0
+    end = float(args[3]) if len(args) > 3 and args[3].lower() != "none" else None
+    sub = (
+        Path(args[4]).resolve() if len(args) > 4 and args[4].lower() != "none" else None
+    )
+    lang = args[5] if len(args) > 5 else "ta"
+    AudioTranscriber().transcribe(audio, lang, sub, None, start, end)
+if __name__ == "__main__":
+    main()
+import asyncio
+from pathlib import Path
+from llm.factory import LLMFactory
+from llm.interface import LLMInterface
+class VisionAnalyzer:
+    def __init__(
+        self,
+        llm: LLMInterface | None = None,
+        prompt_filename: str = "vision_prompt.txt",
+    ):
+        self.llm = llm or LLMFactory.create_llm(provider="ollama")
+        self.prompt_filename = prompt_filename
+        try:
+            self.prompt = self.llm.construct_user_prompt(self.prompt_filename)
+        except FileNotFoundError:
+            self.prompt = (
+                "Describe this scene in detailed, search-friendly language. "
+                "Identify objects, colors, positions, background context, "
+                "actions, and visible text. Produce concise but rich output "
+                "optimized for search and indexing."
+            )
+    async def describe(self, image_path: Path) -> str:
+        image_path = Path(image_path)
+        if not image_path.exists() or not image_path.is_file():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        return await self.llm.describe_image(
+            prompt=self.prompt,
+            image_path=image_path,
+        )
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python -m core.processing.vision /path/to/image.jpg")
+        raise SystemExit(1)
+    img_path = Path(sys.argv[1])
+    async def main() -> None:
+        analyzer = VisionAnalyzer()
+        description = await analyzer.describe(img_path)
+        print(description)
+    asyncio.run(main())
+import os
+from typing import Literal, cast
+from .gemini import GeminiLLM
+from .interface import LLMInterface
+from .ollama import OllamaLLM
+class LLMFactory:
+    @staticmethod
+    def create_llm(
+        provider: Literal["gemini", "ollama"] = "gemini",
+        prompt_dir: str = "./prompts",
+        **kwargs,
+    ) -> LLMInterface:
+        provider = cast(Literal["gemini", "ollama"], provider.lower())
+        print(f"LLMFactory: Creating LLM for provider '{provider}'")
+        if provider == "gemini":
+            return GeminiLLM(prompt_dir=prompt_dir, **kwargs)
+        elif provider == "ollama":
+            return OllamaLLM(prompt_dir=prompt_dir, **kwargs)
+        else:
+            raise ValueError(f"Unknown LLM provider: {provider}")
+    @staticmethod
+    def get_default_llm(prompt_dir: str = "./prompts") -> LLMInterface:
+        provider = os.getenv("LLM_PROVIDER", "gemini")
+        provider = provider.lower()
+        if provider not in ("gemini", "ollama"):
+            provider = "gemini"
+        return LLMFactory.create_llm(
+            cast(Literal["gemini", "ollama"], provider), prompt_dir
+        )
+import asyncio
+import base64
+import mimetypes
+import os
+from pathlib import Path
+from typing import Any, cast
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
+from .interface import LLMInterface, T
+class GeminiLLM(LLMInterface):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        api_key_env: str = "GEMINI_API_KEY",
+        prompt_dir: str = "prompts",
+        timeout: int = 60,
+    ):
+        print("Initializing Gemini LLM Interface")
+        super().__init__(prompt_dir=prompt_dir)
+        model = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+        api_key = os.getenv(api_key_env) or os.getenv("GOOGLE_API_KEY")
+        print(f"Using Gemini model: {model}")
+        if not api_key:
+            print("Gemini API key not set.")
+            raise ValueError("Gemini API key not set.")
+        print("Gemini API key set successfully.")
+        self.llm = ChatGoogleGenerativeAI(
+            model=model,
+            api_key=api_key,
+            request_timeout=timeout,
+            temperature=0.0,
+        )
+    async def generate(self, prompt: str, **kwargs: Any) -> str:
+        try:
+            debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
+            print(f"Generating text with prompt: {debug_prompt}")
+            response = await self.llm.ainvoke(prompt)
+            content = getattr(response, "content", str(response))
+            print("Generated content using Gemini")
+            return str(content)
+        except Exception as e:
+            raise RuntimeError(f"Gemini generation failed: {e}") from e
+    async def generate_structured(
+        self,
+        schema: type[T],
+        prompt: str,
+        system_prompt: str = "",
+        **kwargs: Any,
+    ) -> T:
+        try:
+            debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
+            print(f"Generating structured output with prompt: {debug_prompt}")
+            structured_llm = self.llm.with_structured_output(schema)
+            messages = []
+            if system_prompt:
+                messages.append(SystemMessage(content=system_prompt))
+            messages.append(HumanMessage(content=prompt))
+            result = await structured_llm.ainvoke(messages)
+            return cast(T, result)
+        except Exception as e:
+            print(f"Structured generation failed: {e}")
+            full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+            response_text = await self.generate(full_prompt)
+            try:
+                print("Falling back to manual JSON parsing")
+                return self.parse_json_response(response_text, schema)
+            except Exception as parse_error:
+                raise RuntimeError(
+                    f"Structured validation failed: {parse_error}"
+                ) from e
+    async def describe_image(
+        self,
+        prompt: str,
+        image_path: str | Path,
+        system_prompt: str = "",
+        **kwargs: Any,
+    ) -> str:
+        debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
+        print(f"Generating text with prompt: {debug_prompt}")
+        image_path = Path(image_path)
+        def read_image_file() -> bytes:
+            with open(image_path, "rb") as f:
+                return f.read()
+        image_bytes = await asyncio.to_thread(read_image_file)
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        mime_type, _ = mimetypes.guess_type(str(image_path))
+        mime_type = mime_type or "image/png"
+        messages = []
+        if system_prompt:
+            messages.append(
+                SystemMessage(content=[{"type": "text", "text": system_prompt}])
+            )
+        messages.append(
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                    },
+                ]
+            )
+        )
+        response = await self.llm.ainvoke(messages)
+        content = getattr(response, "content", str(response))
+        return str(content)
+import json
+import os
+import re
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any, TypeVar
+from pydantic import BaseModel
+T = TypeVar("T", bound=BaseModel)
+class LLMInterface(ABC):
+    def __init__(self, prompt_dir: str | Path = "./prompts"):
+        if isinstance(prompt_dir, str):
+            if prompt_dir.strip() == "":
+                raise ValueError("prompt_dir cannot be an empty string")
+            self.prompt_dir = Path(prompt_dir)
+        else:
+            self.prompt_dir = prompt_dir
+        self._prompt_cache: dict[str, str] = {}
+        if not self.prompt_dir.exists():
+            print(f"Prompt directory '{self.prompt_dir}' does not exist. Creating it.")
+            try:
+                os.makedirs(self.prompt_dir, exist_ok=True)
+                print(f"Prompt directory '{self.prompt_dir}' created.")
+            except OSError as exc:
+                print(f"Failed to create prompt directory '{self.prompt_dir}'.")
+                raise OSError(
+                    f"Failed to create prompt directory '{self.prompt_dir}'."
+                ) from exc
+    def load_prompt(self, filename: str) -> str:
+        if filename in self._prompt_cache:
+            return self._prompt_cache[filename]
+        file_path = self.prompt_dir / filename
+        if file_path.exists():
+            print(f"Loading prompt from '{file_path}'")
+            try:
+                with open(file_path, encoding="utf-8") as f:
+                    content = f.read()
+                    self._prompt_cache[filename] = content
+                    return content
+            except Exception as exc:
+                print(f"Failed to load prompt from '{file_path}'.")
+                raise FileNotFoundError(
+                    f"Failed to load prompt from '{file_path}'."
+                ) from exc
+        raise FileNotFoundError(
+            f"Prompt '{filename}' not found on disk or in defaults."
+        )
+    def parse_json_response(self, response_text: str, schema: type[T]) -> T:
+        clean_text = (
+            re.sub(r"```[a-zA-Z]*", "", response_text).replace("```", "").strip()
+        )
+        match = re.search(r"(\{.*\})", clean_text, re.DOTALL)
+        if match:
+            clean_text = match.group(1)
+        try:
+            data = json.loads(clean_text)
+            return schema.model_validate(data)
+        except json.JSONDecodeError as e:
+            print(f"JSON Parsing Failed: {e}")
+            print(f"Failed Payload: {clean_text}")
+            raise RuntimeError("Invalid JSON format received from LLM") from e
+        except Exception as e:
+            print(f"Schema Validation Failed: {e}")
+            raise RuntimeError(f"Parsed JSON did not match schema: {e}") from e
+    def construct_system_prompt(
+        self, schema: type[BaseModel], filename: str = "system_prompt.txt"
+    ) -> str:
+        raw_prompt = self.load_prompt(filename)
+        schema_json = json.dumps(schema.model_json_schema(), indent=2)
+        if "{{JSON_SCHEMA}}" in raw_prompt:
+            return raw_prompt.replace("{{JSON_SCHEMA}}", schema_json)
+        return f"{raw_prompt}\n\n
+    def construct_user_prompt(self, filename: str = "user_prompt.txt") -> str:
+        template = self.load_prompt(filename)
+        try:
+            few_shot = self.load_prompt("few_shot_examples.txt")
+        except FileNotFoundError:
+            few_shot = ""
+        content = template.replace("{{FEW_SHOT}}", few_shot)
+        return content
+    @abstractmethod
+    async def generate(self, prompt: str, **kwargs: Any) -> str:
+        raise NotImplementedError
+    @abstractmethod
+    async def generate_structured(
+        self,
+        schema: type[T],
+        prompt: str,
+        system_prompt: str = "",
+        **kwargs: Any,
+    ) -> T:
+        raise NotImplementedError
+    @abstractmethod
+    async def describe_image(
+        self,
+        prompt: str,
+        image_path: str | Path,
+        system_prompt: str = "",
+        **kwargs: Any,
+    ) -> str:
+        raise NotImplementedError
+import os
+from pathlib import Path
+from typing import Any
+import ollama
+from .interface import LLMInterface, T
+class OllamaLLM(LLMInterface):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        base_url_env: str = "OLLAMA_BASE_URL",
+        prompt_dir: str = "./prompts",
+    ):
+        super().__init__(prompt_dir=prompt_dir)
+        self.model = model_name or os.getenv("OLLAMA_MODEL", "llava")
+        base_url = os.getenv(base_url_env, "http://localhost:11434")
+        print(
+            f"Initializing Ollama client with model={self.model}, base_url={base_url}"
+        )
+        try:
+            self.client = ollama.AsyncClient(host=base_url)
+            print("Ollama AsyncClient initialized successfully.")
+        except Exception as e:
+            print(f"Failed to construct Ollama AsyncClient: {e}")
+            raise RuntimeError(f"Failed to construct Ollama AsyncClient: {e}") from e
+    async def generate(self, prompt: str, **kwargs: Any) -> str:
+        debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
+        print(f"Ollama generating text for prompt: {debug_prompt}")
+        try:
+            resp = await self.client.chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": kwargs.get("temperature", 0.0)},
+            )
+            content = resp.get("message", {}).get("content")
+            return str(content) if content else ""
+        except Exception as e:
+            print(f"Ollama generation failed: {e}")
+            raise RuntimeError(f"Ollama generation failed: {e}") from e
+    async def generate_structured(
+        self,
+        schema: type[T],
+        prompt: str,
+        system_prompt: str = "",
+        **kwargs: Any,
+    ) -> T:
+        print("Ollama structured generation requested.")
+        full_prompt = (
+            f"{system_prompt}\nUser Request:\n{prompt}" if system_prompt else prompt
+        )
+        try:
+            response_text = await self.generate(full_prompt, **kwargs)
+            return self.parse_json_response(response_text, schema)
+        except Exception as e:
+            print(f"Ollama structured generation failed: {e}")
+            raise RuntimeError(f"Ollama structured generation failed: {e}") from e
+    async def describe_image(
+        self,
+        prompt: str,
+        image_path: str | Path,
+        system_prompt: str = "",
+        **kwargs: Any,
+    ) -> str:
+        try:
+            img_path = str(Path(image_path))
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [img_path],
+                }
+            )
+            resp = await self.client.chat(
+                model=self.model,
+                messages=messages,
+            )
+            content = resp.get("message", {}).get("content")
+            return str(content) if content else ""
+        except Exception as e:
+            print(f"Ollama image description failed: {e}")
+            raise RuntimeError(f"Ollama image description failed: {e}") from e
+import os
+IGNORE_DIRS = {".venv", ".git", ".idea", ".ruff_cache", "models"}
+def print_tree(start_path, prefix=""):
+    contents = [c for c in os.listdir(start_path) if c not in IGNORE_DIRS]
+    contents.sort()
+    pointers = ["├── "] * (len(contents) - 1) + ["└── "]
+    for pointer, name in zip(pointers, contents):
+        path = os.path.join(start_path, name)
+        print(prefix + pointer + name)
+        if os.path.isdir(path):
+            extension = "│   " if pointer == "├── " else "    "
+            print_tree(path, prefix + extension)
+if __name__ == "__main__":
+    root = r"D:\AI-Media-Indexer"
+    print(root + "\\")
+    print_tree(root)
