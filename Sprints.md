@@ -216,6 +216,93 @@
 
 ---
 
+#### Commit `4822777` - Transcriber Class Addition (2025-11-24)
+
+**Author**: Gnana Prakash M  
+**Message**: Added Transcriber Class
+
+**Changes**:
+
+- Implemented `AudioTranscriber` class in `core/processing/transcriber.py`
+- Added audio transcription capabilities using faster-whisper
+- Integrated GPU acceleration support
+- Enhanced project dependencies for audio processing
+
+**Files Added**:
+
+- `core/processing/transcriber.py`
+
+**Files Modified**:
+
+- `pyproject.toml` - Added transcription dependencies
+- `uv.lock` - Updated dependency lock file
+
+---
+
+#### Commit `4cd0da2` - WSL Configuration (2025-12-03)
+
+**Author**: Gnana Prakash M  
+**Message**: Add wslconfig to control ram usage
+
+**Changes**:
+
+- Added WSL2 configuration file to optimize memory usage
+- Configured memory limit to 12GB for WSL2
+- Added 8GB swap space for heavy PyTorch compilation
+- Enabled automatic memory reclamation to Windows
+
+**Files Added**:
+
+- `.wslconfig` - WSL2 resource management configuration
+
+**Configuration Details**:
+
+- Memory limit: 12GB
+- Swap space: 8GB
+- Auto memory reclaim: `drop_cache` mode
+
+---
+
+#### Commit `cd45046` - Qdrant Data Exclusion (2025-12-04)
+
+**Author**: Gnana Prakash M  
+**Message**: Added Qdrant data to gitignore
+
+**Changes**:
+
+- Updated `.gitignore` to exclude Qdrant vector database data
+- Improved repository cleanliness by ignoring generated data files
+- Prevented accidental commits of large vector store files
+
+**Files Modified**:
+
+- `.gitignore` - Added `qdrant_data/` exclusion
+
+---
+
+#### Commit `336bac6` - Qdrant Data Fix (2025-12-04)
+
+**Author**: Gnana Prakash M  
+**Message**: Fix the qdrant_data/
+
+**Changes**:
+
+- Fixed `.gitignore` pattern for Qdrant data directory
+- Added output file for debugging/logging purposes
+- Ensured proper exclusion of vector database files
+
+**Files Modified**:
+
+- `.gitignore` - Refined Qdrant data exclusion pattern
+
+**Files Added**:
+
+- `output.txt` - Debug/logging output file
+
+**Total Additional Sprint 2 Changes**: 576+ insertions across multiple commits
+
+---
+
 ### Sprint 2 Completed Tasks
 
 #### Task 2.1 - Audio Transcription ✅
