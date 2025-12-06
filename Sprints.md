@@ -3,7 +3,7 @@
 ## Repository Information
 
 - **Repository**: [gnanaprakash2918/AI-Media-Indexer](https://github.com/gnanaprakash2918/AI-Media-Indexer)
-- **Main Branches**: `main`, `sprint-1`, `sprint-2`, `sprint-2-bug`
+- **Main Branches**: `main`, `sprint-1`, `sprint-2`, `sprint-2-bug`, `sprint-3`
 - **Tech Stack**:
   - Orchestrator: Google ADK (Agent Development Kit)
   - Ingestion Engine: Python with FFmpeg
@@ -453,6 +453,9 @@ From the same folder:
 # If your Docker Desktop uses the new syntax:
 docker compose up -d
 
+# If using a custom docker-compose file:
+docker compose -f docker-compose.qdrant.yaml up -d
+
 # If that errors, use the old one:
 # docker-compose up -d
 ```
@@ -528,44 +531,318 @@ You should see `media_agent_qdrant` up with ports `6333` and `6334`.
 
 ---
 
-## Sprint 3 (Planned)
+## Sprint 3 (Branch: `sprint-3`)
 
-### Task 3.1 - Database and Storage Layer
+### Commit History
 
-- [ ] Implement SQLite database schema for media metadata
-- [ ] Create `core/storage/db.py` with database operations
-- [ ] CRUD operations for media entries, transcriptions, analysis results
-- [ ] Database migration system
+#### Commit `c874ca6` - Sprint 3 Complete (2025-12-06)
 
-### Task 3.2 - Main Processing Pipeline
+**Author**: Gnana Prakash M  
+**Message**: Use dlib instead of face recognition and set use cpu as default
 
-- [ ] Unified `main.py` orchestration:
-  - File scanning via `LibraryScanner`
-  - Frame extraction via `FrameExtractor`
-  - Transcription via `AudioTranscriber`
-  - Vision analysis via `VisionProcessor`
-  - Results storage via database layer
-- [ ] Batch processing with progress tracking
-- [ ] Error recovery and comprehensive logging
-- [ ] Async/concurrent processing optimization
+**Changes**:
 
-### Task 3.3 - API and Web Interface
+- Replaced `face_recognition` library with direct `dlib` implementation
+- Implemented custom face detection and encoding pipeline
+- Added GPU/CPU fallback with MediaPipe integration
+- Set CPU as default device to avoid memory issues
+- Enhanced face detection with multiple backend support
 
-- [ ] FastAPI endpoints:
-  - Media library browsing
-  - Search and filtering
-  - Analysis result retrieval
-  - Indexing status monitoring
-- [ ] Web UI for media index visualization
-- [ ] RESTful API documentation (OpenAPI/Swagger)
+**Files Modified**:
 
-### Task 3.4 - Testing and Documentation
+- `core/processing/identity.py` - Complete rewrite with dlib
+- `config.py` - Updated device configuration
+- `pyproject.toml` - Updated dependencies
 
-- [ ] Comprehensive unit tests for each module
-- [ ] Integration tests for full pipeline
-- [ ] API documentation (auto-generated)
-- [ ] User guide and deployment instructions
+---
+
+#### Major Sprint 3 Commits (2025-11-25 to 2025-12-06)
+
+**Database and Vector Store Implementation**:
+
+- Implemented `VectorDB` class in `core/storage/db.py`
+- Integrated Qdrant for vector storage and similarity search
+- Added sentence-transformers for text embedding
+- Created collections for media segments and face embeddings
+- Implemented search functionality with filtering
+
+**Ingestion Pipeline**:
+
+- Created `IngestionPipeline` in `core/ingestion/pipeline.py`
+- Orchestrated end-to-end video processing workflow
+- Integrated all processing components (prober, transcriber, extractor, vision, identity)
+- Added async processing for frames
+- Implemented memory cleanup and resource management
+
+**Face Detection and Identity**:
+
+- Implemented `FaceManager` in `core/processing/identity.py`
+- Added face detection using dlib with GPU/CPU/MediaPipe fallback
+- Implemented 128-d face encoding computation
+- Added DBSCAN clustering for identity grouping
+- Automatic dlib model download and caching
+
+**Configuration Updates**:
+
+- Enhanced `config.py` with comprehensive settings
+- Added device detection (CUDA/MPS/CPU)
+- Configured Whisper model mapping for multiple languages
+- Added computed fields for paths and hardware settings
+- Integrated pydantic-settings for environment variable management
+
+**Schema Updates**:
+
+- Added `DetectedFace` model to `core/schemas.py`
+- Defined face bounding box and encoding structure
+- Added confidence field for future enhancements
+
+**Main Entry Point**:
+
+- Updated `main.py` with CLI interface
+- Integrated `IngestionPipeline` for video processing
+- Added path validation and async execution
+- Windows-specific event loop policy handling
+
+**Dependencies**:
+
+- Added `qdrant-client` for vector database
+- Added `sentence-transformers` for embeddings
+- Added `mediapipe` for face detection fallback
+- Added `scikit-learn` for DBSCAN clustering
+- Added `pydantic-settings` for configuration
+- Updated PyTorch to CUDA 12.4 support
+
+---
+
+### Sprint 3 Completed Tasks
+
+#### Task 3.1 - Database and Storage Layer ✅
+
+- ✅ Implemented Qdrant vector database integration in `core/storage/db.py`
+  - `VectorDB` class for managing vector storage
+  - Support for embedded (memory) and Docker-based Qdrant
+  - Automatic collection creation for media and faces
+  - SentenceTransformer integration for text embeddings
+  - Local model caching in `project_root/models`
+
+**Key Features**:
+
+- **Media Segment Storage**:
+  - `insert_media_segments()` - Index transcription segments
+  - `search_media()` - Semantic search with filtering
+  - Metadata: video path, timestamps, segment type
+- **Face Embedding Storage**:
+  - `insert_face()` - Store 128-d face encodings
+  - `search_face()` - Find similar faces
+  - Metadata: name, cluster ID, confidence
+- **Frame Storage**:
+  - `upsert_media_frame()` - Store frame embeddings
+  - Metadata: video path, timestamp, action, dialogue
+
+**Technical Details**:
+
+- Vector dimensions: 384 (text), 128 (faces)
+- Distance metric: Cosine similarity
+- Collections: `media_segments`, `faces`, `media_frames`
+- Automatic model download and caching
+
+---
+
+#### Task 3.2 - Main Processing Pipeline ✅
+
+- ✅ Implemented `IngestionPipeline` in `core/ingestion/pipeline.py`
+  - End-to-end video processing orchestration
+  - Async frame processing with memory management
+  - Integration of all processing components
+  - Comprehensive error handling and logging
+
+**Pipeline Steps**:
+
+1. **Media Probing**: Extract metadata (duration, streams) via `MediaProber`
+2. **Audio Transcription**: Transcribe audio to text segments via `AudioTranscriber`
+3. **Segment Indexing**: Store transcription segments in Qdrant
+4. **Frame Extraction**: Extract frames at fixed intervals via `FrameExtractor`
+5. **Frame Processing** (async for each frame):
+   - Vision analysis via `VisionAnalyzer`
+   - Face detection via `FaceManager`
+   - Vector embedding and Qdrant indexing
+6. **Memory Cleanup**: Force garbage collection and CUDA cache clearing
+
+**Configuration**:
+
+- Qdrant backend: memory or docker
+- Frame interval: configurable (default 5 seconds)
+- Async processing for parallel frame analysis
+- Automatic resource cleanup
+
+**CLI Interface** (`main.py`):
+
+```bash
+uv run python main.py <path_to_video>
+```
+
+- Path validation and resolution
+- Windows asyncio policy handling
+- Single video processing
+
+---
+
+#### Task 3.3 - Face Detection and Identity ✅
+
+- ✅ Implemented `FaceManager` in `core/processing/identity.py`
+  - Multi-backend face detection (GPU → MediaPipe → HOG)
+  - dlib-based face encoding (128-d ResNet embeddings)
+  - DBSCAN clustering for identity grouping
+  - Automatic model download and caching
+
+**Face Detection Pipeline**:
+
+1. **Load Image**: Convert to RGB numpy array via PIL
+2. **Detect Faces**:
+   - GPU: dlib CNN detector (if CUDA available)
+   - Fallback 1: MediaPipe face detection
+   - Fallback 2: dlib HOG detector
+3. **Compute Encodings**: dlib ResNet model (128-d vectors)
+4. **Cluster Identities**: DBSCAN clustering on encodings
+
+**Models** (auto-downloaded to `project_root/models`):
+
+- `shape_predictor_68_face_landmarks.dat`
+- `dlib_face_recognition_resnet_model_v1.dat`
+- `mmod_human_face_detector.dat` (CNN detector)
+
+**Configuration**:
+
+- DBSCAN epsilon: 0.5 (default)
+- DBSCAN min samples: 3 (default)
+- Distance metric: Euclidean
+- GPU support: Optional (CPU default to avoid OOM)
+
+**Integration**:
+
+- Returns `DetectedFace` Pydantic models
+- Stores face embeddings in Qdrant
+- Supports identity clustering across videos
+
+---
+
+#### Task 3.4 - Configuration and Settings ✅
+
+- ✅ Enhanced `config.py` with comprehensive application settings
+  - Hardware detection (CUDA/MPS/CPU)
+  - LLM provider configuration
+  - Whisper model mapping for multiple languages
+  - Path management with computed fields
+  - Environment variable integration
+
+**Key Settings**:
+
+- **Paths**:
+
+  - `project_root` - Auto-detected from .git or .env
+  - `model_cache_dir` - `project_root/models`
+  - `prompt_dir` - `project_root/prompts`
+
+- **LLM Configuration**:
+
+  - Provider: Gemini or Ollama
+  - Timeout: 120s default
+  - Model selection per provider
+
+- **ASR Configuration**:
+
+  - Language-specific Whisper models
+  - Batch size and chunk length
+  - Hugging Face token support
+
+- **Hardware**:
+  - Auto device detection
+  - Compute type (float16/float32)
+  - Device index for Pipeline
+
+---
+
+#### Task 3.5 - Schema Updates ✅
+
+- ✅ Added `DetectedFace` model to `core/schemas.py`
+  - Bounding box: (top, right, bottom, left) tuple
+  - Encoding: 128-d face embedding as list
+  - Confidence: Placeholder for future use
+
+**Schema Definition**:
+
+```python
+class DetectedFace(BaseModel):
+    box: tuple[int, int, int, int]
+    encoding: list[float]
+    confidence: float = 1.0
+```
+
+---
+
+#### Task 3.6 - Dependency Management ✅
+
+- ✅ Updated `pyproject.toml` with Sprint 3 dependencies
+  - Vector database: `qdrant-client>=1.16.1`
+  - Embeddings: `sentence-transformers>=5.1.2`
+  - Face detection: `mediapipe>=0.10.21`
+  - Clustering: `scikit-learn>=1.5.0`
+  - Configuration: `pydantic-settings>=2.12.0`
+  - PyTorch: CUDA 12.4 support
+
+**Removed Dependencies**:
+
+- `face-recognition` (replaced with direct dlib)
+- Commented out `nemo-toolkit` (not used yet)
+
+---
+
+### Sprint 3 Technical Highlights
+
+#### Vector Database Architecture
+
+- **Qdrant Integration**: Embedded and Docker modes
+- **Collections**:
+  - `media_segments`: Text-based search (384-d)
+  - `faces`: Face similarity search (128-d)
+  - `media_frames`: Frame-level indexing (384-d)
+- **Automatic Setup**: Collection creation on initialization
+- **Local Caching**: Models stored in project directory
+
+#### Async Processing
+
+- Frame processing parallelized with `asyncio`
+- Memory cleanup after each frame
+- CUDA cache clearing to prevent OOM
+- Windows event loop policy handling
+
+#### Multi-Backend Face Detection
+
+- **Primary**: dlib CNN (GPU)
+- **Fallback 1**: MediaPipe (CPU-optimized)
+- **Fallback 2**: dlib HOG (CPU)
+- Automatic model download from dlib.net
+- Bz2 decompression and caching
+
+#### Configuration Management
+
+- Pydantic-based settings with validation
+- Environment variable support via `.env`
+- Computed fields for dynamic paths
+- Hardware auto-detection
+- Language-specific model mapping
+
+---
+
+### Sprint 3 Future Enhancements
+
+- [ ] API endpoints for search and retrieval
+- [ ] Web UI for media library visualization
+- [ ] Batch video processing
+- [ ] Progress tracking and status monitoring
+- [ ] Unit and integration tests
 - [ ] Performance benchmarking
+- [ ] Documentation and user guides
 
 ---
 
@@ -585,10 +862,48 @@ winget install Ninja-build.Ninja
 **dlib (Windows Python 3.12)**:
 
 - Repository: [z-mahmud22/Dlib_Windows_Python3.x](https://github.com/z-mahmud22/Dlib_Windows_Python3.x)
-- Installation:
+- Pre-built wheel installation:
   ```bash
   uv add "dlib @ https://github.com/z-mahmud22/Dlib_Windows_Python3.x/raw/main/dlib-19.24.99-cp312-cp312-win_amd64.whl"
   ```
+
+**dlib with CUDA Support (Optional)**:
+
+For GPU-accelerated face detection, you can build dlib from source with CUDA support:
+
+1. **Install NVIDIA CUDA Toolkit** (see References section for download links)
+
+   - CUDA 12.4 or CUDA 11.8
+   - cuDNN libraries
+
+2. **Set CUDA environment variables** (PowerShell):
+
+   ```powershell
+   # Set CUDA path (adjust version as needed)
+   $env:CUDA_PATH="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8"
+   $env:PATH="$env:CUDA_PATH\bin;$env:CUDA_PATH\libnvvp;$env:PATH"
+
+   # Tell dlib explicitly to use CUDA + cuBLAS
+   $env:DLIB_USE_CUDA="1"
+   $env:DLIB_USE_CUBLAS="1"
+   ```
+
+3. **Build dlib from source**:
+
+   ```bash
+   # Uninstall pre-built version if installed
+   uv pip uninstall dlib
+
+   # CMD (Windows Command Prompt)
+   set DLIB_USE_CUDA=1
+   uv run pip install dlib --no-binary :all:
+
+   # PowerShell
+   $env:DLIB_USE_CUDA="1"
+   uv run pip install dlib --no-binary :all:
+   ```
+
+> **Note**: Building dlib with CUDA requires Visual Studio Build Tools, CMake, and Ninja (see Build Tools section above). The build process may take 10-30 minutes.
 
 ### Key Python Packages
 
@@ -606,6 +921,13 @@ winget install Ninja-build.Ninja
 ## Useful Commands
 
 ### Environment Setup
+
+- Centralize the python cache
+
+```powershell
+mkdir .cache
+$env:PYTHONPYCACHEPREFIX = "D:\AI-Media-Indexer\.cache"
+```
 
 ```powershell
 # Set Hugging Face cache directory
@@ -654,20 +976,5 @@ git diff sprint-1..sprint-2 --stat
 - **FastAPI**: [https://fastapi.tiangolo.com/](https://fastapi.tiangolo.com/)
 - **Qdrant**: [https://qdrant.tech/](https://qdrant.tech/)
 - **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
-
-- `docker compose -f docker-compose.qdrant.yaml up -d`
-
-https://developer.nvidia.com/cudnn-downloads?ta rget_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local
-https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local
-
-uv pip uninstall dlib
-set DLIB_USE_CUDA=1
-uv run pip install dlib --no-binary :all:
-
-$env:CUDA_PATH="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8"
-$env:PATH="$env:CUDA_PATH\bin;$env:CUDA_PATH\libnvvp;$env:PATH"
-
-# Tell dlib explicitly to use CUDA + cuBLAS
-
-$env:DLIB_USE_CUDA="1"
-$env:DLIB_USE_CUBLAS="1"
+- **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
+- **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)

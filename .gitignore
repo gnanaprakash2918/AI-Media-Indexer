@@ -2,6 +2,8 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.cache/
+*.pyc
 
 # Custom
 models/
