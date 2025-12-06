@@ -49,12 +49,44 @@ class AudioTranscriber:
         self._current_model_size: str | None = None
 
         self.device = settings.device
-        self.compute_type: str = "float16" if self.device == "cuda" else "int8"
+        # self.compute_type: str = "float16" if self.device == "cuda" else "int8"
+        self.compute_type: str = "int8_float16" if self.device == "cuda" else "int8"
 
         print(
             f"[INFO] Initialized Faster-Whisper ({self.device}, "
             f"Compute: {self.compute_type})"
         )
+
+    def __enter__(self):
+        """Called when entering the 'with' block."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Called automatically when exiting the 'with' block."""
+        self.unload_model()
+
+    def unload_model(self) -> None:
+        """Forcefully unload the Whisper model from VRAM."""
+        print("[INFO] Unloading Whisper model to free VRAM...")
+
+        # 1. Delete the CTranslate2 model objects
+        if self._batched_model is not None:
+            del self._batched_model
+            self._batched_model = None
+
+        if self._model is not None:
+            del self._model
+            self._model = None
+            self._current_model_size = None
+
+        # 2. Force Python's Garbage Collector to run
+        gc.collect()
+
+        # 3. Force PyTorch to release cached VRAM
+        if self.device == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        print("[SUCCESS] Whisper unloaded. VRAM should be free.")
 
     def _get_ffmpeg_cmd(self) -> str:
         """Locates the ffmpeg executable in system PATH.
@@ -280,7 +312,7 @@ class AudioTranscriber:
             int: Number of subtitle entries written.
         """
         count = 0
-        last_text = ""
+        # last_text = ""
         with open(path, "w", encoding="utf-8") as f:
             for chunk in chunks:
                 text = chunk.get("text", "").strip()
@@ -303,8 +335,8 @@ class AudioTranscriber:
 
                 if (end - start) < 0.2:
                     continue
-                if text == last_text:
-                    continue
+                # if text == last_text:
+                #     continue
 
                 f.write(
                     f"{count + 1}\n"
@@ -313,7 +345,7 @@ class AudioTranscriber:
                     f"{text}\n\n"
                 )
                 count += 1
-                last_text = text
+                # last_text = text
         return count
 
     def _split_long_chunks(
@@ -414,13 +446,10 @@ class AudioTranscriber:
             if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
                 return None
 
-        proc_path = audio_path
-        is_sliced = False
-        if start_time > 0 or end_time is not None:
-            proc_path = self._slice_audio(audio_path, start_time, end_time)
-            is_sliced = True
-
+        is_sliced = True
+        proc_path = self._slice_audio(audio_path, start_time, end_time)
         chunks: list[dict[str, Any]] = []
+
         candidates = settings.whisper_model_map.get(lang, [settings.fallback_model_id])
         model_to_use = candidates[0] if candidates else settings.fallback_model_id
 
@@ -433,37 +462,67 @@ class AudioTranscriber:
             if self._batched_model is None:
                 raise RuntimeError("Model failed to initialize")
 
-            print(f"[INFO] Running Inference on {proc_path} with {model_to_use}...")
-
-            prompt = (
-                "வணக்கம். Hello sir. என்ன late ஆயிடுச்சு? பரவாயில்லை. "
-                "Project details பேசலாம். Okay, let's start."
-            )
+            print(f"[INFO] Running Inference on {proc_path} with {model_to_use}.")
 
             segments, info = self._batched_model.transcribe(
                 str(proc_path),
                 batch_size=settings.batch_size,
                 language=lang,
                 task="transcribe",
-                beam_size=5,
+                beam_size=3,
                 condition_on_previous_text=False,
-                initial_prompt=prompt,
+                initial_prompt=None,
                 repetition_penalty=1.2,
+                word_timestamps=True,
                 vad_filter=True,
                 vad_parameters={
                     "min_speech_duration_ms": 250,
-                    "min_silence_duration_ms": 2000,
+                    "min_silence_duration_ms": 500,
                     "speech_pad_ms": 500,
                     "threshold": 0.4,
                 },
+                no_speech_threshold=0.6,
+                log_prob_threshold=-1.0,
             )
 
             for segment in segments:
-                chunk = {
-                    "text": segment.text.strip(),
-                    "timestamp": (segment.start, segment.end),
-                }
-                chunks.append(chunk)
+                # If word timestamps are available, reconstruct lines to be max ~6s
+                if segment.words:
+                    current_words = []
+                    seg_start = segment.words[0].start
+
+                    for word in segment.words:
+                        current_words.append(word.word)
+                        # Break line if > 6 seconds OR ends with punctuation
+                        if (word.end - seg_start > 6.0) or word.word.strip().endswith(
+                            ("?", ".", "!")
+                        ):
+                            chunks.append(
+                                {
+                                    "text": "".join(current_words).strip(),
+                                    "timestamp": (seg_start, word.end),
+                                }
+                            )
+                            # Reset for next line
+                            current_words = []
+                            seg_start = word.end
+
+                    # Append any remaining words in the segment
+                    if current_words:
+                        chunks.append(
+                            {
+                                "text": "".join(current_words).strip(),
+                                "timestamp": (seg_start, segment.words[-1].end),
+                            }
+                        )
+                else:
+                    # Fallback if no word timestamps found
+                    chunks.append(
+                        {
+                            "text": segment.text.strip(),
+                            "timestamp": (segment.start, segment.end),
+                        }
+                    )
 
             if not chunks:
                 print("[WARN] No speech detected.")
@@ -473,11 +532,8 @@ class AudioTranscriber:
                 f"[SUCCESS] Transcription complete. Prob: {info.language_probability}"
             )
 
-            chunks = self._split_long_chunks(
-                chunks, max_segment_s=settings.chunk_length_s
-            )
+            # Write SRT
             lines_written = self._write_srt(chunks, out_srt, offset=start_time)
-
             if lines_written > 0:
                 print(f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}")
                 return chunks
@@ -485,7 +541,6 @@ class AudioTranscriber:
         except Exception as e:
             print(f"[ERROR] Inference failed: {e}")
             raise
-
         finally:
             if is_sliced and proc_path.exists():
                 try:
