@@ -334,6 +334,10 @@ class VectorDB:
                 f"got {len(vector)}",
             )
 
+        # Normalize the incoming point_id (which may contain full paths,
+        # unicode pipes, etc.) into a safe, deterministic UUID string.
+        safe_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
+
         payload = {
             "video_path": video_path,
             "timestamp": timestamp,
@@ -345,14 +349,14 @@ class VectorDB:
             collection_name=self.MEDIA_COLLECTION,
             points=[
                 models.PointStruct(
-                    id=point_id,
+                    id=safe_point_id,
                     vector=vector,
                     payload=payload,
                 ),
             ],
         )
 
-        print(f"[VectorDB] Upserted media frame id={point_id}")
+        print(f"[VectorDB] Upserted media frame id={safe_point_id}")
 
     def insert_face(
         self,
