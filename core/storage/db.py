@@ -334,8 +334,6 @@ class VectorDB:
                 f"got {len(vector)}",
             )
 
-        # Normalize the incoming point_id (which may contain full paths,
-        # unicode pipes, etc.) into a safe, deterministic UUID string.
         safe_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
 
         payload = {
@@ -343,6 +341,7 @@ class VectorDB:
             "timestamp": timestamp,
             "action": action,
             "dialogue": dialogue,
+            "type": "visual",
         }
 
         self.client.upsert(
@@ -357,6 +356,38 @@ class VectorDB:
         )
 
         print(f"[VectorDB] Upserted media frame id={safe_point_id}")
+
+    def search_frames(
+        self,
+        query: str,
+        limit: int = 5,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
+        query_vector = self.encoder.encode(query).tolist()
+
+        resp = self.client.query_points(
+            collection_name=self.MEDIA_COLLECTION,
+            query=query_vector,
+            limit=limit,
+            score_threshold=score_threshold,
+        )
+
+        hits = resp.points
+        results: list[dict[str, Any]] = []
+
+        for hit in hits:
+            payload = hit.payload or {}
+            results.append(
+                {
+                    "score": hit.score,
+                    "action": payload.get("action"),
+                    "timestamp": payload.get("timestamp"),
+                    "video_path": payload.get("video_path"),
+                    "type": payload.get("type", "visual"),
+                },
+            )
+
+        return results
 
     def insert_face(
         self,
@@ -475,10 +506,9 @@ class VectorDB:
 
 if __name__ == "__main__":
     db = VectorDB(backend="docker")
-
     try:
         db.insert_media_segments(
-            "C:\\Users\\Gnana Prakash M\\Downloads\\project\\test_video.mp4",
+            "test_video.mp4",
             [
                 {
                     "text": "Hello world this is a test",
@@ -488,21 +518,6 @@ if __name__ == "__main__":
                 },
             ],
         )
-
-        print("Media search result (no filter):", db.search_media("Hello world"))
-        print(
-            "Media search result (filtered):",
-            db.search_media(
-                "Hello world",
-                video_path="test_video.mp4",
-                segment_type="dialogue",
-            ),
-        )
-
-        fake_face_vec = [0.01] * VectorDB.FACE_VECTOR_SIZE
-        db.insert_face(fake_face_vec, name="Test Person", cluster_id=0)
-
-        face_results = db.search_face(fake_face_vec, limit=3)
-        print("Face search result:", face_results)
+        print("Media search result:", db.search_media("Hello world"))
     finally:
         db.close()
