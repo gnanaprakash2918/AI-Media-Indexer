@@ -30,7 +30,7 @@ class OllamaLLM(LLMInterface):
         """
         super().__init__(prompt_dir=prompt_dir)
 
-        self.model = model_name or os.getenv("OLLAMA_MODEL", "llava")
+        self.model = model_name or os.getenv("OLLAMA_MODEL", "llava:7b")
         base_url = os.getenv(base_url_env, "http://localhost:11434")
 
         print(

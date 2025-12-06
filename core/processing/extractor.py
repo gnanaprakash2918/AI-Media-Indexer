@@ -2,7 +2,9 @@
 
 import asyncio
 import shutil
+import subprocess
 import tempfile
+import traceback
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -33,7 +35,9 @@ class FrameExtractor:
             self.cleanup()
 
     async def extract(
-        self, video_path: str | Path, interval: int = 2
+        self,
+        video_path: str | Path,
+        interval: int = 2,
     ) -> AsyncGenerator[Path, None]:
         """Generator that extracts frames from a video file at specified intervals.
 
@@ -64,7 +68,7 @@ class FrameExtractor:
 
             if path_obj.is_dir():
                 raise IsADirectoryError(
-                    f"Expected a file, but got a directory: {path_obj}"
+                    f"Expected a file, but got a directory: {path_obj}",
                 )
 
             if not path_obj.is_file():
@@ -87,22 +91,24 @@ class FrameExtractor:
                 ]
 
                 print(f"Starting async ffmpeg process for {path_obj.name}")
-                process = await asyncio.create_subprocess_exec(
-                    *args_to_ffmpeg,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
 
-                _, stderr = await process.communicate()
+                def run_ffmpeg():
+                    return subprocess.run(
+                        args_to_ffmpeg,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
 
-                if process.returncode != 0:
+                proc = await asyncio.to_thread(run_ffmpeg)
+
+                if proc.returncode != 0:
                     print(
-                        f"[ERROR:FFmpeg] Failed to extract frames from '{video_path}': "
-                        f"{stderr.decode().strip() if stderr else ''}"
+                        "[ERROR:FFmpeg] Failed to extract frames from "
+                        f"'{video_path}': {proc.stderr.strip() if proc.stderr else ''}",
                     )
                     return
 
-                # Sort and yield
                 frames = sorted(cache_dir.glob("frame_*.jpg"))
                 for frame_path in frames:
                     yield frame_path
@@ -121,8 +127,9 @@ class FrameExtractor:
         except Exception as exc:
             print(
                 f"[ERROR:{type(exc).__name__}] Unexpected error "
-                f"processing '{video_path}': {exc}"
+                f"processing '{video_path}': {exc}",
             )
+            traceback.print_exc()
             return
 
 
