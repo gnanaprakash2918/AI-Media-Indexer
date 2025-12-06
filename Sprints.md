@@ -978,3 +978,87 @@ git diff sprint-1..sprint-2 --stat
 - **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
 - **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 - **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
+
+# notes
+
+The reason your complex file path is failing consistently, even with various quoting methods, is almost certainly due to **PowerShell's aggressive interpretation of the brackets `[]`** as part of its **wildcard matching syntax** (globbing).
+
+When you use the path: `D:\Dude (2025)TRUE WEB-DL - 1080p - AVC - [Tam + Tel + Hin + Mal + Kan] -(DD+5.1 - 640Kbps & AAC) - 5.8GB - ESub.mkv`
+
+PowerShell sees `[Tam + Tel + Hin + Mal + Kan]` and tries to match that pattern against existing files, which fails, resulting in the "File not found" error _before_ Python even gets the path correctly.
+
+The failure of the **Stop-Parsing Symbol (`--%`)** confirms this:
+
+```powershell
+uv run python main.py --% D:\Dude (2025)TRUE WEB-DL - 1080p - AVC - [Tam + Tel + Hin + Mal + Kan] -(DD+5.1 - 640Kbps & AAC) - 5.8GB - ESub.mkv
+Error: File not found or not a file: D:\Dude
+```
+
+When using `--%`, PowerShell passes arguments literally, but because your command is `uv run python main.py`, the path is being treated as the **first** argument to `uv run`. Since the path contains spaces, `uv run` sees `D:\Dude` as the path and the rest of the file name as separate arguments, leading to the "File not found" error on the truncated path.
+
+### The Reliable Fix
+
+There are two robust ways to fix this, depending on whether you can rename the file or must use the exact name.
+
+#### 1\. The Best Practice Fix (Recommended)
+
+Rename the file to remove all special characters (`(`, `)`, `[`, `]`, `&`, spaces) and replace them with underscores or hyphens. This is the **most robust** solution for any command-line environment.
+
+**New Path Example:**
+
+```
+D:\Dude_2025_TRUE_WEB-DL_ESub.mkv
+```
+
+**Command:**
+
+```powershell
+uv run python main.py "D:\Dude_2025_TRUE_WEB-DL_ESub.mkv"
+```
+
+---
+
+#### 2\. The PowerShell Escape Fix (If Renaming is Forbidden)
+
+If you absolutely must use the original file name, you need to use the **backtick (`` ` ``) character** to escape every single special character within the double quotes. This tells PowerShell to treat each escaped character as a literal character, not a special operator.
+
+The special characters that need escaping are: `(`, `)`, `[`, `]`, `&`, `+`, spaces.
+
+**Original Path:**
+`D:\Dude (2025)TRUE WEB-DL - 1080p - AVC - [Tam + Tel + Hin + Mal + Kan] -(DD+5.1 - 640Kbps & AAC) - 5.8GB - ESub.mkv`
+
+**Escaped Command:**
+
+```powershell
+uv run python main.py "D:\Dude` (2025`)TRUE` WEB-DL` -` 1080p` -` AVC` -` [`Tam` `+` `Tel` `+` `Hin` `+` `Mal` `+` `Kan`]` -(`DD`+5.1` -` 640Kbps` &` AAC)` -` 5.8GB` -` ESub.mkv"
+```
+
+_(This is extremely tedious and error-prone, which is why renaming is preferred.)_
+
+---
+
+### Handling Multiple Arguments
+
+If you need to pass **multiple arguments** (e.g., a file path and a language code), you simply continue to quote/escape each argument separately.
+
+For instance, if your `main.py` accepted a file path and a language:
+
+```python
+# main.py expects:
+# sys.argv[1] = file_path
+# sys.argv[2] = language (e.g., "en")
+```
+
+**Using the Renamed File (Best Practice):**
+
+```powershell
+uv run python main.py "D:\Dude_2025_ESub.mkv" "en"
+```
+
+**Using the Escaped File (Avoid if possible):**
+
+```powershell
+uv run python main.py "D:\Dude` (2025`)TRUE` WEB-DL` ... ESub.mkv" "en"
+```
+
+The key is to ensure the **entire file path argument** is passed as a single, correctly escaped string to Python via `uv run`.
