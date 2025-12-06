@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     whisper_model_map: dict[str, list[str]] = Field(
         default={
             "ta": [
+                "openai/whisper-large-v3-turbo",
                 "openai/whisper-large-v2",
                 # "vasista22/whisper-tamil-large-v2",
                 # "openai/whisper-small",
