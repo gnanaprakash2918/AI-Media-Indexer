@@ -28,6 +28,7 @@ from faster_whisper import BatchedInferencePipeline, WhisperModel
 from huggingface_hub import snapshot_download
 
 from config import settings
+from core.processing.text_utils import parse_srt
 
 warnings.filterwarnings("ignore")
 
@@ -122,11 +123,14 @@ class AudioTranscriber:
         """
         print("[INFO] Probing for existing subtitles...")
 
+        # 1. Check for explicit user provided subtitle path
         if user_sub_path and user_sub_path.exists():
             print(f"[SUCCESS] Using provided subtitle: {user_sub_path}")
             shutil.copy(user_sub_path, output_path)
             return True
 
+        # 2. Check for sidecar files (video.srt, video.lang.srt)
+        # We check input_path directory for files with same stem
         for sidecar in [
             input_path.with_suffix(f".{language}.srt"),
             input_path.with_suffix(".srt"),
@@ -136,6 +140,7 @@ class AudioTranscriber:
                 shutil.copy(sidecar, output_path)
                 return True
 
+        # 3. Check for embedded subtitles using ffmpeg
         cmd = [
             self._get_ffmpeg_cmd(),
             "-y",
@@ -144,7 +149,7 @@ class AudioTranscriber:
             "-i",
             str(input_path),
             "-map",
-            "0:s:0",
+            "0:s:0",  # Map first subtitle stream
             str(output_path),
         ]
         try:
@@ -312,7 +317,6 @@ class AudioTranscriber:
             int: Number of subtitle entries written.
         """
         count = 0
-        # last_text = ""
         with open(path, "w", encoding="utf-8") as f:
             for chunk in chunks:
                 text = chunk.get("text", "").strip()
@@ -335,8 +339,6 @@ class AudioTranscriber:
 
                 if (end - start) < 0.2:
                     continue
-                # if text == last_text:
-                #     continue
 
                 f.write(
                     f"{count + 1}\n"
@@ -345,7 +347,6 @@ class AudioTranscriber:
                     f"{text}\n\n"
                 )
                 count += 1
-                # last_text = text
         return count
 
     def _split_long_chunks(
@@ -442,10 +443,18 @@ class AudioTranscriber:
         lang = language or settings.language
         out_srt = output_path or audio_path.with_suffix(".srt")
 
+        # Existing Sidecar / Embedded Subtitles
         if start_time == 0.0 and end_time is None:
             if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
-                return None
+                print(f"[INFO] Parsing existing subtitles from {out_srt}...")
+                parsed_segments = parse_srt(out_srt)
+                print(
+                    f"[SUCCESS] Loaded {len(parsed_segments)}"
+                    " segments from existing file."
+                )
+                return parsed_segments
 
+        # Run Whisper (If no subs found) ---
         is_sliced = True
         proc_path = self._slice_audio(audio_path, start_time, end_time)
         chunks: list[dict[str, Any]] = []
@@ -486,14 +495,12 @@ class AudioTranscriber:
             )
 
             for segment in segments:
-                # If word timestamps are available, reconstruct lines to be max ~6s
                 if segment.words:
                     current_words = []
                     seg_start = segment.words[0].start
 
                     for word in segment.words:
                         current_words.append(word.word)
-                        # Break line if > 6 seconds OR ends with punctuation
                         if (word.end - seg_start > 6.0) or word.word.strip().endswith(
                             ("?", ".", "!")
                         ):
@@ -503,11 +510,9 @@ class AudioTranscriber:
                                     "timestamp": (seg_start, word.end),
                                 }
                             )
-                            # Reset for next line
                             current_words = []
                             seg_start = word.end
 
-                    # Append any remaining words in the segment
                     if current_words:
                         chunks.append(
                             {
@@ -516,7 +521,6 @@ class AudioTranscriber:
                             }
                         )
                 else:
-                    # Fallback if no word timestamps found
                     chunks.append(
                         {
                             "text": segment.text.strip(),
@@ -532,7 +536,6 @@ class AudioTranscriber:
                 f"[SUCCESS] Transcription complete. Prob: {info.language_probability}"
             )
 
-            # Write SRT
             lines_written = self._write_srt(chunks, out_srt, offset=start_time)
             if lines_written > 0:
                 print(f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}")

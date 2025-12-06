@@ -130,7 +130,7 @@ class IngestionPipeline:
 
         print(f"\n[Pipeline]  Processing: {path.name} ")
 
-        # --- STEP 1: METADATA ---
+        #  STEP 1: METADATA
         try:
             meta = self.prober.probe(path)
             duration_raw = meta.get("format", {}).get("duration", 0)
@@ -144,16 +144,26 @@ class IngestionPipeline:
             print(f"[Pipeline] Probe failed: {exc}")
             raise
 
-        # --- STEP 2: AUDIO (High VRAM - Whisper) ---
-        print("[Pipeline] Step 1/2: Transcribing audio...")
+        #  STEP 2: AUDIO (High VRAM - Whisper)
+        print("[Pipeline] Step 1/2: Processing Audio...")
+
         audio_segments: list[dict[str, Any]] | None = None
-        try:
-            # Context manager loads model -> transcribes -> UNLOADS model automatically
-            with AudioTranscriber() as transcriber:
-                audio_segments = transcriber.transcribe(path)
-            # At this exact point, Whisper is gone and VRAM is free for Vision
-        except Exception as exc:
-            print(f"[Pipeline] Transcription failed: {exc}")
+        srt_path = path.with_suffix(".srt")
+
+        if srt_path.exists():
+            print(f"[Pipeline] Found sidecar subtitle: {srt_path.name}")
+            from core.processing.text_utils import parse_srt
+
+            audio_segments = parse_srt(srt_path)
+        else:
+            # 2. Only spin up Transcriber if no SRT found
+            print("[Pipeline] No subtitle file found. Spinning up Whisper...")
+            try:
+                # Context manager loads model -> transcribes -> UNLOADS model
+                with AudioTranscriber() as transcriber:
+                    audio_segments = transcriber.transcribe(path)
+            except Exception as e:
+                print(f"[Pipeline] Transcription skipped/failed: {e}")
 
         # Index transcription chunks into Qdrant if available.
         if audio_segments:
@@ -175,14 +185,12 @@ class IngestionPipeline:
         # Force cleanup after Whisper to ensure VRAM is clean for Vision
         self._cleanup_memory()
 
-        # --- STEP 3: VISUAL ANALYSIS (High VRAM - Vision LLM) ---
+        #  STEP 3: VISUAL ANALYSIS (High VRAM - Vision LLM)
         print("[Pipeline] Step 2/2: Analyzing frames (vision + faces)...")
 
         # Initialize Workers LOCALLY only when needed
         print("[Pipeline] Loading Vision & Identity models...")
         self.vision = VisionAnalyzer()
-        # CRITICAL: Force use_gpu=False for FaceManager to prevent VRAM OOM
-        # We rely on Ollama (Vision) using the GPU. Dlib can stay on CPU.
         self.faces = FaceManager(use_gpu=False)
 
         frame_generator = self.extractor.extract(
@@ -235,10 +243,7 @@ class IngestionPipeline:
         )
 
     def _prepare_segments_for_db(
-        self,
-        *,
-        path: Path,
-        chunks: Iterable[dict[str, Any]],
+        self, *, path: Path, chunks: Iterable[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Normalize transcriber chunks into the format expected by VectorDB.
 
@@ -259,41 +264,31 @@ class IngestionPipeline:
             :meth:`VectorDB.insert_media_segments`.
         """
         prepared: list[dict[str, Any]] = []
-
         for chunk in chunks:
             text = (chunk.get("text") or "").strip()
             if not text:
                 continue
 
-            timestamp = chunk.get("timestamp") or (None, None)
-            try:
+            #  FIX: Handle both SRT (start/end keys) and Whisper (timestamp tuple)
+            if "start" in chunk and "end" in chunk:
+                start, end = chunk["start"], chunk["end"]
+            else:
+                timestamp = chunk.get("timestamp") or (None, None)
                 start, end = timestamp
-            except Exception:
-                start, end = None, None
 
             if start is None:
-                # Skip ill-defined segments.
                 continue
-
             if end is None:
                 end = float(start) + 2.0
-
-            try:
-                start_f = float(start)
-                end_f = float(end)
-            except (TypeError, ValueError):
-                # If casting fails, skip this chunk.
-                continue
 
             prepared.append(
                 {
                     "text": text,
-                    "start": start_f,
-                    "end": end_f,
+                    "start": float(start),
+                    "end": float(end),
                     "type": "dialogue",
-                },
+                }
             )
-
         return prepared
 
     async def _process_single_frame(
