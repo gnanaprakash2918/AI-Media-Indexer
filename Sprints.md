@@ -656,3 +656,18 @@ git diff sprint-1..sprint-2 --stat
 - **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
 
 - `docker compose -f docker-compose.qdrant.yaml up -d`
+
+https://developer.nvidia.com/cudnn-downloads?ta rget_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local
+https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local
+
+uv pip uninstall dlib
+set DLIB_USE_CUDA=1
+uv run pip install dlib --no-binary :all:
+
+$env:CUDA_PATH="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8"
+$env:PATH="$env:CUDA_PATH\bin;$env:CUDA_PATH\libnvvp;$env:PATH"
+
+# Tell dlib explicitly to use CUDA + cuBLAS
+
+$env:DLIB_USE_CUDA="1"
+$env:DLIB_USE_CUBLAS="1"
