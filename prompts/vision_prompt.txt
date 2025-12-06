@@ -1,0 +1,7 @@
+Describe this image in detail for a media search engine.
+Focus on:
+1. Main characters (gender, age, clothing).
+2. Setting (indoor/outdoor, time of day, location).
+3. Action (what is happening?).
+4. Text (visible signs or screens).
+Output a single concise paragraph.
