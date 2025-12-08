@@ -12,6 +12,7 @@ timestamp, file path, and content snippet.
 from typing import Any
 
 from core.storage.db import VectorDB
+from core.utils.logger import log
 
 
 class SearchEngine:
@@ -47,7 +48,7 @@ class SearchEngine:
             * ``"dialogue_matches"``: List of dialogue-based matches with the
               same keys.
         """
-        print(f"[Search] Querying: '{query}'...")
+        log(f"[Search] Querying: '{query}'...")
 
         visual_results = self.db.search_frames(query, limit=limit)
         dialogue_results = self.db.search_media(query, limit=limit)

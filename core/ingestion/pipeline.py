@@ -35,6 +35,7 @@ from core.processing.transcriber import AudioTranscriber
 from core.processing.vision import VisionAnalyzer
 from core.schemas import MediaMetadata, MediaType
 from core.storage.db import VectorDB
+from core.utils.logger import log
 
 
 class IngestionPipeline:
@@ -78,7 +79,7 @@ class IngestionPipeline:
                 for online metadata enrichment. If ``None``, the engine falls
                 back to environment configuration or offline-only behavior.
         """
-        print("[Pipeline] Initializing Infrastructure...")
+        log("[Pipeline] Initializing Infrastructure...")
 
         # Infrastructure components (lightweight)
         self.prober = MediaProber()
@@ -96,14 +97,14 @@ class IngestionPipeline:
         self.vision: VisionAnalyzer | None = None
         self.faces: FaceManager | None = None
 
-        print("[Pipeline] Initialization complete. AI Models will load on-demand.")
+        log("[Pipeline] Initialization complete. AI Models will load on-demand.")
 
     def _cleanup_memory(self) -> None:
         """Force Python and CUDA to release memory."""
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        print("[Pipeline] Memory cleanup triggered.")
+        log("[Pipeline] Memory cleanup triggered.")
 
     async def process_video(
         self,
@@ -141,17 +142,17 @@ class IngestionPipeline:
 
         if not path.exists():
             msg = f"Video file not found: {path}"
-            print(f"[Pipeline] {msg}")
+            log(f"[Pipeline] {msg}")
             raise FileNotFoundError(msg)
 
         if not path.is_file():
             msg = f"Expected a file, got a directory or special path: {path}"
-            print(f"[Pipeline] {msg}")
+            log(f"[Pipeline] {msg}")
             raise FileNotFoundError(msg)
 
-        print(f"\n[Pipeline]  Processing: {path.name} ")
+        log(f"\n[Pipeline]  Processing: {path.name} ")
 
-        # --- STEP 0: SEMANTIC METADATA & CLASSIFICATION ---
+        #  STEP 0: SEMANTIC METADATA & CLASSIFICATION
         # Convert string hint to Enum, with graceful fallback
         hint_enum = (
             MediaType(media_type_hint)
@@ -159,18 +160,18 @@ class IngestionPipeline:
             else MediaType.UNKNOWN
         )
 
-        print("[Pipeline] Analyzing semantic metadata...")
+        log("[Pipeline] Analyzing semantic metadata...")
         meta: MediaMetadata = self.metadata_engine.identify(path, user_hint=hint_enum)
-        print(
+        log(
             f"[Metadata] Identified: {meta.media_type.value.upper()} | "
             f"Title: {meta.title} ({meta.year})"
         )
         if meta.cast:
-            print(f"[Metadata] Cast: {', '.join(meta.cast[:3])}")
+            log(f"[Metadata] Cast: {', '.join(meta.cast[:3])}")
         if not meta.is_processed:
-            print("[Metadata] Online enrichment unavailable or skipped.")
+            log("[Metadata] Online enrichment unavailable or skipped.")
 
-        # --- STEP 1: TECHNICAL PROBE ---
+        #  STEP 1: TECHNICAL PROBE
         try:
             probed_meta = self.prober.probe(path)
             duration_raw = probed_meta.get("format", {}).get("duration", 0)
@@ -178,20 +179,20 @@ class IngestionPipeline:
                 duration = float(duration_raw)
             except (TypeError, ValueError):
                 duration = 0.0
-            print(f"[Pipeline] Duration: {duration:.2f}s")
+            log(f"[Pipeline] Duration: {duration:.2f}s")
         except MediaProbeError as exc:
-            print(f"[Pipeline] Probe failed: {exc}")
+            log(f"[Pipeline] Probe failed: {exc}")
             raise
 
-        # --- STEP 2: AUDIO & SUBTITLES (Priority Chain) ---
-        print("[Pipeline] Step 1/2: Processing Audio/Subtitles...")
+        #  STEP 2: AUDIO & SUBTITLES (Priority Chain)
+        log("[Pipeline] Step 1/2: Processing Audio/Subtitles...")
 
         audio_segments: list[dict[str, Any]] = []
 
         # Priority 1: Sidecar (.srt)
         srt_path = path.with_suffix(".srt")
         if srt_path.exists():
-            print(f"[Subtitle] Found sidecar file: {srt_path.name}")
+            log(f"[Subtitle] Found sidecar file: {srt_path.name}")
             audio_segments = parse_srt(srt_path) or []
 
         # Priority 2: Embedded subtitles (via AudioTranscriber utility)
@@ -202,22 +203,22 @@ class IngestionPipeline:
                     # Default language chain: try Tamil ("ta")/English ("en") or
                     # whatever logic `_find_existing_subtitles` implements.
                     if transcriber._find_existing_subtitles(path, temp_srt, None, "ta"):
-                        print("[Subtitle] Extracted embedded subtitles.")
+                        log("[Subtitle] Extracted embedded subtitles.")
                         audio_segments = parse_srt(temp_srt)
                         if temp_srt.exists():
                             temp_srt.unlink()
             except Exception as exc:  # noqa: BLE001
-                print(f"[Subtitle] Embedded extraction check failed: {exc}")
+                log(f"[Subtitle] Embedded extraction check failed: {exc}")
 
         # Priority 3: Whisper transcription
         if not audio_segments:
-            print("[Subtitle] No external subtitles found. Spinning up Whisper...")
+            log("[Subtitle] No external subtitles found. Spinning up Whisper...")
             try:
                 with AudioTranscriber() as transcriber:
                     audio_segments = transcriber.transcribe(path) or []
 
             except Exception as exc:  # noqa: BLE001
-                print(f"[Pipeline] Whisper failed: {exc}")
+                log(f"[Pipeline] Whisper failed: {exc}")
 
         # Index transcription/subtitle chunks into Qdrant if available
         if audio_segments:
@@ -228,22 +229,22 @@ class IngestionPipeline:
             try:
                 # TODO: Attach `meta` (Title/Year) to payloads for richer queries
                 self.db.insert_media_segments(str(path), prepared_segments)
-                print(
+                log(
                     f"[Pipeline] Indexed {len(prepared_segments)} audio segments "
                     "into Qdrant.",
                 )
             except Exception as exc:  # noqa: BLE001
-                print(f"[Pipeline] Failed to index audio segments: {exc}")
+                log(f"[Pipeline] Failed to index audio segments: {exc}")
         else:
-            print("[Pipeline] No audio segments found or processed.")
+            log("[Pipeline] No audio segments found or processed.")
 
         # Force cleanup after Whisper to ensure VRAM is clean for Vision
         self._cleanup_memory()
 
-        # --- STEP 3: VISUAL ANALYSIS (Vision + Faces) ---
-        print("[Pipeline] Step 2/2: Analyzing frames (vision + faces)...")
+        #  STEP 3: VISUAL ANALYSIS (Vision + Faces)
+        log("[Pipeline] Step 2/2: Analyzing frames (vision + faces)...")
 
-        print("[Pipeline] Loading Vision & Identity models...")
+        log("[Pipeline] Loading Vision & Identity models...")
         self.vision = VisionAnalyzer()
         # Force CPU for Dlib to avoid VRAM conflict with other workloads
         self.faces = FaceManager(use_gpu=False)
@@ -257,7 +258,7 @@ class IngestionPipeline:
         try:
             async for frame_path in frame_generator:
                 timestamp = frame_count * float(self.frame_interval_seconds)
-                print(
+                log(
                     f"[Pipeline] Processing frame #{frame_count} "
                     f"at ~{timestamp:.2f}s: {frame_path.name}",
                 )
@@ -270,7 +271,7 @@ class IngestionPipeline:
                     )
                     await asyncio.sleep(1)
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[Pipeline] Error processing frame {frame_path}: {exc}")
+                    log(f"[Pipeline] Error processing frame {frame_path}: {exc}")
                 finally:
                     if frame_path.exists():
                         try:
@@ -281,7 +282,7 @@ class IngestionPipeline:
 
                 frame_count += 1
         finally:
-            print("[Pipeline] Finished visual processing. Unloading models...")
+            log("[Pipeline] Finished visual processing. Unloading models...")
             if self.vision:
                 del self.vision
             if self.faces:
@@ -290,7 +291,7 @@ class IngestionPipeline:
             self.faces = None
             self._cleanup_memory()
 
-        print(
+        log(
             f"\n[Pipeline]  Finished processing {path.name}. "
             f"Frames processed: {frame_count} ",
         )
@@ -373,23 +374,23 @@ class IngestionPipeline:
             FileNotFoundError: If the frame image cannot be found on disk.
         """
         if self.vision is None or self.faces is None:
-            print("[Pipeline] Error: Models not initialized. Skipping frame.")
+            log("[Pipeline] Error: Models not initialized. Skipping frame.")
             return
 
         if not frame_path.exists():
             msg = f"Frame file not found: {frame_path}"
-            print(f"[Pipeline] {msg}")
+            log(f"[Pipeline] {msg}")
             raise FileNotFoundError(msg)
 
         description: str | None = None
         try:
             description = await self.vision.describe(frame_path)
         except Exception as exc:  # noqa: BLE001
-            print(f"[Pipeline] Vision description failed: {exc}")
+            log(f"[Pipeline] Vision description failed: {exc}")
 
         if description:
             description = description.strip()
-            print(f"[Vision] Output: {description[:100]}...")
+            log(f"[Vision] Output: {description[:100]}...")
             if description:
                 try:
                     vector = self.db.encoder.encode(description).tolist()
@@ -403,7 +404,7 @@ class IngestionPipeline:
                         dialogue=None,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[Pipeline] Failed to index frame description: {exc}")
+                    log(f"[Pipeline] Failed to index frame description: {exc}")
 
         try:
             detected_faces = await asyncio.to_thread(
@@ -411,19 +412,19 @@ class IngestionPipeline:
                 frame_path,
             )
         except FileNotFoundError:
-            print(
+            log(
                 f"[Pipeline] Frame disappeared before face detection: {frame_path}",
             )
             return
         except Exception as exc:  # noqa: BLE001
-            print(f"[Pipeline] Face detection failed on {frame_path}: {exc}")
+            log(f"[Pipeline] Face detection failed on {frame_path}: {exc}")
             return
 
         if not detected_faces:
-            print(f"[Pipeline] No faces detected at {timestamp:.2f}s.")
+            log(f"[Pipeline] No faces detected at {timestamp:.2f}s.")
             return
 
-        print(
+        log(
             f"[Pipeline] [{timestamp:.2f}s] Detected {len(detected_faces)} face(s).",
         )
 
@@ -431,4 +432,4 @@ class IngestionPipeline:
             try:
                 self.db.insert_face(face.encoding, name=None, cluster_id=None)
             except Exception as exc:  # noqa: BLE001
-                print(f"[Pipeline] Failed to index face embedding: {exc}")
+                log(f"[Pipeline] Failed to index face embedding: {exc}")
