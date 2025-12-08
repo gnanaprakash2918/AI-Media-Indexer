@@ -12,13 +12,18 @@ from typing import Any
 
 
 def log(*args: Any, **kwargs: Any) -> None:
-    """Write a log message to stderr.
+    """Logger that handles Unicode characters (like '｜') on Windowswithout crashing."""
+    # Force output to stderr (MCP requirement)
+    kwargs["file"] = sys.stderr
 
-    Args:
-        *args: Positional arguments passed to :func:`print`.
-        **kwargs: Keyword arguments passed to :func:`print`. The ``file``
-            parameter is always forced to :data:`sys.stderr`.
-    """
-    # Ensure we never write logs to stdout (which MCP uses for JSON-RPC).
-    kwargs.setdefault("file", sys.stderr)
-    print(*args, **kwargs)
+    # Convert all args to string
+    msg = " ".join(str(arg) for arg in args)
+
+    try:
+        # Attempt to write directly
+        print(msg, **kwargs)
+    except UnicodeEncodeError:
+        # Fallback: Replace unprintable characters with '?'
+        # This works even if the console is strictly cp1252
+        safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
+        print(safe_msg, **kwargs)
