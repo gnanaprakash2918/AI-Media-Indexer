@@ -48,15 +48,8 @@ class AudioTranscriber:
         self._model: WhisperModel | None = None
         self._batched_model: BatchedInferencePipeline | None = None
         self._current_model_size: str | None = None
-
         self.device = settings.device
-        # self.compute_type: str = "float16" if self.device == "cuda" else "int8"
         self.compute_type: str = "int8_float16" if self.device == "cuda" else "int8"
-
-        print(
-            f"[INFO] Initialized Faster-Whisper ({self.device}, "
-            f"Compute: {self.compute_type})"
-        )
 
     def __enter__(self):
         """Called when entering the 'with' block."""
@@ -270,12 +263,16 @@ class AudioTranscriber:
             self._model = None
             self._batched_model = None
             gc.collect()
-            if self.device == "cuda":
+            if self.device == "cuda" and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        print(f"[INFO] Requesting Model: {model_key}...")
-        final_model_path = self._convert_and_cache_model(model_key)
+        # only log here, when we actually load weights
+        print(
+            f"[INFO] Loading Faster-Whisper model '{model_key}' "
+            f"({self.device}, Compute: {self.compute_type})..."
+        )
 
+        final_model_path = self._convert_and_cache_model(model_key)
         try:
             self._model = WhisperModel(
                 final_model_path,
