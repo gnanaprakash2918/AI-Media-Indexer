@@ -46,6 +46,9 @@ dependencies = [
     "sentence-transformers>=5.1.2",
     "ctranslate2>=4.6.1",
     "mediapipe>=0.10.21",
+    "mcp>=1.23.2",
+    "websockets>=15.0.1",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]
