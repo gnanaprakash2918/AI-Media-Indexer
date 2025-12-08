@@ -12,7 +12,10 @@ from llm.interface import LLMInterface
 
 
 class VisionAnalyzer:
-    """Helper to create descriptive text for an image for indexing."""
+    """Analyzing images using Multimodal LLMs.
+
+    Acts as a 'Tool' in the Agentic workflow.
+    """
 
     def __init__(
         self,
@@ -28,13 +31,12 @@ class VisionAnalyzer:
 
         try:
             self.prompt = self.llm.construct_user_prompt(self.prompt_filename)
+            print(f"[Vision] Loaded prompt from {self.prompt_filename}")
         except FileNotFoundError:
-            self.prompt = (
-                "Describe this scene in detailed, search-friendly language. "
-                "Identify objects, colors, positions, background context, "
-                "actions, and visible text. Produce concise but rich output "
-                "optimized for search and indexing."
+            print(
+                f"[ERROR] Prompt file '{self.prompt_filename}' not found in prompts/."
             )
+            raise
 
     async def describe(self, image_path: Path) -> str:
         """Asynchronously describe an image using the configured LLM.
@@ -50,7 +52,7 @@ class VisionAnalyzer:
         """
         image_path = Path(image_path)
         if not image_path.exists() or not image_path.is_file():
-            raise FileNotFoundError(f"Image not found: {image_path}")
+            return f"Error: Image not found at {image_path}"
 
         return await self.llm.describe_image(
             prompt=self.prompt,
@@ -59,6 +61,7 @@ class VisionAnalyzer:
 
 
 if __name__ == "__main__":
+    # Simple smoke test
     import sys
 
     if len(sys.argv) < 2:
@@ -69,8 +72,11 @@ if __name__ == "__main__":
 
     async def main() -> None:
         """CLI helper that calls the async describe method and prints result."""
-        analyzer = VisionAnalyzer()
-        description = await analyzer.describe(img_path)
-        print(description)
+        try:
+            analyzer = VisionAnalyzer()
+            description = await analyzer.describe(img_path)
+            print(f"\n[Description]:\n{description}")
+        except Exception as e:
+            print(f"Vision tool failed: {e}")
 
     asyncio.run(main())

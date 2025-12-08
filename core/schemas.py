@@ -10,9 +10,47 @@ from pydantic import BaseModel, Field, FilePath
 class MediaType(str, Enum):
     """Supported media types for scanned files."""
 
+    MOVIE = "movie"
+    TV = "tv"
     VIDEO = "video"
     AUDIO = "audio"
     IMAGE = "image"
+    PERSONAL = "personal"
+    UNKNOWN = "unknown"
+
+
+class MediaMetadata(BaseModel):
+    """Describes metadata information for a media item such as a movie, audio, or image.
+
+    Attributes:
+        title: The title or name of the media item.
+        year: The release or creation year of the media item, if known.
+        media_type: The classification of the media (video, audio, image, etc.).
+        cast: A list of names involved in the media (e.g., actors or participants).
+        director: Name of the director or creator, if applicable.
+        plot_summary: Brief summary or description of the media's content.
+        is_processed: Flag indicating if the media metadata has been processed.
+    """
+
+    title: str
+    year: int | None = None
+    media_type: MediaType = MediaType.UNKNOWN
+
+    cast: list[str] = Field(default_factory=list)
+    director: str | None = None
+    plot_summary: str | None = None
+
+    is_processed: bool = False
+
+
+class UnresolvedFace(BaseModel):
+    """Represents a face cluster that needs naming."""
+
+    cluster_id: int
+    face_encoding: list[float]
+    sample_image_path: str
+    occurrence_count: int
+    suggested_name: str | None = None
 
 
 class MediaAsset(BaseModel):
@@ -46,7 +84,7 @@ class DetectedFace(BaseModel):
         ..., description="(top, right, bottom, left)"
     )
     encoding: list[float] = Field(..., description="128-dimensional face vector")
-    confidence: float = 1.0  # Placeholder for future use
+    confidence: float = 1.0
 
 
 class TranscriptionResult(BaseModel):
