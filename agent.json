@@ -3,72 +3,22 @@
   "description": "A multimodal agent that ingests, indexes, and searches personal media libraries.",
   "version": "1.0.0",
   "protocol_version": "0.3.0",
-  "preferred_transport": "stdio+json",
-  "url": "mcp://core.agent.server",
+  "preferred_transport": "HTTP+JSON",
+  "url": "http://localhost:8000/a2a",
+  "default_input_modes": ["application/json"],
+  "default_output_modes": ["application/json"],
   "skills": [
     {
       "id": "search_media",
       "name": "Search Media",
-      "description": "Finds relevant media segments (visual frames and dialogue) based on a natural language query.",
-      "inputs": {
-        "query": {
-          "type": "string",
-          "description": "Natural language search query (e.g. 'red car at night', 'argument in kitchen')."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Maximum number of results to return.",
-          "default": 5
-        }
-      },
-      "outputs": {
-        "visual_matches": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "description": "Frame-based match with score, time, file, and content."
-          }
-        },
-        "dialogue_matches": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "description": "Dialogue-based match with score, time, file, and content."
-          }
-        }
-      },
-      "tags": ["search", "video", "retrieval", "multimodal"]
+      "description": "Finds relevant media segments based on natural language.",
+      "tags": ["search", "video", "retrieval"]
     },
     {
       "id": "ingest_media",
       "name": "Ingest Media",
-      "description": "Processes a video file to extract subtitles/transcripts, visual descriptions, and face embeddings for indexing.",
-      "inputs": {
-        "file_path": {
-          "type": "string",
-          "description": "Absolute path to the video file on the host filesystem."
-        },
-        "media_type": {
-          "type": "string",
-          "description": "Optional media type hint (movie, tv, personal, unknown).",
-          "default": "unknown"
-        }
-      },
-      "outputs": {
-        "file_path": {
-          "type": "string",
-          "description": "Resolved absolute path of the ingested file."
-        },
-        "media_type_hint": {
-          "type": "string",
-          "description": "Media type hint that was forwarded to the pipeline."
-        },
-        "message": {
-          "type": "string",
-          "description": "Human-readable summary of the ingestion result."
-        }
-      },
-      "tags": ["index", "processing", "pipeline"]
+      "description": "Processes a video file to extract metadata and features.",
+      "tags": ["index", "processing"]
     }
   ]
 }
