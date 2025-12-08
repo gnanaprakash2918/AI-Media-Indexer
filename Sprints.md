@@ -402,78 +402,6 @@
   - `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`
   - `PROMPT_DIR` for external prompt templates
 
-# Running Ingestion pipeline
-
-Gotcha — Windows, and you only care about **Qdrant as a service**, no app container. Perfect, that’s actually simpler. 🙌
-
-You **do not need any Dockerfile** if you’re just running Qdrant — the official image already _is_ the Dockerfile. Your `docker-compose.yml` is enough.
-
-I’ll still show you:
-
-- How to **stop + clean everything** on Docker.
-- How to **run only Qdrant** via your `docker-compose.yml`.
-- (Optional) a minimal Dockerfile for Qdrant if you _really_ want one, but it’s redundant.
-
----
-
-## 1️⃣ Stop everything + clean Docker (Windows)
-
-### 📌 In PowerShell
-
-Run these one by one:
-
-```powershell
-# 1. Stop all running containers
-docker ps -q | ForEach-Object { docker stop $_ }
-
-# 2. Remove all containers (stopped + running)
-docker ps -aq | ForEach-Object { docker rm $_ }
-
-# 3. Prune EVERYTHING unused: containers, images, networks, volumes, build cache
-#    WARNING: This will delete unused images and volumes for ALL projects.
-docker system prune -af --volumes
-```
-
-If you want to **wipe Qdrant data** as well (fresh DB):
-
-```powershell
-Remove-Item -Recurse -Force .\qdrant_data -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path .\qdrant_data | Out-Null
-```
-
-> Run those from your **project root** (where `docker-compose.yml` lives).
-
----
-
-## 2️⃣ Run only Qdrant with docker-compose
-
-From the same folder:
-
-```powershell
-# If your Docker Desktop uses the new syntax:
-docker compose up -d
-
-# If using a custom docker-compose file:
-docker compose -f docker-compose.qdrant.yaml up -d
-
-# If that errors, use the old one:
-# docker-compose up -d
-```
-
-Check it’s running:
-
-```powershell
-docker ps
-```
-
-You should see `media_agent_qdrant` up with ports `6333` and `6334`.
-
-**References**:
-
-- [Google Gemini API](https://ai.google.dev/)
-- [Ollama](https://ollama.ai/)
-- [Ollama Python Library](https://github.com/ollama/ollama-python)
-
 ---
 
 #### Task 2.5 - Schemas and Data Validation ✅
@@ -846,6 +774,125 @@ class DetectedFace(BaseModel):
 
 ---
 
+## Sprint 4 (Branch: `sprint-4`)
+
+### Commit History
+
+#### Commit `27025dd` - Documentation Updates (2025-12-08)
+
+**Author**: Gnana Prakash M  
+**Message**: Added Doc string for text_utils
+
+**Changes**:
+
+- Added comprehensive documentation strings to `text_utils` module
+- Improved code readability and developer experience
+
+---
+
+#### Commit `dcd706d` - Resource Optimization (2025-12-08)
+
+**Author**: Gnana Prakash M  
+**Message**: Fix log ordering for the model loading to free VRAM
+
+**Changes**:
+
+- Optimized log ordering during model initialization
+- Improved VRAM management to prevent widespread allocation issues
+- Enhanced application stability during startup
+
+---
+
+#### Commit `eb33d49` - Robust Ingestion Pipeline (2025-12-08)
+
+**Author**: Gnana Prakash M  
+**Message**: feat(pipeline): implement robust ingestion with metadata enrichment
+
+**Changes**:
+
+- Implemented metadata enrichment logic for ingested media
+- Enhanced pipeline robustness against failures
+- Improved data consistency in the vector store
+
+---
+
+#### Commit `baa9fb5` - Schema Enhancements (2025-12-08)
+
+**Author**: Gnana Prakash M  
+**Message**: Added new schemas and metadata engine
+
+**Changes**:
+
+- Defined new Pydantic schemas for improved type safety
+- Introduced a dedicated metadata engine for handling complex metadata
+
+---
+
+#### Commit `393cf31` - Prompt Management (2025-12-06)
+
+**Author**: Gnana Prakash M  
+**Message**: Added Prompts separately and made vision.py load from it
+
+**Changes**:
+
+- Decoupled system prompts from codebase
+- Updated `vision.py` to load prompts dynamically
+- Easier prompt tuning and management
+
+---
+
+#### Commit `5cefdd9` - Sidecar & SRT Support (2025-12-06)
+
+**Author**: Gnana Prakash M  
+**Message**: Updated the ingestion pipeline to handle sidecars / srt ingestion properly
+
+**Changes**:
+
+- Added support for sidecar files (e.g., subtitles)
+- Improved SRT ingestion processing
+
+---
+
+#### Commit `00dc903` - Retrieval Search CLI (2025-12-06)
+
+**Author**: Gnana Prakash M  
+**Message**: Developed a cli to invoke the retrieval search on embeddings
+
+**Changes**:
+
+- Created a CLI interface for searching embeddings
+- Enabled direct verification of vector search capabilities
+
+---
+
+### Sprint 4 Technical Highlights
+
+#### Ingestion Pipeline Enhancements
+
+- **Metadata Enrichment**: The pipeline now actively enriches media metadata, ensuring richer search capabilities.
+- **Sidecar Support**: Proper handling of `.srt` and other sidecar files during ingestion.
+- **Robustness**: Improved error handling and stability in the ingestion process.
+
+#### CLI & Interactive Features
+
+- **Embedding Search**: New CLI tools to perform retrieval tasks directly on the vector database.
+- **Interactive Resolution**: Mechanism to interactively resolve ambiguous filenames or paths.
+
+#### PowerShell & File Path Handling (Learnings)
+
+During this sprint, significant issues were identified and resolved regarding file path handling in PowerShell, specifically with special characters.
+
+- **The Issue**: PowerShell aggressively interprets brackets `[]` as wildcard/glob patterns. A file named `Movie [2025].mkv` would fail to resolve because PowerShell tries to match `[2025]` as a pattern.
+- **Solution 1 (Recommended)**: Rename files to remove special characters (`[]`, `()`, space) and use underscores (e.g., `Movie_2025.mkv`).
+- **Solution 2 (Escaping)**: If renaming is impossible, use backticks to escape special chars: `uv run python main.py "Movie ``[2025``].mkv"`.
+- **Best Practice**: Always enclose file paths in quotes when passing them as arguments: `uv run python main.py "path/to/file.mkv"`.
+
+#### Resource Optimization
+
+- **VRAM Management**: Optimized model loading to prevent unnecessary VRAM consumption.
+
+---
+
 ## Development Tools and Dependencies
 
 ### Build Tools (Windows)
@@ -978,87 +1025,3 @@ git diff sprint-1..sprint-2 --stat
 - **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
 - **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 - **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
-
-# notes
-
-The reason your complex file path is failing consistently, even with various quoting methods, is almost certainly due to **PowerShell's aggressive interpretation of the brackets `[]`** as part of its **wildcard matching syntax** (globbing).
-
-When you use the path: `D:\Dude (2025)TRUE WEB-DL - 1080p - AVC - [Tam + Tel + Hin + Mal + Kan] -(DD+5.1 - 640Kbps & AAC) - 5.8GB - ESub.mkv`
-
-PowerShell sees `[Tam + Tel + Hin + Mal + Kan]` and tries to match that pattern against existing files, which fails, resulting in the "File not found" error _before_ Python even gets the path correctly.
-
-The failure of the **Stop-Parsing Symbol (`--%`)** confirms this:
-
-```powershell
-uv run python main.py --% D:\Dude (2025)TRUE WEB-DL - 1080p - AVC - [Tam + Tel + Hin + Mal + Kan] -(DD+5.1 - 640Kbps & AAC) - 5.8GB - ESub.mkv
-Error: File not found or not a file: D:\Dude
-```
-
-When using `--%`, PowerShell passes arguments literally, but because your command is `uv run python main.py`, the path is being treated as the **first** argument to `uv run`. Since the path contains spaces, `uv run` sees `D:\Dude` as the path and the rest of the file name as separate arguments, leading to the "File not found" error on the truncated path.
-
-### The Reliable Fix
-
-There are two robust ways to fix this, depending on whether you can rename the file or must use the exact name.
-
-#### 1\. The Best Practice Fix (Recommended)
-
-Rename the file to remove all special characters (`(`, `)`, `[`, `]`, `&`, spaces) and replace them with underscores or hyphens. This is the **most robust** solution for any command-line environment.
-
-**New Path Example:**
-
-```
-D:\Dude_2025_TRUE_WEB-DL_ESub.mkv
-```
-
-**Command:**
-
-```powershell
-uv run python main.py "D:\Dude_2025_TRUE_WEB-DL_ESub.mkv"
-```
-
----
-
-#### 2\. The PowerShell Escape Fix (If Renaming is Forbidden)
-
-If you absolutely must use the original file name, you need to use the **backtick (`` ` ``) character** to escape every single special character within the double quotes. This tells PowerShell to treat each escaped character as a literal character, not a special operator.
-
-The special characters that need escaping are: `(`, `)`, `[`, `]`, `&`, `+`, spaces.
-
-**Original Path:**
-`D:\Dude (2025)TRUE WEB-DL - 1080p - AVC - [Tam + Tel + Hin + Mal + Kan] -(DD+5.1 - 640Kbps & AAC) - 5.8GB - ESub.mkv`
-
-**Escaped Command:**
-
-```powershell
-uv run python main.py "D:\Dude` (2025`)TRUE` WEB-DL` -` 1080p` -` AVC` -` [`Tam` `+` `Tel` `+` `Hin` `+` `Mal` `+` `Kan`]` -(`DD`+5.1` -` 640Kbps` &` AAC)` -` 5.8GB` -` ESub.mkv"
-```
-
-_(This is extremely tedious and error-prone, which is why renaming is preferred.)_
-
----
-
-### Handling Multiple Arguments
-
-If you need to pass **multiple arguments** (e.g., a file path and a language code), you simply continue to quote/escape each argument separately.
-
-For instance, if your `main.py` accepted a file path and a language:
-
-```python
-# main.py expects:
-# sys.argv[1] = file_path
-# sys.argv[2] = language (e.g., "en")
-```
-
-**Using the Renamed File (Best Practice):**
-
-```powershell
-uv run python main.py "D:\Dude_2025_ESub.mkv" "en"
-```
-
-**Using the Escaped File (Avoid if possible):**
-
-```powershell
-uv run python main.py "D:\Dude` (2025`)TRUE` WEB-DL` ... ESub.mkv" "en"
-```
-
-The key is to ensure the **entire file path argument** is passed as a single, correctly escaped string to Python via `uv run`.
