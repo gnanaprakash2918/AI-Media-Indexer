@@ -15,14 +15,16 @@ The server is intended to be launched as a local MCP tool, typically via
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from core.ingestion.pipeline import IngestionPipeline
 from core.retrieval.search import SearchEngine
+from core.schemas import IngestResponse, SearchResponse
 from core.storage.db import VectorDB
+from core.utils.logger import log
 
 # Initialize FastMCP server
 mcp = FastMCP("MediaIndexer")
@@ -67,43 +69,6 @@ def _get_pipeline() -> IngestionPipeline:
             tmdb_api_key=None,
         )
     return _pipeline
-
-
-# Pydantic response models
-
-
-class SearchResponse(BaseModel):
-    """Response payload for media search.
-
-    Attributes:
-        visual_matches: Frame-based search hits, usually containing score,
-            timestamp, file path, and a short description of the scene.
-        dialogue_matches: Dialogue/text-based search hits, usually containing
-            score, timestamp, file path, and a subtitle/transcript snippet.
-    """
-
-    visual_matches: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Frame-based visual matches.",
-    )
-    dialogue_matches: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Dialogue/text matches.",
-    )
-
-
-class IngestResponse(BaseModel):
-    """Response payload for media ingestion.
-
-    Attributes:
-        file_path: Resolved absolute path of the ingested file.
-        media_type_hint: Media type hint that was forwarded to the pipeline.
-        message: Human-readable summary of the ingestion outcome.
-    """
-
-    file_path: str
-    media_type_hint: str
-    message: str
 
 
 # MCP tools
@@ -208,6 +173,7 @@ def main() -> None:
     This starts the FastMCP event loop and exposes the registered tools
     (`search_media`, `ingest_media`) to MCP-compatible hosts.
     """
+    log("[MCP] MediaIndexer server started. Waiting for MCP client...")
     mcp.run()
 
 
