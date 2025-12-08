@@ -34,7 +34,7 @@ class VisionAnalyzer:
             print(f"[Vision] Loaded prompt from {self.prompt_filename}")
         except FileNotFoundError:
             print(
-                f"[ERROR] Prompt file '{self.prompt_filename}' not found in prompts/ directory."
+                f"[ERROR] Prompt file '{self.prompt_filename}' not found in prompts/."
             )
             raise
 
