@@ -2,9 +2,10 @@
 
 This module provides a simple executable interface for processing a single
 video file through the `IngestionPipeline`. It validates input paths,
-sets up platform-appropriate asyncio policies, and triggers asynchronous
-processing of the video, including transcription, frame analysis, vector
-embedding, and Qdrant indexing.
+supports interactive filename resolution, lets the user provide a media
+type hint, sets up platform-appropriate asyncio policies, and triggers
+asynchronous processing of the video, including transcription, frame
+analysis, vector embedding, and Qdrant indexing.
 
 Usage:
     uv run python main.py <path_to_video>
@@ -20,34 +21,72 @@ from pathlib import Path
 from core.ingestion.pipeline import IngestionPipeline
 
 
-async def _run(video_path: Path) -> None:
+def _ask_media_type() -> str:
+    """Interactively ask the user for a media type hint.
+
+    Returns:
+        A lowercase string corresponding to a `MediaType` value, such as
+        ``"movie"``, ``"tv"``, ``"personal"``, or ``"unknown"``.
+    """
+    print("\n--- Media Type Classification ---")
+    print("1. Movie (Fetch Cast/Subs)")
+    print("2. TV Series (Fetch Cast/Subs)")
+    print("3. Personal Video (Skip external APIs)")
+    print("4. Auto-Detect (Default)")
+
+    choice = input("Select type (1-4) [4]: ").strip()
+
+    if choice == "1":
+        return "movie"
+    if choice == "2":
+        return "tv"
+    if choice == "3":
+        return "personal"
+    return "unknown"
+
+
+async def _run(video_path: Path, media_type: str) -> None:
     """Run the ingestion pipeline for a single video.
 
     Args:
         video_path: Path to the video file that should be processed.
+        media_type: Media type hint string to be forwarded to the ingestion
+            pipeline. Should align with values in :class:`MediaType`, such
+            as ``"movie"``, ``"tv"``, ``"personal"``, or ``"unknown"``.
     """
     pipeline = IngestionPipeline(
         qdrant_backend="docker",
         qdrant_host="localhost",
         qdrant_port=6333,
         frame_interval_seconds=15,
+        # tmdb_api_key="YOUR_KEY_HERE",  # Optionally provide TMDB key.
     )
-    await pipeline.process_video(video_path)
+    await pipeline.process_video(video_path, media_type_hint=media_type)
 
 
 def _interactive_resolve(raw_path: str) -> Path:
-    """If the exact file isn't found, lists files in the directory and let user pick."""
-    # 1. Clean the input
+    """Resolve a video path, interactively offering close matches if needed.
+
+    If the exact file is not found, this function scans the parent directory
+    for likely video file candidates and lets the user pick one.
+
+    Args:
+        raw_path: Raw path string, potentially quoted, as passed from the CLI.
+
+    Returns:
+        A resolved :class:`Path` pointing to an existing video file.
+
+    Raises:
+        SystemExit: If no suitable file can be resolved or selected.
+    """
     clean_path_str = raw_path.strip('"').strip("'")
     path = Path(clean_path_str).expanduser().resolve()
 
-    # 2. Check if it exists exactly
     if path.exists() and path.is_file():
         return path
 
     print(f"\n[WARN] Exact match failed for: '{path.name}'")
 
-    # 3. Scan the parent directory
     parent = path.parent
     if not parent.exists():
         print(f"[ERROR] Parent directory does not exist: {parent}")
@@ -55,7 +94,6 @@ def _interactive_resolve(raw_path: str) -> Path:
 
     print(f"[INFO] Scanning '{parent}' for candidates...")
 
-    # Get all video files in that folder
     valid_extensions = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
     candidates = [
         p
@@ -67,7 +105,6 @@ def _interactive_resolve(raw_path: str) -> Path:
         print("[ERROR] No video files found in that directory.")
         sys.exit(1)
 
-    # 4. Find close matches
     matches = difflib.get_close_matches(
         path.name, [p.name for p in candidates], n=5, cutoff=0.3
     )
@@ -79,7 +116,6 @@ def _interactive_resolve(raw_path: str) -> Path:
         print(f"{i + 1}: {candidate.name}")
     print("-------------------------------------")
 
-    # 5. Ask User
     try:
         choice = input(
             f"Select a number (1-{len(selection_pool)}) or press Enter to cancel: "
@@ -108,14 +144,14 @@ def main() -> None:
         raise SystemExit(1)
 
     raw_input = " ".join(sys.argv[1:])
-
     video_path = _interactive_resolve(raw_input)
 
-    # Windows Asyncio Fix
+    media_type_str = _ask_media_type()
+
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    asyncio.run(_run(video_path))
+    asyncio.run(_run(video_path, media_type_str))
 
 
 if __name__ == "__main__":

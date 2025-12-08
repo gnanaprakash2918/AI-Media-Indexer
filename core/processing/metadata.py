@@ -120,7 +120,6 @@ class MetadataEngine:
             media_type=media_type,
         )
 
-        # Update this line in identify()
         if enable_online_lookup and media_type in [MediaType.MOVIE, MediaType.TV]:
             enriched = self._enrich_from_providers(title, year)
             if enriched:
