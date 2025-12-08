@@ -1,34 +1,34 @@
-"""MCP server exposing media ingestion and search tools.
+"""MCP server exposing media ingestion and search tools over stdio.
 
-This module wraps the core ingestion and retrieval components of
-AI-Media-Indexer as MCP tools so that LLM-based agents can call them
-via the Model Context Protocol (MCP).
+This module wraps the core AI-Media-Indexer functionality as MCP tools so
+LLM-based agents can call them via the Model Context Protocol (MCP).
 
-Exposed capabilities:
+Exposed tools:
 
-* Ingest a new video file into the vector database.
-* Search the indexed media by natural language query.
+* `search_media`: Multimodal search across dialogue and visual frames.
+* `ingest_media`: Full ingestion pipeline for a single video file.
 
-The server is stateless at the protocol level but maintains shared
-process-local singletons (VectorDB, SearchEngine, IngestionPipeline)
-to avoid repeatedly bootstrapping heavy infrastructure.
+The server is intended to be launched as a local MCP tool, typically via
+`uv run python core/agent/server.py` or equivalent.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from core.ingestion.pipeline import IngestionPipeline
-from core.retrieval.search import SearchEngine  # type: ignore[import]
+from core.retrieval.search import SearchEngine
 from core.storage.db import VectorDB
 
-mcp = FastMCP("AI Media Indexer")
+# Initialize FastMCP server
+mcp = FastMCP("MediaIndexer")
 
-# Singletons
+# Global singletons (lazy-loaded to avoid repeated heavy initialization)
+
 _vector_db: VectorDB | None = None
 _search_engine: SearchEngine | None = None
 _pipeline: IngestionPipeline | None = None
@@ -63,140 +63,150 @@ def _get_pipeline() -> IngestionPipeline:
             qdrant_host="localhost",
             qdrant_port=6333,
             frame_interval_seconds=15,
-            # tmdb_api_key is taken from env by MetadataEngine if not passed.
+            # MetadataEngine will fall back to env if set.
             tmdb_api_key=None,
         )
     return _pipeline
 
 
-class SearchInput(BaseModel):
-    """Arguments for the media search tool."""
-
-    query: str = Field(
-        description="Natural language query (e.g. 'red car explosion at night').",
-    )
-    limit: int = Field(
-        default=5,
-        ge=1,
-        le=50,
-        description="Maximum number of results to return.",
-    )
+# Pydantic response models
 
 
 class SearchResponse(BaseModel):
     """Response payload for media search.
 
     Attributes:
-        visual_matches: Frame-based search hits, typically containing file path,
-            timestamp, similarity score, and a short description of the scene.
-        dialogue_matches: Dialogue/text-based search hits, typically containing
-            file path, timestamp, similarity score, and a transcript snippet.
+        visual_matches: Frame-based search hits, usually containing score,
+            timestamp, file path, and a short description of the scene.
+        dialogue_matches: Dialogue/text-based search hits, usually containing
+            score, timestamp, file path, and a subtitle/transcript snippet.
     """
 
     visual_matches: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Frame-based/visual search matches.",
+        description="Frame-based visual matches.",
     )
     dialogue_matches: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Dialogue/text-based search matches.",
-    )
-
-
-class IngestInput(BaseModel):
-    """Arguments for the media ingestion tool."""
-
-    file_path: str = Field(
-        description="Absolute path to the video file on the server filesystem.",
-    )
-    media_type: str = Field(
-        default="unknown",
-        description=(
-            "Optional media type hint. Should match a MediaType value, e.g. "
-            "'movie', 'tv', 'personal', or 'unknown'."
-        ),
+        description="Dialogue/text matches.",
     )
 
 
 class IngestResponse(BaseModel):
-    """Response payload for media ingestion."""
+    """Response payload for media ingestion.
 
-    file_path: str = Field(
-        description="Resolved absolute path of the ingested file.",
-    )
-    media_type_hint: str = Field(
-        description="Media type hint that was forwarded to the pipeline.",
-    )
-    message: str = Field(
-        description="Human-readable summary of the ingestion result.",
-    )
+    Attributes:
+        file_path: Resolved absolute path of the ingested file.
+        media_type_hint: Media type hint that was forwarded to the pipeline.
+        message: Human-readable summary of the ingestion outcome.
+    """
+
+    file_path: str
+    media_type_hint: str
+    message: str
 
 
 # MCP tools
 
 
 @mcp.tool()
-async def search_media(args: SearchInput) -> SearchResponse:
-    """Search the indexed media library for dialogue or visual matches.
+async def search_media(
+    query: Annotated[
+        str,
+        Field(
+            description="Natural language search query "
+            "(e.g. 'red car explosion', 'argument in kitchen').",
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results to return.",
+            ge=1,
+            le=50,
+        ),
+    ] = 5,
+) -> SearchResponse:
+    """Find relevant media segments (visual or dialogue) based on a query.
 
-    The concrete structure of each match entry is determined by the
-    :class:`SearchEngine` implementation. Each list element typically
-    contains a score, timestamp, file path, and content snippet.
+    This tool queries the underlying VectorDB via :class:`SearchEngine` and
+    returns both frame-based and dialogue-based matches.
 
     Args:
-        args: Structured search arguments containing the query string
-            and optional result limit.
+        query: Natural language query string describing the desired scene or
+            utterance.
+        limit: Maximum number of results to return per modality.
 
     Returns:
-        A :class:`SearchResponse` with separate lists for visual and
-        dialogue matches.
+        A :class:`SearchResponse` with ``visual_matches`` and
+        ``dialogue_matches`` lists.
     """
     engine = _get_search_engine()
-    results = engine.search(args.query, limit=args.limit)
+    results = engine.search(query, limit=limit)
     return SearchResponse(**results)
 
 
 @mcp.tool()
-async def ingest_media(args: IngestInput) -> IngestResponse:
-    """Ingest and index a single video file into the media database.
+async def ingest_media(
+    file_path: Annotated[
+        str,
+        Field(
+            description="Absolute path to the video file on the host filesystem.",
+        ),
+    ],
+    media_type: Annotated[
+        str,
+        Field(
+            description="Optional media type hint: 'movie', 'tv',"
+            " 'personal', or 'unknown'.",
+        ),
+    ] = "unknown",
+) -> IngestResponse:
+    """Ingest and index a video file into the media library.
 
-    This tool runs the full ingestion pipeline on the given file path,
+    This runs the full ingestion pipeline on the provided file path,
     including metadata enrichment, subtitle/transcription processing,
     frame analysis, and face detection.
 
     Args:
-        args: Structured ingestion arguments, including the absolute
-            file path and an optional media type hint string.
+        file_path: Absolute path to the video file on disk.
+        media_type: Optional media type hint string, forwarded to the
+            ingestion pipeline for better classification.
 
     Returns:
-        An :class:`IngestResponse` summarizing the ingestion outcome.
-
-    Raises:
-        FileNotFoundError: If the resolved path does not exist or is
-            not a regular file.
+        An :class:`IngestResponse` summarizing success or failure of the
+        ingestion attempt.
     """
-    raw_path = args.file_path.strip()
+    # Normalize and resolve the path
+    raw_path = file_path.strip().strip('"').strip("'")
     path = Path(raw_path).expanduser().resolve()
 
     if not path.exists() or not path.is_file():
-        raise FileNotFoundError(f"Media file not found or not a file: {path}")
+        return IngestResponse(
+            file_path=str(path),
+            media_type_hint=media_type,
+            message=f"Error: File not found or not a regular file: {path}",
+        )
 
     pipeline = _get_pipeline()
-    await pipeline.process_video(path, media_type_hint=args.media_type)
+    try:
+        await pipeline.process_video(path, media_type_hint=media_type)
+        msg = "Ingestion complete."
+    except Exception as exc:  # noqa: BLE001
+        msg = f"Ingestion failed: {exc}"
 
     return IngestResponse(
         file_path=str(path),
-        media_type_hint=args.media_type,
-        message=f"Successfully indexed media file: {path}",
+        media_type_hint=media_type,
+        message=msg,
     )
 
 
 def main() -> None:
-    """Run the MCP server.
+    """Run the MCP server over stdio.
 
     This starts the FastMCP event loop and exposes the registered tools
-    over the configured transport (e.g. stdio when launched as an MCP
-    tool, or other transports depending on host configuration).
+    (`search_media`, `ingest_media`) to MCP-compatible hosts.
     """
     mcp.run()
 
