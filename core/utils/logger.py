@@ -12,18 +12,23 @@ from typing import Any
 
 
 def log(*args: Any, **kwargs: Any) -> None:
-    """Logger that handles Unicode characters (like '｜') on Windowswithout crashing."""
-    # Force output to stderr (MCP requirement)
+    """Thread-safe, Unicode-safe logger for MCP Servers.
+
+    Redirects to stderr and forces UTF-8 encoding to prevent Windows 'charmap' crashes.
+    """
+    # 1. Force stderr (Critical for MCP)
     kwargs["file"] = sys.stderr
 
-    # Convert all args to string
+    # 2. Convert to string
     msg = " ".join(str(arg) for arg in args)
 
+    # 3. Write bytes directly to stderr buffer to bypass Windows console encoding issues
     try:
-        # Attempt to write directly
-        print(msg, **kwargs)
-    except UnicodeEncodeError:
-        # Fallback: Replace unprintable characters with '?'
-        # This works even if the console is strictly cp1252
+        # Add newline since print() usually does
+        encoded_msg = (msg + "\n").encode("utf-8", errors="replace")
+        sys.stderr.buffer.write(encoded_msg)
+        sys.stderr.buffer.flush()
+    except Exception:
+        # If accessing buffer fails (rare), fall back to safe ASCII string
         safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
         print(safe_msg, **kwargs)
