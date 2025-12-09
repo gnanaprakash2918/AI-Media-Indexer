@@ -1012,20 +1012,6 @@ git diff sprint-1..sprint-2 --stat
 
 ---
 
-## References and Documentation
-
-- **FFmpeg**: [https://ffmpeg.org/](https://ffmpeg.org/)
-- **PyTorch CUDA**: [https://download.pytorch.org/whl/cu121](https://download.pytorch.org/whl/cu121)
-- **Faster Whisper**: [https://github.com/guillaumekln/faster-whisper](https://github.com/guillaumekln/faster-whisper)
-- **Google Gemini API**: [https://ai.google.dev/](https://ai.google.dev/)
-- **Ollama**: [https://ollama.ai/](https://ollama.ai/)
-- **Pydantic**: [https://docs.pydantic.dev/](https://docs.pydantic.dev/)
-- **FastAPI**: [https://fastapi.tiangolo.com/](https://fastapi.tiangolo.com/)
-- **Qdrant**: [https://qdrant.tech/](https://qdrant.tech/)
-- **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
-- **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
-- **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
-
 ## Sprint 5 (Branch: `sprint-5`)
 
 ### Commit History
@@ -1081,3 +1067,17 @@ git diff sprint-1..sprint-2 --stat
 - **Flow**: User -> CLI -> LLM -> (Tool Call) -> CLI -> Server -> CLI -> (Tool Result) -> LLM -> CLI -> User.
 
 This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server), allowing for easier switching of LLM backends or tool implementations.
+## References and Documentation
+
+- **FFmpeg**: [https://ffmpeg.org/](https://ffmpeg.org/)
+- **PyTorch CUDA**: [https://download.pytorch.org/whl/cu121](https://download.pytorch.org/whl/cu121)
+- **Faster Whisper**: [https://github.com/guillaumekln/faster-whisper](https://github.com/guillaumekln/faster-whisper)
+- **Google Gemini API**: [https://ai.google.dev/](https://ai.google.dev/)
+- **Ollama**: [https://ollama.ai/](https://ollama.ai/)
+- **Pydantic**: [https://docs.pydantic.dev/](https://docs.pydantic.dev/)
+- **FastAPI**: [https://fastapi.tiangolo.com/](https://fastapi.tiangolo.com/)
+- **Qdrant**: [https://qdrant.tech/](https://qdrant.tech/)
+- **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
+- **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
+- **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
+
