@@ -25,13 +25,15 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
 
+from .config import settings
+
 SERVER_PARAMS = StdioServerParameters(
     command="uv",
     args=["run", "python", "-m", "core.agent.server"],
     env=None,
 )
 
-MODEL_NAME = "llama3.1"
+MODEL_NAME = settings.agent_model
 
 
 def _print_banner() -> None:

@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 from typing import Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 
-from config import Settings
 from core.utils.logger import log
 
-_SETTINGS = Settings()
+from ...config import settings
 
 
 class VectorDB:
@@ -50,9 +48,9 @@ class VectorDB:
 
     def __init__(
         self,
-        backend: str = "memory",
-        host: str = "localhost",
-        port: int = 6333,
+        backend: str = settings.qdrant_backend,
+        host: str = settings.qdrant_host,
+        port: int = settings.qdrant_port,
         path: str = "qdrant_data_embedded",
     ) -> None:
         """Initialize the vector database.
@@ -71,71 +69,71 @@ class VectorDB:
 
         if backend == "memory":
             self.client = QdrantClient(path=path)
-            log(f"Initialized embedded Qdrant at path={path}")
+            log("Initialized embedded Qdrant", path=path, backend=backend)
         elif backend == "docker":
             try:
                 self.client = QdrantClient(host=host, port=port)
                 self.client.get_collections()
             except Exception as exc:  # noqa: BLE001
-                log(f"Could not connect to Qdrant: {exc}")
+                log("Could not connect to Qdrant", error=str(exc), host=host, port=port)
                 raise ConnectionError("Qdrant connection failed.") from exc
-            log(f"Connected to Qdrant at {host}:{port}")
+            log("Connected to Qdrant", host=host, port=port, backend=backend)
         else:
             raise ValueError(f"Unknown backend: {backend!r} (use 'memory' or 'docker')")
 
-        log("Loading SentenceTransformer model...")
+        log("Loading SentenceTransformer model...", model_name=self.MODEL_NAME)
         self.encoder = self._load_encoder()
 
         self._ensure_collections()
-
-    @staticmethod
-    def _get_project_root() -> Path:
-        """Return the project root directory from application settings.
-
-        Returns:
-            Project root path discovered via configuration.
-        """
-        return _SETTINGS.project_root
 
     def _load_encoder(self) -> SentenceTransformer:
         """Load the SentenceTransformer model with project-local preference.
 
         Load order:
-        1. `<project_root>/models/<MODEL_NAME>` if it exists.
+        1. `<cache_dir>/models/<MODEL_NAME>` if it exists.
         2. Global cache or download using `MODEL_NAME`.
-        3. Save the loaded model into `<project_root>/models/<MODEL_NAME>`.
+        3. Save the loaded model into `<cache_dir>/models/<MODEL_NAME>`.
 
         Returns:
             Loaded SentenceTransformer encoder.
         """
-        project_root = self._get_project_root()
-        models_dir = project_root / "models"
+        models_dir = settings.model_cache_dir
         models_dir.mkdir(parents=True, exist_ok=True)
 
         local_model_dir = models_dir / self.MODEL_NAME
 
         if local_model_dir.exists():
-            log(f"Loading SentenceTransformer from {local_model_dir}")
-            return SentenceTransformer(str(local_model_dir), device="cpu")
+            log(
+                "Loading SentenceTransformer from local cache",
+                path=str(local_model_dir),
+                device=settings.device,
+            )
+            return SentenceTransformer(str(local_model_dir), device=settings.device)
 
         log(
-            f"Local model not found in {local_model_dir}. "
-            f"Loading '{self.MODEL_NAME}' from SentenceTransformers..."
+            "Local model not found, loading from hub",
+            path=str(local_model_dir),
+            model_name=self.MODEL_NAME,
+            device=settings.device,
         )
-        model = SentenceTransformer(self.MODEL_NAME, device="cpu")
+        model = SentenceTransformer(self.MODEL_NAME, device=settings.device)
 
         try:
-            log(f"Saving model to {local_model_dir}")
+            log("Saving SentenceTransformer model to cache", path=str(local_model_dir))
             model.save(str(local_model_dir))
         except Exception as exc:  # noqa: BLE001
-            log(f"Warning: failed to save model to {local_model_dir}: {exc}")
+            log(
+                "Warning: failed to save SentenceTransformer model",
+                path=str(local_model_dir),
+                error=str(exc),
+            )
 
         return model
 
     def _ensure_collections(self) -> None:
         """Ensure that required Qdrant collections exist."""
         if not self.client.collection_exists(self.MEDIA_SEGMENTS_COLLECTION):
-            log("media_segments collection not found. Creating it.")
+            log("media_segments collection not found, creating")
             self.client.create_collection(
                 collection_name=self.MEDIA_SEGMENTS_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -145,7 +143,7 @@ class VectorDB:
             )
 
         if not self.client.collection_exists(self.MEDIA_COLLECTION):
-            log("media_frames collection not found. Creating it.")
+            log("media_frames collection not found, creating")
             self.client.create_collection(
                 collection_name=self.MEDIA_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -155,7 +153,7 @@ class VectorDB:
             )
 
         if not self.client.collection_exists(self.FACES_COLLECTION):
-            log("faces collection not found. Creating it.")
+            log("faces collection not found, creating")
             self.client.create_collection(
                 collection_name=self.FACES_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -164,7 +162,7 @@ class VectorDB:
                 ),
             )
 
-        log("Collections ensured!")
+        log("Qdrant collections ensured")
 
     def list_collections(self) -> models.CollectionsResponse:
         """List all collections in Qdrant.
@@ -192,7 +190,11 @@ class VectorDB:
         if not segments:
             return
 
-        log(f"Encoding {len(segments)} segments for {video_path}...")
+        log(
+            "Encoding media segments",
+            video_path=video_path,
+            segment_count=len(segments),
+        )
 
         texts = [s.get("text", "") for s in segments]
         embeddings = self.encoder.encode(texts, show_progress_bar=False)
@@ -231,7 +233,11 @@ class VectorDB:
             points=points,
         )
 
-        log(f"Inserted {len(points)} segments into Qdrant.")
+        log(
+            "Inserted media text segments into Qdrant",
+            video_path=video_path,
+            inserted_count=len(points),
+        )
 
     def search_media(
         self,
@@ -305,6 +311,12 @@ class VectorDB:
                 },
             )
 
+        log(
+            "Media text search completed",
+            query=query,
+            limit=limit,
+            result_count=len(results),
+        )
         return results
 
     def upsert_media_frame(
@@ -356,7 +368,14 @@ class VectorDB:
             ],
         )
 
-        log(f"[VectorDB] Upserted media frame id={safe_point_id}")
+        log(
+            "[VectorDB] Upserted media frame",
+            point_id=safe_point_id,
+            video_path=video_path,
+            timestamp=timestamp,
+            has_action=action is not None,
+            has_dialogue=dialogue is not None,
+        )
 
     def search_frames(
         self,
@@ -364,6 +383,21 @@ class VectorDB:
         limit: int = 5,
         score_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
+        """Search visual media frames using a text query.
+
+        Args:
+            query: Text query describing the desired visual content.
+            limit: Maximum number of results to return.
+            score_threshold: Optional similarity threshold.
+
+        Returns:
+            List of dictionaries containing:
+                - score: Similarity score.
+                - action: Detected action, if any.
+                - timestamp: Frame timestamp in seconds.
+                - video_path: Media file path.
+                - type: Frame type (defaults to "visual").
+        """
         query_vector = self.encoder.encode(query).tolist()
 
         resp = self.client.query_points(
@@ -388,6 +422,12 @@ class VectorDB:
                 },
             )
 
+        log(
+            "Media frame search completed",
+            query=query,
+            limit=limit,
+            result_count=len(results),
+        )
         return results
 
     def insert_face(
@@ -433,7 +473,12 @@ class VectorDB:
             ],
         )
 
-        log(f"[VectorDB] Upserted face id={point_id}, name={name}")
+        log(
+            "[VectorDB] Upserted face",
+            point_id=point_id,
+            name=name,
+            cluster_id=cluster_id,
+        )
         return point_id
 
     def search_face(
@@ -486,6 +531,11 @@ class VectorDB:
                 },
             )
 
+        log(
+            "Face search completed",
+            limit=limit,
+            result_count=len(results),
+        )
         return results
 
     def close(self) -> None:
@@ -502,11 +552,11 @@ class VectorDB:
         try:
             self.client.close()
         except Exception as exc:  # noqa: BLE001
-            log(f"Warning: error while closing QdrantClient: {exc}")
+            log("Warning: error while closing QdrantClient", error=str(exc))
 
 
 if __name__ == "__main__":
-    db = VectorDB(backend="docker")
+    db = VectorDB()
     try:
         db.insert_media_segments(
             "test_video.mp4",
@@ -519,6 +569,9 @@ if __name__ == "__main__":
                 },
             ],
         )
-        log("Media search result:", db.search_media("Hello world"))
+        log(
+            "Media search result",
+            results=db.search_media(query="Hello world", limit=2),
+        )
     finally:
         db.close()

@@ -37,6 +37,8 @@ from core.schemas import MediaMetadata, MediaType
 from core.storage.db import VectorDB
 from core.utils.logger import log
 
+from ...config import settings
+
 
 class IngestionPipeline:
     """End-to-end media ingestion pipeline.
@@ -58,21 +60,19 @@ class IngestionPipeline:
     def __init__(
         self,
         *,
-        qdrant_backend: str = "docker",
-        qdrant_host: str = "localhost",
-        qdrant_port: int = 6333,
-        frame_interval_seconds: int = 5,
-        tmdb_api_key: str | None = None,
+        qdrant_backend: str = settings.qdrant_backend,
+        qdrant_host: str = settings.qdrant_host,
+        qdrant_port: int = settings.qdrant_port,
+        frame_interval_seconds: int = settings.frame_interval,
+        tmdb_api_key: str | None = settings.tmdb_api_key,
     ) -> None:
         """Initialize the ingestion pipeline and its components.
 
         Args:
             qdrant_backend: Backend mode for Qdrant. Either ``"memory"`` or
                 ``"docker"`` as expected by :class:`VectorDB`.
-            qdrant_host: Hostname for Qdrant when using the ``"docker"``
-                backend.
-            qdrant_port: TCP port for Qdrant when using the ``"docker"``
-                backend.
+            qdrant_host: Hostname for Qdrant when using the ``"docker"`` backend.
+            qdrant_port: TCP port for Qdrant when using the ``"docker"`` backend.
             frame_interval_seconds: Interval (in seconds) at which frames are
                 extracted from the video timeline.
             tmdb_api_key: Optional TMDB API key used by :class:`MetadataEngine`

@@ -49,6 +49,8 @@ dependencies = [
     "mcp>=1.23.2",
     "websockets>=15.0.1",
     "httpx>=0.28.1",
+    "structlog>=25.5.0",
+    "colorama>=0.4.6",
 ]
 
 [project.optional-dependencies]
