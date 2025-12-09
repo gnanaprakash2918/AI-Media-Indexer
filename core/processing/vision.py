@@ -7,6 +7,7 @@ request image descriptions from the configured LLM.
 import asyncio
 from pathlib import Path
 
+from core.utils.logger import log
 from llm.factory import LLMFactory
 from llm.interface import LLMInterface
 
@@ -31,11 +32,9 @@ class VisionAnalyzer:
 
         try:
             self.prompt = self.llm.construct_user_prompt(self.prompt_filename)
-            print(f"[Vision] Loaded prompt from {self.prompt_filename}")
+            log(f"[Vision] Loaded prompt from {self.prompt_filename}")
         except FileNotFoundError:
-            print(
-                f"[ERROR] Prompt file '{self.prompt_filename}' not found in prompts/."
-            )
+            log(f"[ERROR] Prompt file '{self.prompt_filename}' not found in prompts/.")
             raise
 
     async def describe(self, image_path: Path) -> str:
@@ -65,7 +64,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python -m core.processing.vision /path/to/image.jpg")
+        log("Usage: python -m core.processing.vision /path/to/image.jpg")
         raise SystemExit(1)
 
     img_path = Path(sys.argv[1])
@@ -75,8 +74,8 @@ if __name__ == "__main__":
         try:
             analyzer = VisionAnalyzer()
             description = await analyzer.describe(img_path)
-            print(f"\n[Description]:\n{description}")
+            log(f"\n[Description]:\n{description}")
         except Exception as e:
-            print(f"Vision tool failed: {e}")
+            log(f"Vision tool failed: {e}")
 
     asyncio.run(main())

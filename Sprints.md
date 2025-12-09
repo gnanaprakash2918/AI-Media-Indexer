@@ -884,7 +884,7 @@ During this sprint, significant issues were identified and resolved regarding fi
 
 - **The Issue**: PowerShell aggressively interprets brackets `[]` as wildcard/glob patterns. A file named `Movie [2025].mkv` would fail to resolve because PowerShell tries to match `[2025]` as a pattern.
 - **Solution 1 (Recommended)**: Rename files to remove special characters (`[]`, `()`, space) and use underscores (e.g., `Movie_2025.mkv`).
-- **Solution 2 (Escaping)**: If renaming is impossible, use backticks to escape special chars: `uv run python main.py "Movie ``[2025``].mkv"`.
+- **Solution 2 (Escaping)**: If renaming is impossible, use backticks to escape special chars: ` uv run python main.py "Movie ``[2025``].mkv" `.
 - **Best Practice**: Always enclose file paths in quotes when passing them as arguments: `uv run python main.py "path/to/file.mkv"`.
 
 #### Resource Optimization
@@ -1025,3 +1025,59 @@ git diff sprint-1..sprint-2 --stat
 - **Google ADK**: [https://developers.google.com/adk](https://developers.google.com/adk)
 - **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 - **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
+
+## Sprint 5 (Branch: `sprint-5`)
+
+### Commit History
+
+#### Commit `5eab3d6` - Agent CLI Implementation (2025-12-09)
+
+**Author**: Gnana Prakash M  
+**Message**: Added Agent server to schemas
+
+**Changes**:
+
+- Implemented `agent_cli.py` for MCP server interaction
+- Added CLI entry point for agent operations
+
+**Files Added**:
+
+- `agent_cli.py`
+
+### Sprint 5 Completed Tasks
+
+#### Task 5.1 - MCP Agent Client ✅
+
+- ✅ Implemented `AgentCLI` in `agent_cli.py`
+  - Interactive command-line interface for the Media Indexer Agent
+  - Integration with Model Context Protocol (MCP) via `mcp` library
+  - Seamless communication with `core.agent.server`
+  - Powered by Ollama (default: `llama3.1`) for natural language interaction
+  - Support for tool calling (`search_media`, `ingest_media`)
+  - Dynamic tool discovery and schema mapping
+
+**Key Features**:
+
+- **REPL Interface**: Interactive chat loop with state preservation
+- **Tool Chaining**: Model can call tools, receive output, and synthesize answers
+- **Stdio Transport**: Robust local communication between client and agent server
+
+#### Task 5.2 - Schema Enhancements ✅
+
+- ✅ Updated `core/schemas.py` with standard response models
+  - **`SearchResponse`**: Standardized structure for visual and dialogue search results
+  - **`IngestResponse`**: Unified response format for ingestion operations
+  - Improved type safety for MCP tool returns
+
+---
+
+### Sprint 5 Technical Highlights
+
+#### MCP Client-Server Architecture
+
+- **Protocol**: Adopted the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) standard.
+- **Client**: `agent_cli.py` acts as the host, managing the LLM (Ollama) and the connection to the server.
+- **Server**: `core.agent.server` provides the actual tools (`search`, `ingest`) and executes them.
+- **Flow**: User -> CLI -> LLM -> (Tool Call) -> CLI -> Server -> CLI -> (Tool Result) -> LLM -> CLI -> User.
+
+This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server), allowing for easier switching of LLM backends or tool implementations.

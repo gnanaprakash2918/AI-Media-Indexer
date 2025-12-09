@@ -103,3 +103,40 @@ class TranscriptionResult(BaseModel):
     language: str
     language_probability: float
     duration: float
+
+
+# Pydantic response models
+
+
+class SearchResponse(BaseModel):
+    """Response payload for media search.
+
+    Attributes:
+        visual_matches: Frame-based search hits, usually containing score,
+            timestamp, file path, and a short description of the scene.
+        dialogue_matches: Dialogue/text-based search hits, usually containing
+            score, timestamp, file path, and a subtitle/transcript snippet.
+    """
+
+    visual_matches: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Frame-based visual matches.",
+    )
+    dialogue_matches: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Dialogue/text matches.",
+    )
+
+
+class IngestResponse(BaseModel):
+    """Response payload for media ingestion.
+
+    Attributes:
+        file_path: Resolved absolute path of the ingested file.
+        media_type_hint: Media type hint that was forwarded to the pipeline.
+        message: Human-readable summary of the ingestion outcome.
+    """
+
+    file_path: str
+    media_type_hint: str
+    message: str

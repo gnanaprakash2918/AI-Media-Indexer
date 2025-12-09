@@ -1,0 +1,24 @@
+{
+  "name": "MediaIndexer",
+  "description": "A multimodal agent that ingests, indexes, and searches personal media libraries.",
+  "version": "1.0.0",
+  "protocol_version": "0.3.0",
+  "preferred_transport": "HTTP+JSON",
+  "url": "http://localhost:8000/a2a",
+  "default_input_modes": ["application/json"],
+  "default_output_modes": ["application/json"],
+  "skills": [
+    {
+      "id": "search_media",
+      "name": "Search Media",
+      "description": "Finds relevant media segments based on natural language.",
+      "tags": ["search", "video", "retrieval"]
+    },
+    {
+      "id": "ingest_media",
+      "name": "Ingest Media",
+      "description": "Processes a video file to extract metadata and features.",
+      "tags": ["index", "processing"]
+    }
+  ]
+}

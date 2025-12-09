@@ -8,6 +8,8 @@ import traceback
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
+from core.utils.logger import log
+
 
 class FrameExtractor:
     """Class to extract frames from video files at specified intervals."""
@@ -90,7 +92,7 @@ class FrameExtractor:
                     str(output_pattern),
                 ]
 
-                print(f"Starting async ffmpeg process for {path_obj.name}")
+                log(f"Starting async ffmpeg process for {path_obj.name}")
 
                 def run_ffmpeg():
                     return subprocess.run(
@@ -98,12 +100,14 @@ class FrameExtractor:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                     )
 
                 proc = await asyncio.to_thread(run_ffmpeg)
 
                 if proc.returncode != 0:
-                    print(
+                    log(
                         "[ERROR:FFmpeg] Failed to extract frames from "
                         f"'{video_path}': {proc.stderr.strip() if proc.stderr else ''}",
                     )
@@ -121,11 +125,11 @@ class FrameExtractor:
             IsADirectoryError,
             OSError,
         ) as exc:
-            print(f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}")
+            log(f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}")
             return
 
         except Exception as exc:
-            print(
+            log(
                 f"[ERROR:{type(exc).__name__}] Unexpected error "
                 f"processing '{video_path}': {exc}",
             )
@@ -139,6 +143,6 @@ if __name__ == "__main__":
         """Test the FrameExtractor with a sample video file."""
         extractor = FrameExtractor()
         async for frame in extractor.extract("test_video.mp4"):
-            print(f"Got frame: {frame}")
+            log(f"Got frame: {frame}")
 
     # asyncio.run(main())

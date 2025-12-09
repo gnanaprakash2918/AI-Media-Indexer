@@ -29,6 +29,7 @@ from huggingface_hub import snapshot_download
 
 from config import settings
 from core.processing.text_utils import parse_srt
+from core.utils.logger import log
 
 warnings.filterwarnings("ignore")
 
@@ -61,7 +62,7 @@ class AudioTranscriber:
 
     def unload_model(self) -> None:
         """Forcefully unload the Whisper model from VRAM."""
-        print("[INFO] Unloading Whisper model to free VRAM...")
+        log("[INFO] Unloading Whisper model to free VRAM...")
 
         # 1. Delete the CTranslate2 model objects
         if self._batched_model is not None:
@@ -80,7 +81,7 @@ class AudioTranscriber:
         if self.device == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        print("[SUCCESS] Whisper unloaded. VRAM should be free.")
+        log("[SUCCESS] Whisper unloaded. VRAM should be free.")
 
     def _get_ffmpeg_cmd(self) -> str:
         """Locates the ffmpeg executable in system PATH.
@@ -114,11 +115,11 @@ class AudioTranscriber:
         Returns:
             bool: True if subtitles were found/extracted; False otherwise.
         """
-        print("[INFO] Probing for existing subtitles...")
+        log("[INFO] Probing for existing subtitles...")
 
         # 1. Check for explicit user provided subtitle path
         if user_sub_path and user_sub_path.exists():
-            print(f"[SUCCESS] Using provided subtitle: {user_sub_path}")
+            log(f"[SUCCESS] Using provided subtitle: {user_sub_path}")
             shutil.copy(user_sub_path, output_path)
             return True
 
@@ -129,7 +130,7 @@ class AudioTranscriber:
             input_path.with_suffix(".srt"),
         ]:
             if sidecar.exists() and sidecar != output_path:
-                print(f"[SUCCESS] Found sidecar: {sidecar}")
+                log(f"[SUCCESS] Found sidecar: {sidecar}")
                 shutil.copy(sidecar, output_path)
                 return True
 
@@ -150,12 +151,12 @@ class AudioTranscriber:
                 cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             if output_path.exists() and output_path.stat().st_size > 0:
-                print("[SUCCESS] Extracted embedded subtitles.")
+                log("[SUCCESS] Extracted embedded subtitles.")
                 return True
         except subprocess.CalledProcessError:
             pass
 
-        print("[INFO] No existing subtitles found. Proceeding to ASR.")
+        log("[INFO] No existing subtitles found. Proceeding to ASR.")
         return False
 
     def _slice_audio(self, input_path: Path, start: float, end: float | None) -> Path:
@@ -187,7 +188,7 @@ class AudioTranscriber:
 
         cmd.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
 
-        print(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
+        log(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
         subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
@@ -202,7 +203,7 @@ class AudioTranscriber:
                 with open(ct2_output_dir / "config.json", "r", encoding="utf-8") as f:
                     conf = json.load(f)
                     if "architectures" in conf or "_name_or_path" in conf:
-                        print(f"[WARN] Corrupted config in {ct2_output_dir}. Purging.")
+                        log(f"[WARN] Corrupted config in {ct2_output_dir}. Purging.")
                         shutil.rmtree(ct2_output_dir)
             except Exception:
                 shutil.rmtree(ct2_output_dir, ignore_errors=True)
@@ -218,8 +219,8 @@ class AudioTranscriber:
                         shutil.copy(raw_model_dir / fname, ct2_output_dir / fname)
             return str(ct2_output_dir)
 
-        print(f"[INFO] Model {model_id} needs conversion.")
-        print(f"[INFO] Step 1: High-Speed Download to {raw_model_dir}...")
+        log(f"[INFO] Model {model_id} needs conversion.")
+        log(f"[INFO] Step 1: High-Speed Download to {raw_model_dir}...")
 
         try:
             snapshot_download(
@@ -231,8 +232,8 @@ class AudioTranscriber:
                 token=settings.hf_token,
                 ignore_patterns=["*.msgpack", "*.h5", "*.tflite", "*.ot"],
             )
-            print("[SUCCESS] Download complete.")
-            print(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
+            log("[SUCCESS] Download complete.")
+            log(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
 
             converter = ctranslate2.converters.TransformersConverter(
                 str(raw_model_dir), load_as_float16=True
@@ -248,11 +249,11 @@ class AudioTranscriber:
                 if src.exists():
                     shutil.copy(src, ct2_output_dir / file_name)
 
-            print("[SUCCESS] Model converted and patched successfully.")
+            log("[SUCCESS] Model converted and patched successfully.")
             return str(ct2_output_dir)
 
         except Exception as e:
-            print(f"[ERROR] Model download/conversion failed: {e}")
+            log(f"[ERROR] Model download/conversion failed: {e}")
             raise RuntimeError(f"Could not prepare {model_id}.") from e
 
     def _load_model(self, model_key: str) -> None:
@@ -267,7 +268,7 @@ class AudioTranscriber:
                 torch.cuda.empty_cache()
 
         # only log here, when we actually load weights
-        print(
+        log(
             f"[INFO] Loading Faster-Whisper model '{model_key}' "
             f"({self.device}, Compute: {self.compute_type})..."
         )
@@ -282,7 +283,7 @@ class AudioTranscriber:
             )
             self._batched_model = BatchedInferencePipeline(model=self._model)
             self._current_model_size = model_key
-            print(f"[SUCCESS] Loaded {model_key} on {self.device}")
+            log(f"[SUCCESS] Loaded {model_key} on {self.device}")
         except Exception as e:
             raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
 
@@ -434,7 +435,7 @@ class AudioTranscriber:
                 fallback was used.
         """
         if not audio_path.exists():
-            print(f"[ERROR] Input file not found: {audio_path}")
+            log(f"[ERROR] Input file not found: {audio_path}")
             return None
 
         lang = language or settings.language
@@ -443,9 +444,9 @@ class AudioTranscriber:
         # Existing Sidecar / Embedded Subtitles
         if start_time == 0.0 and end_time is None:
             if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
-                print(f"[INFO] Parsing existing subtitles from {out_srt}...")
+                log(f"[INFO] Parsing existing subtitles from {out_srt}...")
                 parsed_segments = parse_srt(out_srt)
-                print(
+                log(
                     f"[SUCCESS] Loaded {len(parsed_segments)}"
                     " segments from existing file."
                 )
@@ -468,7 +469,7 @@ class AudioTranscriber:
             if self._batched_model is None:
                 raise RuntimeError("Model failed to initialize")
 
-            print(f"[INFO] Running Inference on {proc_path} with {model_to_use}.")
+            log(f"[INFO] Running Inference on {proc_path} with {model_to_use}.")
 
             segments, info = self._batched_model.transcribe(
                 str(proc_path),
@@ -526,20 +527,18 @@ class AudioTranscriber:
                     )
 
             if not chunks:
-                print("[WARN] No speech detected.")
+                log("[WARN] No speech detected.")
                 return None
 
-            print(
-                f"[SUCCESS] Transcription complete. Prob: {info.language_probability}"
-            )
+            log(f"[SUCCESS] Transcription complete. Prob: {info.language_probability}")
 
             lines_written = self._write_srt(chunks, out_srt, offset=start_time)
             if lines_written > 0:
-                print(f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}")
+                log(f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}")
                 return chunks
 
         except Exception as e:
-            print(f"[ERROR] Inference failed: {e}")
+            log(f"[ERROR] Inference failed: {e}")
             raise
         finally:
             if is_sliced and proc_path.exists():
