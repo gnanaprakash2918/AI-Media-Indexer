@@ -14,6 +14,8 @@ The server is intended to be launched as a local MCP tool, typically via
 
 from __future__ import annotations
 
+import io
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -25,6 +27,10 @@ from core.retrieval.search import SearchEngine
 from core.schemas import IngestResponse, SearchResponse
 from core.storage.db import VectorDB
 from core.utils.logger import log
+
+# FORCE UTF-8 for stdout/stderr to prevent Windows charmap crashes
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Initialize FastMCP server
 mcp = FastMCP("MediaIndexer")
