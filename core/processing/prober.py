@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from core.utils.logger import log
+
 
 def requires_ffprobe(func):
     """Ensure that the `ffprobe` executable is available.
@@ -173,4 +175,4 @@ class MediaProber:
 if __name__ == "__main__":
     scanner = MediaProber()
     path = ""
-    print(scanner.probe(path))
+    log(scanner.probe(path))

@@ -11,6 +11,7 @@ from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 
 from config import Settings
+from core.utils.logger import log
 
 _SETTINGS = Settings()
 
@@ -70,19 +71,19 @@ class VectorDB:
 
         if backend == "memory":
             self.client = QdrantClient(path=path)
-            print(f"Initialized embedded Qdrant at path={path}")
+            log(f"Initialized embedded Qdrant at path={path}")
         elif backend == "docker":
             try:
                 self.client = QdrantClient(host=host, port=port)
                 self.client.get_collections()
             except Exception as exc:  # noqa: BLE001
-                print(f"Could not connect to Qdrant: {exc}")
+                log(f"Could not connect to Qdrant: {exc}")
                 raise ConnectionError("Qdrant connection failed.") from exc
-            print(f"Connected to Qdrant at {host}:{port}")
+            log(f"Connected to Qdrant at {host}:{port}")
         else:
             raise ValueError(f"Unknown backend: {backend!r} (use 'memory' or 'docker')")
 
-        print("Loading SentenceTransformer model...")
+        log("Loading SentenceTransformer model...")
         self.encoder = self._load_encoder()
 
         self._ensure_collections()
@@ -114,27 +115,27 @@ class VectorDB:
         local_model_dir = models_dir / self.MODEL_NAME
 
         if local_model_dir.exists():
-            print(f"Loading SentenceTransformer from {local_model_dir}")
+            log(f"Loading SentenceTransformer from {local_model_dir}")
             return SentenceTransformer(str(local_model_dir), device="cpu")
 
-        print(
+        log(
             f"Local model not found in {local_model_dir}. "
             f"Loading '{self.MODEL_NAME}' from SentenceTransformers..."
         )
         model = SentenceTransformer(self.MODEL_NAME, device="cpu")
 
         try:
-            print(f"Saving model to {local_model_dir}")
+            log(f"Saving model to {local_model_dir}")
             model.save(str(local_model_dir))
         except Exception as exc:  # noqa: BLE001
-            print(f"Warning: failed to save model to {local_model_dir}: {exc}")
+            log(f"Warning: failed to save model to {local_model_dir}: {exc}")
 
         return model
 
     def _ensure_collections(self) -> None:
         """Ensure that required Qdrant collections exist."""
         if not self.client.collection_exists(self.MEDIA_SEGMENTS_COLLECTION):
-            print("media_segments collection not found. Creating it.")
+            log("media_segments collection not found. Creating it.")
             self.client.create_collection(
                 collection_name=self.MEDIA_SEGMENTS_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -144,7 +145,7 @@ class VectorDB:
             )
 
         if not self.client.collection_exists(self.MEDIA_COLLECTION):
-            print("media_frames collection not found. Creating it.")
+            log("media_frames collection not found. Creating it.")
             self.client.create_collection(
                 collection_name=self.MEDIA_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -154,7 +155,7 @@ class VectorDB:
             )
 
         if not self.client.collection_exists(self.FACES_COLLECTION):
-            print("faces collection not found. Creating it.")
+            log("faces collection not found. Creating it.")
             self.client.create_collection(
                 collection_name=self.FACES_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -163,7 +164,7 @@ class VectorDB:
                 ),
             )
 
-        print("Collections ensured!")
+        log("Collections ensured!")
 
     def list_collections(self) -> models.CollectionsResponse:
         """List all collections in Qdrant.
@@ -191,7 +192,7 @@ class VectorDB:
         if not segments:
             return
 
-        print(f"Encoding {len(segments)} segments for {video_path}...")
+        log(f"Encoding {len(segments)} segments for {video_path}...")
 
         texts = [s.get("text", "") for s in segments]
         embeddings = self.encoder.encode(texts, show_progress_bar=False)
@@ -230,7 +231,7 @@ class VectorDB:
             points=points,
         )
 
-        print(f"Inserted {len(points)} segments into Qdrant.")
+        log(f"Inserted {len(points)} segments into Qdrant.")
 
     def search_media(
         self,
@@ -355,7 +356,7 @@ class VectorDB:
             ],
         )
 
-        print(f"[VectorDB] Upserted media frame id={safe_point_id}")
+        log(f"[VectorDB] Upserted media frame id={safe_point_id}")
 
     def search_frames(
         self,
@@ -432,7 +433,7 @@ class VectorDB:
             ],
         )
 
-        print(f"[VectorDB] Upserted face id={point_id}, name={name}")
+        log(f"[VectorDB] Upserted face id={point_id}, name={name}")
         return point_id
 
     def search_face(
@@ -501,7 +502,7 @@ class VectorDB:
         try:
             self.client.close()
         except Exception as exc:  # noqa: BLE001
-            print(f"Warning: error while closing QdrantClient: {exc}")
+            log(f"Warning: error while closing QdrantClient: {exc}")
 
 
 if __name__ == "__main__":
@@ -518,6 +519,6 @@ if __name__ == "__main__":
                 },
             ],
         )
-        print("Media search result:", db.search_media("Hello world"))
+        log("Media search result:", db.search_media("Hello world"))
     finally:
         db.close()

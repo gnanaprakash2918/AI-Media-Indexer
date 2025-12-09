@@ -19,6 +19,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from core.utils.logger import log
+
 
 def parse_srt(file_path: str | Path) -> list[dict[str, Any]]:
     """Parse an SRT subtitle file into normalized dialogue segments.
@@ -43,7 +45,7 @@ def parse_srt(file_path: str | Path) -> list[dict[str, Any]]:
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
     except Exception as exc:  # noqa: BLE001
-        print(f"[ERROR] Failed to read SRT file {path}: {exc}")
+        log(f"[ERROR] Failed to read SRT file {path}: {exc}")
         return []
 
     pattern = re.compile(

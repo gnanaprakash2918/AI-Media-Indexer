@@ -31,6 +31,7 @@ from PIL import Image
 from sklearn.cluster import DBSCAN
 
 from core.schemas import DetectedFace
+from core.utils.logger import log
 
 # Where to store dlib model files relative to the project root.
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
@@ -63,7 +64,7 @@ def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
         if target.exists() and target.stat().st_size >= min_size:
             continue
 
-        print(f"[dlib] Downloading model: {name}", file=sys.stderr)
+        log(f"[dlib] Downloading model: {name}", file=sys.stderr)
 
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = Path(tmp.name)
@@ -76,7 +77,7 @@ def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
             if target.stat().st_size < min_size:
                 raise RuntimeError(f"Downloaded {name} looks corrupted (too small)")
 
-            print(f"[dlib] Installed {name}", file=sys.stderr)
+            log(f"[dlib] Installed {name}", file=sys.stderr)
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -141,7 +142,7 @@ class FaceManager:
                     str(MODELS_DIR / "mmod_human_face_detector.dat")
                 )
             except Exception as e:
-                print(f"[WARN] Failed to load Dlib CNN detector: {e}. Fallback to CPU.")
+                log(f"[WARN] Failed to load Dlib CNN detector: {e}. Fallback to CPU.")
                 self.cnn_detector = None
                 self.use_gpu = False
 

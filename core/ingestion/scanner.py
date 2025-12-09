@@ -6,6 +6,7 @@ from collections.abc import Generator, Iterable
 from pathlib import Path
 
 from core.schemas import MediaAsset, MediaType
+from core.utils.logger import log
 
 
 class LibraryScanner:
@@ -131,11 +132,11 @@ class LibraryScanner:
             IsADirectoryError,
             OSError,
         ) as exc:
-            print(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
+            log(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
             return
 
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
+            log(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
             return
 
 
@@ -144,6 +145,4 @@ if __name__ == "__main__":
     file_path = ""
 
     for media_asset in scanner.scan(file_path):
-        print(
-            f"[{media_asset.media_type.value.upper()}] found: {media_asset.file_path}"
-        )
+        log(f"[{media_asset.media_type.value.upper()}] found: {media_asset.file_path}")
