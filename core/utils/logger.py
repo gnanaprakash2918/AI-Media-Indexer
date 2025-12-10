@@ -30,6 +30,29 @@ DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 DEFAULT_BACKUP_COUNT = 5
 
 
+def _ensure_utf8_stderr() -> None:
+    """Best-effort patch to make stderr UTF-8 capable.
+
+    This prevents ``UnicodeEncodeError: 'charmap' codec can't encode...``
+    when printing log lines that contain characters unsupported by the
+    legacy Windows console encoding (e.g. full-width punctuation, emojis,
+    Tamil, etc.).
+
+    It uses ``TextIOBase.reconfigure`` when available (Python 3.7+),
+    while guarding with ``hasattr`` so static analyzers like Pylance
+    don't complain.
+    """
+    stderr = sys.stderr
+
+    # Some environments wrap stderr with objects that don't expose
+    # reconfigure; don't assume it always exists.
+    if hasattr(stderr, "reconfigure"):
+        try:
+            stderr.reconfigure(encoding="utf-8", errors="backslashreplace")  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+
 def _add_logger_name(
     logger: logging.Logger | WrappedLogger,
     method_name: str,
@@ -85,6 +108,9 @@ def configure_logger() -> None:
 
     Safe to call multiple times, but typically done once at process startup.
     """
+    # Make console less fragile with Unicode first.
+    _ensure_utf8_stderr()
+
     log_dir: Path = settings.log_dir
     _ensure_log_dir(log_dir)
 
@@ -171,7 +197,7 @@ def get_logger(name: str | None) -> BoundLogger:
 def log(msg: str, **kwargs: Any) -> None:
     """Log an INFO-level message using the default logger.
 
-    Compatibility wrapper for legacy calls like: log("event", key=value).
+    Compatibility wrapper for legacy calls like: ``log("event", key=value)``.
 
     Args:
         msg: Log event name or message.
