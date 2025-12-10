@@ -64,11 +64,18 @@ D:\AI-Media-Indexer
 And a `uv` venv:
 
 ```powershell
+D:
 cd D:\AI-Media-Indexer
-uv venv .venv
+dir
 .\.venv\Scripts\activate.ps1   # PowerShell
-# or
-.\.venv\Scripts\activate.bat   # Developer Command Prompt
+or
+& D:\AI-Media-Indexer\.venv\Scripts\Activate.ps1
+```
+
+```cmd
+D:
+cd D:\AI-Media-Indexer
+call .venv\Scripts\activate.bat
 ```
 
 ---
