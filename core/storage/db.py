@@ -11,7 +11,7 @@ from sentence_transformers import SentenceTransformer
 
 from core.utils.logger import log
 
-from ...config import settings
+from config import settings
 
 
 class VectorDB:

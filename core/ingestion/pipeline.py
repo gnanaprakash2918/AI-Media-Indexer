@@ -37,7 +37,7 @@ from core.schemas import MediaMetadata, MediaType
 from core.storage.db import VectorDB
 from core.utils.logger import log
 
-from ...config import settings
+from config import settings
 
 
 class IngestionPipeline:
