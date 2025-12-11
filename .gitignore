@@ -10,6 +10,7 @@ models/
 qdrant_data/
 get_files.py
 analyze_branch.py
+logs/
 
 # C extensions
 *.so
