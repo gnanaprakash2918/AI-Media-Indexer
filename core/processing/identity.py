@@ -16,6 +16,7 @@ import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 
+import cv2
 import dlib
 import numpy as np
 from dlib import (
@@ -36,6 +37,8 @@ from core.utils.logger import log
 
 # Where to store dlib model files relative to the project root.
 MODELS_DIR = Settings.project_root() / "models"
+YUNET_MODEL_NAME = "face_detection_yunet_2023mar.onnx"
+YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 
 DLIB_MODEL_URLS: dict[str, tuple[str, int]] = {
     "shape_predictor_68_face_landmarks.dat": (
@@ -53,10 +56,11 @@ DLIB_MODEL_URLS: dict[str, tuple[str, int]] = {
 }
 
 
-def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
-    """Ensure required dlib model files exist; download missing ones."""
+def _ensure_models(models_dir: Path, use_cnn: bool = True) -> None:
+    """Ensures all required Dlib and YuNet models are downloaded."""
     models_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1. Download Dlib models (BZ2 compressed)
     for name, (url, min_size) in DLIB_MODEL_URLS.items():
         if not use_cnn and name == "mmod_human_face_detector.dat":
             continue
@@ -65,8 +69,7 @@ def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
         if target.exists() and target.stat().st_size >= min_size:
             continue
 
-        log(f"[dlib] Downloading model: {name}", file=sys.stderr)
-
+        log(f"[models] Downloading: {name}", file=sys.stderr)
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = Path(tmp.name)
 
@@ -77,10 +80,19 @@ def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
 
             if target.stat().st_size < min_size:
                 raise RuntimeError(f"Downloaded {name} looks corrupted (too small)")
-
-            log(f"[dlib] Installed {name}", file=sys.stderr)
+            log(f"[models] Installed {name}", file=sys.stderr)
         finally:
             tmp_path.unlink(missing_ok=True)
+
+    # 2. Download YuNet model (Rew ONNX)
+    yunet_target = models_dir / YUNET_MODEL_NAME
+    if not yunet_target.exists():
+        log(f"[models] Downloading: {YUNET_MODEL_NAME}", file=sys.stderr)
+        try:
+            urllib.request.urlretrieve(YUNET_URL, yunet_target)
+            log(f"[models] Installed {YUNET_MODEL_NAME}", file=sys.stderr)
+        except Exception as e:
+            log(f"[WARN] Failed to download YuNet model: {e}", file=sys.stderr)
 
 
 class FaceManager:
