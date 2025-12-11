@@ -1083,3 +1083,4 @@ This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server)
 - **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 
 - https://pypi.org/project/a2a-sdk/
+- `https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet`
