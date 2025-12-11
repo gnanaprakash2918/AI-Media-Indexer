@@ -5,13 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import torch
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 
-from core.utils.logger import log
-
 from config import settings
+from core.utils.logger import log
 
 
 class VectorDB:
@@ -41,7 +41,6 @@ class VectorDB:
     MEDIA_VECTOR_SIZE = 384
     FACE_VECTOR_SIZE = 128
     TEXT_DIM = 384
-
     MODEL_NAME = "all-MiniLM-L6-v2"
 
     client: QdrantClient
@@ -66,7 +65,6 @@ class VectorDB:
             ValueError: If an unknown backend value is provided.
         """
         self._closed = False
-
         if backend == "memory":
             self.client = QdrantClient(path=path)
             log("Initialized embedded Qdrant", path=path, backend=backend)
@@ -74,49 +72,83 @@ class VectorDB:
             try:
                 self.client = QdrantClient(host=host, port=port)
                 self.client.get_collections()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log("Could not connect to Qdrant", error=str(exc), host=host, port=port)
                 raise ConnectionError("Qdrant connection failed.") from exc
             log("Connected to Qdrant", host=host, port=port, backend=backend)
         else:
             raise ValueError(f"Unknown backend: {backend!r} (use 'memory' or 'docker')")
 
-        log("Loading SentenceTransformer model...", model_name=self.MODEL_NAME)
+        log(
+            "Loading SentenceTransformer model...",
+            model_name=self.MODEL_NAME,
+            device=settings.device,
+        )
         self.encoder = self._load_encoder()
-
         self._ensure_collections()
 
     def _load_encoder(self) -> SentenceTransformer:
-        """Load the SentenceTransformer model with project-local preference.
+        """Load SentenceTransformer with fallback: try settings.device, else cpu.
 
-        Load order:
-        1. `<cache_dir>/models/<MODEL_NAME>` if it exists.
-        2. Global cache or download using `MODEL_NAME`.
-        3. Save the loaded model into `<cache_dir>/models/<MODEL_NAME>`.
-
-        Returns:
-            Loaded SentenceTransformer encoder.
+        - tries local cache first, then hub.
+        - attempts target device (settings.device), and falls back to CPU on failure.
         """
         models_dir = settings.model_cache_dir
         models_dir.mkdir(parents=True, exist_ok=True)
 
         local_model_dir = models_dir / self.MODEL_NAME
+        target_device = settings.device or "cpu"
 
+        def _create(path_or_name: str, device: str) -> SentenceTransformer:
+            log(
+                "Creating SentenceTransformer", path_or_name=path_or_name, device=device
+            )
+            return SentenceTransformer(path_or_name, device=device)
+
+        # Try local cache first
         if local_model_dir.exists():
             log(
                 "Loading SentenceTransformer from local cache",
                 path=str(local_model_dir),
-                device=settings.device,
+                device=target_device,
             )
-            return SentenceTransformer(str(local_model_dir), device=settings.device)
+            try:
+                return _create(str(local_model_dir), device=target_device)
+            except Exception as exc:
+                log(
+                    "Failed to load cached model on target device — will try hub or "
+                    "CPU fallback",
+                    error=str(exc),
+                    device=target_device,
+                )
 
+        # Try loading from hub on target_device
         log(
             "Local model not found, loading from hub",
             path=str(local_model_dir),
             model_name=self.MODEL_NAME,
-            device=settings.device,
+            device=target_device,
         )
-        model = SentenceTransformer(self.MODEL_NAME, device=settings.device)
+        try:
+            model = _create(self.MODEL_NAME, device=target_device)
+        except Exception as exc:
+            if target_device != "cpu":
+                log(
+                    "Falling back to CPU for SentenceTransformer after failure",
+                    from_device=target_device,
+                    error=str(exc),
+                )
+                try:
+                    model = _create(self.MODEL_NAME, device="cpu")
+                except Exception as exc2:
+                    log(
+                        "Failed to load SentenceTransformer on CPU as well",
+                        error=str(exc2),
+                    )
+                    raise
+            else:
+                log("Failed to load SentenceTransformer on CPU", error=str(exc))
+                raise
 
         try:
             log("Saving SentenceTransformer model to cache", path=str(local_model_dir))
@@ -129,6 +161,63 @@ class VectorDB:
             )
 
         return model
+
+    def encode_texts(
+        self,
+        texts: str | list[str],
+        batch_size: int = 1,
+        show_progress_bar: bool = False,
+    ) -> list[list[float]]:
+        """Encode a single text or list of texts in a memory-safe manner.
+
+        - Empties CUDA cache before encoding attempts.
+        - Uses batch_size=1 by default to reduce GPU peaks.
+        - On encoding failure (e.g., CUDA OOM), automatically retries on CPU.
+        - Returns embeddings as plain Python lists: List[List[float]].
+        """
+        # Normalize input to list
+        if isinstance(texts, str):
+            texts_list = [texts]
+        else:
+            texts_list = list(texts)
+
+        def _try_encode(encoder: SentenceTransformer, inputs: list[str], bsize: int):
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception as exc:
+                log("Warning: torch.cuda.empty_cache() failed", error=str(exc))
+
+            embeddings = encoder.encode(
+                inputs, batch_size=bsize, show_progress_bar=show_progress_bar
+            )
+            return [list(e) for e in embeddings]
+
+        try:
+            return _try_encode(self.encoder, texts_list, batch_size)
+        except RuntimeError as exc:
+            log("Encoder runtime error; attempting CPU fallback", error=str(exc))
+        except Exception as exc:
+            log("Unexpected encoder error; attempting CPU fallback", error=str(exc))
+
+        try:
+            need_new_cpu_encoder = False
+            try:
+                if settings.device and "cuda" in str(settings.device).lower():
+                    need_new_cpu_encoder = True
+            except Exception:
+                need_new_cpu_encoder = True
+
+            if need_new_cpu_encoder:
+                log("Creating CPU fallback SentenceTransformer", device="cpu")
+                cpu_encoder = SentenceTransformer(self.MODEL_NAME, device="cpu")
+            else:
+                cpu_encoder = self.encoder
+
+            return _try_encode(cpu_encoder, texts_list, 1)
+        except Exception as exc:
+            log("CPU fallback encoding failed", error=str(exc))
+            raise
 
     def _ensure_collections(self) -> None:
         """Ensure that required Qdrant collections exist."""
@@ -197,21 +286,19 @@ class VectorDB:
         )
 
         texts = [s.get("text", "") for s in segments]
-        embeddings = self.encoder.encode(texts, show_progress_bar=False)
+        embeddings = self.encode_texts(texts, batch_size=1, show_progress_bar=False)
 
-        if len(embeddings[0]) != self.TEXT_DIM:
+        if not embeddings or len(embeddings[0]) != self.TEXT_DIM:
             raise ValueError(
                 f"Text embedding dimension mismatch: expected {self.TEXT_DIM}, "
-                f"got {len(embeddings[0])}",
+                f"got {len(embeddings[0]) if embeddings else 'no embeddings'}",
             )
 
         points: list[models.PointStruct] = []
-
         for i, segment in enumerate(segments):
             start_time = segment.get("start", 0.0)
             unique_str = f"{video_path}_{start_time}"
             point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
-
             payload = {
                 "video_path": str(video_path),
                 "text": segment.get("text"),
@@ -219,11 +306,10 @@ class VectorDB:
                 "end": segment.get("end"),
                 "type": segment.get("type", "dialogue"),
             }
-
             points.append(
                 models.PointStruct(
                     id=point_id,
-                    vector=embeddings[i].tolist(),
+                    vector=embeddings[i],
                     payload=payload,
                 ),
             )
@@ -265,10 +351,11 @@ class VectorDB:
                 - "video_path": Media file path.
                 - "type": Segment type.
         """
-        query_vector = self.encoder.encode(query).tolist()
+        query_vector = self.encode_texts(query, batch_size=1, show_progress_bar=False)[
+            0
+        ]
 
         conditions: list[models.Condition] = []
-
         if video_path is not None:
             conditions.append(
                 models.FieldCondition(
@@ -297,7 +384,6 @@ class VectorDB:
 
         hits = resp.points
         results: list[dict[str, Any]] = []
-
         for hit in hits:
             payload = hit.payload or {}
             results.append(
@@ -348,7 +434,6 @@ class VectorDB:
             )
 
         safe_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
-
         payload = {
             "video_path": video_path,
             "timestamp": timestamp,
@@ -409,7 +494,6 @@ class VectorDB:
 
         hits = resp.points
         results: list[dict[str, Any]] = []
-
         for hit in hits:
             payload = hit.payload or {}
             results.append(
@@ -456,7 +540,6 @@ class VectorDB:
             )
 
         point_id = str(uuid.uuid4())
-
         payload = {
             "name": name,
             "cluster_id": cluster_id,
@@ -519,7 +602,6 @@ class VectorDB:
 
         hits = resp.points
         results: list[dict[str, Any]] = []
-
         for hit in hits:
             payload = hit.payload or {}
             results.append(
@@ -546,9 +628,7 @@ class VectorDB:
         """
         if self._closed:
             return
-
         self._closed = True
-
         try:
             self.client.close()
         except Exception as exc:  # noqa: BLE001
