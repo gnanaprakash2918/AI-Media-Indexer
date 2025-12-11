@@ -30,11 +30,12 @@ from numpy.typing import ArrayLike, NDArray
 from PIL import Image
 from sklearn.cluster import DBSCAN
 
+from config import Settings
 from core.schemas import DetectedFace
 from core.utils.logger import log
 
 # Where to store dlib model files relative to the project root.
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODELS_DIR = Settings.project_root() / "models"
 
 DLIB_MODEL_URLS: dict[str, tuple[str, int]] = {
     "shape_predictor_68_face_landmarks.dat": (
