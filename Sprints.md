@@ -1083,4 +1083,27 @@ This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server)
 - **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 
 - https://pypi.org/project/a2a-sdk/
+
 - `https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet`
+
+for testings a2a_server
+
+```json
+curl -X POST http://localhost:8000/a2a/message/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": {
+      "role": "user",
+      "message_id": "msg-1",
+      "parts": [
+        {
+          "text": "Find the red car"
+        }
+      ]
+    }
+  }'
+```
+
+- `$env:PYTHONPYCACHEPREFIX="D:\AI-Media-Indexer\.cache\pycache"; uv run python -m core.agent.a2a_server`
+- `uv pip install --upgrade "a2a-sdk[all]"`
+- `uv pip install "a2a-sdk[all]" --upgrade`
