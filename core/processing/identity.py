@@ -26,7 +26,6 @@ from dlib import (
     rectangle,  # type: ignore
     shape_predictor,  # type: ignore
 )
-from mediapipe.python.solutions import face_detection as mp_face_detection
 from numpy.typing import ArrayLike, NDArray
 from PIL import Image
 from sklearn.cluster import DBSCAN
@@ -35,7 +34,6 @@ from config import Settings
 from core.schemas import DetectedFace
 from core.utils.logger import log
 
-# Where to store dlib model files relative to the project root.
 MODELS_DIR = Settings.project_root() / "models"
 YUNET_MODEL_NAME = "face_detection_yunet_2023mar.onnx"
 YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
@@ -122,27 +120,36 @@ class FaceManager:
         self.dbscan_min_samples = dbscan_min_samples
         self.dbscan_metric = dbscan_metric
 
-        # --- CUDA Check ---
-        # Safely check for CUDA support to fix Pylance/Attribute errors
-        self.dlib_has_cuda = False
+        # Check for Dlib CUDA support
         try:
-            if dlib.cuda.get_num_devices() > 0:  # type: ignore[attr-defined]
-                self.dlib_has_cuda = True
+            self.dlib_has_cuda = dlib.cuda.get_num_devices() > 0  # type: ignore[attr-defined]
         except AttributeError:
             self.dlib_has_cuda = False
 
-        # Only use GPU if requested AND dlib supports it
+        # Determine strict GPU usage
         self.use_gpu = use_gpu and self.dlib_has_cuda
 
-        # Ensure models are available (download if needed).
-        _ensure_dlib_models(MODELS_DIR, use_cnn=self.use_gpu)
+        _ensure_models(MODELS_DIR, use_cnn=self.use_gpu)
 
-        # 1. MediaPipe Detector (Primary CPU - VRAM Free & High Accuracy)
-        # Use direct import so Pylance understands the attribute
-        self.mp_detector = mp_face_detection.FaceDetection(
-            model_selection=1,  # 0=Short-range, 1=Full-range (better for movies)
-            min_detection_confidence=0.5,
-        )
+        self.yunet_path = str(MODELS_DIR / YUNET_MODEL_NAME)
+        self.yunet_detector = None
+        try:
+            cv_has_cuda = False
+            try:
+                cv_has_cuda = cv2.cuda.getCudaEnabledDeviceCount() > 0
+            except AttributeError:
+                pass
+
+            backend_id = (
+                cv2.dnn.DNN_BACKEND_CUDA
+                if (self.use_gpu and cv_has_cuda)
+                else cv2.dnn.DNN_BACKEND_DEFAULT
+            )
+            target_id = (
+                cv2.dnn.DNN_TARGET_CUDA
+                if (self.use_gpu and cv_has_cuda)
+                else cv2.dnn.DNN_TARGET_CPU
+            )
 
         # 2. HOG detector (Legacy CPU fallback)
         self.hog_detector = get_frontal_face_detector()
