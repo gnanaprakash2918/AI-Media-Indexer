@@ -151,11 +151,23 @@ class FaceManager:
                 else cv2.dnn.DNN_TARGET_CPU
             )
 
-        # 2. HOG detector (Legacy CPU fallback)
-        self.hog_detector = get_frontal_face_detector()
+            self.yunet_detector = cv2.FaceDetectorYN.create(
+                model=self.yunet_path,
+                config="",
+                input_size=(320, 320),
+                score_threshold=0.6,
+                nms_threshold=0.3,
+                top_k=5000,
+                backend_id=backend_id,
+                target_id=target_id,
+            )
+        except Exception as e:
+            log(f"[WARN] Failed to init YuNet: {e}. Fallback to Dlib HOG only.")
 
-        # 3. CNN detector (GPU - High Accuracy but VRAM heavy)
+        # Initialize Dlib Detectors
+        self.hog_detector = get_frontal_face_detector()
         self.cnn_detector: cnn_face_detection_model_v1 | None = None
+
         if self.use_gpu:
             try:
                 self.cnn_detector = cnn_face_detection_model_v1(
@@ -166,7 +178,6 @@ class FaceManager:
                 self.cnn_detector = None
                 self.use_gpu = False
 
-        # Landmark predictor and face embedding model (128-d vectors).
         self.shape_predictor = shape_predictor(
             str(MODELS_DIR / "shape_predictor_68_face_landmarks.dat")
         )
@@ -177,25 +188,21 @@ class FaceManager:
     def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
         """Detect faces in an image and compute their 128-d encodings."""
         path = Path(image_path)
-
         if not path.exists():
-            msg = f"Image file not found: {path}"
-            raise FileNotFoundError(msg)
+            raise FileNotFoundError(f"Image file not found: {path}")
 
         try:
             image = self._load_image(path)
-        except Exception as exc:  # noqa: BLE001
-            msg = f"Failed to load image: {path}"
-            raise ValueError(msg) from exc
+        except Exception as exc:
+            raise ValueError(f"Failed to load image: {path}") from exc
 
         boxes = self._detect_face_boxes(image)
-
         if not boxes:
             return []
 
         encodings = self._compute_encodings(image, boxes)
-
         results: list[DetectedFace] = []
+
         for box, enc in zip(boxes, encodings, strict=True):
             top, right, bottom, left = box
             results.append(
@@ -204,7 +211,6 @@ class FaceManager:
                     encoding=enc.tolist(),
                 ),
             )
-
         return results
 
     @staticmethod
@@ -220,8 +226,7 @@ class FaceManager:
         """Detect face bounding boxes using GPU -> MediaPipe -> HOG fallback."""
         boxes: list[tuple[int, int, int, int]] = []
 
-        # Priority 1: Try CNN (GPU) if enabled.
-        # This is the most accurate but risky for VRAM.
+        # 1. Try Dlib CNN (GPU)
         if self.use_gpu and self.cnn_detector is not None:
             try:
                 detections = self.cnn_detector(image, 1)
@@ -235,38 +240,32 @@ class FaceManager:
                     for d in detections
                 ]
             except Exception:
-                # Silently fail on OOM/RuntimeError and fall through to MediaPipe
                 boxes = []
 
-        # Priority 2: MediaPipe (CPU).
-        # Used if GPU is disabled, failed, or found nothing.
-        # Accurate for side profiles and uses 0 VRAM.
-        if not boxes:
-            results = self.mp_detector.process(image)
-            detections = getattr(results, "detections", None)
+        if not boxes and self.yunet_detector is not None:
+            h, w = image.shape[:2]
+            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-            if detections:
-                h, w, _ = image.shape
-                for detection in detections:
-                    bboxc = detection.location_data.relative_bounding_box
+            self.yunet_detector.setInputSize((w, h))
+            _, detections = self.yunet_detector.detect(image_bgr)
 
-                    # Convert MP relative coords to CSS absolute
-                    # (top, right, bottom, left)
-                    left = int(bboxc.xmin * w)
-                    top = int(bboxc.ymin * h)
-                    width = int(bboxc.width * w)
-                    height = int(bboxc.height * h)
+            if detections is not None:
+                for det in detections:
+                    x, y, w_box, h_box = det[:4]
 
-                    # Ensure coordinates are within image bounds
+                    left = int(x)
+                    top = int(y)
+                    right = int(x + w_box)
+                    bottom = int(y + h_box)
+
                     left = max(0, left)
                     top = max(0, top)
-                    right = min(w, left + width)
-                    bottom = min(h, top + height)
+                    right = min(w, right)
+                    bottom = min(h, bottom)
 
                     boxes.append((top, right, bottom, left))
 
-        # Priority 3: HOG (Legacy CPU).
-        # Only used if MediaPipe fails entirely (rare).
+        # 3. Fallback to Dlib HOG (CPU)
         if not boxes:
             detections = self.hog_detector(image, 1)
             boxes = [
@@ -288,13 +287,11 @@ class FaceManager:
     ) -> list[NDArray[np.float64]]:
         """Compute 128-d face encodings for given boxes (dlib ResNet)."""
         encodings: list[NDArray[np.float64]] = []
-
         for top, right, bottom, left in boxes:
             rect = rectangle(left, top, right, bottom)
             shape = self.shape_predictor(image, rect)
             descriptor = self.face_rec_model.compute_face_descriptor(image, shape)
             encodings.append(np.asarray(descriptor, dtype=np.float64))
-
         return encodings
 
     def cluster_faces(
@@ -314,15 +311,12 @@ class FaceManager:
             return np.array([], dtype=np.int64)
 
         data = self._to_2d_array(all_encodings)
-
         dbscan = DBSCAN(
             eps=self.dbscan_eps,
             min_samples=self.dbscan_min_samples,
             metric=self.dbscan_metric,
         )
-
         dbscan.fit(data)
-
         return dbscan.labels_
 
     @staticmethod
@@ -338,7 +332,6 @@ class FaceManager:
             A 2D numpy array of shape (n_samples, 128).
         """
         processed: list[NDArray[np.float64]] = []
-
         for idx, enc in enumerate(encodings):
             arr = np.asarray(enc, dtype=np.float64)
             if arr.ndim != 1:
@@ -353,5 +346,4 @@ class FaceManager:
                 "All encodings must be the same dimensionality."
             )
             raise ValueError(msg)
-
         return np.vstack(processed)
