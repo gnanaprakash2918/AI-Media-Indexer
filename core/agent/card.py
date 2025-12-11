@@ -7,7 +7,7 @@ MediaIndexer agent for A2A-compatible orchestrators.
 
 from __future__ import annotations
 
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill, TransportProtocol
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 
 def get_agent_card(base_url: str = "http://localhost:8000") -> AgentCard:
@@ -18,7 +18,7 @@ def get_agent_card(base_url: str = "http://localhost:8000") -> AgentCard:
 
     Returns:
         A fully-populated :class:`AgentCard` instance describing the
-        MediaIndexer agent, its skills, and supported transports.
+        MediaIndexer agent, its skills, and capabilities.
     """
     return AgentCard(
         name="MediaIndexer",
@@ -28,12 +28,13 @@ def get_agent_card(base_url: str = "http://localhost:8000") -> AgentCard:
             "visual embeddings."
         ),
         version="1.0.0",
+        # The JSON-RPC endpoint exposed by A2AFastAPIApplication
         url=f"{base_url}/a2a",
-        preferred_transport=TransportProtocol.http_json,
         capabilities=AgentCapabilities(
             streaming=True,
             push_notifications=False,
         ),
+        # Adjust these if your SDK expects camelCase (defaultInputModes, defaultOutputModes)
         default_input_modes=["application/json"],
         default_output_modes=["application/json"],
         skills=[
