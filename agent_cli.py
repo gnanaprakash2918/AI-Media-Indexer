@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from typing import Any, Dict, List
+from typing import Any, dict, list
 
 import ollama
 from mcp import ClientSession, StdioServerParameters
@@ -42,9 +42,9 @@ def _print_banner() -> None:
     print("Type a question, or 'exit' / 'q' to quit.")
 
 
-def _extract_text_from_content(contents: List[Any]) -> str:
+def _extract_text_from_content(contents: list[Any]) -> str:
     """Extract and concatenate text from an MCP tool result content list."""
-    chunks: List[str] = []
+    chunks: list[str] = []
     for item in contents:
         # FastMCP tool results are usually TextContent items
         if isinstance(item, TextContent):
@@ -54,9 +54,9 @@ def _extract_text_from_content(contents: List[Any]) -> str:
     return "\n".join(chunks)
 
 
-def _build_ollama_tools(tools: Any) -> List[Dict[str, Any]]:
+def _build_ollama_tools(tools: Any) -> list[dict[str, Any]]:
     """Convert MCP tools from list_tools() into Ollama function tool specs."""
-    ollama_tools: List[Dict[str, Any]] = []
+    ollama_tools: list[dict[str, Any]] = []
     for t in tools:
         # t.inputSchema is already a JSON schema dict from FastMCP
         params_schema = t.inputSchema if isinstance(t.inputSchema, dict) else {}
@@ -100,7 +100,7 @@ async def run_agent() -> None:
             ollama_tools = _build_ollama_tools(mcp_tools)
 
             # Conversation history for Ollama
-            history: List[Dict[str, Any]] = []
+            history: list[dict[str, Any]] = []
 
             # 4. Interactive loop
             while True:
