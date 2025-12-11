@@ -23,7 +23,7 @@ import structlog
 from structlog.stdlib import BoundLogger
 from structlog.types import EventDict, Processor, WrappedLogger
 
-from ...config import settings
+from config import settings
 
 LOG_FILE_NAME = "agent.jsonl"
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
