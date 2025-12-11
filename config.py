@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     )
 
     # Paths
-    @property
-    def project_root(self) -> Path:
+    @staticmethod
+    def project_root() -> Path:
         """Finds project root by looking for .git or .env files."""
         current = Path(__file__).resolve()
         for parent in current.parents:
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     @property
     def cache_dir(self) -> Path:
         """Central location for all caches (__pycache__, models, temp files)."""
-        path = self.project_root / ".cache"
+        path = Settings.project_root() / ".cache"
         path.mkdir(exist_ok=True)
         return path
 
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     @property
     def log_dir(self) -> Path:
         """Path to project_root/logs."""
-        path = self.project_root / "logs"
+        path = Settings.project_root() / "logs"
         path.mkdir(exist_ok=True)
         return path
 
@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     @property
     def prompt_dir(self) -> Path:
         """Path to project_root/prompts."""
-        path = self.project_root / "prompts"
+        path = Settings.project_root() / "prompts"
         return path
 
     @computed_field

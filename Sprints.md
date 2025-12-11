@@ -1067,6 +1067,7 @@ git diff sprint-1..sprint-2 --stat
 - **Flow**: User -> CLI -> LLM -> (Tool Call) -> CLI -> Server -> CLI -> (Tool Result) -> LLM -> CLI -> User.
 
 This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server), allowing for easier switching of LLM backends or tool implementations.
+
 ## References and Documentation
 
 - **FFmpeg**: [https://ffmpeg.org/](https://ffmpeg.org/)
@@ -1081,3 +1082,5 @@ This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server)
 - **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 - **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 
+- https://pypi.org/project/a2a-sdk/
+- `https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet`

@@ -16,6 +16,7 @@ import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 
+import cv2
 import dlib
 import numpy as np
 from dlib import (
@@ -25,16 +26,17 @@ from dlib import (
     rectangle,  # type: ignore
     shape_predictor,  # type: ignore
 )
-from mediapipe.python.solutions import face_detection as mp_face_detection
 from numpy.typing import ArrayLike, NDArray
 from PIL import Image
 from sklearn.cluster import DBSCAN
 
+from config import Settings
 from core.schemas import DetectedFace
 from core.utils.logger import log
 
-# Where to store dlib model files relative to the project root.
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODELS_DIR = Settings.project_root() / "models"
+YUNET_MODEL_NAME = "face_detection_yunet_2023mar.onnx"
+YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 
 DLIB_MODEL_URLS: dict[str, tuple[str, int]] = {
     "shape_predictor_68_face_landmarks.dat": (
@@ -52,10 +54,11 @@ DLIB_MODEL_URLS: dict[str, tuple[str, int]] = {
 }
 
 
-def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
-    """Ensure required dlib model files exist; download missing ones."""
+def _ensure_models(models_dir: Path, use_cnn: bool = True) -> None:
+    """Ensures all required Dlib and YuNet models are downloaded."""
     models_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1. Download Dlib models (BZ2 compressed)
     for name, (url, min_size) in DLIB_MODEL_URLS.items():
         if not use_cnn and name == "mmod_human_face_detector.dat":
             continue
@@ -64,8 +67,7 @@ def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
         if target.exists() and target.stat().st_size >= min_size:
             continue
 
-        log(f"[dlib] Downloading model: {name}", file=sys.stderr)
-
+        log(f"[models] Downloading: {name}", file=sys.stderr)
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = Path(tmp.name)
 
@@ -76,10 +78,19 @@ def _ensure_dlib_models(models_dir: Path, use_cnn: bool = True) -> None:
 
             if target.stat().st_size < min_size:
                 raise RuntimeError(f"Downloaded {name} looks corrupted (too small)")
-
-            log(f"[dlib] Installed {name}", file=sys.stderr)
+            log(f"[models] Installed {name}", file=sys.stderr)
         finally:
             tmp_path.unlink(missing_ok=True)
+
+    # 2. Download YuNet model (Rew ONNX)
+    yunet_target = models_dir / YUNET_MODEL_NAME
+    if not yunet_target.exists():
+        log(f"[models] Downloading: {YUNET_MODEL_NAME}", file=sys.stderr)
+        try:
+            urllib.request.urlretrieve(YUNET_URL, yunet_target)
+            log(f"[models] Installed {YUNET_MODEL_NAME}", file=sys.stderr)
+        except Exception as e:
+            log(f"[WARN] Failed to download YuNet model: {e}", file=sys.stderr)
 
 
 class FaceManager:
@@ -109,33 +120,54 @@ class FaceManager:
         self.dbscan_min_samples = dbscan_min_samples
         self.dbscan_metric = dbscan_metric
 
-        # --- CUDA Check ---
-        # Safely check for CUDA support to fix Pylance/Attribute errors
-        self.dlib_has_cuda = False
+        # Check for Dlib CUDA support
         try:
-            if dlib.cuda.get_num_devices() > 0:  # type: ignore[attr-defined]
-                self.dlib_has_cuda = True
+            self.dlib_has_cuda = dlib.cuda.get_num_devices() > 0  # type: ignore[attr-defined]
         except AttributeError:
             self.dlib_has_cuda = False
 
-        # Only use GPU if requested AND dlib supports it
+        # Determine strict GPU usage
         self.use_gpu = use_gpu and self.dlib_has_cuda
 
-        # Ensure models are available (download if needed).
-        _ensure_dlib_models(MODELS_DIR, use_cnn=self.use_gpu)
+        _ensure_models(MODELS_DIR, use_cnn=self.use_gpu)
 
-        # 1. MediaPipe Detector (Primary CPU - VRAM Free & High Accuracy)
-        # Use direct import so Pylance understands the attribute
-        self.mp_detector = mp_face_detection.FaceDetection(
-            model_selection=1,  # 0=Short-range, 1=Full-range (better for movies)
-            min_detection_confidence=0.5,
-        )
+        self.yunet_path = str(MODELS_DIR / YUNET_MODEL_NAME)
+        self.yunet_detector = None
+        try:
+            cv_has_cuda = False
+            try:
+                cv_has_cuda = cv2.cuda.getCudaEnabledDeviceCount() > 0
+            except AttributeError:
+                pass
 
-        # 2. HOG detector (Legacy CPU fallback)
+            backend_id = (
+                cv2.dnn.DNN_BACKEND_CUDA
+                if (self.use_gpu and cv_has_cuda)
+                else cv2.dnn.DNN_BACKEND_DEFAULT
+            )
+            target_id = (
+                cv2.dnn.DNN_TARGET_CUDA
+                if (self.use_gpu and cv_has_cuda)
+                else cv2.dnn.DNN_TARGET_CPU
+            )
+
+            self.yunet_detector = cv2.FaceDetectorYN.create(
+                model=self.yunet_path,
+                config="",
+                input_size=(320, 320),
+                score_threshold=0.6,
+                nms_threshold=0.3,
+                top_k=5000,
+                backend_id=backend_id,
+                target_id=target_id,
+            )
+        except Exception as e:
+            log(f"[WARN] Failed to init YuNet: {e}. Fallback to Dlib HOG only.")
+
+        # Initialize Dlib Detectors
         self.hog_detector = get_frontal_face_detector()
-
-        # 3. CNN detector (GPU - High Accuracy but VRAM heavy)
         self.cnn_detector: cnn_face_detection_model_v1 | None = None
+
         if self.use_gpu:
             try:
                 self.cnn_detector = cnn_face_detection_model_v1(
@@ -146,7 +178,6 @@ class FaceManager:
                 self.cnn_detector = None
                 self.use_gpu = False
 
-        # Landmark predictor and face embedding model (128-d vectors).
         self.shape_predictor = shape_predictor(
             str(MODELS_DIR / "shape_predictor_68_face_landmarks.dat")
         )
@@ -157,25 +188,21 @@ class FaceManager:
     def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
         """Detect faces in an image and compute their 128-d encodings."""
         path = Path(image_path)
-
         if not path.exists():
-            msg = f"Image file not found: {path}"
-            raise FileNotFoundError(msg)
+            raise FileNotFoundError(f"Image file not found: {path}")
 
         try:
             image = self._load_image(path)
-        except Exception as exc:  # noqa: BLE001
-            msg = f"Failed to load image: {path}"
-            raise ValueError(msg) from exc
+        except Exception as exc:
+            raise ValueError(f"Failed to load image: {path}") from exc
 
         boxes = self._detect_face_boxes(image)
-
         if not boxes:
             return []
 
         encodings = self._compute_encodings(image, boxes)
-
         results: list[DetectedFace] = []
+
         for box, enc in zip(boxes, encodings, strict=True):
             top, right, bottom, left = box
             results.append(
@@ -184,7 +211,6 @@ class FaceManager:
                     encoding=enc.tolist(),
                 ),
             )
-
         return results
 
     @staticmethod
@@ -200,8 +226,7 @@ class FaceManager:
         """Detect face bounding boxes using GPU -> MediaPipe -> HOG fallback."""
         boxes: list[tuple[int, int, int, int]] = []
 
-        # Priority 1: Try CNN (GPU) if enabled.
-        # This is the most accurate but risky for VRAM.
+        # 1. Try Dlib CNN (GPU)
         if self.use_gpu and self.cnn_detector is not None:
             try:
                 detections = self.cnn_detector(image, 1)
@@ -215,38 +240,32 @@ class FaceManager:
                     for d in detections
                 ]
             except Exception:
-                # Silently fail on OOM/RuntimeError and fall through to MediaPipe
                 boxes = []
 
-        # Priority 2: MediaPipe (CPU).
-        # Used if GPU is disabled, failed, or found nothing.
-        # Accurate for side profiles and uses 0 VRAM.
-        if not boxes:
-            results = self.mp_detector.process(image)
-            detections = getattr(results, "detections", None)
+        if not boxes and self.yunet_detector is not None:
+            h, w = image.shape[:2]
+            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-            if detections:
-                h, w, _ = image.shape
-                for detection in detections:
-                    bboxc = detection.location_data.relative_bounding_box
+            self.yunet_detector.setInputSize((w, h))
+            _, detections = self.yunet_detector.detect(image_bgr)
 
-                    # Convert MP relative coords to CSS absolute
-                    # (top, right, bottom, left)
-                    left = int(bboxc.xmin * w)
-                    top = int(bboxc.ymin * h)
-                    width = int(bboxc.width * w)
-                    height = int(bboxc.height * h)
+            if detections is not None:
+                for det in detections:
+                    x, y, w_box, h_box = det[:4]
 
-                    # Ensure coordinates are within image bounds
+                    left = int(x)
+                    top = int(y)
+                    right = int(x + w_box)
+                    bottom = int(y + h_box)
+
                     left = max(0, left)
                     top = max(0, top)
-                    right = min(w, left + width)
-                    bottom = min(h, top + height)
+                    right = min(w, right)
+                    bottom = min(h, bottom)
 
                     boxes.append((top, right, bottom, left))
 
-        # Priority 3: HOG (Legacy CPU).
-        # Only used if MediaPipe fails entirely (rare).
+        # 3. Fallback to Dlib HOG (CPU)
         if not boxes:
             detections = self.hog_detector(image, 1)
             boxes = [
@@ -268,13 +287,11 @@ class FaceManager:
     ) -> list[NDArray[np.float64]]:
         """Compute 128-d face encodings for given boxes (dlib ResNet)."""
         encodings: list[NDArray[np.float64]] = []
-
         for top, right, bottom, left in boxes:
             rect = rectangle(left, top, right, bottom)
             shape = self.shape_predictor(image, rect)
             descriptor = self.face_rec_model.compute_face_descriptor(image, shape)
             encodings.append(np.asarray(descriptor, dtype=np.float64))
-
         return encodings
 
     def cluster_faces(
@@ -294,15 +311,12 @@ class FaceManager:
             return np.array([], dtype=np.int64)
 
         data = self._to_2d_array(all_encodings)
-
         dbscan = DBSCAN(
             eps=self.dbscan_eps,
             min_samples=self.dbscan_min_samples,
             metric=self.dbscan_metric,
         )
-
         dbscan.fit(data)
-
         return dbscan.labels_
 
     @staticmethod
@@ -318,7 +332,6 @@ class FaceManager:
             A 2D numpy array of shape (n_samples, 128).
         """
         processed: list[NDArray[np.float64]] = []
-
         for idx, enc in enumerate(encodings):
             arr = np.asarray(enc, dtype=np.float64)
             if arr.ndim != 1:
@@ -333,5 +346,65 @@ class FaceManager:
                 "All encodings must be the same dimensionality."
             )
             raise ValueError(msg)
-
         return np.vstack(processed)
+
+
+if __name__ == "__main__":
+    import argparse
+    import time
+
+    def main() -> None:
+        """Test Block Sanity."""
+        parser = argparse.ArgumentParser(description="Test FaceManager implementation")
+        parser.add_argument(
+            "image_path", type=str, help="Path to the image file to test"
+        )
+        parser.add_argument("--gpu", action="store_true", help="Enable GPU usage")
+        args = parser.parse_args()
+
+        image_path = Path(args.image_path)
+        if not image_path.exists():
+            print(f"[ERROR] Image not found: {image_path}")
+            sys.exit(1)
+
+        print(" initializing face manager ")
+        start_init = time.perf_counter()
+
+        manager = FaceManager(use_gpu=args.gpu)
+        print(f"Initialization took: {time.perf_counter() - start_init:.4f}s")
+
+        print(f"\n processing {image_path.name} ")
+        start_detect = time.perf_counter()
+
+        try:
+            faces = manager.detect_faces(image_path)
+        except Exception as e:
+            print(f"[ERROR] Detection failed: {e}")
+            sys.exit(1)
+
+        duration = time.perf_counter() - start_detect
+        print(f"Detection took: {duration:.4f}s")
+        print(f"Faces found: {len(faces)}")
+
+        # Print details for each face
+        for i, face in enumerate(faces):
+            # face.box is (top, right, bottom, left)
+            top, right, bottom, left = face.box
+            width = right - left
+            height = bottom - top
+            print(f"  Face #{i + 1}:")
+            print(f"    Box: {face.box} (W: {width}px, H: {height}px)")
+            print(f"    Encoding Size: {len(face.encoding)}")
+
+        # Basic Clustering Test (Sanity Check)
+        if len(faces) > 0:
+            print("\n testing internal clustering ")
+            encodings = [f.encoding for f in faces]
+            # If only 1 face, it's trivial, but ensures method doesn't crash
+            labels = manager.cluster_faces(encodings)
+            print(f"Cluster Labels: {labels}")
+
+    main()
+
+# python -m core.processing.identity path/to/test_image.jpg
+# python -m core.processing.identity path/to/test_image.jpg --gpu
