@@ -1082,34 +1082,83 @@ This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server)
 - **NVIDIA CUDA 12.4**: [https://developer.nvidia.com/cuda-12-4-0-download-archive](https://developer.nvidia.com/cuda-12-4-0-download-archive?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 - **NVIDIA cuDNN**: [https://developer.nvidia.com/cudnn-downloads](https://developer.nvidia.com/cudnn-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
 
-- https://pypi.org/project/a2a-sdk/
 
-- `https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet`
+---
 
-for testings a2a_server
+## Sprint 6 (Branch: `sprint-6`)
 
-```json
-curl -X POST "http://localhost:8000/a2a/v1/message:send" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": {
-      "role": "ROLE_USER",
-      "message_id": "msg-1",
-      "content": [
-        {
-          "text": "Find the red car"
-        }
-      ]
-    }
-  }'
-```
+### Commit History
 
-- google.protobuf.json_format.Parse maps JSON strings to proto enums by matching the enum identifier declared in the .proto file (for example ROLE_USER, ROLE_ASSISTANT, etc.). "USER" doesn't match any declared enum identifiers, so parsing fails with Invalid enum value USER for enum type a2a.v1.Role.
-  Quick troubleshooting tips
-- Inspect the API contract to confirm the exact enum names:
-- Open http://localhost:8000/openapi.json (or /docs) and look at the SendMessageRequest schema to see allowed enum values.
-- Inspect your openapi.json / proto
+#### Commit `52a12b6` - A2A Base Implementation (2025-12-09)
 
-- `$env:PYTHONPYCACHEPREFIX="D:\AI-Media-Indexer\.cache\pycache"; uv run python -m core.agent.a2a_server`
-- `uv pip install --upgrade "a2a-sdk[all]"`
-- `uv pip install "a2a-sdk[all]" --upgrade`
+**Author**: Gnana Prakash M
+**Message**: A2A - Add Base
+
+**Changes**:
+
+- Introduced base structure for Agent-to-Agent (A2A) communication.
+- Added initial server setup for handling agent requests.
+
+#### Commit `2f87ee6` - A2A Request Handling (2025-12-09)
+
+**Author**: Gnana Prakash M
+**Message**: Add request to the A2A
+
+**Changes**:
+
+- Implemented request processing logic for A2A interaction.
+
+#### Commit `8f2fff7` - Chat Request Integration (2025-12-09)
+
+**Author**: Gnana Prakash M
+**Message**: A2A - Add chat request to models
+
+**Changes**:
+
+- Integrated chat request handling within the model layer.
+- Enabled agents to process and respond to chat-based inputs.
+
+---
+
+### Sprint 6 Completed Tasks
+
+#### Task 6.1 - Agent-to-Agent (A2A) Foundation ✅
+
+- ✅ Established the base framework for A2A communication.
+- ✅ Implemented server-side request handling for inter-agent messaging.
+- ✅ Integrated chat request processing into the core model architecture.
+
+---
+
+## Sprint 7 (Branch: `sprint-7`)
+
+### Commit History
+
+#### Commit `c61ad78` - A2A Handler Updates (2025-12-10)
+
+**Author**: Gnana Prakash M
+**Message**: Update Handler for A2A and update deps
+
+**Changes**:
+
+- Refined the A2A request handler for better stability.
+- Updated project dependencies to support new A2A features.
+
+#### Commit `1ab828a` - Project Dependencies (2025-12-10)
+
+**Author**: Gnana Prakash M
+**Message**: Update Project Deps
+
+**Changes**:
+
+- Comprehensive update of project dependencies (uv.lock, pyproject.toml).
+
+---
+
+### Sprint 7 Completed Tasks
+
+#### Task 7.1 - A2A Refinement and Maintenance ✅
+
+- ✅ Optimized A2A request handlers.
+- ✅ Performed major dependency updates to ensure security and compatibility.
+
