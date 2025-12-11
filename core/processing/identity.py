@@ -347,3 +347,64 @@ class FaceManager:
             )
             raise ValueError(msg)
         return np.vstack(processed)
+
+
+if __name__ == "__main__":
+    import argparse
+    import time
+
+    def main() -> None:
+        """Test Block Sanity."""
+        parser = argparse.ArgumentParser(description="Test FaceManager implementation")
+        parser.add_argument(
+            "image_path", type=str, help="Path to the image file to test"
+        )
+        parser.add_argument("--gpu", action="store_true", help="Enable GPU usage")
+        args = parser.parse_args()
+
+        image_path = Path(args.image_path)
+        if not image_path.exists():
+            print(f"[ERROR] Image not found: {image_path}")
+            sys.exit(1)
+
+        print(" initializing face manager ")
+        start_init = time.perf_counter()
+
+        manager = FaceManager(use_gpu=args.gpu)
+        print(f"Initialization took: {time.perf_counter() - start_init:.4f}s")
+
+        print(f"\n processing {image_path.name} ")
+        start_detect = time.perf_counter()
+
+        try:
+            faces = manager.detect_faces(image_path)
+        except Exception as e:
+            print(f"[ERROR] Detection failed: {e}")
+            sys.exit(1)
+
+        duration = time.perf_counter() - start_detect
+        print(f"Detection took: {duration:.4f}s")
+        print(f"Faces found: {len(faces)}")
+
+        # Print details for each face
+        for i, face in enumerate(faces):
+            # face.box is (top, right, bottom, left)
+            top, right, bottom, left = face.box
+            width = right - left
+            height = bottom - top
+            print(f"  Face #{i + 1}:")
+            print(f"    Box: {face.box} (W: {width}px, H: {height}px)")
+            print(f"    Encoding Size: {len(face.encoding)}")
+
+        # Basic Clustering Test (Sanity Check)
+        if len(faces) > 0:
+            print("\n testing internal clustering ")
+            encodings = [f.encoding for f in faces]
+            # If only 1 face, it's trivial, but ensures method doesn't crash
+            labels = manager.cluster_faces(encodings)
+            print(f"Cluster Labels: {labels}")
+
+    main()
+
+# python -m core.processing.identity path/to/test_image.jpg
+# python -m core.processing.identity path/to/test_image.jpg --gpu
