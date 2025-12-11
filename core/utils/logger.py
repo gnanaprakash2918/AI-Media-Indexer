@@ -70,7 +70,8 @@ def _add_logger_name(
     Returns:
         EventDict: The updated event dictionary including the "logger" field.
     """
-    event_dict.setdefault("logger", logger.name)
+    if logger is not None:
+        event_dict.setdefault("logger", logger.name)
     return event_dict
 
 

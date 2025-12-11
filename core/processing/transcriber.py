@@ -431,7 +431,7 @@ class AudioTranscriber:
             end_time (float | None): End offset in seconds.
 
         Returns:
-            list[dict[str, Any]] | None: List of ASR chunks, or None if subtitle
+            list[dict[str, Any]] | None: list of ASR chunks, or None if subtitle
                 fallback was used.
         """
         if not audio_path.exists():

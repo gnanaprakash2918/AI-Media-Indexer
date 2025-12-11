@@ -87,6 +87,7 @@ class Settings(BaseSettings):
         }
     )
     fallback_model_id: str = "openai/whisper-large-v3-turbo"
+    language: str = Field(default="en", description="Target language code")
 
     @computed_field
     @property
