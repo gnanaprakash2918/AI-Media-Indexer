@@ -1089,13 +1089,13 @@ This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server)
 for testings a2a_server
 
 ```json
-curl -X POST http://localhost:8000/a2a/message/send \
+curl -X POST "http://localhost:8000/a2a/v1/message:send" \
   -H "Content-Type: application/json" \
   -d '{
     "message": {
-      "role": "user",
+      "role": "ROLE_USER",
       "message_id": "msg-1",
-      "parts": [
+      "content": [
         {
           "text": "Find the red car"
         }
@@ -1103,6 +1103,12 @@ curl -X POST http://localhost:8000/a2a/message/send \
     }
   }'
 ```
+
+- google.protobuf.json_format.Parse maps JSON strings to proto enums by matching the enum identifier declared in the .proto file (for example ROLE_USER, ROLE_ASSISTANT, etc.). "USER" doesn't match any declared enum identifiers, so parsing fails with Invalid enum value USER for enum type a2a.v1.Role.
+  Quick troubleshooting tips
+- Inspect the API contract to confirm the exact enum names:
+- Open http://localhost:8000/openapi.json (or /docs) and look at the SendMessageRequest schema to see allowed enum values.
+- Inspect your openapi.json / proto
 
 - `$env:PYTHONPYCACHEPREFIX="D:\AI-Media-Indexer\.cache\pycache"; uv run python -m core.agent.a2a_server`
 - `uv pip install --upgrade "a2a-sdk[all]"`
