@@ -1162,3 +1162,84 @@ This architecture decouples the "brain" (LLM/CLI) from the "body" (Tools/Server)
 - ✅ Optimized A2A request handlers.
 - ✅ Performed major dependency updates to ensure security and compatibility.
 
+---
+
+## Sprint 8 (Branch: `sprint-8`) - Integration, Optimization & Verification
+
+### Prerequisites: Gated Models 🔐
+
+To run the voice intelligence pipeline, you must accept the user agreement for the following models on Hugging Face and provide a valid `HF_TOKEN` in your `.env` file:
+
+- **Speaker Diarization**: [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1)
+- **Segmentation**: [`pyannote/segmentation-3.0`](https://huggingface.co/pyannote/segmentation-3.0)
+- **Voice Embedding**: [`pyannote/wespeaker-voxceleb-resnet34-LM`](https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM)
+
+> [!IMPORTANT]
+> The application will crash with a `WeightsUnpickler` error or 401 Unauthorized if these licenses are not accepted.
+
+### Commit History
+
+#### Commit `[Current]` - Integration Verification & Fixes (2025-12-18)
+
+**Author**: Gnana Prakash M
+**Message**: Finalize pipeline verification and infrastructure support
+
+**Changes**:
+
+- **Core Stabilization**:
+  - Implemented `torch.load` monkeypatch in `VoiceProcessor` to resolve `pyannote/speechbrain` compatibility issues with newer PyTorch versions.
+  - Fixed logger instantiation bugs in `core/processing/voice.py`.
+- **Infrastructure**:
+  - Validated Ollama integration (`llava:7b`) for local vision analysis, ensuring pipeline robustness when services are offline or online.
+  - Verified `memory` backend for Qdrant as a viable portable fallback.
+
+#### Commit `[Config]` - Pydantic V2 Configuration (2025-12-18)
+
+**Author**: Gnana Prakash M
+**Message**: Refactor config.py to use Pydantic Settings
+
+**Changes**:
+
+- Migrated `config.py` to use `pydantic-settings` for robust environment variable management.
+- Added type validation and `.env` file support out-of-the-box.
+- Centralized path management (`project_root`, `log_dir`, `model_cache_dir`) via computed fields.
+
+#### Commit `f2c8169` - Identity Engine Revamp (2025-12-18)
+
+**Author**: Gnana Prakash M
+**Message**: Completely Revamp identity.py by removing dlib
+
+**Changes**:
+
+- **Dependency Removal**: Removed `dlib` and `cmake` requirements to drastically simplify build and cross-platform deployment.
+- **Optimization**: Refactored `FaceManager` to use streamlined detection logic suitable for CPU/GPU.
+- **Schema Alignment**: Optimized face embedding extraction for direct compatibility with Qdrant vector storage.
+
+#### Commit `df87d90` - Voice Intelligence Schemas (2025-12-18)
+
+**Author**: Gnana Prakash M
+**Message**: Added new Schemas for voice intelligence
+
+**Changes**:
+
+- Defined robust Pydantic schemas for `SpeakerSegment`, ensuring type safety for voice diarization outputs.
+- Aligned voice embedding structures (`256-dim`) with VectorDB constraints.
+
+---
+
+### Sprint 8 Completed Tasks
+
+#### Task 8.1 - Configuration and Architecture Refactor ✅
+
+- ✅ **Modern Config**: Switched to `Pydantic Settings` for type-safe, auto-validated configuration.
+- ✅ **Dependency Cleanup**: Removed `dlib` to fix long-standing installation friction on Windows/Linux.
+
+#### Task 8.2 - Core Component Stabilization ✅
+
+- ✅ **Voice**: Fixed critical `pyannote` model loading issues (PyTorch security policies + HF Token).
+- ✅ **Pipeline**: Verified full 4-layer ingestion flow (Voice -> Face -> DB -> End-to-End).
+
+#### Task 8.3 - Infrastructure Verification ✅
+
+- ✅ **Full Integration Tested**: Verified pipeline works via `run_pipeline.py` with `Ollama` (Vision) and `Qdrant` (Memory).
+
