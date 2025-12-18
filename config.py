@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     min_speakers: int | None = None
     max_speakers: int | None = None
 
+    # Resource
+    enable_resource_monitoring: bool = True
+    max_cpu_percent: float = 90.0
+    max_ram_percent: float = 85.0
+    max_temp_celsius: float = 85.0  # Pause if CPU hits 85°C
+
+    # Pause duration when overheated (seconds)
+    cool_down_seconds: int = 30
+
     @computed_field
     @property
     def device(self) -> str:
