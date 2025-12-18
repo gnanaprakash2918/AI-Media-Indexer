@@ -1243,3 +1243,29 @@ To run the voice intelligence pipeline, you must accept the user agreement for t
 
 - ✅ **Full Integration Tested**: Verified pipeline works via `run_pipeline.py` with `Ollama` (Vision) and `Qdrant` (Memory).
 
+#### Commit `[Current]` - Resource Management & Linting (2025-12-18)
+
+**Author**: Gnana Prakash M
+**Message**: feat(core): Resource throttling and code quality improvements
+
+**Changes**:
+
+- **Resource Management**:
+  - Integrated `ResourceManager` into `IngestionPipeline` to throttle execution based on CPU/RAM usage.
+  - Added robust exception handling for cross-platform CPU temperature sensing in `core/utils/resource.py`.
+  - Implemented smart throttling for "compute" vs "network" tasks (Vision/LLM) to prevent system freeze.
+
+- **Code Quality & Linting**:
+  - Resolved Pylance and Ruff errors across core modules:
+    - `core/utils/resource.py`: Added docstrings, fixed line lengths, and type safety.
+    - `core/ingestion/pipeline.py`: Fixed type errors and improved documentation.
+    - `core/storage/db.py`: Added missing docstrings for vector database methods.
+    - `core/processing/voice.py`: Fixed array type handling and documentation.
+
+**Files Modified**:
+
+- `core/utils/resource.py`
+- `core/ingestion/pipeline.py`
+- `core/storage/db.py`
+- `core/processing/voice.py`
+
