@@ -429,6 +429,6 @@ class IngestionPipeline:
 
         for face in detected_faces:
             try:
-                self.db.insert_face(face.encoding, name=None, cluster_id=None)
+                self.db.insert_face(face.embedding, name=None, cluster_id=None)
             except Exception as exc:  # noqa: BLE001
                 log(f"[Pipeline] Failed to index face embedding: {exc}")
