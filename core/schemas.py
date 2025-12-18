@@ -2,9 +2,10 @@
 
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, FilePath
+from pydantic import BaseModel, ConfigDict, Field, FilePath
 
 
 class MediaType(str, Enum):
@@ -18,21 +19,8 @@ class MediaType(str, Enum):
     PERSONAL = "personal"
     UNKNOWN = "unknown"
 
-
 class MediaMetadata(BaseModel):
-    """Describes metadata information for a media item such as a movie, audio, or image.
-
-    Attributes:
-        title: The title or name of the media item.
-        year: The release or creation year of the media item, if known.
-        media_type: The classification of the media (video, audio, image, etc.).
-        cast: A list of names involved in the media (e.g., actors or participants).
-        director: Name of the director or creator, if applicable.
-        plot_summary: Brief summary or description of the media's content.
-        is_processed: Flag indicating if the media metadata has been processed.
-    """
-
-    title: str
+    """Extracted metadata from a media file."""
     year: int | None = None
     media_type: MediaType = MediaType.UNKNOWN
 
@@ -41,6 +29,18 @@ class MediaMetadata(BaseModel):
     plot_summary: str | None = None
 
     is_processed: bool = False
+    duration: float | None = None
+    width: int | None = None
+    height: int | None = None
+    codec: str | None = None
+    fps: float | None = None
+    size_bytes: int | None = None
+    created_at: str | None = None
+    modified_at: str | None = None
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    description: str | None = None
 
 
 class UnresolvedFace(BaseModel):
@@ -68,24 +68,16 @@ class MediaAsset(BaseModel):
     file_size_bytes: int = Field(..., description="Size in bytes")
     last_modified: datetime
 
-
 class DetectedFace(BaseModel):
-    """Represents a single detected face in an image.
+    """Represents a face detected in a media file."""
 
-    Attributes:
-        box:
-            The bounding box as a 4-tuple (top, right, bottom, left) in pixel
-            coordinates relative to the original image.
-        encoding:
-            The 128-d face embedding as a 1D numpy array of shape (128,).
-    """
-
-    box: tuple[int, int, int, int] = Field(
-        ..., description="(top, right, bottom, left)"
-    )
-    encoding: list[float] = Field(..., description="128-dimensional face vector")
+    bbox: tuple[int, int, int, int]
     confidence: float = 1.0
-
+    landmarks: list[tuple[int, int]] | None = None
+    embedding: list[float] | None = Field(
+        default=None, exclude=True, description="128-dimensional face vector"
+    )
+    person_id: str | None = None
 
 class TranscriptionResult(BaseModel):
     """Result of transcribing an audio file.
@@ -140,3 +132,60 @@ class IngestResponse(BaseModel):
     file_path: str
     media_type_hint: str
     message: str
+
+
+class ProcessingStatus(str, Enum):
+    """Status of media processing workflow."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class SpeakerSegment(BaseModel):
+    """A segment of audio attributed to a specific speaker."""
+
+    start_time: float
+    end_time: float
+    speaker_label: str
+    confidence: float = 0.0
+    transcribed_text: str | None = None
+    embedding: list[float] | None = Field(default=None, exclude=True)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DetectedVoice(BaseModel):
+    """Metadata about a unique voice found in the media."""
+
+    label: str
+    embedding_avg: list[float]
+    total_duration: float
+
+class MediaFile(BaseModel):
+    """Represents a media file in the system."""
+
+    path: str
+    filename: str
+    media_type: MediaType
+    content_hash: str
+    metadata: MediaMetadata = Field(default_factory=MediaMetadata)
+
+    # Analysis Data
+    transcript: str | None = None
+    summary: str | None = None
+    visual_description: str | None = None
+    detected_faces: list[DetectedFace] = Field(default_factory=list)
+    speaker_segments: list[SpeakerSegment] = Field(default_factory=list)
+
+    # System Data
+    status: ProcessingStatus = ProcessingStatus.PENDING
+    error_message: str | None = None
+    turn_id: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @property
+    def file_path(self) -> Path:
+        """Get the file path as a Path object."""
+        return Path(self.path)
