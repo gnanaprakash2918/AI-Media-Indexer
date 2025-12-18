@@ -8,12 +8,25 @@ from typing import Final, cast
 
 import numpy as np
 import torch
+
+# torch.load to disable weights_only enforcement for pyannote/speechbrain compatibility
+_original_load = torch.load
+
+def safe_load(*args, **kwargs):
+    # FORCE weights_only=False even if True was passed
+    kwargs['weights_only'] = False
+    return _original_load(*args, **kwargs)
+
+torch.load = safe_load
+
 from pyannote.audio import Inference, Model, Pipeline
 from pyannote.core import Segment
 
 from config import settings
 from core.schemas import SpeakerSegment
-from core.utils.logger import log
+from core.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 GPU_SEMAPHORE = asyncio.Semaphore(1)
 
