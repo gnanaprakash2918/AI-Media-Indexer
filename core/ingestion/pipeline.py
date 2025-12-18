@@ -26,6 +26,7 @@ from typing import Any, Iterable
 
 import torch
 
+from config import settings
 from core.processing.extractor import FrameExtractor
 from core.processing.identity import FaceManager
 from core.processing.metadata import MetadataEngine
@@ -36,8 +37,6 @@ from core.processing.vision import VisionAnalyzer
 from core.schemas import MediaMetadata, MediaType
 from core.storage.db import VectorDB
 from core.utils.logger import log
-
-from config import settings
 
 
 class IngestionPipeline:
