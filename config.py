@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import torch
-from pydantic import Field, computed_field
+from pydantic import Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,32 +21,41 @@ class Settings(BaseSettings):
     """Application settings, hardware config, and external keys."""
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
-    # Paths
     @staticmethod
-    def project_root() -> Path:
-        """Finds project root by looking for .git or .env files."""
-        current = Path(__file__).resolve()
-        for parent in current.parents:
+    def project_root(start: Path | None = None) -> Path:
+        """Find the project root directory."""
+        start = start or Path(__file__).resolve()
+        for parent in start.parents:
             if (parent / ".git").exists() or (parent / "pyproject.toml").exists():
                 return parent
-        return current.parent.parent
+        raise RuntimeError("Project root not found")
 
     @computed_field
     @property
     def cache_dir(self) -> Path:
         """Central location for all caches (__pycache__, models, temp files)."""
-        path = Settings.project_root() / ".cache"
+        path = self.project_root() / ".cache"
         path.mkdir(exist_ok=True)
         return path
 
     @computed_field
     @property
     def model_cache_dir(self) -> Path:
-        """Path to project_root/models (primary cache)."""
-        path = self.cache_dir / "models"
+        """Directory for model weights."""
+        path = self.project_root() / "models"
+        path.mkdir(exist_ok=True)
+        return path
+
+    @computed_field
+    @property
+    def prompt_dir(self) -> Path:
+        """Directory for prompt templates."""
+        path = self.project_root() / "prompts"
         path.mkdir(exist_ok=True)
         return path
 
@@ -54,7 +63,7 @@ class Settings(BaseSettings):
     @property
     def log_dir(self) -> Path:
         """Path to project_root/logs."""
-        path = Settings.project_root() / "logs"
+        path = self.project_root() / "logs"
         path.mkdir(exist_ok=True)
         return path
 
@@ -69,32 +78,35 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(default="http://localhost:11434")
     ollama_vision_model: str = Field(default="llava:7b")
 
-    #  Keys & External APIs
+    gemini_api_key: SecretStr | None = Field(
+        default=None, validation_alias="GOOGLE_API_KEY"
+    )
+    gemini_model: str = "gemini-1.5-flash"
+
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llava:7b"
+
     tmdb_api_key: str | None = None
     omdb_api_key: str | None = None
-    hf_token: str | None = None
+    hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
-    #  Ingestion Settings
     frame_interval: int = Field(default=15, description="Seconds between frames")
     batch_size: int = Field(default=24)
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
-    #  Whisper Configuration
-    whisper_model_map: dict[str, list[str]] = Field(
-        default={
-            "ta": ["openai/whisper-large-v3-turbo", "openai/whisper-large-v2"],
-            "en": ["openai/whisper-large-v3-turbo", "distil-whisper/distil-large-v3"],
-        }
-    )
-    fallback_model_id: str = "openai/whisper-large-v3-turbo"
-    language: str = Field(default="en", description="Target language code")
+    language: str | None = "ta"
+    whisper_model_map: dict[str, list[str]] = {
+        "ta": ["large-v3", "large-v2"],
+        "en": ["medium.en", "small.en"],
+    }
+    fallback_model_id: str = "medium"
 
-    @computed_field
-    @property
-    def prompt_dir(self) -> Path:
-        """Path to project_root/prompts."""
-        path = Settings.project_root() / "prompts"
-        return path
+    # Voice Intelligence
+    enable_voice_analysis: bool = True
+    pyannote_model: str = "pyannote/speaker-diarization-3.1"
+    voice_embedding_model: str = "pyannote/wespeaker-voxceleb-resnet34-LM"
+    min_speakers: int | None = None
+    max_speakers: int | None = None
 
     @computed_field
     @property
@@ -108,8 +120,23 @@ class Settings(BaseSettings):
             return "mps"
         return "cpu"
 
+    @computed_field
+    @property
+    def compute_type(self) -> str:
+        """Determine the compute type (float16/int8) based on device."""
+        if self.device == "cuda":
+            return "float16"
+        return "int8"
+
+    @computed_field
+    @property
+    def device_index(self) -> list[int]:
+        """List of available device indices."""
+        if self.device == "cuda":
+            return list(range(torch.cuda.device_count()))
+        return []
+
 
 settings = Settings()
 
-#  Auto-Cleanup PyCache
 sys.pycache_prefix = str(settings.cache_dir / "pycache")
