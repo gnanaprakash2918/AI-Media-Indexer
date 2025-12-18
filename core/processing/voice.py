@@ -143,3 +143,32 @@ class VoiceProcessor:
             log.error(f"Voice processing failed for {audio_path.name}: {e}")
             return []
 
+    async def _extract_embedding(
+        self,
+        audio_path: Path,
+        start: float,
+        end: float,
+    ) -> list[float] | None:
+        if not self.inference:
+            return None
+
+        try:
+            async with GPU_SEMAPHORE:
+                emb = self.inference.crop(
+                    str(audio_path),
+                    Segment(start, end),
+                )
+
+            if isinstance(emb, torch.Tensor):
+                vec = cast(torch.Tensor, emb).squeeze().float().cpu().numpy()
+            else:
+                vec = np.asarray(emb, dtype=np.float32).reshape(-1)
+
+            if vec.ndim != 1 or vec.size == 0:
+                return None
+
+            vec /= np.linalg.norm(vec) + 1e-9
+            return vec.tolist()
+
+        except Exception:
+            return None
