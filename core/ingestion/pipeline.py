@@ -24,6 +24,7 @@ from core.processing.voice import VoiceProcessor
 from core.schemas import MediaMetadata, MediaType
 from core.storage.db import VectorDB
 from core.utils.logger import log
+from core.utils.resource import resource_manager
 
 
 class IngestionPipeline:
@@ -120,6 +121,8 @@ class IngestionPipeline:
 
         if not audio_segments:
             try:
+                await resource_manager.throttle_if_needed("compute")
+
                 with AudioTranscriber() as transcriber:
                     temp_srt = path.with_suffix(".embedded.srt")
                     if transcriber._find_existing_subtitles(path, temp_srt, None, "ta"):
@@ -142,6 +145,7 @@ class IngestionPipeline:
 
         self._cleanup_memory()
 
+        await resource_manager.throttle_if_needed("compute")
         log("[Pipeline] Step 2/3: Voice Analysis")
 
         self.voice = VoiceProcessor()
@@ -164,6 +168,9 @@ class IngestionPipeline:
             log(f"[Pipeline] Voice processing failed: {exc}")
 
         self._cleanup_memory()
+
+        vision_task_type = "network" if settings.llm_provider == "gemini" else "compute"
+        await resource_manager.throttle_if_needed(vision_task_type)
 
         log("[Pipeline] Step 3/3: Vision + Faces")
 
