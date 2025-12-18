@@ -1,5 +1,8 @@
-"""Vector database utilities for media, faces using Qdrant."""
+"""Vector database interface for multimodal embeddings.
 
+This module provides the `VectorDB` class, which handles interactions with Qdrant
+for storing and retrieving media segments, frames, faces, and voice embeddings.
+"""
 from __future__ import annotations
 
 import uuid
@@ -15,32 +18,18 @@ from core.utils.logger import log
 
 
 class VectorDB:
-    """Wrapper around Qdrant for storing and querying embeddings.
-
-    Manages:
-    - Embedded or remote Qdrant initialization
-    - Collection setup
-    - Media frame upsert
-    - Face insertion and search
-    - Local SentenceTransformer model loading
-
-    Attributes:
-        MEDIA_SEGMENTS_COLLECTION: Collection name for media text segments.
-        MEDIA_COLLECTION: Collection name for media frame vectors.
-        FACES_COLLECTION: Collection name for face embeddings.
-        MEDIA_VECTOR_SIZE: Expected dimension of media frame vectors.
-        FACE_VECTOR_SIZE: Expected dimension of face embeddings.
-        TEXT_DIM: Expected dimension of text embeddings.
-        MODEL_NAME: Sentence-transformers model identifier.
-    """
+    """Wrapper for Qdrant vector database storage and retrieval."""
 
     MEDIA_SEGMENTS_COLLECTION = "media_segments"
     MEDIA_COLLECTION = "media_frames"
     FACES_COLLECTION = "faces"
+    VOICE_COLLECTION = "voice_segments"
 
     MEDIA_VECTOR_SIZE = 384
     FACE_VECTOR_SIZE = 128
     TEXT_DIM = 384
+    VOICE_VECTOR_SIZE = 256
+
     MODEL_NAME = "all-MiniLM-L6-v2"
 
     client: QdrantClient
@@ -52,19 +41,16 @@ class VectorDB:
         port: int = settings.qdrant_port,
         path: str = "qdrant_data_embedded",
     ) -> None:
-        """Initialize the vector database.
+        """Initialize the VectorDB connection.
 
         Args:
-            backend: Qdrant backend to use. Either "memory" (embedded) or "docker".
-            host: Qdrant host for the "docker" backend.
-            port: Qdrant port for the "docker" backend.
-            path: Storage path for embedded Qdrant when using "memory".
-
-        Raises:
-            ConnectionError: If a Qdrant connection cannot be established.
-            ValueError: If an unknown backend value is provided.
+            backend: The storage backend ('memory' or 'docker').
+            host: Qdrant host address for docker backend.
+            port: Qdrant port for docker backend.
+            path: Local path for embedded storage.
         """
         self._closed = False
+
         if backend == "memory":
             self.client = QdrantClient(path=path)
             log("Initialized embedded Qdrant", path=path, backend=backend)
@@ -84,28 +70,24 @@ class VectorDB:
             model_name=self.MODEL_NAME,
             device=settings.device,
         )
+
         self.encoder = self._load_encoder()
         self._ensure_collections()
 
     def _load_encoder(self) -> SentenceTransformer:
-        """Load SentenceTransformer with fallback: try settings.device, else cpu.
-
-        - tries local cache first, then hub.
-        - attempts target device (settings.device), and falls back to CPU on failure.
-        """
         models_dir = settings.model_cache_dir
         models_dir.mkdir(parents=True, exist_ok=True)
-
         local_model_dir = models_dir / self.MODEL_NAME
         target_device = settings.device or "cpu"
 
         def _create(path_or_name: str, device: str) -> SentenceTransformer:
             log(
-                "Creating SentenceTransformer", path_or_name=path_or_name, device=device
+                "Creating SentenceTransformer",
+                path_or_name=path_or_name,
+                device=device,
             )
             return SentenceTransformer(path_or_name, device=device)
 
-        # Try local cache first
         if local_model_dir.exists():
             log(
                 "Loading SentenceTransformer from local cache",
@@ -116,49 +98,26 @@ class VectorDB:
                 return _create(str(local_model_dir), device=target_device)
             except Exception as exc:
                 log(
-                    "Failed to load cached model on target device — will try hub or "
-                    "CPU fallback",
+                    "Failed to load cached model on target device — fallback",
                     error=str(exc),
-                    device=target_device,
                 )
 
-        # Try loading from hub on target_device
         log(
             "Local model not found, loading from hub",
-            path=str(local_model_dir),
             model_name=self.MODEL_NAME,
             device=target_device,
         )
+
         try:
             model = _create(self.MODEL_NAME, device=target_device)
         except Exception as exc:
-            if target_device != "cpu":
-                log(
-                    "Falling back to CPU for SentenceTransformer after failure",
-                    from_device=target_device,
-                    error=str(exc),
-                )
-                try:
-                    model = _create(self.MODEL_NAME, device="cpu")
-                except Exception as exc2:
-                    log(
-                        "Failed to load SentenceTransformer on CPU as well",
-                        error=str(exc2),
-                    )
-                    raise
-            else:
-                log("Failed to load SentenceTransformer on CPU", error=str(exc))
-                raise
+            log("Falling back to CPU encoder", error=str(exc))
+            model = _create(self.MODEL_NAME, device="cpu")
 
         try:
-            log("Saving SentenceTransformer model to cache", path=str(local_model_dir))
             model.save(str(local_model_dir))
-        except Exception as exc:  # noqa: BLE001
-            log(
-                "Warning: failed to save SentenceTransformer model",
-                path=str(local_model_dir),
-                error=str(exc),
-            )
+        except Exception as exc:
+            log("Warning: failed to save model cache", error=str(exc))
 
         return model
 
@@ -168,61 +127,36 @@ class VectorDB:
         batch_size: int = 1,
         show_progress_bar: bool = False,
     ) -> list[list[float]]:
-        """Encode a single text or list of texts in a memory-safe manner.
+        """Generate embeddings for a list of texts.
 
-        - Empties CUDA cache before encoding attempts.
-        - Uses batch_size=1 by default to reduce GPU peaks.
-        - On encoding failure (e.g., CUDA OOM), automatically retries on CPU.
-        - Returns embeddings as plain Python lists: List[List[float]].
+        Args:
+            texts: A string or list of strings to encode.
+            batch_size: Batch size for inference.
+            show_progress_bar: Whether to show a tqdm progress bar.
+
+        Returns:
+            A list of vector embeddings (lists of floats).
         """
-        # Normalize input to list
         if isinstance(texts, str):
             texts_list = [texts]
         else:
             texts_list = list(texts)
 
-        def _try_encode(encoder: SentenceTransformer, inputs: list[str], bsize: int):
-            try:
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception as exc:
-                log("Warning: torch.cuda.empty_cache() failed", error=str(exc))
-
-            embeddings = encoder.encode(
-                inputs, batch_size=bsize, show_progress_bar=show_progress_bar
-            )
-            return [list(e) for e in embeddings]
-
         try:
-            return _try_encode(self.encoder, texts_list, batch_size)
-        except RuntimeError as exc:
-            log("Encoder runtime error; attempting CPU fallback", error=str(exc))
-        except Exception as exc:
-            log("Unexpected encoder error; attempting CPU fallback", error=str(exc))
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
-        try:
-            need_new_cpu_encoder = False
-            try:
-                if settings.device and "cuda" in str(settings.device).lower():
-                    need_new_cpu_encoder = True
-            except Exception:
-                need_new_cpu_encoder = True
-
-            if need_new_cpu_encoder:
-                log("Creating CPU fallback SentenceTransformer", device="cpu")
-                cpu_encoder = SentenceTransformer(self.MODEL_NAME, device="cpu")
-            else:
-                cpu_encoder = self.encoder
-
-            return _try_encode(cpu_encoder, texts_list, 1)
-        except Exception as exc:
-            log("CPU fallback encoding failed", error=str(exc))
-            raise
+        embeddings = self.encoder.encode(
+            texts_list,
+            batch_size=batch_size,
+            show_progress_bar=show_progress_bar,
+        )
+        return [list(e) for e in embeddings]
 
     def _ensure_collections(self) -> None:
-        """Ensure that required Qdrant collections exist."""
         if not self.client.collection_exists(self.MEDIA_SEGMENTS_COLLECTION):
-            log("media_segments collection not found, creating")
             self.client.create_collection(
                 collection_name=self.MEDIA_SEGMENTS_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -232,7 +166,6 @@ class VectorDB:
             )
 
         if not self.client.collection_exists(self.MEDIA_COLLECTION):
-            log("media_frames collection not found, creating")
             self.client.create_collection(
                 collection_name=self.MEDIA_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -242,7 +175,6 @@ class VectorDB:
             )
 
         if not self.client.collection_exists(self.FACES_COLLECTION):
-            log("faces collection not found, creating")
             self.client.create_collection(
                 collection_name=self.FACES_COLLECTION,
                 vectors_config=models.VectorParams(
@@ -251,14 +183,19 @@ class VectorDB:
                 ),
             )
 
+        if not self.client.collection_exists(self.VOICE_COLLECTION):
+            self.client.create_collection(
+                collection_name=self.VOICE_COLLECTION,
+                vectors_config=models.VectorParams(
+                    size=self.VOICE_VECTOR_SIZE,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+
         log("Qdrant collections ensured")
 
     def list_collections(self) -> models.CollectionsResponse:
-        """List all collections in Qdrant.
-
-        Returns:
-            Qdrant collections response.
-        """
+        """List all collections in the Qdrant instance."""
         return self.client.get_collections()
 
     def insert_media_segments(
@@ -266,63 +203,44 @@ class VectorDB:
         video_path: str,
         segments: list[dict[str, Any]],
     ) -> None:
-        """Insert text segments for a media file into Qdrant.
+        """Insert media segments (dialogue, subtitles) into the database.
 
         Args:
-            video_path: Path to the media file.
-            segments: List of segment dictionaries containing:
-                - "text": Segment text.
-                - "start": Start time in seconds.
-                - "end": End time in seconds.
-                - "type": Segment type (for example, "dialogue").
+            video_path: Path to the source video.
+            segments: List of dictionaries containing text, start/end times, etc.
         """
         if not segments:
             return
 
-        log(
-            "Encoding media segments",
-            video_path=video_path,
-            segment_count=len(segments),
-        )
-
         texts = [s.get("text", "") for s in segments]
-        embeddings = self.encode_texts(texts, batch_size=1, show_progress_bar=False)
-
-        if not embeddings or len(embeddings[0]) != self.TEXT_DIM:
-            raise ValueError(
-                f"Text embedding dimension mismatch: expected {self.TEXT_DIM}, "
-                f"got {len(embeddings[0]) if embeddings else 'no embeddings'}",
-            )
+        embeddings = self.encode_texts(texts, batch_size=1)
 
         points: list[models.PointStruct] = []
+
         for i, segment in enumerate(segments):
             start_time = segment.get("start", 0.0)
             unique_str = f"{video_path}_{start_time}"
             point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
+
             payload = {
-                "video_path": str(video_path),
+                "video_path": video_path,
                 "text": segment.get("text"),
                 "start": start_time,
                 "end": segment.get("end"),
                 "type": segment.get("type", "dialogue"),
             }
+
             points.append(
                 models.PointStruct(
                     id=point_id,
                     vector=embeddings[i],
                     payload=payload,
-                ),
+                )
             )
 
         self.client.upsert(
             collection_name=self.MEDIA_SEGMENTS_COLLECTION,
             points=points,
-        )
-
-        log(
-            "Inserted media text segments into Qdrant",
-            video_path=video_path,
-            inserted_count=len(points),
         )
 
     def search_media(
@@ -333,58 +251,48 @@ class VectorDB:
         video_path: str | None = None,
         segment_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search for media text segments matching a query.
+        """Search for media segments similar to the query string.
 
         Args:
-            query: Search query text.
+            query: The search query text.
             limit: Maximum number of results to return.
-            score_threshold: Optional similarity threshold.
-            video_path: Optional exact match filter on the media file path.
-            segment_type: Optional exact match filter on segment type.
+            score_threshold: Minimum similarity score cutoff.
+            video_path: Filter results by video path.
+            segment_type: Filter results by segment type.
 
         Returns:
-            List of result dictionaries containing:
-                - "score": Similarity score.
-                - "text": Segment text.
-                - "start": Start time in seconds.
-                - "end": End time in seconds.
-                - "video_path": Media file path.
-                - "type": Segment type.
+            A list of matching segments with metadata.
         """
-        query_vector = self.encode_texts(query, batch_size=1, show_progress_bar=False)[
-            0
-        ]
+        query_vector = self.encode_texts(query)[0]
 
         conditions: list[models.Condition] = []
-        if video_path is not None:
+        if video_path:
             conditions.append(
                 models.FieldCondition(
                     key="video_path",
                     match=models.MatchValue(value=video_path),
-                ),
+                )
             )
-
-        if segment_type is not None:
+        if segment_type:
             conditions.append(
                 models.FieldCondition(
                     key="type",
                     match=models.MatchValue(value=segment_type),
-                ),
+                )
             )
 
-        qdrant_filter = models.Filter(must=conditions) if conditions else None
+        qfilter = models.Filter(must=conditions) if conditions else None
 
         resp = self.client.query_points(
             collection_name=self.MEDIA_SEGMENTS_COLLECTION,
             query=query_vector,
             limit=limit,
             score_threshold=score_threshold,
-            query_filter=qdrant_filter,
+            query_filter=qfilter,
         )
 
-        hits = resp.points
-        results: list[dict[str, Any]] = []
-        for hit in hits:
+        results = []
+        for hit in resp.points:
             payload = hit.payload or {}
             results.append(
                 {
@@ -394,15 +302,9 @@ class VectorDB:
                     "end": payload.get("end"),
                     "video_path": payload.get("video_path"),
                     "type": payload.get("type"),
-                },
+                }
             )
 
-        log(
-            "Media text search completed",
-            query=query,
-            limit=limit,
-            result_count=len(results),
-        )
         return results
 
     def upsert_media_frame(
@@ -414,26 +316,18 @@ class VectorDB:
         action: str | None = None,
         dialogue: str | None = None,
     ) -> None:
-        """Upsert a media frame embedding into Qdrant.
+        """Upsert a single frame embedding.
 
         Args:
-            point_id: Identifier for the frame.
-            vector: Embedding vector.
-            video_path: Path to the media file.
-            timestamp: Frame timestamp in seconds.
-            action: Optional action description.
-            dialogue: Optional dialogue text.
-
-        Raises:
-            ValueError: If the vector dimension is incorrect.
+            point_id: Unique ID for the point.
+            vector: The vector embedding of the frame description.
+            video_path: Path to the source video.
+            timestamp: Timestamp of the frame in the video.
+            action: Visual description of the frame.
+            dialogue: Associated dialogue (optional).
         """
-        if len(vector) != self.MEDIA_VECTOR_SIZE:
-            raise ValueError(
-                f"media frame vector dim mismatch: expected {self.MEDIA_VECTOR_SIZE}, "
-                f"got {len(vector)}",
-            )
-
         safe_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
+
         payload = {
             "video_path": video_path,
             "timestamp": timestamp,
@@ -449,17 +343,8 @@ class VectorDB:
                     id=safe_point_id,
                     vector=vector,
                     payload=payload,
-                ),
+                )
             ],
-        )
-
-        log(
-            "[VectorDB] Upserted media frame",
-            point_id=safe_point_id,
-            video_path=video_path,
-            timestamp=timestamp,
-            has_action=action is not None,
-            has_dialogue=dialogue is not None,
         )
 
     def search_frames(
@@ -468,20 +353,15 @@ class VectorDB:
         limit: int = 5,
         score_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Search visual media frames using a text query.
+        """Search for frames similar to the query description.
 
         Args:
-            query: Text query describing the desired visual content.
-            limit: Maximum number of results to return.
-            score_threshold: Optional similarity threshold.
+            query: The visual search query text.
+            limit: Maximum number of results.
+            score_threshold: Minimum similarity score.
 
         Returns:
-            List of dictionaries containing:
-                - score: Similarity score.
-                - action: Detected action, if any.
-                - timestamp: Frame timestamp in seconds.
-                - video_path: Media file path.
-                - type: Frame type (defaults to "visual").
+            A list of matching frames.
         """
         query_vector = self.encoder.encode(query).tolist()
 
@@ -492,9 +372,8 @@ class VectorDB:
             score_threshold=score_threshold,
         )
 
-        hits = resp.points
-        results: list[dict[str, Any]] = []
-        for hit in hits:
+        results = []
+        for hit in resp.points:
             payload = hit.payload or {}
             results.append(
                 {
@@ -503,15 +382,9 @@ class VectorDB:
                     "timestamp": payload.get("timestamp"),
                     "video_path": payload.get("video_path"),
                     "type": payload.get("type", "visual"),
-                },
+                }
             )
 
-        log(
-            "Media frame search completed",
-            query=query,
-            limit=limit,
-            result_count=len(results),
-        )
         return results
 
     def insert_face(
@@ -520,26 +393,18 @@ class VectorDB:
         name: str | None = None,
         cluster_id: int | None = None,
     ) -> str:
-        """Insert a face embedding into the faces collection.
+        """Insert a face embedding.
 
         Args:
-            face_encoding: Face embedding vector.
-            name: Optional human-readable label.
-            cluster_id: Optional cluster identifier.
+            face_encoding: The numeric vector representing the face.
+            name: Name of the person (if known).
+            cluster_id: ID of the cluster this face belongs to.
 
         Returns:
-            Generated point ID.
-
-        Raises:
-            ValueError: If the vector dimension is incorrect.
+            The generated ID of the inserted point.
         """
-        if len(face_encoding) != self.FACE_VECTOR_SIZE:
-            raise ValueError(
-                f"face vector dim mismatch: expected {self.FACE_VECTOR_SIZE}, "
-                f"got {len(face_encoding)}",
-            )
-
         point_id = str(uuid.uuid4())
+
         payload = {
             "name": name,
             "cluster_id": cluster_id,
@@ -552,16 +417,10 @@ class VectorDB:
                     id=point_id,
                     vector=face_encoding,
                     payload=payload,
-                ),
+                )
             ],
         )
 
-        log(
-            "[VectorDB] Upserted face",
-            point_id=point_id,
-            name=name,
-            cluster_id=cluster_id,
-        )
         return point_id
 
     def search_face(
@@ -570,29 +429,16 @@ class VectorDB:
         limit: int = 5,
         score_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Search for similar faces in the faces collection.
+        """Search for similar faces.
 
         Args:
-            face_encoding: Query face embedding vector.
-            limit: Maximum number of results to return.
-            score_threshold: Optional distance threshold.
+            face_encoding: The query face vector.
+            limit: Maximum number of results.
+            score_threshold: Minimum similarity score.
 
         Returns:
-            List of result dictionaries containing:
-                - "score": Distance score.
-                - "id": Point ID.
-                - "name": Stored name, if any.
-                - "cluster_id": Stored cluster ID, if any.
-
-        Raises:
-            ValueError: If the query vector dimension is incorrect.
+            A list of matching faces.
         """
-        if len(face_encoding) != self.FACE_VECTOR_SIZE:
-            raise ValueError(
-                f"face query vector dim mismatch: expected {self.FACE_VECTOR_SIZE}, "
-                f"got {len(face_encoding)}",
-            )
-
         resp = self.client.query_points(
             collection_name=self.FACES_COLLECTION,
             query=face_encoding,
@@ -600,9 +446,8 @@ class VectorDB:
             score_threshold=score_threshold,
         )
 
-        hits = resp.points
-        results: list[dict[str, Any]] = []
-        for hit in hits:
+        results = []
+        for hit in resp.points:
             payload = hit.payload or {}
             results.append(
                 {
@@ -610,48 +455,63 @@ class VectorDB:
                     "id": hit.id,
                     "name": payload.get("name"),
                     "cluster_id": payload.get("cluster_id"),
-                },
+                }
             )
 
-        log(
-            "Face search completed",
-            limit=limit,
-            result_count=len(results),
-        )
         return results
 
-    def close(self) -> None:
-        """Close the underlying Qdrant client.
+    def insert_voice_segment(
+        self,
+        *,
+        media_path: str,
+        start: float,
+        end: float,
+        speaker_label: str,
+        embedding: list[float],
+    ) -> None:
+        """Insert a voice segment embedding.
 
-        Suppresses errors while closing; intended to be called explicitly at
-        application shutdown.
+        Args:
+            media_path: Path to the source media file.
+            start: Start time of the segment.
+            end: End time of the segment.
+            speaker_label: Label or ID of the speaker.
+            embedding: The voice embedding vector.
+
+        Raises:
+            ValueError: If the embedding dimension does not match `VOICE_VECTOR_SIZE`.
         """
+        if len(embedding) != self.VOICE_VECTOR_SIZE:
+            raise ValueError(
+                f"voice vector dim mismatch: expected {self.VOICE_VECTOR_SIZE}, "
+                f"got {len(embedding)}"
+            )
+
+        point_id = str(uuid.uuid4())
+
+        self.client.upsert(
+            collection_name=self.VOICE_COLLECTION,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector=embedding,
+                    payload={
+                        "media_path": media_path,
+                        "start": start,
+                        "end": end,
+                        "speaker_label": speaker_label,
+                        "embedding_version": "wespeaker_resnet34_v1_l2",
+                    },
+                )
+            ],
+        )
+
+    def close(self) -> None:
+        """Close the database client connection."""
         if self._closed:
             return
         self._closed = True
         try:
             self.client.close()
-        except Exception as exc:  # noqa: BLE001
-            log("Warning: error while closing QdrantClient", error=str(exc))
-
-
-if __name__ == "__main__":
-    db = VectorDB()
-    try:
-        db.insert_media_segments(
-            "test_video.mp4",
-            [
-                {
-                    "text": "Hello world this is a test",
-                    "start": 0.0,
-                    "end": 2.0,
-                    "type": "dialogue",
-                },
-            ],
-        )
-        log(
-            "Media search result",
-            results=db.search_media(query="Hello world", limit=2),
-        )
-    finally:
-        db.close()
+        except Exception:
+            pass
