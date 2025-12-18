@@ -1,100 +1,72 @@
-"""Face identity processing utilities.
-
-This module provides the `FaceManager` class, which can:
-
-1. Detect faces in an image and compute 128-d face embeddings using
-   `face_recognition`.
-2. Cluster those embeddings into identities using DBSCAN from scikit-learn.
-"""
+"""Face identity processing utilities (Async)."""
 
 from __future__ import annotations
 
-import bz2
-import sys
-import tempfile
+import asyncio
+import hashlib
+import os
+import time
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import Any, Final
 
 import cv2
-import dlib
 import numpy as np
-from dlib import (
-    cnn_face_detection_model_v1,  # type: ignore
-    face_recognition_model_v1,  # type: ignore
-    get_frontal_face_detector,  # type: ignore
-    rectangle,  # type: ignore
-    shape_predictor,  # type: ignore
-)
 from numpy.typing import ArrayLike, NDArray
 from PIL import Image
 from sklearn.cluster import DBSCAN
 
-from config import Settings
+from config import settings
 from core.schemas import DetectedFace
-from core.utils.logger import log
 
-MODELS_DIR = Settings.project_root() / "models"
-YUNET_MODEL_NAME = "face_detection_yunet_2023mar.onnx"
-YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+MODELS_DIR = settings.project_root() / "models"
+CACHE_DIR = settings.project_root() / ".face_cache"
 
-DLIB_MODEL_URLS: dict[str, tuple[str, int]] = {
-    "shape_predictor_68_face_landmarks.dat": (
-        "https://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2",
-        10_000_000,
-    ),
-    "dlib_face_recognition_resnet_model_v1.dat": (
-        "https://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2",
-        10_000_000,
-    ),
-    "mmod_human_face_detector.dat": (
-        "https://dlib.net/files/mmod_human_face_detector.dat.bz2",
-        500_000,
-    ),
-}
+YUNET_MODEL: Final = "face_detection_yunet_2023mar.onnx"
+YUNET_URL: Final = (
+    "https://github.com/opencv/opencv_zoo/raw/main/models/"
+    "face_detection_yunet/face_detection_yunet_2023mar.onnx"
+)
+
+SFACE_MODEL: Final = "face_recognition_sface_2021dec.onnx"
+SFACE_URL: Final = (
+    "https://github.com/opencv/opencv_zoo/raw/main/models/"
+    "face_recognition_sface/face_recognition_sface_2021dec.onnx"
+)
+
+EMBEDDING_VERSION: Final = "sface_v2_128d_l2"
+
+GPU_SEMAPHORE = asyncio.Semaphore(1)
 
 
-def _ensure_models(models_dir: Path, use_cnn: bool = True) -> None:
-    """Ensures all required Dlib and YuNet models are downloaded."""
-    models_dir.mkdir(parents=True, exist_ok=True)
+def _ensure_models() -> None:
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    for name, url in (
+        (YUNET_MODEL, YUNET_URL),
+        (SFACE_MODEL, SFACE_URL),
+    ):
+        path = MODELS_DIR / name
+        if not path.exists():
+            urllib.request.urlretrieve(url, path)
 
-    # 1. Download Dlib models (BZ2 compressed)
-    for name, (url, min_size) in DLIB_MODEL_URLS.items():
-        if not use_cnn and name == "mmod_human_face_detector.dat":
-            continue
 
-        target = models_dir / name
-        if target.exists() and target.stat().st_size >= min_size:
-            continue
-
-        log(f"[models] Downloading: {name}", file=sys.stderr)
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-
-        try:
-            urllib.request.urlretrieve(url, tmp_path)
-            with bz2.open(tmp_path, "rb") as src, open(target, "wb") as dst:
-                dst.write(src.read())
-
-            if target.stat().st_size < min_size:
-                raise RuntimeError(f"Downloaded {name} looks corrupted (too small)")
-            log(f"[models] Installed {name}", file=sys.stderr)
-        finally:
-            tmp_path.unlink(missing_ok=True)
-
-    # 2. Download YuNet model (Rew ONNX)
-    yunet_target = models_dir / YUNET_MODEL_NAME
-    if not yunet_target.exists():
-        log(f"[models] Downloading: {YUNET_MODEL_NAME}", file=sys.stderr)
-        try:
-            urllib.request.urlretrieve(YUNET_URL, yunet_target)
-            log(f"[models] Installed {YUNET_MODEL_NAME}", file=sys.stderr)
-        except Exception as e:
-            log(f"[WARN] Failed to download YuNet model: {e}", file=sys.stderr)
+def _migrate_cache(old_version: str, new_version: str) -> None:
+    if not CACHE_DIR.exists():
+        return
+    for p in CACHE_DIR.glob(f"*_{old_version}.npy"):
+        new = p.with_name(p.name.replace(old_version, new_version))
+        if not new.exists():
+            os.rename(p, new)
 
 
 class FaceManager:
-    """High-level interface for face detection and identity clustering."""
+    """Manages face detection, recognition, and clustering operations (Async).
+
+    This class handles loading of face detection (YuNet) and recognition (SFace)
+    models, ensuring they are downloaded if missing. It supports lazy initialization
+    to save resources until needed and can utilize GPU acceleration if available.
+    """
 
     def __init__(
         self,
@@ -102,309 +74,247 @@ class FaceManager:
         dbscan_min_samples: int = 3,
         dbscan_metric: str = "euclidean",
         use_gpu: bool = False,
+        max_fps: float = 8.0,
+        batch_size: int = 16,
     ) -> None:
-        """Initialize the FaceManager.
+        """Initialize the FaceManager with configuration parameters.
 
         Args:
-            dbscan_eps: Maximum distance between two samples for them
-                to be considered neighbors in DBSCAN.
-            dbscan_min_samples: Minimum number of samples required to
-                form a cluster in DBSCAN.
-            dbscan_metric: Distance metric used by DBSCAN
-                (e.g., "euclidean", "cosine").
-            use_gpu: Whether to attempt using GPU for face detection.
-                NOTE: On 8GB VRAM cards (like RTX 4060), running this
-                alongside Ollama/Whisper may cause OOM.
+            dbscan_eps: The maximum distance between two samples for one to be
+                considered as in the neighborhood of the other.
+            dbscan_min_samples: The number of samples (or total weight) in a
+                neighborhood for a point to be considered as a core point.
+            dbscan_metric: The metric to use when calculating distance between
+                instances in a feature array.
+            use_gpu: Whether to attempt using a CUDA-enabled GPU for inference.
+            max_fps: Maximum frames per second to process when batching generic
+                inputs (simulated processing rate).
+            batch_size: Number of frames to process in a single batch.
         """
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
         self.dbscan_metric = dbscan_metric
+        self.max_fps = max_fps
+        self.batch_size = batch_size
+        self._use_gpu_requested = use_gpu
+        self._initialized = False
+        self._init_lock = asyncio.Lock()
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _ensure_models()
+        _migrate_cache("sface_v1_128d_l2", EMBEDDING_VERSION)
 
-        # Check for Dlib CUDA support
-        try:
-            self.dlib_has_cuda = dlib.cuda.get_num_devices() > 0  # type: ignore[attr-defined]
-        except AttributeError:
-            self.dlib_has_cuda = False
-
-        # Determine strict GPU usage
-        self.use_gpu = use_gpu and self.dlib_has_cuda
-
-        _ensure_models(MODELS_DIR, use_cnn=self.use_gpu)
-
-        self.yunet_path = str(MODELS_DIR / YUNET_MODEL_NAME)
-        self.yunet_detector = None
-        try:
-            cv_has_cuda = False
+    async def _lazy_init(self) -> None:
+        if self._initialized:
+            return
+        async with self._init_lock:
+            if self._initialized:
+                return
+            backend = cv2.dnn.DNN_BACKEND_DEFAULT
+            target = cv2.dnn.DNN_TARGET_CPU
             try:
-                cv_has_cuda = cv2.cuda.getCudaEnabledDeviceCount() > 0
-            except AttributeError:
+                if self._use_gpu_requested and cv2.cuda.getCudaEnabledDeviceCount() > 0:
+                    backend = cv2.dnn.DNN_BACKEND_CUDA
+                    target = cv2.dnn.DNN_TARGET_CUDA
+            except Exception:
                 pass
-
-            backend_id = (
-                cv2.dnn.DNN_BACKEND_CUDA
-                if (self.use_gpu and cv_has_cuda)
-                else cv2.dnn.DNN_BACKEND_DEFAULT
-            )
-            target_id = (
-                cv2.dnn.DNN_TARGET_CUDA
-                if (self.use_gpu and cv_has_cuda)
-                else cv2.dnn.DNN_TARGET_CPU
-            )
-
-            self.yunet_detector = cv2.FaceDetectorYN.create(
-                model=self.yunet_path,
+            self.detector = cv2.FaceDetectorYN.create(
+                model=str(MODELS_DIR / YUNET_MODEL),
                 config="",
                 input_size=(320, 320),
                 score_threshold=0.6,
                 nms_threshold=0.3,
                 top_k=5000,
-                backend_id=backend_id,
-                target_id=target_id,
+                backend_id=backend,
+                target_id=target,
             )
-        except Exception as e:
-            log(f"[WARN] Failed to init YuNet: {e}. Fallback to Dlib HOG only.")
+            self.recognizer = cv2.FaceRecognizerSF.create(
+                model=str(MODELS_DIR / SFACE_MODEL),
+                config="",
+                backend_id=backend,
+                target_id=target,
+            )
+            self._initialized = True
 
-        # Initialize Dlib Detectors
-        self.hog_detector = get_frontal_face_detector()
-        self.cnn_detector: cnn_face_detection_model_v1 | None = None
+    async def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
+        """Detect faces in a single image file asynchronously.
 
-        if self.use_gpu:
-            try:
-                self.cnn_detector = cnn_face_detection_model_v1(
-                    str(MODELS_DIR / "mmod_human_face_detector.dat")
-                )
-            except Exception as e:
-                log(f"[WARN] Failed to load Dlib CNN detector: {e}. Fallback to CPU.")
-                self.cnn_detector = None
-                self.use_gpu = False
+        Args:
+            image_path: Path to the image file.
 
-        self.shape_predictor = shape_predictor(
-            str(MODELS_DIR / "shape_predictor_68_face_landmarks.dat")
-        )
-        self.face_rec_model = face_recognition_model_v1(
-            str(MODELS_DIR / "dlib_face_recognition_resnet_model_v1.dat")
-        )
-
-    def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
-        """Detect faces in an image and compute their 128-d encodings."""
+        Returns:
+            A list of DetectedFace objects containing bounding boxes and
+            encodings for all detected faces.
+        """
+        await self._lazy_init()
         path = Path(image_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Image file not found: {path}")
-
-        try:
-            image = self._load_image(path)
-        except Exception as exc:
-            raise ValueError(f"Failed to load image: {path}") from exc
-
-        boxes = self._detect_face_boxes(image)
+        image = self._load_image(path)
+        boxes = await self._detect_boxes(image)
         if not boxes:
             return []
+        encodings = await self._compute_encodings(image, boxes)
+        return [
+            DetectedFace(bbox=b, embedding=e.tolist())
+            for b, e in zip(boxes, encodings, strict=True)
+        ]
 
-        encodings = self._compute_encodings(image, boxes)
-        results: list[DetectedFace] = []
+    def cluster_faces(self, all_encodings: Sequence[ArrayLike]) -> NDArray[np.int64]:
+        """Cluster face encodings using DBSCAN.
 
-        for box, enc in zip(boxes, encodings, strict=True):
-            top, right, bottom, left = box
-            results.append(
-                DetectedFace(
-                    box=(int(top), int(right), int(bottom), int(left)),
-                    encoding=enc.tolist(),
-                ),
-            )
-        return results
+        Args:
+            all_encodings: A sequence of face encodings (vectors).
+
+        Returns:
+            A numpy array of cluster labels for each encoding. -1 indicates
+            noise (no cluster found).
+        """
+        if not all_encodings:
+            return np.array([], dtype=np.int64)
+        data = self._to_2d_array(all_encodings)
+        return DBSCAN(
+            eps=self.dbscan_eps,
+            min_samples=self.dbscan_min_samples,
+            metric=self.dbscan_metric,
+        ).fit_predict(data)
 
     @staticmethod
     def _load_image(path: Path) -> NDArray[np.uint8]:
-        """Load image as RGB uint8 numpy array."""
         with Image.open(path) as img:
             return np.asarray(img.convert("RGB"), dtype=np.uint8)
 
-    def _detect_face_boxes(
-        self,
-        image: NDArray[np.uint8],
+    async def _detect_boxes(
+        self, image: NDArray[np.uint8]
     ) -> list[tuple[int, int, int, int]]:
-        """Detect face bounding boxes using GPU -> MediaPipe -> HOG fallback."""
-        boxes: list[tuple[int, int, int, int]] = []
-
-        # 1. Try Dlib CNN (GPU)
-        if self.use_gpu and self.cnn_detector is not None:
-            try:
-                detections = self.cnn_detector(image, 1)
-                boxes = [
-                    (
-                        int(d.rect.top()),
-                        int(d.rect.right()),
-                        int(d.rect.bottom()),
-                        int(d.rect.left()),
-                    )
-                    for d in detections
-                ]
-            except Exception:
-                boxes = []
-
-        if not boxes and self.yunet_detector is not None:
+        async with GPU_SEMAPHORE:
             h, w = image.shape[:2]
-            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-            self.yunet_detector.setInputSize((w, h))
-            _, detections = self.yunet_detector.detect(image_bgr)
-
-            if detections is not None:
-                for det in detections:
-                    x, y, w_box, h_box = det[:4]
-
-                    left = int(x)
-                    top = int(y)
-                    right = int(x + w_box)
-                    bottom = int(y + h_box)
-
-                    left = max(0, left)
-                    top = max(0, top)
-                    right = min(w, right)
-                    bottom = min(h, bottom)
-
-                    boxes.append((top, right, bottom, left))
-
-        # 3. Fallback to Dlib HOG (CPU)
-        if not boxes:
-            detections = self.hog_detector(image, 1)
-            boxes = [
+            bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            self.detector.setInputSize((w, h))
+            _, dets = self.detector.detect(bgr)
+        if dets is None:
+            return []
+        boxes = []
+        for d in dets:
+            x, y, bw, bh = d[:4]
+            boxes.append(
                 (
-                    int(d.top()),
-                    int(d.right()),
-                    int(d.bottom()),
-                    int(d.left()),
+                    int(y),
+                    int(x + bw),
+                    int(y + bh),
+                    int(x),
                 )
-                for d in detections
-            ]
-
+            )
         return boxes
 
-    def _compute_encodings(
+    async def _compute_encodings(
         self,
         image: NDArray[np.uint8],
         boxes: list[tuple[int, int, int, int]],
     ) -> list[NDArray[np.float64]]:
-        """Compute 128-d face encodings for given boxes (dlib ResNet)."""
-        encodings: list[NDArray[np.float64]] = []
-        for top, right, bottom, left in boxes:
-            rect = rectangle(left, top, right, bottom)
-            shape = self.shape_predictor(image, rect)
-            descriptor = self.face_rec_model.compute_face_descriptor(image, shape)
-            encodings.append(np.asarray(descriptor, dtype=np.float64))
-        return encodings
+        bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        results = []
+        for box in boxes:
+            key = self._cache_key(bgr, box)
+            cached = self._disk_cache_get(key)
+            if cached is not None:
+                results.append(cached)
+                continue
+            async with GPU_SEMAPHORE:
+                top, right, bottom, left = box
+                face_box = np.array(
+                    [[left, top, right - left, bottom - top]], dtype=np.int32
+                )
+                aligned = self.recognizer.alignCrop(bgr, face_box)
+                emb = self.recognizer.feature(aligned).reshape(-1).astype(np.float64)
+                emb /= np.linalg.norm(emb) + 1e-9
+            self._disk_cache_put(key, emb)
+            results.append(emb)
+        return results
 
-    def cluster_faces(
-        self,
-        all_encodings: Sequence[ArrayLike],
-    ) -> NDArray[np.int64]:
-        """Cluster face encodings into identities using DBSCAN.
+    def process_video_frames(
+        self, frames: Iterable[NDArray[np.uint8]]
+    ) -> list[list[DetectedFace]]:
+        """Process a stream of video frames to detect and encode faces.
 
         Args:
-            all_encodings: A sequence of 128-d face encodings.
+            frames: An iterable of video frames as numpy arrays (RGB).
 
         Returns:
-            A 1D numpy array of shape (n_samples,) with the cluster label for
-            each encoding. ``-1`` indicates noise or outliers.
+            A list where each element corresponds to a frame and contains a list
+            of DetectedFace objects found in that frame.
         """
-        if not all_encodings:
-            return np.array([], dtype=np.int64)
-
-        data = self._to_2d_array(all_encodings)
-        dbscan = DBSCAN(
-            eps=self.dbscan_eps,
-            min_samples=self.dbscan_min_samples,
-            metric=self.dbscan_metric,
-        )
-        dbscan.fit(data)
-        return dbscan.labels_
+        out = []
+        last = 0.0
+        interval = 1.0 / self.max_fps
+        for batch in self._batch(frames, self.batch_size):
+            now = time.perf_counter()
+            if now - last < interval:
+                time.sleep(interval - (now - last))
+            last = time.perf_counter()
+            for frame in batch:
+                boxes = asyncio.run(self._detect_boxes(frame))
+                if not boxes:
+                    out.append([])
+                    continue
+                encs = asyncio.run(self._compute_encodings(frame, boxes))
+                out.append(
+                    [
+                        DetectedFace(bbox=b, embedding=e.tolist())
+                        for b, e in zip(boxes, encs, strict=True)
+                    ]
+                )
+        return out
 
     @staticmethod
-    def _to_2d_array(
-        encodings: Sequence[ArrayLike],
-    ) -> NDArray[np.float64]:
-        """Validate and stack face encodings into a 2D numpy array.
+    def _batch(
+        iterable: Iterable[NDArray[np.uint8]],
+        size: int,
+    ) -> Iterable[list[NDArray[np.uint8]]]:
+        batch = []
+        for item in iterable:
+            batch.append(item)
+            if len(batch) == size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
-        Args:
-            encodings: A sequence of 128-d face encodings.
+    def _cache_key(
+        self, image: NDArray[Any], box: tuple[int, int, int, int]
+    ) -> str:
+        h = hashlib.sha1(image.data[:2048]).hexdigest()
+        return f"{h}_{box}_{EMBEDDING_VERSION}"
 
-        Returns:
-            A 2D numpy array of shape (n_samples, 128).
-        """
-        processed: list[NDArray[np.float64]] = []
-        for idx, enc in enumerate(encodings):
-            arr = np.asarray(enc, dtype=np.float64)
-            if arr.ndim != 1:
-                msg = f"Encoding at index {idx} is not 1D. Got shape {arr.shape!r}."
-                raise ValueError(msg)
-            processed.append(arr)
+    def _disk_cache_get(self, key: str) -> NDArray[np.float64] | None:
+        path = CACHE_DIR / f"{key}.npy"
+        if path.exists():
+            return np.load(path)
+        return None
 
-        lengths = {arr.shape[0] for arr in processed}
-        if len(lengths) != 1:
-            msg = (
-                f"Encodings have inconsistent lengths: {sorted(lengths)}. "
-                "All encodings must be the same dimensionality."
-            )
-            raise ValueError(msg)
-        return np.vstack(processed)
+    def _disk_cache_put(self, key: str, value: NDArray[np.float64]) -> None:
+        path = CACHE_DIR / f"{key}.npy"
+        if not path.exists():
+            np.save(path, value)
+
+    @staticmethod
+    def _to_2d_array(encodings: Sequence[ArrayLike]) -> NDArray[np.float64]:
+        arrs = [np.asarray(e, dtype=np.float64) for e in encodings]
+        shapes = {a.shape for a in arrs}
+        if len(shapes) != 1:
+            raise ValueError(shapes)
+        return np.vstack(arrs)
 
 
 if __name__ == "__main__":
     import argparse
-    import time
 
-    def main() -> None:
-        """Test Block Sanity."""
-        parser = argparse.ArgumentParser(description="Test FaceManager implementation")
-        parser.add_argument(
-            "image_path", type=str, help="Path to the image file to test"
-        )
-        parser.add_argument("--gpu", action="store_true", help="Enable GPU usage")
-        args = parser.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image_path")
+    parser.add_argument("--gpu", action="store_true")
+    args = parser.parse_args()
 
-        image_path = Path(args.image_path)
-        if not image_path.exists():
-            print(f"[ERROR] Image not found: {image_path}")
-            sys.exit(1)
-
-        print(" initializing face manager ")
-        start_init = time.perf_counter()
-
-        manager = FaceManager(use_gpu=args.gpu)
-        print(f"Initialization took: {time.perf_counter() - start_init:.4f}s")
-
-        print(f"\n processing {image_path.name} ")
-        start_detect = time.perf_counter()
-
-        try:
-            faces = manager.detect_faces(image_path)
-        except Exception as e:
-            print(f"[ERROR] Detection failed: {e}")
-            sys.exit(1)
-
-        duration = time.perf_counter() - start_detect
-        print(f"Detection took: {duration:.4f}s")
-        print(f"Faces found: {len(faces)}")
-
-        # Print details for each face
-        for i, face in enumerate(faces):
-            # face.box is (top, right, bottom, left)
-            top, right, bottom, left = face.box
-            width = right - left
-            height = bottom - top
-            print(f"  Face #{i + 1}:")
-            print(f"    Box: {face.box} (W: {width}px, H: {height}px)")
-            print(f"    Encoding Size: {len(face.encoding)}")
-
-        # Basic Clustering Test (Sanity Check)
-        if len(faces) > 0:
-            print("\n testing internal clustering ")
-            encodings = [f.encoding for f in faces]
-            # If only 1 face, it's trivial, but ensures method doesn't crash
-            labels = manager.cluster_faces(encodings)
-            print(f"Cluster Labels: {labels}")
-
-    main()
-
-# python -m core.processing.identity path/to/test_image.jpg
-# python -m core.processing.identity path/to/test_image.jpg --gpu
+    fm = FaceManager(use_gpu=args.gpu)
+    faces = asyncio.run(fm.detect_faces(args.image_path))
+    print(len(faces))
+    if faces:
+        valid_embeddings = [f.embedding for f in faces if f.embedding is not None]
+        if valid_embeddings:
+            print(fm.cluster_faces(valid_embeddings))
