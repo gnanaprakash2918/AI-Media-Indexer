@@ -87,3 +87,59 @@ class VoiceProcessor:
                 self.embedding_model = None
                 self.inference = None
 
+    async def process(self, audio_path: Path) -> list[SpeakerSegment]:
+        """Process an audio file to extract speaker segments and embeddings.
+
+        Args:
+            audio_path: Path to the audio file.
+
+        Returns:
+            List of detected speaker segments.
+        """
+        if not self.enabled or not audio_path.exists():
+            return []
+
+        await self._lazy_init()
+        if not self.pipeline or not self.inference:
+            return []
+
+        segments: list[SpeakerSegment] = []
+
+        try:
+            async with GPU_SEMAPHORE:
+                diarization = self.pipeline(
+                    str(audio_path),
+                    min_speakers=settings.min_speakers,
+                    max_speakers=settings.max_speakers,
+                )
+
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                start = float(turn.start)
+                end = float(turn.end)
+                duration = end - start
+
+                if duration < MIN_SEGMENT_DURATION:
+                    continue
+                if duration > MAX_SEGMENT_DURATION:
+                    end = start + MAX_SEGMENT_DURATION
+
+                embedding = await self._extract_embedding(audio_path, start, end)
+                if embedding is None:
+                    continue
+
+                segments.append(
+                    SpeakerSegment(
+                        start_time=start,
+                        end_time=end,
+                        speaker_label=speaker,
+                        confidence=1.0,
+                        embedding=embedding,
+                    )
+                )
+
+            return segments
+
+        except Exception as e:
+            log.error(f"Voice processing failed for {audio_path.name}: {e}")
+            return []
+
