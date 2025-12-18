@@ -18,14 +18,14 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from typing import Any, dict, list
+from typing import Any
 
 import ollama
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
 
-from .config import settings
+from config import settings
 
 SERVER_PARAMS = StdioServerParameters(
     command="uv",

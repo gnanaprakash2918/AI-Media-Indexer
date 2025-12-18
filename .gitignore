@@ -12,6 +12,7 @@ qdrant_data/
 get_files.py
 analyze_branch.py
 logs/
+.face_cache/
 
 # C extensions
 *.so

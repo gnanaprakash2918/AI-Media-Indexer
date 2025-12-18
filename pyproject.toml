@@ -8,16 +8,13 @@ packages = ["ai_media_indexer"]
 [project]
 name = "ai-media-indexer"
 version = "0.1.0"
-description = "AI Media Indexer with SOTA Speech Recognition (NeMo/Whisper)"
+description = "AI Media Indexer with SOTA Speech Recognition (NeMo/Whisper) and Voice Intelligence"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "black>=24.0.0",
     "cmake>=3.20.0",
     "cython>=3.0.0",
-    # "face-recognition>=1.3.0",
-    # "dlib",
-    "face-recognition-models>=0.3.0",
     "faster-whisper>=1.0.0",
     "hf-transfer>=0.1.0",
     "hf-xet>=0.1.0",
@@ -57,6 +54,7 @@ dependencies = [
     "uvicorn>=0.38.0",
     "fastapi>=0.124.2",
     "pillow>=12.0.0",
+    "pyannote.audio>=3.1.1",
 ]
 
 [project.optional-dependencies]
@@ -85,10 +83,8 @@ convention = "google"
 [tool.ruff.format]
 line-ending = "lf"
 
-
 [[tool.uv.index]]
 name = "pytorch"
-# CUDA 12.4 is standard for Torch 2.4/2.5
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
@@ -96,4 +92,3 @@ explicit = true
 torch = [{ index = "pytorch" }]
 torchvision = [{ index = "pytorch" }]
 torchaudio = [{ index = "pytorch" }]
-# dlib = { path = "vendor/dlib-19.24.6-cp312-cp312-win_amd64.whl" }
