@@ -10,3 +10,18 @@ services:
     volumes:
       - ./qdrant_data:/qdrant/storage
     restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: media_agent_langfuse
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: sqlite:///langfuse.db
+      NEXTAUTH_SECRET: local-secret
+      SALT: local-salt
+      NEXTAUTH_URL: http://localhost:3000
+      LANGFUSE_ENABLE_TELEMETRY: "false"
+    volumes:
+      - ./langfuse_data:/app/data
+    restart: unless-stopped
