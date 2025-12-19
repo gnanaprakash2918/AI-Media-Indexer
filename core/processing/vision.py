@@ -8,6 +8,7 @@ import asyncio
 from pathlib import Path
 
 from core.utils.logger import log
+from core.utils.observe import observe
 from llm.factory import LLMFactory
 from llm.interface import LLMInterface
 
@@ -37,6 +38,7 @@ class VisionAnalyzer:
             log(f"[ERROR] Prompt file '{self.prompt_filename}' not found in prompts/.")
             raise
 
+    @observe("vision_describe")
     async def describe(self, image_path: Path) -> str:
         """Asynchronously describe an image using the configured LLM.
 
