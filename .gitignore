@@ -13,6 +13,13 @@ get_files.py
 analyze_branch.py
 logs/
 .face_cache/
+.cache
+.env
+*.log
+qdrant_data
+postgres_data
+clickhouse_data
+minio_data
 
 # C extensions
 *.so
