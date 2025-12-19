@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import asyncio
+import os
 from pathlib import Path
 from typing import Final, cast
 
@@ -101,7 +103,6 @@ class VoiceProcessor:
                 self.embedding_model = None
                 self.inference = None
 
-    @observe("voice_processing")
     async def process(self, audio_path: Path) -> list[SpeakerSegment]:
         """Process an audio file to extract speaker segments and embeddings.
 
@@ -119,11 +120,16 @@ class VoiceProcessor:
             return []
 
         segments: list[SpeakerSegment] = []
+        temp_wav: Path | None = None
 
         try:
+            # Always convert to WAV to ensure compatibility with all video/audio formats
+            temp_wav = await self._convert_to_wav(audio_path)
+            processing_path = temp_wav if temp_wav else audio_path
+
             async with GPU_SEMAPHORE:
                 diarization = self.pipeline(
-                    str(audio_path),
+                    str(processing_path),
                     min_speakers=settings.min_speakers,
                     max_speakers=settings.max_speakers,
                 )
@@ -138,7 +144,7 @@ class VoiceProcessor:
                 if duration > MAX_SEGMENT_DURATION:
                     end = start + MAX_SEGMENT_DURATION
 
-                embedding = await self._extract_embedding(audio_path, start, end)
+                embedding = await self._extract_embedding(processing_path, start, end)
                 if embedding is None:
                     continue
 
@@ -157,6 +163,54 @@ class VoiceProcessor:
         except Exception as e:
             log.error(f"Voice processing failed for {audio_path.name}: {e}")
             return []
+        
+        finally:
+            if temp_wav and temp_wav.exists():
+                try:
+                    temp_wav.unlink()
+                except Exception:
+                    pass
+
+    async def _convert_to_wav(self, path: Path) -> Path | None:
+        """Convert any audio/video to a temporary 16kHz mono WAV file."""
+        import tempfile
+        import subprocess
+
+        fd, temp_path_str = tempfile.mkstemp(suffix=".wav", prefix="voice_temp_")
+        os.close(fd)
+        temp_path = Path(temp_path_str)
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(path),
+            "-vn",              # Disable video
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",     # 16kHz
+            "-ac", "1",         # Mono
+            str(temp_path)
+        ]
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                log.warning(f"FFmpeg conversion failed: {stderr.decode()}")
+                if temp_path.exists():
+                    temp_path.unlink()
+                return None
+                
+            return temp_path
+        except Exception as e:
+            log.warning(f"Failed to convert {path} to wav: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
+            return None
 
     async def _extract_embedding(
         self,
