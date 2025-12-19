@@ -25,6 +25,7 @@ from pyannote.core import Segment
 from config import settings
 from core.schemas import SpeakerSegment
 from core.utils.logger import get_logger
+from core.utils.observe import observe
 
 log = get_logger(__name__)
 
@@ -100,6 +101,7 @@ class VoiceProcessor:
                 self.embedding_model = None
                 self.inference = None
 
+    @observe("voice_processing")
     async def process(self, audio_path: Path) -> list[SpeakerSegment]:
         """Process an audio file to extract speaker segments and embeddings.
 

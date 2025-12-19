@@ -30,10 +30,11 @@ from huggingface_hub import snapshot_download
 from config import settings
 from core.processing.text_utils import parse_srt
 from core.utils.logger import log
+from core.utils.observe import observe
 
 warnings.filterwarnings("ignore")
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -233,6 +234,13 @@ class AudioTranscriber:
                 ignore_patterns=["*.msgpack", "*.h5", "*.tflite", "*.ot"],
             )
             log("[SUCCESS] Download complete.")
+
+            # Check if already CTranslate2 format
+            if (raw_model_dir / "model.bin").exists() and (raw_model_dir / "config.json").exists():
+                 log(f"[INFO] Model {model_id} appears to be already converted. Skipping conversion step.")
+                 shutil.copytree(raw_model_dir, ct2_output_dir, dirs_exist_ok=True)
+                 return str(ct2_output_dir)
+
             log(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
 
             converter = ctranslate2.converters.TransformersConverter(
@@ -411,6 +419,7 @@ class AudioTranscriber:
 
         return out
 
+    @observe("transcription")
     def transcribe(
         self,
         audio_path: Path,

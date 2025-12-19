@@ -1,214 +1,168 @@
-"""Application-wide structured logging configuration.
-
-Provides:
-
-- Colorized, human-readable console logs (stderr).
-- Structured JSONL file logs (agent.jsonl) for querying and ingestion.
-- Full stdlib logging integration (third-party libraries included).
-- Callsite, timestamp, level, and bound context support.
-
-Initialize once at startup; import ``logger`` or use ``get_logger()``.
-"""
+"""Logging configuration and utilities."""
 
 from __future__ import annotations
 
 import logging
-import os
 import sys
-from logging.handlers import RotatingFileHandler
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-import structlog
-from structlog.stdlib import BoundLogger
-from structlog.types import EventDict, Processor, WrappedLogger
+from loguru import logger
 
 from config import settings
 
-LOG_FILE_NAME = "agent.jsonl"
-DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
-DEFAULT_BACKUP_COUNT = 5
+trace_id_ctx: ContextVar[str | None] = ContextVar("trace_id", default=None)
+span_ctx: ContextVar[str | None] = ContextVar("span", default=None)
+component_ctx: ContextVar[str | None] = ContextVar("component", default=None)
 
+class InterceptHandler(logging.Handler):
+    """Redirects standard logging into Loguru while preserving correct caller info."""
 
-def _ensure_utf8_stderr() -> None:
-    """Best-effort patch to make stderr UTF-8 capable.
-
-    This prevents ``UnicodeEncodeError: 'charmap' codec can't encode...``
-    when printing log lines that contain characters unsupported by the
-    legacy Windows console encoding (e.g. full-width punctuation, emojis,
-    Tamil, etc.).
-
-    It uses ``TextIOBase.reconfigure`` when available (Python 3.7+),
-    while guarding with ``hasattr`` so static analyzers like Pylance
-    don't complain.
-    """
-    stderr = sys.stderr
-
-    # Some environments wrap stderr with objects that don't expose
-    # reconfigure; don't assume it always exists.
-    if hasattr(stderr, "reconfigure"):
+    def emit(self, record: logging.LogRecord) -> None:
+        """Log the specified logging record."""
         try:
-            stderr.reconfigure(encoding="utf-8", errors="backslashreplace")  # type: ignore[call-arg]
-        except Exception:
-            pass
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        frame = logging.currentframe()
+        depth = 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        _base_logger().opt(depth=depth, exception=record.exc_info).log(
+            level,
+            record.getMessage(),
+        )
 
 
-def _add_logger_name(
-    logger: logging.Logger | WrappedLogger,
-    method_name: str,
-    event_dict: EventDict,
-) -> EventDict:
-    """Add the logger name to the event dict.
+def setup_logger() -> None:
+    """Configure Loguru for console and file logging.
 
-    Mimics structlog.processors.add_logger_name in a type-checker-friendly way.
-
-    Args:
-        logger: The stdlib or wrapped logger instance.
-        method_name: The log method name (for example, "info").
-        event_dict: The current event dictionary.
-
-    Returns:
-        EventDict: The updated event dictionary including the "logger" field.
+    Features:
+    - Human-friendly console logs
+    - Structured JSON file logs (Grafana Loki / ELK)
+    - Full interception of stdlib logging
     """
-    if logger is not None:
-        event_dict.setdefault("logger", logger.name)
-    return event_dict
+    logger.remove()
+    
+    def _patcher(record):
+        record["extra"].setdefault("trace_id", None)
+        record["extra"].setdefault("span", None)
+        record["extra"].setdefault("component", None)
 
+    # Ensure trace_id always exists to prevent KeyErrors in format string
+    logger.configure(patcher=_patcher)
 
-def _get_log_level() -> int:
-    """Resolve the global log level.
-
-    Precedence:
-
-    1. settings.log_level
-    2. LOG_LEVEL environment variable
-    3. logging.INFO default
-
-    Returns:
-        int: Resolved stdlib logging level (for example, logging.INFO).
-    """
-    level_name = str(
-        getattr(settings, "log_level", os.getenv("LOG_LEVEL", "INFO"))
-    ).upper()
-    return getattr(logging, level_name, logging.INFO)
-
-
-def _ensure_log_dir(log_dir: Path) -> None:
-    """Ensure that the log directory exists."""
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-
-def configure_logger() -> None:
-    """Configure global structured logging.
-
-    Sets up:
-
-    - Console logging (pretty, colorized).
-    - Rotating JSONL file logging.
-    - structlog + stdlib logging integration.
-
-    Safe to call multiple times, but typically done once at process startup.
-    """
-    # Make console less fragile with Unicode first.
-    _ensure_utf8_stderr()
-
+    # Ensure log directory exists
     log_dir: Path = settings.log_dir
-    _ensure_log_dir(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "app.log"
 
-    log_file = log_dir / LOG_FILE_NAME
-    log_level = _get_log_level()
-
-    timestamper: Processor = structlog.processors.TimeStamper(fmt="iso", utc=True)
-
-    shared_processors: list[Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        _add_logger_name,
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.CallsiteParameterAdder(
-            [
-                structlog.processors.CallsiteParameter.PATHNAME,
-                structlog.processors.CallsiteParameter.FILENAME,
-                structlog.processors.CallsiteParameter.FUNC_NAME,
-                structlog.processors.CallsiteParameter.LINENO,
-            ]
+    logger.add(
+        sys.stderr,
+        level=getattr(settings, "log_level", "INFO"),
+        colorize=True,
+        backtrace=True,
+        diagnose=False,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level:<8}</level> | "
+            "trace=<cyan>{extra[trace_id]}</cyan> "
+            "span=<cyan>{extra[span]}</cyan> "
+            "comp=<cyan>{extra[component]}</cyan> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
         ),
-        timestamper,
-    ]
-
-    # Console handler: human-readable, colorized output.
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(log_level)
-    console_handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(
-            processor=structlog.dev.ConsoleRenderer(colors=True, pad_event=2),
-            foreign_pre_chain=shared_processors,
-        )
     )
 
-    # File handler: JSON Lines, rotated.
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=DEFAULT_MAX_BYTES,
-        backupCount=DEFAULT_BACKUP_COUNT,
-        encoding="utf-8",
-    )
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(
-            processor=structlog.processors.JSONRenderer(),
-            foreign_pre_chain=shared_processors,
-        )
+    logger.add(
+        str(log_file),
+        level="DEBUG",
+        rotation="10 MB",
+        retention="7 days",
+        compression="zip",
+        serialize=True,
+        enqueue=True,
+        backtrace=True,
+        diagnose=False,
     )
 
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-    root_logger.handlers.clear()
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+    logging.basicConfig(
+        handlers=[InterceptHandler()],
+        level=0,
+        force=True,
+    )
 
-    structlog.configure(
-        processors=[
-            structlog.stdlib.filter_by_level,
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            _add_logger_name,
-            timestamper,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ],
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.make_filtering_bound_logger(log_level),
-        cache_logger_on_first_use=True,
+    for noisy in (
+        "uvicorn.access",
+        "uvicorn.error",
+        "httpx",
+        "httpcore",
+        "asyncio",
+    ):
+        _logger = logging.getLogger(noisy)
+        _logger.handlers = [InterceptHandler()]
+        _logger.propagate = False
+
+
+def bind_context(
+    *,
+    trace_id: str | None = None,
+    span: str | None = None,
+    component: str | None = None,
+) -> None:
+    """Bind context vars globally (used by middleware / pipeline)."""
+    if trace_id is not None:
+        trace_id_ctx.set(trace_id)
+    if span is not None:
+        span_ctx.set(span)
+    if component is not None:
+        component_ctx.set(component)
+
+
+def clear_context() -> None:
+    """Clear all context variables."""
+    trace_id_ctx.set(None)
+    span_ctx.set(None)
+    component_ctx.set(None)
+
+
+def _base_logger(extra: dict[str, Any] | None = None):
+    return logger.bind(
+        trace_id=trace_id_ctx.get(),
+        span=span_ctx.get(),
+        component=component_ctx.get(),
+        **(extra or {}),
     )
 
 
-def get_logger(name: str | None) -> BoundLogger:
-    """Return a structured logger.
+def log(message: str, level: str = "INFO", **kwargs: Any) -> None:
+    """Backward-compatible logging helper.
 
-    Args:
-        name: Optional logger name (usually __name__) for source tagging.
-
-    Returns:
-        BoundLogger: A structlog bound logger instance.
+    Usage:
+        log("Starting transcription", video=path)
+        log("Whisper failed", level="ERROR", error=str(exc))
     """
-    return structlog.get_logger(name) if name else structlog.get_logger()
+    lvl = level.upper()
+    _base_logger(kwargs).log(lvl, message)
 
 
-def log(msg: str, **kwargs: Any) -> None:
-    """Log an INFO-level message using the default logger.
-
-    Compatibility wrapper for legacy calls like: ``log("event", key=value)``.
-
-    Args:
-        msg: Log event name or message.
-        **kwargs: Additional structured fields to attach to the event.
-    """
-    logger.info(msg, **kwargs)
+def _handle_uncaught(exc_type, exc, tb):
+    logger.bind(
+        trace_id=trace_id_ctx.get(),
+        span=span_ctx.get(),
+        component=component_ctx.get(),
+    ).opt(exception=(exc_type, exc, tb)).critical("Unhandled exception")
 
 
-# Configure on import so all logs use this pipeline.
-configure_logger()
+sys.excepthook = _handle_uncaught
 
-# Default application logger.
-logger = get_logger(__name__)
+setup_logger()
+
+
+def get_logger(name: str | None = None):
+    """Get a logger instance (optionally bound to a name)."""
+    return logger.bind(name=name)

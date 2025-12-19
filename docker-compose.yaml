@@ -1,12 +1,139 @@
-version: "3.8"
+
 
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.16.2
     container_name: media_agent_qdrant
     ports:
-      - "6333:6333"   # HTTP API
-      - "6334:6334"   # gRPC API
+      - "6333:6333"
+      - "6334:6334"
     volumes:
       - ./qdrant_data:/qdrant/storage
     restart: unless-stopped
+
+  postgres:
+    profiles: ["docker"]
+    image: postgres:16
+    container_name: media_agent_postgres
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  clickhouse:
+    profiles: ["docker"]
+    image: clickhouse/clickhouse-server:24.3
+    container_name: media_agent_clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000" # ClickHouse keeps port 9000
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: langfuse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    profiles: ["docker"]
+    image: redis:7.2.4
+    container_name: media_agent_redis
+    command: redis-server --requirepass "redispass"
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  minio:
+    profiles: ["docker"]
+    image: minio/minio
+    container_name: media_agent_minio
+    command: server /data --console-address ":9001"
+    ports:
+      # CHANGED: Map Host 9090 -> Container 9000 to avoid conflict with ClickHouse
+      - "9090:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  createbuckets:
+    profiles: ["docker"]
+    image: minio/mc
+    container_name: media_agent_createbuckets
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minio miniosecret;
+      /usr/bin/mc mb myminio/langfuse;
+      exit 0;
+      "
+
+  langfuse:
+    image: langfuse/langfuse:3
+    container_name: media_agent_langfuse
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    ports:
+      - "3300:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
+      
+      CLICKHOUSE_USER: "default"
+      CLICKHOUSE_PASSWORD: "langfuse"
+      CLICKHOUSE_DB: "default"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_URL: "clickhouse://default:langfuse@clickhouse:9000"
+      CLICKHOUSE_MIGRATION_URL: "clickhouse://default:langfuse@clickhouse:9000"
+      
+      NEXTAUTH_SECRET: "89ec276067b45f431662998a6915f0d579c8d672808006e001844b245780517f"
+      SALT: "89ec276067b45f431662998a6915f0d579c8d672808006e001844b245780517f"
+      NEXTAUTH_URL: "http://localhost:3300"
+      ENCRYPTION_KEY: "92ae3af72cce9731d13da597943582a6cd1134f5a95c7f6a78f0484e03f99d7d"
+      
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: "redispass"
+      
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse"
+
+      # INTERNAL URL (Containers talk to each other on port 9000)
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "minio"
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "miniosecret"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: "us-east-1"
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      
+      LANGFUSE_ENABLE_TELEMETRY: "false"
+    restart: unless-stopped
+
+volumes:
+  clickhouse_data:
+  minio_data:

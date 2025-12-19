@@ -19,6 +19,7 @@ from sklearn.cluster import DBSCAN
 
 from config import settings
 from core.schemas import DetectedFace
+from core.utils.observe import observe
 
 MODELS_DIR = settings.project_root() / "models"
 CACHE_DIR = settings.project_root() / ".face_cache"
@@ -135,6 +136,7 @@ class FaceManager:
             )
             self._initialized = True
 
+    @observe("face_detect")
     async def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
         """Detect faces in a single image file asynchronously.
 
@@ -157,6 +159,7 @@ class FaceManager:
             for b, e in zip(boxes, encodings, strict=True)
         ]
 
+    @observe("face_cluster")
     def cluster_faces(self, all_encodings: Sequence[ArrayLike]) -> NDArray[np.int64]:
         """Cluster face encodings using DBSCAN.
 

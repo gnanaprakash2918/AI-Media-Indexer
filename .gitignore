@@ -9,10 +9,14 @@ logs/
 # Custom
 models/
 qdrant_data/
+qdrant_data_embedded/
 get_files.py
 analyze_branch.py
 logs/
 .face_cache/
+tests/assets/
+tests/temp_frames/
+test_output.txt
 
 # C extensions
 *.so

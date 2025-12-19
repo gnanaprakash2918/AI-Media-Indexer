@@ -96,10 +96,19 @@ class Settings(BaseSettings):
 
     language: str | None = "ta"
     whisper_model_map: dict[str, list[str]] = {
-        "ta": ["large-v3", "large-v2"],
-        "en": ["medium.en", "small.en"],
+        "ta": [
+            # "ai4bharat/indicconformer",
+            "openai/whisper-large-v3-turbo",
+            "openai/whisper-large-v2",
+        ],
+        "en": [
+            "openai/whisper-large-v3-turbo",
+            "openai/whisper-large-v2",
+            "distil-whisper/distil-large-v3",
+        ],
     }
-    fallback_model_id: str = "medium"
+
+    fallback_model_id: str = "distil-whisper/distil-large-v3"
 
     # Voice Intelligence
     enable_voice_analysis: bool = True
@@ -116,6 +125,20 @@ class Settings(BaseSettings):
 
     # Pause duration when overheated (seconds)
     cool_down_seconds: int = 30
+
+    # Langfuse Configuration
+    langfuse_backend: Literal["docker", "cloud", "disabled"] = Field(
+        default="disabled",
+        description="Langfuse backend selection",
+    )
+
+    # Cloud Langfuse
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str = "https://cloud.langfuse.com"
+
+    # Local (Docker) Langfuse
+    langfuse_docker_host: str = "http://localhost:3300"
 
     @computed_field
     @property

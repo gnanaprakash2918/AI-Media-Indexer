@@ -12,6 +12,15 @@ venv
 models/
 qdrant_data/
 downloads/
+.cache
+.env
+*.log
+qdrant_data
+postgres_data
+clickhouse_data
+minio_data
 
 # Ignore local requirements to force usage of docker version
 requirements.txt
+
+
