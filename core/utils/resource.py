@@ -6,7 +6,9 @@ from typing import Literal
 import psutil
 
 from config import settings
-from core.utils.logger import log
+from core.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 TaskType = Literal["compute", "network", "io"]
 
