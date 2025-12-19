@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 from core.utils.logger import log
+from core.utils.observe import observe
 
 
 class FrameExtractor:
@@ -36,6 +37,7 @@ class FrameExtractor:
             """Exit the context manager, cleaning up the temp directory."""
             self.cleanup()
 
+    @observe("frame_extract")
     async def extract(
         self,
         video_path: str | Path,
