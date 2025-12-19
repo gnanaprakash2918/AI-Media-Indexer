@@ -30,6 +30,7 @@ from huggingface_hub import snapshot_download
 from config import settings
 from core.processing.text_utils import parse_srt
 from core.utils.logger import log
+from core.utils.observe import observe
 
 warnings.filterwarnings("ignore")
 
@@ -411,6 +412,7 @@ class AudioTranscriber:
 
         return out
 
+    @observe("transcription")
     def transcribe(
         self,
         audio_path: Path,
