@@ -32,7 +32,7 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(
+        _base_logger().opt(depth=depth, exception=record.exc_info).log(
             level,
             record.getMessage(),
         )
@@ -47,6 +47,14 @@ def setup_logger() -> None:
     - Full interception of stdlib logging
     """
     logger.remove()
+    
+    def _patcher(record):
+        record["extra"].setdefault("trace_id", None)
+        record["extra"].setdefault("span", None)
+        record["extra"].setdefault("component", None)
+
+    # Ensure trace_id always exists to prevent KeyErrors in format string
+    logger.configure(patcher=_patcher)
 
     # Ensure log directory exists
     log_dir: Path = settings.log_dir
@@ -143,14 +151,18 @@ def log(message: str, level: str = "INFO", **kwargs: Any) -> None:
 
 
 def _handle_uncaught(exc_type, exc, tb):
-    logger.opt(exception=(exc_type, exc, tb)).critical(
-        "Unhandled exception",
+    logger.bind(
         trace_id=trace_id_ctx.get(),
         span=span_ctx.get(),
         component=component_ctx.get(),
-    )
+    ).opt(exception=(exc_type, exc, tb)).critical("Unhandled exception")
 
 
 sys.excepthook = _handle_uncaught
 
 setup_logger()
+
+
+def get_logger(name: str | None = None):
+    """Get a logger instance (optionally bound to a name)."""
+    return logger.bind(name=name)
