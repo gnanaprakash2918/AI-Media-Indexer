@@ -117,6 +117,20 @@ class Settings(BaseSettings):
     # Pause duration when overheated (seconds)
     cool_down_seconds: int = 30
 
+    # Langfuse Configuration
+    langfuse_backend: Literal["docker", "cloud", "disabled"] = Field(
+        default="disabled",
+        description="Langfuse backend selection",
+    )
+
+    # Cloud Langfuse
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str = "https://cloud.langfuse.com"
+
+    # Local (Docker) Langfuse
+    langfuse_docker_host: str = "http://localhost:3000"
+
     @computed_field
     @property
     def device(self) -> str:
