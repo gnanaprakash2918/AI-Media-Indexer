@@ -10,6 +10,7 @@ services:
     restart: unless-stopped
 
   postgres:
+    profiles: ["docker"]
     image: postgres:16
     container_name: media_agent_postgres
     environment:
@@ -28,6 +29,7 @@ services:
     restart: unless-stopped
 
   clickhouse:
+    profiles: ["docker"]
     image: clickhouse/clickhouse-server:24.3
     container_name: media_agent_clickhouse
     ports:
@@ -48,6 +50,7 @@ services:
     restart: unless-stopped
 
   redis:
+    profiles: ["docker"]
     image: redis:7.2.4
     container_name: media_agent_redis
     command: redis-server --requirepass "redispass"
@@ -56,6 +59,7 @@ services:
     restart: unless-stopped
 
   minio:
+    profiles: ["docker"]
     image: minio/minio
     container_name: media_agent_minio
     command: server /data --console-address ":9001"
@@ -71,6 +75,7 @@ services:
     restart: unless-stopped
 
   createbuckets:
+    profiles: ["docker"]
     image: minio/mc
     container_name: media_agent_createbuckets
     depends_on:
@@ -83,6 +88,7 @@ services:
       "
 
   langfuse:
+    profiles: ["docker"]
     image: langfuse/langfuse:3
     container_name: media_agent_langfuse
     depends_on:
@@ -116,7 +122,7 @@ services:
       REDIS_AUTH: "redispass"
       
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse"
-      
+
       # INTERNAL URL (Containers talk to each other on port 9000)
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "minio"
