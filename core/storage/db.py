@@ -15,6 +15,7 @@ from sentence_transformers import SentenceTransformer
 
 from config import settings
 from core.utils.logger import log
+from core.utils.observe import observe
 
 
 class VectorDB:
@@ -121,6 +122,7 @@ class VectorDB:
 
         return model
 
+    @observe("db_encode_texts")
     def encode_texts(
         self,
         texts: str | list[str],
@@ -198,6 +200,7 @@ class VectorDB:
         """List all collections in the Qdrant instance."""
         return self.client.get_collections()
 
+    @observe("db_insert_media_segments")
     def insert_media_segments(
         self,
         video_path: str,
@@ -243,6 +246,7 @@ class VectorDB:
             points=points,
         )
 
+    @observe("db_search_media")
     def search_media(
         self,
         query: str,
@@ -307,6 +311,7 @@ class VectorDB:
 
         return results
 
+    @observe("db_upsert_media_frame")
     def upsert_media_frame(
         self,
         point_id: str,
@@ -347,6 +352,7 @@ class VectorDB:
             ],
         )
 
+    @observe("db_search_frames")
     def search_frames(
         self,
         query: str,
@@ -387,6 +393,7 @@ class VectorDB:
 
         return results
 
+    @observe("db_insert_face")
     def insert_face(
         self,
         face_encoding: list[float],
@@ -423,6 +430,7 @@ class VectorDB:
 
         return point_id
 
+    @observe("db_search_face")
     def search_face(
         self,
         face_encoding: list[float],
@@ -460,6 +468,7 @@ class VectorDB:
 
         return results
 
+    @observe("db_insert_voice_segment")
     def insert_voice_segment(
         self,
         *,
