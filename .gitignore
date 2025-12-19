@@ -17,6 +17,13 @@ logs/
 tests/assets/
 tests/temp_frames/
 test_output.txt
+.cache
+.env
+*.log
+qdrant_data
+postgres_data
+clickhouse_data
+minio_data
 
 # C extensions
 *.so
