@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
 
     # Local (Docker) Langfuse
-    langfuse_docker_host: str = "http://localhost:3000"
+    langfuse_docker_host: str = "http://localhost:3300"
 
     @computed_field
     @property
