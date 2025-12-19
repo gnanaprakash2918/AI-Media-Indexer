@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from typing import Any
 from uuid import uuid4
 
-from langfuse.client import Langfuse
+from langfuse import Langfuse
 from loguru import logger
 
 from config import settings

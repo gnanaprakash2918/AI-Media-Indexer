@@ -1,8 +1,8 @@
-version: "3.8"
+
 
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.16.2
     container_name: media_agent_qdrant
     ports:
       - "6333:6333"   # HTTP API
@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
 
   langfuse:
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:3
     container_name: media_agent_langfuse
     ports:
       - "3300:3000"
