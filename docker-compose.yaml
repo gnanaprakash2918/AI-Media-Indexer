@@ -1,6 +1,8 @@
+
+
 services:
   qdrant:
-    image: qdrant/qdrant:v1.9.3
+    image: qdrant/qdrant:v1.16.2
     container_name: media_agent_qdrant
     ports:
       - "6333:6333"
@@ -88,7 +90,6 @@ services:
       "
 
   langfuse:
-    profiles: ["docker"]
     image: langfuse/langfuse:3
     container_name: media_agent_langfuse
     depends_on:
