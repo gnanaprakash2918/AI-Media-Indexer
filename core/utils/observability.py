@@ -16,7 +16,8 @@ from core.utils.logger import bind_context, clear_context
 langfuse_client: Langfuse | None = None
 
 trace_id_ctx: ContextVar[str | None] = ContextVar("obs_trace_id", default=None)
-span_stack_ctx: ContextVar[list[str] | None] = ContextVar(
+
+span_stack_ctx: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "obs_span_stack", default=None
 )
 
@@ -25,6 +26,7 @@ def init_langfuse() -> None:
     """Initialize Langfuse client based on configuration."""
     global langfuse_client
     if settings.langfuse_backend == "disabled":
+        langfuse_client = None
         return
     if settings.langfuse_backend == "cloud" and settings.langfuse_public_key:
         langfuse_client = Langfuse(
@@ -71,16 +73,26 @@ def end_trace(status: str = "success", error: str | None = None) -> None:
 def start_span(name: str, metadata: dict[str, Any] | None = None) -> None:
     """Start a new span."""
     stack = span_stack_ctx.get() or []
-    parent = stack[-1] if stack else None
-    span_stack_ctx.set(stack + [name])
+    parent_item = stack[-1] if stack else None
     bind_context(span=name)
+    span_client = None
     if langfuse_client:
-        langfuse_client.span(
-            trace_id=trace_id_ctx.get(),
-            name=name,
-            parent_span_id=parent,
-            metadata=metadata or {},
-        )
+        trace_id = trace_id_ctx.get()
+        if trace_id:
+            # Determine parent span ID if exists
+            parent_span_id = None
+            if parent_item and parent_item.get("span"):
+                parent_span_id = parent_item["span"].id # type: ignore
+
+            span_client = langfuse_client.trace(id=trace_id).span(
+                name=name,
+                parent_span_id=parent_span_id,
+                metadata=metadata or {},
+            )
+            
+    # Push to stack
+    new_item = {"name": name, "span": span_client}
+    span_stack_ctx.set(stack + [new_item])
     logger.info("span_start", span=name)
 
 
@@ -89,15 +101,25 @@ def end_span(status: str = "success", error: str | None = None) -> None:
     stack = span_stack_ctx.get()
     if not stack:
         return
-    name = stack[-1]
-    if langfuse_client:
-        langfuse_client.span(
-            trace_id=trace_id_ctx.get(),
-            name=name,
-        ).end(status=status, error=error)
+
+    item = stack[-1]
+    name = item["name"]
+    span_client = item["span"]
+
+    if span_client:
+        span_client.end(status=status, error=error)
+
     logger.info("span_end", span=name, status=status, error=error)
-    span_stack_ctx.set(stack[:-1])
-    bind_context(span=stack[-2] if len(stack) > 1 else None)
+    
+    # Pop
+    new_stack = stack[:-1]
+    span_stack_ctx.set(new_stack)
+    
+    # Restore context
+    if new_stack:
+        bind_context(span=new_stack[-1]["name"])
+    else:
+        bind_context(span=None)
 
 
 class Span:
