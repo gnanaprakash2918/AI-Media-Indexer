@@ -1353,3 +1353,29 @@ To run the voice intelligence pipeline, you must accept the user agreement for t
 - ✅ **Repository Hygiene**: Enforced strict ignore rules for auto-generated folders (`langfuse_data`, `postgres_data`).
 - ✅ **Configuration**: Standardized `v3` configuration for ignore files.
 
+---
+
+#### Commit `[Current]` - Docker Optimization (2025-12-20)
+
+**Author**: Gnana Prakash M
+**Message**: chore: optimize docker images and enforce resource limits
+
+**Changes**:
+
+- **Image Optimization**: Switched to Alpine Linux bases for Postgres and Redis to reduce footprint.
+- **Resource Limits**: Configured memory caps (RAM limits) for all services to prevent host instability.
+- **Cleanup**: Removed unused `Dockerfile` and obsolete `setup_dlib.md`.
+
+**Files Modified**:
+
+- `docker-compose.yaml` (Alpine images, deploy limits)
+- `Dockerfile` (Deleted)
+- `docs/setup_dlib.md` (Deleted)
+
+#### Task 10.2 - Docker Runtime Optimization ✅
+
+- ✅ **Alpine Migration**: Reduced container size by using Alpine variants where possible.
+- ✅ **Stability**: Added `deploy.resources.limits` to all `docker-compose` services.
+- ✅ **Cleanup**: Verified and removed dead files to keep the repository clean.
+
+
