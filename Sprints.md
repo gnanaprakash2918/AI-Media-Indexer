@@ -1264,8 +1264,92 @@ To run the voice intelligence pipeline, you must accept the user agreement for t
 
 **Files Modified**:
 
+
 - `core/utils/resource.py`
 - `core/ingestion/pipeline.py`
 - `core/storage/db.py`
 - `core/processing/voice.py`
+
+
+---
+
+## Sprint 9 (Branch: `sprint-9`)
+
+### Commit History
+
+#### Commit `8149978` - Pipeline Logging Integration (2025-12-20)
+
+**Author**: Gnana Prakash M
+**Message**: feat(pipeline): integrate centralized logger
+
+**Changes**:
+
+- Replaced mock print statements with proper logging in `IngestionPipeline`.
+- Enhanced observability with detailed info and error logs.
+- Integrated `core.utils.observability` for structured logging.
+
+**Files Modified**:
+
+- `core/ingestion/pipeline.py`
+
+---
+
+#### Commit `6db73db` - Troubleshooting Guide (2025-12-20)
+
+**Author**: Gnana Prakash M
+**Message**: docs: add troubleshooting guide and update sprints
+
+**Changes**:
+
+- Added `docs/troubleshooting.md` with solutions for common errors (Docker, Ollama, Qdrant).
+- Updated project documentation structure.
+
+**Files Added**:
+
+- `docs/troubleshooting.md`
+
+### Sprint 9 Completed Tasks
+
+#### Task 9.1 - Observability ✅
+
+- ✅ Integrated logging framework into the ingestion pipeline.
+- ✅ Replaced `print()` calls with structured logs (`logger.info`, `logger.error`).
+- ✅ Improved debugging capability for production workflows.
+
+#### Task 9.2 - Documentation ✅
+
+- ✅ Created [Troubleshooting Guide](file:///d:/AI-Media-Indexer/docs/troubleshooting.md) covering:
+  - Database connection failures.
+  - LLM timeouts and model not found errors.
+  - Docker volume issues.
+
+---
+
+## Sprint 10 (Branch: `sprint-10`)
+
+### Commit History
+
+#### Commit `2d7a31f` - Docker & Git Cleanup (2025-12-20)
+
+**Author**: Gnana Prakash M
+**Message**: chore: update .dockerignore and .gitignore (v3)
+
+**Changes**:
+
+- Updated `.dockerignore` to exclude `qdrant_data`, `langfuse_data`, and `postgres_data`.
+- Refined `.gitignore` to strictly exclude local data and build artifacts.
+- Improved Docker build context size and security.
+
+**Files Modified**:
+
+- `.dockerignore`
+- `.gitignore`
+
+### Sprint 10 Completed Tasks
+
+#### Task 10.1 - Infrastructure Optimization ✅
+
+- ✅ **Docker Builds**: Reduced build context size by ignoring heavy data directories.
+- ✅ **Repository Hygiene**: Enforced strict ignore rules for auto-generated folders (`langfuse_data`, `postgres_data`).
+- ✅ **Configuration**: Standardized `v3` configuration for ignore files.
 
