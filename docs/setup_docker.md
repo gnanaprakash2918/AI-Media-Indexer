@@ -273,6 +273,49 @@ docker logs -f media_agent_langfuse
 
 ---
 
+## Troubleshooting
+
+### PostgreSQL Volume Corruption (Langfuse)
+
+**Symptoms:**
+- Container logs show: `FATAL: could not open file "base/..."`
+- Langfuse fails to start or continuously restarts.
+- Errors about "Schema engine error" or "Database unavailable".
+
+**Prevention:**
+Always shut down Docker gracefully to prevent database writer corruption.
+```bash
+docker compose down
+```
+Avoid hard stopping containers (e.g., killing the process or power loss) while the database is writing.
+
+**Resolution:**
+If the database becomes corrupted, you must reset the `postgres_data` volume. **Warning: This deletes all Langfuse data (users, projects, api keys).**
+
+1. **Stop all containers:**
+   ```bash
+   docker compose down
+   ```
+
+2. **Remove the corrupted volume folder:**
+   ```powershell
+   # PowerShell
+   Remove-Item -Recurse -Force postgres_data
+   ```
+   or
+   ```bash
+   # Bash
+   rm -rf postgres_data
+   ```
+
+3. **Restart the stack:**
+   ```bash
+   docker compose up -d
+   ```
+   Docker will recreate the volume and initialize a fresh database.
+
+---
+
 ## Summary
 
 > **`LANGFUSE_BACKEND` controls everything.**
