@@ -21,6 +21,8 @@ span_stack_ctx: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "obs_span_stack", default=None
 )
 
+trace_obj_ctx: ContextVar[Any | None] = ContextVar("obs_trace_obj", default=None)
+
 
 def init_langfuse() -> None:
     """Initialize Langfuse client based on configuration."""
@@ -44,29 +46,44 @@ def init_langfuse() -> None:
 
 def start_trace(name: str, metadata: dict[str, Any] | None = None) -> str:
     """Start a new trace."""
-    trace_id = str(uuid4())
-    trace_id_ctx.set(trace_id)
-    bind_context(trace_id=trace_id)
+    
+    # Reset contexts
+    clear_context()
+    
     if langfuse_client:
-        langfuse_client.trace(
-            id=trace_id,
+        trace_obj = langfuse_client.start_span(
             name=name,
             metadata=metadata or {},
         )
+        trace_obj_ctx.set(trace_obj)
+        trace_id = trace_obj.trace_id
+    else:
+        trace_id = str(uuid4())
+        
+    trace_id_ctx.set(trace_id)
+    bind_context(trace_id=trace_id)
+        
     logger.info("trace_start", trace=name)
     return trace_id
 
 
 def end_trace(status: str = "success", error: str | None = None) -> None:
     """End the current trace."""
-    trace_id = trace_id_ctx.get()
-    if langfuse_client and trace_id:
-        langfuse_client.trace(id=trace_id).update(
-            metadata={"status": status, "error": error}
-        )
+    trace_obj = trace_obj_ctx.get()
+    
+    if trace_obj:
+        update_kwargs = {"metadata": {"status": status, "error": error}}
+        if status == "error":
+            update_kwargs["level"] = "ERROR"
+            update_kwargs["status_message"] = error
+            
+        trace_obj.update(**update_kwargs)
+        trace_obj.end()
+        
     logger.info("trace_end", status=status, error=error)
     trace_id_ctx.set(None)
     span_stack_ctx.set(None)
+    trace_obj_ctx.set(None)
     clear_context()
 
 
@@ -77,16 +94,16 @@ def start_span(name: str, metadata: dict[str, Any] | None = None) -> None:
     bind_context(span=name)
     span_client = None
     if langfuse_client:
-        trace_id = trace_id_ctx.get()
-        if trace_id:
-            # Determine parent span ID if exists
-            parent_span_id = None
-            if parent_item and parent_item.get("span"):
-                parent_span_id = parent_item["span"].id # type: ignore
+        # Get parent: either the last span or the root trace object
+        parent = None
+        if parent_item and parent_item.get("span"):
+             parent = parent_item["span"]
+        else:
+             parent = trace_obj_ctx.get()
 
-            span_client = langfuse_client.trace(id=trace_id).span(
+        if parent:
+            span_client = parent.start_span(
                 name=name,
-                parent_span_id=parent_span_id,
                 metadata=metadata or {},
             )
             
@@ -107,7 +124,13 @@ def end_span(status: str = "success", error: str | None = None) -> None:
     span_client = item["span"]
 
     if span_client:
-        span_client.end(status=status, error=error)
+        update_kwargs = {}
+        if status == "error":
+            update_kwargs["level"] = "ERROR"
+            update_kwargs["status_message"] = error
+            
+        span_client.update(**update_kwargs)
+        span_client.end()
 
     logger.info("span_end", span=name, status=status, error=error)
     
