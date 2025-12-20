@@ -158,41 +158,58 @@ class VectorDB:
         return [list(e) for e in embeddings]
 
     def _ensure_collections(self) -> None:
-        if not self.client.collection_exists(self.MEDIA_SEGMENTS_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.TEXT_DIM,
-                    distance=models.Distance.COSINE,
-                ),
-            )
+        try:
+            if not self.client.collection_exists(self.MEDIA_SEGMENTS_COLLECTION):
+                self.client.create_collection(
+                    collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                    vectors_config=models.VectorParams(
+                        size=self.TEXT_DIM,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+        except Exception as e:
+            # Handle potential race condition or file exists error
+            if "File exists" not in str(e) and "500" not in str(e):
+                log("Warning: media_segments collection creation error", error=str(e))
 
-        if not self.client.collection_exists(self.MEDIA_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.MEDIA_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.MEDIA_VECTOR_SIZE,
-                    distance=models.Distance.COSINE,
-                ),
-            )
+        try:
+            if not self.client.collection_exists(self.MEDIA_COLLECTION):
+                self.client.create_collection(
+                    collection_name=self.MEDIA_COLLECTION,
+                    vectors_config=models.VectorParams(
+                        size=self.MEDIA_VECTOR_SIZE,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+        except Exception as e:
+            if "File exists" not in str(e) and "500" not in str(e):
+                log("Warning: media_frames collection creation error", error=str(e))
 
-        if not self.client.collection_exists(self.FACES_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.FACES_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.FACE_VECTOR_SIZE,
-                    distance=models.Distance.EUCLID,
-                ),
-            )
+        try:
+            if not self.client.collection_exists(self.FACES_COLLECTION):
+                self.client.create_collection(
+                    collection_name=self.FACES_COLLECTION,
+                    vectors_config=models.VectorParams(
+                        size=self.FACE_VECTOR_SIZE,
+                        distance=models.Distance.EUCLID,
+                    ),
+                )
+        except Exception as e:
+            if "File exists" not in str(e) and "500" not in str(e):
+                log("Warning: faces collection creation error", error=str(e))
 
-        if not self.client.collection_exists(self.VOICE_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.VOICE_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.VOICE_VECTOR_SIZE,
-                    distance=models.Distance.COSINE,
-                ),
-            )
+        try:
+            if not self.client.collection_exists(self.VOICE_COLLECTION):
+                self.client.create_collection(
+                    collection_name=self.VOICE_COLLECTION,
+                    vectors_config=models.VectorParams(
+                        size=self.VOICE_VECTOR_SIZE,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+        except Exception as e:
+            if "File exists" not in str(e) and "500" not in str(e):
+                log("Warning: voice_segments collection creation error", error=str(e))
 
         log("Qdrant collections ensured")
 

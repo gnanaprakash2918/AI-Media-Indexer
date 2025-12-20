@@ -38,6 +38,7 @@ class IngestionPipeline:
         qdrant_backend: str = settings.qdrant_backend,
         qdrant_host: str = settings.qdrant_host,
         qdrant_port: int = settings.qdrant_port,
+        qdrant_path: str = "qdrant_data_embedded",
         frame_interval_seconds: int = settings.frame_interval,
         tmdb_api_key: str | None = settings.tmdb_api_key,
     ) -> None:
@@ -48,6 +49,7 @@ class IngestionPipeline:
             backend=qdrant_backend,
             host=qdrant_host,
             port=qdrant_port,
+            path=qdrant_path,
         )
         self.metadata_engine = MetadataEngine(tmdb_api_key=tmdb_api_key)
         self.frame_interval_seconds = frame_interval_seconds
