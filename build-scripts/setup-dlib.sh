@@ -87,11 +87,11 @@ EOF
 
     python t.py
 
-    echo "--- Build Process Complete (Check output for 'CUDA enabled: True') ---"
+    echo "Build Process Complete (Check output for 'CUDA enabled: True')"
     deactivate
 }
 
-# --- Main Script Execution ---
+# Main Script Execution
 
 if [[ "$1" == "--cleanup" ]]; then
     full_cleanup_dlib

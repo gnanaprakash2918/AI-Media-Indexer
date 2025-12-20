@@ -124,7 +124,7 @@ if ($Cleanup) {
 } else {
     Setup-DlibBuild
     Write-Host ""
-    Write-Host "=================================================================================="
+    Write-Host ""
     Write-Host "Setup Complete. NEXT STEP REQUIRED (IMPORTANT):" -ForegroundColor Green
     Write-Host "The build environment must be initialized by Visual Studio."
     Write-Host ""

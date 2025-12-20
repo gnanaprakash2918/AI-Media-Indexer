@@ -90,6 +90,12 @@ npx @modelcontextprotocol/inspector uv run python -m core.agent.server
 
 ---
 
+## Running Tests
+
+For detailed testing instructions, ensuring comprehensive coverage of all components including Agent/MCP, please refer to [TESTING.md](../TESTING.md).
+
+---
+
 ## Development Tools and Dependencies
 
 ### Build Tools (Windows)

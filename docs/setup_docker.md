@@ -44,18 +44,18 @@ The active profile is driven by **one environment variable**.
 ## `.env` Configuration (Master Switch)
 
 ```env
-# --- Langfuse Mode ---
+# Langfuse Mode
 LANGFUSE_BACKEND=docker
 # LANGFUSE_BACKEND=cloud
 # LANGFUSE_BACKEND=disabled
 
-# --- Docker Profile Bridge ---
+# Docker Profile Bridge
 COMPOSE_PROFILES=${LANGFUSE_BACKEND}
 
-# --- Local Langfuse ---
+# Local Langfuse
 LANGFUSE_DOCKER_HOST=http://localhost:3300
 
-# --- Langfuse Cloud (optional) ---
+# Langfuse Cloud (optional)
 # LANGFUSE_PUBLIC_KEY=pk_...
 # LANGFUSE_SECRET_KEY=sk_...
 # LANGFUSE_HOST=https://cloud.langfuse.com
