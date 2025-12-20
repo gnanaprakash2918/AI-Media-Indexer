@@ -10,9 +10,9 @@ from fastapi import FastAPI
 
 from core.agent.card import get_agent_card
 from core.agent.handler import MediaAgentHandler
-from core.utils.logger import configure_logger, get_logger
+from core.utils.logger import get_logger, setup_logger
 
-configure_logger()
+setup_logger()
 logger = get_logger(__name__)
 
 

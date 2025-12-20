@@ -28,7 +28,7 @@ def _ask_media_type() -> str:
         A lowercase string corresponding to a `MediaType` value, such as
         ``"movie"``, ``"tv"``, ``"personal"``, or ``"unknown"``.
     """
-    print("\n--- Media Type Classification ---")
+    print("\nMedia Type Classification")
     print("1. Movie (Fetch Cast/Subs)")
     print("2. TV Series (Fetch Cast/Subs)")
     print("3. Personal Video (Skip external APIs)")
@@ -111,10 +111,10 @@ def _interactive_resolve(raw_path: str) -> Path:
 
     selection_pool = [parent / m for m in matches] if matches else candidates[:10]
 
-    print("\n--- Did you mean one of these? ---")
+    print("\nDid you mean one of these?")
     for i, candidate in enumerate(selection_pool):
         print(f"{i + 1}: {candidate.name}")
-    print("-------------------------------------")
+
 
     try:
         choice = input(
