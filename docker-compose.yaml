@@ -9,11 +9,15 @@ services:
       - "6334:6334"
     volumes:
       - ./qdrant_data:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     restart: unless-stopped
 
   postgres:
     profiles: ["docker"]
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: media_agent_postgres
     environment:
       POSTGRES_DB: langfuse
@@ -28,6 +32,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     restart: unless-stopped
 
   clickhouse:
@@ -49,15 +57,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     restart: unless-stopped
 
   redis:
     profiles: ["docker"]
-    image: redis:7.2.4
+    image: redis:7.2.4-alpine
     container_name: media_agent_redis
     command: redis-server --requirepass "redispass"
     ports:
       - "6379:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     restart: unless-stopped
 
   minio:
@@ -74,6 +90,10 @@ services:
       MINIO_ROOT_PASSWORD: miniosecret
     volumes:
       - minio_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     restart: unless-stopped
 
   createbuckets:
@@ -133,6 +153,10 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       
       LANGFUSE_ENABLE_TELEMETRY: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     restart: unless-stopped
 
 volumes:
