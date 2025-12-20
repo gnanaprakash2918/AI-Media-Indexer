@@ -90,6 +90,7 @@ services:
       "
 
   langfuse:
+    profiles: ["docker"]
     image: langfuse/langfuse:3
     container_name: media_agent_langfuse
     depends_on:
