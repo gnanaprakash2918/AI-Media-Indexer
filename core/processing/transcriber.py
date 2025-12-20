@@ -461,7 +461,7 @@ class AudioTranscriber:
                 )
                 return parsed_segments
 
-        # Run Whisper (If no subs found) ---
+        # Run Whisper (If no subs found)
         is_sliced = True
         proc_path = self._slice_audio(audio_path, start_time, end_time)
         chunks: list[dict[str, Any]] = []

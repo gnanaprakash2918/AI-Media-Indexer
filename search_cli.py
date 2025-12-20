@@ -18,7 +18,7 @@ def main():
     try:
         results = engine.search(query)
 
-        print("\n--- VISUAL MATCHES ---")
+        print("\nVISUAL MATCHES")
         if not results["visual_matches"]:
             print("No visual matches found.")
 
@@ -27,7 +27,7 @@ def main():
             filename = Path(r["file"]).name if r.get("file") else "Unknown"
             print(f"[{r['score']}] {filename} ({r['time']}) - {r['content'][:80]}...")
 
-        print("\n--- DIALOGUE MATCHES ---")
+        print("\nDIALOGUE MATCHES")
         if not results["dialogue_matches"]:
             print("No dialogue matches found.")
 

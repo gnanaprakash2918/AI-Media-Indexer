@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextvars import ContextVar
 from pathlib import Path
@@ -61,22 +62,24 @@ def setup_logger() -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "app.log"
 
-    logger.add(
-        sys.stderr,
-        level=getattr(settings, "log_level", "INFO"),
-        colorize=True,
-        backtrace=True,
-        diagnose=False,
-        format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-            "<level>{level:<8}</level> | "
-            "trace=<cyan>{extra[trace_id]}</cyan> "
-            "span=<cyan>{extra[span]}</cyan> "
-            "comp=<cyan>{extra[component]}</cyan> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-            "<level>{message}</level>"
-        ),
-    )
+    is_test_mode = os.environ.get("AI_INDEXER_TEST_MODE") == "1"
+    if "pytest" not in sys.modules and not is_test_mode:
+        logger.add(
+            sys.stderr,
+            level=getattr(settings, "log_level", "INFO"),
+            colorize=True,
+            backtrace=True,
+            diagnose=False,
+            format=(
+                "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+                "<level>{level:<8}</level> | "
+                "trace=<cyan>{extra[trace_id]}</cyan> "
+                "span=<cyan>{extra[span]}</cyan> "
+                "comp=<cyan>{extra[component]}</cyan> | "
+                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+                "<level>{message}</level>"
+            ),
+        )
 
     logger.add(
         str(log_file),
