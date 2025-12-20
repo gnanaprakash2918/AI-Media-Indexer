@@ -17,6 +17,8 @@ logs/
 tests/assets/
 tests/temp_frames/
 test_output.txt
+agent_test_output*.txt
+combined_test_output.txt
 .cache
 .env
 *.log
@@ -24,6 +26,7 @@ qdrant_data
 postgres_data
 clickhouse_data
 minio_data
+reports/
 
 # C extensions
 *.so
@@ -314,4 +317,12 @@ http-client.private.env.json
 
 # Github Copilot persisted session migrations, see: https://github.com/microsoft/copilot-intellij-feedback/issues/712#issuecomment-3322062215
 .idea/**/copilot.data.migration.*.xml
+
+# Project Specific Backups and Temp
+tests_backup/
+.pytest_cache/
+.face_cache/
+test_output.txt
+agent_test_output*.txt
+combined_test_output.txt
 t.py

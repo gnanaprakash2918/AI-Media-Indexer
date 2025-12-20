@@ -15,6 +15,7 @@ class LLMProvider(str, Enum):
 
     GEMINI = "gemini"
     OLLAMA = "ollama"
+    MOCK = "mock"
 
 
 class Settings(BaseSettings):
