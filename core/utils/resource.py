@@ -108,3 +108,17 @@ class ResourceManager:
 
 # Singleton instance
 resource_manager = ResourceManager()
+
+
+def get_resource_usage() -> dict[str, float]:
+    """Returns a dictionary of current system resource usage.
+
+    Used by tests and potential status monitoring.
+    """
+    mem = psutil.virtual_memory()
+    return {
+        "cpu_percent": psutil.cpu_percent(),
+        "memory_percent": mem.percent,
+        "memory_used_gb": mem.used / (1024**3),
+        "memory_total_gb": mem.total / (1024**3),
+    }
