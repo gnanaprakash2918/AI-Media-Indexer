@@ -221,7 +221,7 @@ class AudioTranscriber:
             return str(ct2_output_dir)
 
         log(f"[INFO] Model {model_id} needs conversion.")
-        log(f"[INFO] Step 1: High-Speed Download to {raw_model_dir}...")
+        log(f"[INFO] High-Speed Download to {raw_model_dir}...")
 
         try:
             snapshot_download(
@@ -241,7 +241,7 @@ class AudioTranscriber:
                  shutil.copytree(raw_model_dir, ct2_output_dir, dirs_exist_ok=True)
                  return str(ct2_output_dir)
 
-            log(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
+            log(f"[INFO] Converting to CTranslate2 at {ct2_output_dir}...")
 
             converter = ctranslate2.converters.TransformersConverter(
                 str(raw_model_dir), load_as_float16=True
@@ -275,7 +275,7 @@ class AudioTranscriber:
             if self.device == "cuda" and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        # only log here, when we actually load weights
+        # Log only when loading weights
         log(
             f"[INFO] Loading Faster-Whisper model '{model_key}' "
             f"({self.device}, Compute: {self.compute_type})..."
