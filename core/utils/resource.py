@@ -36,8 +36,7 @@ class ResourceManager:
         if not self.enabled:
             return
 
-        # We assume network tasks (API calls) don't heat up the CPU
-        # But we still check RAM to prevent OOM crashes
+        # Network tasks exclude thermal checks but require RAM verification.
         check_thermal = (task_type == "compute")
 
         while not self._is_safe(check_thermal=check_thermal):
@@ -54,17 +53,16 @@ class ResourceManager:
         if mem.percent > settings.max_ram_percent:
             return False
 
-        # If it's just a network call, we don't care about CPU/Temp as much
+        # Network calls skip thermal checks
         if not check_thermal:
             return True
 
         # 2. Check CPU Usage
-        # interval=None is non-blocking (returns usage since last call)
+        # interval=None is non-blocking
         if psutil.cpu_percent(interval=None) > settings.max_cpu_percent:
             return False
 
-        # 3. Check Temperature (Best Effort)
-        # Windows often hides temp; Linux is usually good.
+        # 3. Check Temperature
         temp = self._get_cpu_temp()
         if temp and temp > settings.max_temp_celsius:
             return False
@@ -86,7 +84,7 @@ class ResourceManager:
                         # Return max core temp
                         return max(entry.current for entry in temps[name])
 
-                # Fallback: just take the highest value found anywhere
+                # Fallback: use max sensor value
                 return max(
                     entry.current
                     for entry_list in temps.values()
