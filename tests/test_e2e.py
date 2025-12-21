@@ -32,7 +32,7 @@ async def test_custom_media_sanity(tmp_path):
     AUDIO_PATH = r"C:\Users\Gnana Prakash M\Downloads\Programs\Javed Ali - Siragugal.flac"
     VIDEO_PATH = r"C:\Users\Gnana Prakash M\Downloads\Programs\Video Song ｜ Keladi Kannmani ｜ S P B ｜ Radhika ｜ Ilaiyaraaja Love Songs [033Z2WNg2Q.webm"
     
-    pipeline = IngestionPipeline(qdrant_backend="memory")
+    pipeline = IngestionPipeline(qdrant_backend="memory", qdrant_path=":memory:")
     
     # Just check if we can process one of them if present
     for path_str in [AUDIO_PATH, VIDEO_PATH]:

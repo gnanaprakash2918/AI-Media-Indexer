@@ -3,8 +3,6 @@ from unittest.mock import MagicMock, patch
 from core.storage.db import VectorDB
 from core.retrieval.search import SearchEngine
 
-# --- Vector Database Tests ---
-
 @pytest.fixture
 def mock_qdrant(monkeypatch):
     """Mocks Qdrant client for isolation."""
@@ -72,8 +70,6 @@ def test_db_backend_docker(monkeypatch):
 
     VectorDB(backend="docker", host="localhost", port=6333)
     mock_client_cls.assert_called_with(host="localhost", port=6333)
-
-# --- Search Engine Tests ---
 
 @pytest.fixture
 def mock_db():

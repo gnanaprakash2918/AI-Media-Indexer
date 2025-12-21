@@ -14,8 +14,6 @@ from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
 from core.schemas import MediaType
 
-# --- Media Prober Tests ---
-
 @pytest.fixture
 def mock_ffprobe_deps(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda x: "/usr/bin/ffprobe")
@@ -35,14 +33,10 @@ async def test_prober_basic(mock_ffprobe_deps, tmp_path):
         meta = mp.probe(f)
         assert float(meta["format"]["duration"]) == 10.5
 
-# --- Frame Extractor Tests ---
-
 @pytest.mark.asyncio
 async def test_extractor_init():
     ext = FrameExtractor()
     assert ext is not None
-
-# --- Face Manager Tests ---
 
 @pytest.fixture
 def mock_face_deps(monkeypatch):
@@ -66,22 +60,18 @@ async def test_face_manager_cluster(mock_face_deps):
             assert len(labels) == 3
             assert labels[2] == -1
 
-# --- Metadata Engine Tests ---
-
 def test_metadata_identify():
-    engine = MetadataEngine()
+    engine = MetadataEngine(tmdb_api_key="fake")
     # Test filename parsing
     title, year = engine._parse_filename("The.Matrix.1999.1080p.mkv")
     assert title == "The Matrix"
     assert year == 1999
 
-# --- Vision Analyzer Tests ---
-
 @pytest.mark.asyncio
 async def test_vision_describe(tmp_path):
     mock_llm = AsyncMock()
     mock_llm.describe_image.return_value = "a cat"
-    mock_llm.construct_user_prompt.return_value = "mock prompt"
+    mock_llm.construct_user_prompt = MagicMock(return_value="mock prompt")
     
     with patch("core.processing.vision.LLMFactory.create_llm", return_value=mock_llm):
         vis = VisionAnalyzer()
@@ -107,3 +97,49 @@ async def test_transcriber_basic(tmp_path):
             ts.transcribe(audio)
             assert ts._model is not None
 
+
+@pytest.mark.asyncio
+async def test_voice_processor_lifecycle(tmp_path):
+    # Mock settings to enable voice
+    with patch("config.settings.enable_voice_analysis", True), \
+         patch("config.settings.hf_token", "fake_token"):
+         
+        vp = VoiceProcessor()
+        assert vp.enabled is True
+        
+        # Test lazy init with mocks
+        with patch("core.processing.voice.Pipeline.from_pretrained") as mock_pipe, \
+             patch("core.processing.voice.Model.from_pretrained") as mock_model, \
+             patch("core.processing.voice.Inference") as mock_inf:
+             
+            mock_pipe.return_value.to.return_value = None
+            
+            # Create a dummy audio file
+            audio = tmp_path / "test.wav"
+            audio.touch()
+            
+            # Mock convert to wav
+            with patch.object(vp, "_convert_to_wav", return_value=audio):
+                # Mock pipeline processing (diarization)
+                mock_diarization = MagicMock()
+                # Mock iterator: yields (turn, track, speaker)
+                turn = MagicMock()
+                turn.start = 0.0
+                turn.end = 2.0
+                mock_diarization.itertracks.return_value = [(turn, None, "Speaker1")]
+                
+                # Configure the factory to return our mock pipeline
+                mock_pipeline_instance = MagicMock()
+                mock_pipeline_instance.return_value = mock_diarization
+                
+                # When Pipeline.from_pretrained() is called, it returns our pipeline instance
+                mock_pipe.return_value = mock_pipeline_instance
+                
+                vp.inference = MagicMock()
+                
+                # Mock embedding extraction
+                with patch.object(vp, "_extract_embedding", return_value=[0.1]*256):
+                     segments = await vp.process(audio)
+                     
+                     assert len(segments) == 1
+                     assert segments[0].speaker_label == "Speaker1"

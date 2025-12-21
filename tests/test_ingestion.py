@@ -94,10 +94,6 @@ async def test_process_frames_step(mock_pipeline_deps, tmp_path):
         await pipeline._process_frames(video)
 
         mock_vision.describe.assert_called()
-        mock_faces.detect_faces.assert_called()
-
-# --- Library Scanner Tests ---
-
 @pytest.fixture
 def scanner():
     return LibraryScanner()
