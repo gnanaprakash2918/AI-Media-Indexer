@@ -8,10 +8,7 @@ from core.agent.handler import MediaAgentHandler
 from core.agent.server import mcp, search_media, ingest_media
 from core.schemas import SearchResponse, IngestResponse
 
-# --- A2A Server Tests ---
-
 def test_check_ollama_connection_success():
-    """Test successful Ollama connection."""
     with patch("ollama.list") as mock_list:
         check_ollama_connection("llama3")
         mock_list.assert_called_once()
@@ -31,10 +28,8 @@ def test_create_app(mock_handler, mock_card, mock_check):
     assert app is not None
     mock_check.assert_called_once()
 
-# --- Card Tests ---
-
 def test_get_agent_card_structure():
-    card = get_agent_card("http://test-host:1234")
+    card = get_agent_card("http://test-host:1234/a2a")
 
     assert card.name == "MediaIndexer"
     assert card.version == "1.0.0"
@@ -47,8 +42,6 @@ def test_get_agent_card_structure():
 
     # Verify capabilities
     assert card.capabilities.streaming is True
-
-# --- Handler Tests ---
 
 @pytest.fixture
 def agent_handler():
@@ -111,8 +104,6 @@ async def test_execute_tool_search(agent_handler):
 
         assert "Search results for: 'test'" in summary
         assert "[V] 1s v.mp4: c" in summary
-
-# --- MCP Server Tests ---
 
 @pytest.mark.asyncio
 async def test_mcp_list_tools():
