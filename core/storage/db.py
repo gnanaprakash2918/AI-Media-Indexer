@@ -574,7 +574,6 @@ class VectorDB:
             for point in resp[0]:
                 payload = point.payload or {}
                 cluster_id = payload.get("cluster_id")
-                # Use point id hash as fallback cluster_id if missing
                 if cluster_id is None:
                     cluster_id = abs(hash(str(point.id))) % (10**9)
                 results.append({
@@ -584,7 +583,11 @@ class VectorDB:
                     "media_path": payload.get("media_path"),
                     "timestamp": payload.get("timestamp"),
                     "thumbnail_path": payload.get("thumbnail_path"),
+                    "is_main": payload.get("is_main", False),
+                    "appearance_count": payload.get("appearance_count", 1),
                 })
+            # Sort: main characters first, then by appearance count
+            results.sort(key=lambda x: (not x.get("is_main", False), -x.get("appearance_count", 1)))
             return results
         except Exception:
             return []
@@ -793,6 +796,32 @@ class VectorDB:
                 payload={"name": name},
                 points=[face_id],
             )
+            return True
+        except Exception:
+            return False
+
+    def set_face_main(self, cluster_id: int, is_main: bool = True) -> bool:
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=False,
+            )
+            face_ids = [str(p.id) for p in resp[0]]
+            if face_ids:
+                self.client.set_payload(
+                    collection_name=self.FACES_COLLECTION,
+                    payload={"is_main": is_main},
+                    points=face_ids,
+                )
             return True
         except Exception:
             return False

@@ -509,13 +509,19 @@ def create_app() -> FastAPI:
 
     @app.delete("/faces/{face_id}")
     async def delete_face(face_id: str):
-        """Delete a face."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         success = pipeline.db.delete_face(face_id)
         if not success:
             raise HTTPException(status_code=404, detail="Face not found")
         return {"success": True, "face_id": face_id}
+
+    @app.post("/faces/{cluster_id}/main")
+    async def set_main_character(cluster_id: int, is_main: bool = True):
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        success = pipeline.db.set_face_main(cluster_id, is_main)
+        return {"success": success, "cluster_id": cluster_id, "is_main": is_main}
 
     @app.get("/voices")
     async def get_voice_segments(
