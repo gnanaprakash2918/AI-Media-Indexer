@@ -357,21 +357,19 @@ class IngestionPipeline:
                 try:
                     import cv2
                     import numpy as np
-                    # Use cv2.imdecode for unicode path support on Windows
                     img_data = np.fromfile(str(frame_path), dtype=np.uint8)
                     img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
                     if img is not None:
-                        # bbox format from FaceManager is (top, right, bottom, left)
                         top, right, bottom, left = face.bbox
                         face_w = right - left
                         face_h = bottom - top
                         
-                        # Tighter padding (15%) to avoid chest/body, focusing on the face
-                        pad_w = int(face_w * 0.15)
-                        pad_h = int(face_h * 0.15)
+                        # More generous padding (25%) for better face context
+                        pad_w = int(face_w * 0.25)
+                        pad_h = int(face_h * 0.25)
                         
-                        # Shift crop slightly up (10%) to prioritize head/hair over neck
-                        shift_up = int(face_h * 0.1)
+                        # Less aggressive upward shift
+                        shift_up = int(face_h * 0.05)
                         
                         y1 = max(0, top - pad_h - shift_up)
                         y2 = min(img.shape[0], bottom + pad_h - shift_up)
@@ -380,11 +378,11 @@ class IngestionPipeline:
                         
                         face_crop = img[y1:y2, x1:x2]
                         
-                        # Ensure minimum size for quality (resize up if too small)
-                        min_size = 200  # Increased from 150 for better visual quality
+                        # Larger minimum size for HD quality
+                        min_size = 256
                         crop_h, crop_w = face_crop.shape[:2]
                         
-                        if crop_h > 10 and crop_w > 10:  # Basic sanity check
+                        if crop_h > 10 and crop_w > 10:
                             if crop_h < min_size or crop_w < min_size:
                                 scale = max(min_size / crop_h, min_size / crop_w)
                                 new_w = int(crop_w * scale)
@@ -393,8 +391,8 @@ class IngestionPipeline:
                             
                             thumb_name = f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
                             thumb_file = thumb_dir / thumb_name
-                            # Use high JPEG quality
-                            cv2.imwrite(str(thumb_file), face_crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                            # Max JPEG quality
+                            cv2.imwrite(str(thumb_file), face_crop, [cv2.IMWRITE_JPEG_QUALITY, 98])
                             thumb_path = f"/thumbnails/faces/{thumb_name}"
                 except Exception as e:
                     logger.error(f"Thumbnail generation failed: {e}")

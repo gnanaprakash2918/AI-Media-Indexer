@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     omdb_api_key: str | None = None
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
-    frame_interval: int = Field(default=5, description="Seconds between frames")
+    frame_interval: int = Field(default=2, description="Seconds between frames")
     batch_size: int = Field(default=24)
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
@@ -123,11 +123,11 @@ class Settings(BaseSettings):
     
     # Face Detection Settings
     face_detection_threshold: float = Field(
-        default=0.5,
+        default=0.4,
         description="Face detection confidence threshold (0.3-0.9, lower=more faces)"
     )
     face_detection_resolution: int = Field(
-        default=640,
+        default=960,
         description="Face detection input resolution (320=fast, 640=balanced, 960=accurate)"
     )
 

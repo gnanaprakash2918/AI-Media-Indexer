@@ -275,7 +275,7 @@ if [ "$INTEGRATED" = true ]; then
     
     # Start Backend in foreground (blocking)
     cd "$SCRIPT_DIR"
-    uv run uvicorn api.server:app --port 8000
+    uv run uvicorn api.server:create_app --factory --host 0.0.0.0 --port 8000
 else
     # DEFAULT: Launch in separate terminal windows
     echo -e "${GRAY}  Mode: Separate terminal windows (default)${NC}"
@@ -295,16 +295,16 @@ else
     
     # Start Backend
     if [ "$TERMINAL" = "gnome-terminal" ]; then
-        gnome-terminal -- bash -c "cd '$SCRIPT_DIR' && echo -e '${CYAN}AI-Media-Indexer Backend${NC}' && uv run uvicorn api.server:app --port 8000; exec bash"
+        gnome-terminal -- bash -c "cd '$SCRIPT_DIR' && echo -e '${CYAN}AI-Media-Indexer Backend${NC}' && uv run uvicorn api.server:create_app --factory --host 0.0.0.0 --port 8000; exec bash"
     elif [ "$TERMINAL" = "konsole" ]; then
-        konsole -e bash -c "cd '$SCRIPT_DIR' && uv run uvicorn api.server:app --port 8000; exec bash" &
+        konsole -e bash -c "cd '$SCRIPT_DIR' && uv run uvicorn api.server:create_app --factory --host 0.0.0.0 --port 8000; exec bash" &
     elif [ "$TERMINAL" = "xterm" ]; then
-        xterm -hold -e "cd '$SCRIPT_DIR' && uv run uvicorn api.server:app --port 8000" &
+        xterm -hold -e "cd '$SCRIPT_DIR' && uv run uvicorn api.server:create_app --factory --host 0.0.0.0 --port 8000" &
     elif [ "$TERMINAL" = "osascript" ]; then
-        osascript -e "tell application \"Terminal\" to do script \"cd '$SCRIPT_DIR' && uv run uvicorn api.server:app --port 8000\""
+        osascript -e "tell application \"Terminal\" to do script \"cd '$SCRIPT_DIR' && uv run uvicorn api.server:create_app --factory --host 0.0.0.0 --port 8000\""
     else
         echo -e "${YELLOW}  No terminal emulator found. Falling back to integrated mode...${NC}"
-        cd "$SCRIPT_DIR" && uv run uvicorn api.server:app --port 8000 &
+        cd "$SCRIPT_DIR" && uv run uvicorn api.server:create_app --factory --host 0.0.0.0 --port 8000 &
     fi
     echo -e "${GREEN}  Backend started (port 8000)${NC}"
     
