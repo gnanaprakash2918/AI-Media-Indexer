@@ -182,6 +182,29 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.get("/media")
+    async def stream_media(path: str = Query(...)):
+        """Stream a media file for playback in browser."""
+        from fastapi.responses import FileResponse
+        file_path = Path(path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Get mime type
+        suffix = file_path.suffix.lower()
+        mime_types = {
+            '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm',
+            '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+            '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.flac': 'audio/flac',
+        }
+        media_type = mime_types.get(suffix, 'application/octet-stream')
+        
+        return FileResponse(
+            file_path,
+            media_type=media_type,
+            filename=file_path.name,
+        )
+
     @app.post("/ingest")
     async def ingest_media(
         ingest_request: IngestRequest,

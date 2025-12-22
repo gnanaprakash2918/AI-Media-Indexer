@@ -315,7 +315,7 @@ if ($Integrated) {
     # Start Backend in foreground (blocking)
     Set-Location $ProjectRoot
     try {
-        uv run uvicorn api.server:app --port 8000
+        uv run uvicorn api.server:create_app --factory --host 0.0.0.0 --port 8000
     } finally {
         # Cleanup when backend stops
         Write-Host ""

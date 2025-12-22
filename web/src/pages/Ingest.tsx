@@ -94,11 +94,14 @@ export default function IngestPage() {
         refetchInterval: 5000,
     });
 
+    // Parse time string (supports s, m:s, h:m:s formats), returns undefined if invalid
     const parseTime = (t: string): number | undefined => {
-        if (!t) return undefined;
+        if (!t.trim()) return undefined;
         const parts = t.split(':').map(Number);
-        if (parts.length === 2) return parts[0] * 60 + parts[1];
-        if (parts.length === 1) return parts[0];
+        if (parts.some(isNaN)) return undefined;  // Invalid input = use full video
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];  // h:m:s
+        if (parts.length === 2) return parts[0] * 60 + parts[1];  // m:s
+        if (parts.length === 1) return parts[0];  // seconds only
         return undefined;
     };
 
@@ -149,8 +152,10 @@ export default function IngestPage() {
     };
 
     // Clear pending jobs when they appear in real jobs
-    const realJobPaths = jobs.data?.jobs?.map((j: Job) => j.file_path) || [];
-    const filteredPending = pendingJobs.filter(p => !realJobPaths.includes(p));
+    useEffect(() => {
+        const realJobPaths = jobs.data?.jobs?.map((j: Job) => j.file_path) || [];
+        setPendingJobs(prev => prev.filter(p => !realJobPaths.includes(p)));
+    }, [jobs.data]);
 
     const addPath = () => setPaths([...paths, '']);
     const removePath = (idx: number) => setPaths(paths.filter((_, i) => i !== idx));
@@ -223,16 +228,16 @@ export default function IngestPage() {
                     </Button>
                     <TextField
                         size="small"
-                        sx={{ width: 90 }}
-                        placeholder="0:00"
+                        sx={{ width: 100 }}
+                        placeholder="0:00:00"
                         label="Start"
                         value={startTime}
                         onChange={(e) => setStartTime(e.target.value)}
                     />
                     <TextField
                         size="small"
-                        sx={{ width: 90 }}
-                        placeholder="5:00"
+                        sx={{ width: 100 }}
+                        placeholder="(full)"
                         label="End"
                         value={endTime}
                         onChange={(e) => setEndTime(e.target.value)}
