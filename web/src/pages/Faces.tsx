@@ -31,7 +31,7 @@ import {
 } from '@mui/material';
 import {
     Face, Search, Check, Edit, Delete, ZoomIn, AutoAwesome, Groups,
-    ExpandMore, ExpandLess, MoveUp
+    ExpandMore, ExpandLess, MoveUp, Star, StarBorder
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 
@@ -45,6 +45,7 @@ import {
     deleteFace,
     moveFaceToCluster,
     createNewFaceCluster,
+    setFaceMain,
 } from '../api/client';
 
 interface FaceData {
@@ -62,6 +63,7 @@ interface FaceClusterData {
     face_count: number;
     representative: FaceData | null;
     faces: FaceData[];
+    is_main?: boolean;
 }
 
 function FaceCard({
@@ -153,6 +155,7 @@ function ClusterCard({
     onZoom,
     onMoveFace,
     onMerge,
+    onSetMain,
 }: {
     cluster: FaceClusterData;
     onLabelCluster: (clusterId: number) => void;
@@ -161,6 +164,7 @@ function ClusterCard({
     onZoom: (face: FaceData) => void;
     onMoveFace: (faceId: string) => void;
     onMerge?: () => void;
+    onSetMain?: (clusterId: number, isMain: boolean) => void;
 }) {
     const [expanded, setExpanded] = useState(false);
     const [imageError, setImageError] = useState(false);
@@ -169,7 +173,7 @@ function ClusterCard({
     const hasValidImage = thumbUrl && !imageError;
 
     return (
-        <Paper sx={{ mb: 2, overflow: 'hidden' }}>
+        <Paper sx={{ mb: 2, overflow: 'hidden', border: cluster.is_main ? '2px solid' : 'none', borderColor: 'warning.main' }}>
             <Box
                 sx={{ display: 'flex', alignItems: 'center', p: 2, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
                 onClick={() => setExpanded(!expanded)}
@@ -178,16 +182,27 @@ function ClusterCard({
                     <Face />
                 </Avatar>
                 <Box sx={{ flex: 1 }}>
-                    {cluster.name ? (
-                        <Chip label={cluster.name} color="success" size="small" />
-                    ) : (
-                        <Typography variant="body1" fontWeight={600}>Cluster #{cluster.cluster_id}</Typography>
-                    )}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {cluster.is_main && <Star sx={{ color: 'warning.main', fontSize: 18 }} />}
+                        {cluster.name ? (
+                            <Chip label={cluster.name} color="success" size="small" />
+                        ) : (
+                            <Typography variant="body1" fontWeight={600}>Cluster #{cluster.cluster_id}</Typography>
+                        )}
+                    </Box>
                     <Typography variant="caption" color="text.secondary" display="block">
-                        {cluster.face_count} occurrence{cluster.face_count !== 1 ? 's' : ''}
+                        {cluster.face_count} occurrence{cluster.face_count !== 1 ? 's' : ''}{cluster.is_main ? ' • Main Character' : ''}
                     </Typography>
                 </Box>
                 <Badge badgeContent={cluster.face_count} color="primary" sx={{ mr: 2 }}><Groups /></Badge>
+
+                {onSetMain && (
+                    <Tooltip title={cluster.is_main ? 'Remove Main' : 'Mark as Main Character'}>
+                        <IconButton size="small" onClick={(e) => { e.stopPropagation(); onSetMain(cluster.cluster_id, !cluster.is_main); }} sx={{ mr: 1, color: cluster.is_main ? 'warning.main' : 'inherit' }}>
+                            {cluster.is_main ? <Star /> : <StarBorder />}
+                        </IconButton>
+                    </Tooltip>
+                )}
 
                 {onMerge && (
                     <Button size="small" variant="outlined" color="warning" onClick={(e) => { e.stopPropagation(); onMerge(); }} sx={{ mr: 1 }}>
@@ -306,6 +321,11 @@ export default function FacesPage() {
         onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); setMoveFaceId(null); },
     });
 
+    const setMainMutation = useMutation({
+        mutationFn: ({ clusterId, isMain }: { clusterId: number; isMain: boolean }) => setFaceMain(clusterId, isMain),
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); },
+    });
+
     const handleTriggerClustering = async () => {
         setIsClustering(true);
         try { await triggerFaceClustering(); queryClient.invalidateQueries({ queryKey: ['faces'] }); }
@@ -377,6 +397,7 @@ export default function FacesPage() {
                                 onZoom={setZoomFace}
                                 onMoveFace={setMoveFaceId}
                                 onMerge={() => setMergeSourceId(cluster.cluster_id)}
+                                onSetMain={(cid, isMain) => setMainMutation.mutate({ clusterId: cid, isMain })}
                             />
                         ))}
                     </Box>

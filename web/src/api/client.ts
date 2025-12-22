@@ -128,6 +128,11 @@ export const mergeFaceClusters = async (fromCluster: number, toCluster: number) 
     return res.data;
 };
 
+export const setFaceMain = async (clusterId: number, isMain: boolean) => {
+    const res = await apiClient.post(`/faces/${clusterId}/main`, null, { params: { is_main: isMain } });
+    return res.data;
+};
+
 // Voice Clustering
 export const triggerVoiceClustering = async () => {
     const res = await apiClient.post('/voices/cluster');
