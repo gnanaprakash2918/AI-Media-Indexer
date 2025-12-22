@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
     language: str | None = "ta"
-        whisper_model_map: dict[str, list[str]] = {
+    whisper_model_map: dict[str, list[str]] = {
         "ta": [
             # "ai4bharat/indicconformer",
             "openai/whisper-large-v3-turbo",
