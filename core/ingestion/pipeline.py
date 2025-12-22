@@ -331,13 +331,16 @@ class IngestionPipeline:
                     img_data = np.fromfile(str(frame_path), dtype=np.uint8)
                     img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
                     if img is not None:
-                        x, y, w, h = face.bbox
-                        # Increased padding for better context (40% instead of 20%)
-                        pad = int(max(w, h) * 0.4)
-                        y1 = max(0, y - pad)
-                        y2 = min(img.shape[0], y + h + pad)
-                        x1 = max(0, x - pad)
-                        x2 = min(img.shape[1], x + w + pad)
+                        # bbox format from FaceManager is (top, right, bottom, left)
+                        top, right, bottom, left = face.bbox
+                        face_w = right - left
+                        face_h = bottom - top
+                        # Increased padding for better context (40%)
+                        pad = int(max(face_w, face_h) * 0.4)
+                        y1 = max(0, top - pad)
+                        y2 = min(img.shape[0], bottom + pad)
+                        x1 = max(0, left - pad)
+                        x2 = min(img.shape[1], right + pad)
                         face_crop = img[y1:y2, x1:x2]
                         
                         # Ensure minimum size for quality (resize up if too small)
