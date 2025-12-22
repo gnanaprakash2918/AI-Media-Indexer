@@ -142,21 +142,25 @@ class FaceManager:
         """Try to initialize InsightFace. Returns True on success."""
         FaceAnalysis = _try_import_insightface()
         if FaceAnalysis is None:
+            print("[FaceManager] InsightFace library not found. Falling back.")
             return False
         
         try:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._use_gpu else ["CPUExecutionProvider"]
+            # Buffalo_l is the 512-dim model with highest accuracy
             app = FaceAnalysis(
-                name="buffalo_l",  # Best accuracy model
+                name="buffalo_l",
                 root=str(MODELS_DIR),
                 providers=providers,
             )
             app.prepare(ctx_id=0 if self._use_gpu else -1, det_size=(640, 640))
             self._insightface_app = app
-            print("[FaceManager] Using InsightFace ArcFace (512-dim) - BEST")
+            print(f"[FaceManager] SUCCESS: Using InsightFace ArcFace (512-dim). Providers: {providers}")
             return True
         except Exception as e:
-            print(f"[FaceManager] InsightFace init failed: {e}")
+            print(f"[FaceManager] CRITICAL: InsightFace init failed despite library presence: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     async def _try_init_sface(self) -> bool:

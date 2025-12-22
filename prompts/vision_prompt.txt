@@ -1,7 +1,11 @@
-Describe this image in detail for a media search engine.
-Focus on:
-1. Main characters (gender, age, clothing).
-2. Setting (indoor/outdoor, time of day, location).
-3. Action (what is happening?).
-4. Text (visible signs or screens).
-Output a single concise paragraph.
+Describe this image in extreme detail for a search index. 
+1. **Action**: What exactly is happening? (e.g., "bowling a strike", "running", "arguing"). Infer the likely preceding and succeeding actions.
+2. **Subjects**: Describe people in detail:
+   - Clothing: Color, type (e.g., "red Nike jacket", "green shoes with untied laces").
+   - Accessories: Headphones, glasses, ID cards (try to read text like "INFY").
+   - Appearance: Hair, estimated age, emotion.
+3. **Setting**: Where is this? (e.g., "Brunswick bowling alley", "kitchen", "office"). Note lighting and background objects.
+4. **Text**: Read ANY visible text (signs, screens, badges).
+5. **Context**: Synthesize "what is going on" into a narrative sentence.
+
+Output as a detailed paragraph without bullet points.

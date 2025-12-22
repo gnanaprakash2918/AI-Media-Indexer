@@ -27,24 +27,35 @@ trace_obj_ctx: ContextVar[Any | None] = ContextVar("obs_trace_obj", default=None
 def init_langfuse() -> None:
     """Initialize Langfuse client based on configuration."""
     global langfuse_client
+    
+    logger.info(f"🔍 Langfuse init: backend={settings.langfuse_backend}")
+    
     if settings.langfuse_backend == "disabled":
         langfuse_client = None
+        logger.info("  Langfuse disabled")
         return
+        
     if settings.langfuse_backend == "cloud" and settings.langfuse_public_key:
         langfuse_client = Langfuse(
             public_key=settings.langfuse_public_key,
             secret_key=settings.langfuse_secret_key,
             host=settings.langfuse_host,
         )
+        logger.info(f"  ✅ Langfuse cloud initialized: {settings.langfuse_host}")
+        
     elif settings.langfuse_backend == "docker":
-        # Use keys from settings if available, otherwise fall back to local
         public_key = settings.langfuse_public_key or "local"
         secret_key = settings.langfuse_secret_key or "local"
+        # Use LANGFUSE_HOST if set, otherwise default docker host
+        host = settings.langfuse_host if settings.langfuse_host != "https://cloud.langfuse.com" else settings.langfuse_docker_host
         langfuse_client = Langfuse(
             public_key=public_key,
             secret_key=secret_key,
-            host=settings.langfuse_docker_host,
+            host=host,
         )
+        logger.info(f"  ✅ Langfuse docker initialized: {host}")
+    else:
+        logger.warning(f"  ⚠️ Langfuse not initialized: backend={settings.langfuse_backend}, key_present={bool(settings.langfuse_public_key)}")
 
 
 def start_trace(name: str, metadata: dict[str, Any] | None = None) -> str:
@@ -82,6 +93,13 @@ def end_trace(status: str = "success", error: str | None = None) -> None:
             
         trace_obj.update(**update_kwargs)
         trace_obj.end()
+        
+        # Flush to ensure trace is sent to server
+        if langfuse_client:
+            try:
+                langfuse_client.flush()
+            except Exception:
+                pass
         
     logger.info("trace_end", status=status, error=error)
     trace_id_ctx.set(None)

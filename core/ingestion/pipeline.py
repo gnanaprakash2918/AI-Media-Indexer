@@ -263,6 +263,9 @@ class IngestionPipeline:
 
         frame_count = 0
         CLEANUP_INTERVAL = 10  # Cleanup memory every N frames
+        
+        # Keep track of context for narrative continuity
+        last_description: str | None = None
 
         async for frame_path in frame_generator:
             if job_id and progress_tracker.is_cancelled(job_id):
@@ -272,12 +275,16 @@ class IngestionPipeline:
             timestamp = time_offset + (frame_count * float(self.frame_interval_seconds))
             try:
                 if self.frame_sampler.should_sample(frame_count):
-                    await self._process_single_frame(
+                    new_desc = await self._process_single_frame(
                         video_path=path,
                         frame_path=frame_path,
                         timestamp=timestamp,
                         index=frame_count,
+                        context=last_description,
                     )
+                    if new_desc:
+                        last_description = new_desc
+                        
                     if job_id and frame_count % 5 == 0:
                         progress = 55.0 + min(40.0, frame_count * 2.0)
                         progress_tracker.update(
@@ -316,13 +323,14 @@ class IngestionPipeline:
         frame_path: Path,
         timestamp: float,
         index: int,
-    ) -> None:
+        context: str | None = None,
+    ) -> str | None:
         if not self.vision or not self.faces:
-            return
+            return None
 
         description: str | None = None
         try:
-            description = await self.vision.describe(frame_path)
+            description = await self.vision.describe(frame_path, context=context)
         except Exception:
             pass
 
@@ -340,7 +348,7 @@ class IngestionPipeline:
         try:
             detected_faces = await self.faces.detect_faces(frame_path)
         except Exception:
-            return
+            return None
 
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"
@@ -406,6 +414,8 @@ class IngestionPipeline:
                     timestamp=timestamp,
                     thumbnail_path=thumb_path,
                 )
+        
+        return description
 
     def _prepare_segments_for_db(
         self,

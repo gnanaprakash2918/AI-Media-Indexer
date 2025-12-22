@@ -21,7 +21,20 @@ from core.utils.observe import observe
 
 
 # Auto-select embedding model based on available VRAM
-_SELECTED_MODEL, _SELECTED_DIM = select_embedding_model()
+# Allow override from config
+if settings.embedding_model_override:
+    _SELECTED_MODEL = settings.embedding_model_override
+    # We'd ideally infer dim, but for custom overrides, we might default to 1024 or 768?
+    # For now, let's assume if they stick to the e5/bge family:
+    if "large" in _SELECTED_MODEL:
+        _SELECTED_DIM = 1024
+    elif "base" in _SELECTED_MODEL:
+        _SELECTED_DIM = 768
+    else:
+        _SELECTED_DIM = 384
+    log(f"Overriding embedding model from config: {_SELECTED_MODEL} ({_SELECTED_DIM}d)")
+else:
+    _SELECTED_MODEL, _SELECTED_DIM = select_embedding_model()
 
 
 class VectorDB:

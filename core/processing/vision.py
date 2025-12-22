@@ -39,11 +39,12 @@ class VisionAnalyzer:
             raise
 
     @observe("vision_describe")
-    async def describe(self, image_path: Path) -> str:
+    async def describe(self, image_path: Path, context: str | None = None) -> str:
         """Asynchronously describe an image using the configured LLM.
 
         Args:
             image_path: Path to the image file to describe.
+            context: Optional context from previous frames to maintain narrative flow.
 
         Returns:
             A textual description produced by the LLM.
@@ -55,8 +56,13 @@ class VisionAnalyzer:
         if not image_path.exists() or not image_path.is_file():
             return f"Error: Image not found at {image_path}"
 
+        final_prompt = self.prompt
+        if context:
+            # Append context to help the model understand continuity
+            final_prompt += f"\n\n[PREVIOUS FRAME CONTEXT]: {context}\nUse this context to infer continuing actions, but focus on the CURRENT image."
+
         return await self.llm.describe_image(
-            prompt=self.prompt,
+            prompt=final_prompt,
             image_path=image_path,
         )
 

@@ -8,6 +8,31 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
+from pathlib import Path
+from uuid import uuid4
+import sys
+
+# Windows-specific asyncio fix for "WinError 10054" noise
+if sys.platform == "win32":
+    import asyncio
+    
+    class SilenceEventLoopPolicy(asyncio.WindowsProactorEventLoopPolicy):
+        def _loop_factory(self) -> asyncio.AbstractEventLoop:
+            loop = super()._loop_factory()
+            
+            def exception_handler(loop, context):
+                # Suppress connection reset errors typical in Windows
+                if "ConnectionResetError" in str(context.get("exception", "")) or \
+                   "WinError 10054" in str(context.get("exception", "")):
+                    return
+                # Default handler for everything else
+                loop.default_exception_handler(context)
+
+            loop.set_exception_handler(exception_handler)
+            return loop
+
+    asyncio.set_event_loop_policy(SilenceEventLoopPolicy())
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -183,27 +208,144 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/media")
-    async def stream_media(path: str = Query(...)):
-        """Stream a media file for playback in browser."""
-        from fastapi.responses import FileResponse
+    async def stream_media(
+        request: Request,
+        path: str = Query(...),
+        start: float = Query(0.0, description="Start time in seconds for segment playback"),
+        end: float = Query(None, description="End time in seconds for segment playback"),
+    ):
+        """Stream a media file with HTTP Range support for proper seeking and audio.
+        
+        Supports:
+        - HTTP Range requests (required for video seeking)
+        - Optional start/end params for segment playback
+        """
+        from fastapi.responses import StreamingResponse, Response
+        import os
+        import stat
+        
         file_path = Path(path)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
+        
+        # Get file stats
+        file_size = file_path.stat().st_size
         
         # Get mime type
         suffix = file_path.suffix.lower()
         mime_types = {
             '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm',
-            '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+            '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v',
             '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.flac': 'audio/flac',
+            '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg',
         }
         media_type = mime_types.get(suffix, 'application/octet-stream')
         
-        return FileResponse(
-            file_path,
-            media_type=media_type,
-            filename=file_path.name,
-        )
+        # Parse Range header
+        range_header = request.headers.get("range")
+        
+        if range_header:
+            # Parse "bytes=start-end"
+            range_match = range_header.replace("bytes=", "").split("-")
+            range_start = int(range_match[0]) if range_match[0] else 0
+            range_end = int(range_match[1]) if range_match[1] else file_size - 1
+            
+            # Ensure valid range
+            range_start = max(0, min(range_start, file_size - 1))
+            range_end = max(range_start, min(range_end, file_size - 1))
+            
+            content_length = range_end - range_start + 1
+            
+            def iterfile():
+                with open(file_path, "rb") as f:
+                    f.seek(range_start)
+                    remaining = content_length
+                    chunk_size = 64 * 1024  # 64KB chunks
+                    while remaining > 0:
+                        read_size = min(chunk_size, remaining)
+                        data = f.read(read_size)
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+            
+            headers = {
+                "Content-Range": f"bytes {range_start}-{range_end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(content_length),
+                "Content-Type": media_type,
+            }
+            
+            return StreamingResponse(
+                iterfile(),
+                status_code=206,  # Partial Content
+                headers=headers,
+                media_type=media_type,
+            )
+        else:
+            # No range request - stream entire file
+            def iterfile():
+                with open(file_path, "rb") as f:
+                    chunk_size = 64 * 1024
+                    while chunk := f.read(chunk_size):
+                        yield chunk
+            
+            headers = {
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+            }
+            
+            return StreamingResponse(
+                iterfile(),
+                headers=headers,
+                media_type=media_type,
+            )
+
+    @app.get("/media/thumbnail")
+    async def get_media_thumbnail(path: str = Query(...), time: float = 0.0):
+        """Generate a thumbnail for a video at a specific timestamp."""
+        from fastapi.responses import Response
+        import cv2
+        import numpy as np
+        
+        file_path = Path(path)
+        if not file_path.exists():
+             # Return a placeholder or 404
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        # Use OpenCV for fast seeking
+        try:
+            cap = cv2.VideoCapture(str(file_path))
+            if not cap.isOpened():
+                raise ValueError("Could not open video")
+                
+            # Seek
+            # Convert seconds to msec
+            cap.set(cv2.CAP_PROP_POS_MSEC, time * 1000)
+            ret, frame = cap.read()
+            cap.release()
+            
+            if not ret or frame is None:
+                raise ValueError("Could not read frame")
+                
+            # Resize for thumbnail (e.g. 320px width)
+            h, w = frame.shape[:2]
+            target_w = 320
+            scale = target_w / w
+            target_h = int(h * scale)
+            frame = cv2.resize(frame, (target_w, target_h))
+            
+            # Encode as JPEG
+            # [1] is quality (0-100)
+            success, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if not success:
+                raise ValueError("Encoding failed")
+                
+            return Response(content=buffer.tobytes(), media_type="image/jpeg")
+            
+        except Exception as e:
+            logger.error(f"Thumbnail generation failed: {e}")
+            raise HTTPException(status_code=500, detail="Could not generate thumbnail")
 
     @app.post("/ingest")
     async def ingest_media(
@@ -312,22 +454,135 @@ def create_app() -> FastAPI:
             description="Type of search: all, dialogue, visual, voice",
         ),
     ):
-        """Semantic search across audio, visual, and voice."""
+        """Semantic search across audio, visual, and voice with detailed stats.
+        
+        Returns results with:
+        - Occurrence stats (frame count, time ranges)
+        - Thumbnail URLs
+        - Segment timestamps for playback
+        - Debug info to diagnose search quality issues
+        """
         if not pipeline:
-            return {"error": "Pipeline not initialized", "results": []}
+            return {"error": "Pipeline not initialized", "results": [], "stats": {}}
+        
+        from urllib.parse import quote
+        from collections import defaultdict
+        
+        logger.info(f"🔍 Search query: '{q}' | type: {search_type} | limit: {limit}")
 
         results = []
+        stats = {
+            "query": q,
+            "search_type": search_type,
+            "dialogue_count": 0,
+            "visual_count": 0,
+            "total_frames_scanned": 0,
+        }
 
+        # Dialogue/transcript search
         if search_type in ("all", "dialogue"):
             dialogue_results = pipeline.db.search_media(q, limit=limit)
+            stats["dialogue_count"] = len(dialogue_results)
+            
+            for hit in dialogue_results:
+                hit["result_type"] = "dialogue"
+                hit["thumbnail_url"] = None  # Could generate from video_path + start time
+                video = hit.get("video_path")
+                start_time = hit.get("start", 0)
+                if video:
+                    safe_path = quote(str(video))
+                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={start_time}"
+                    hit["playback_url"] = f"/media?path={safe_path}#t={start_time}"
+            
             results.extend(dialogue_results)
+            logger.info(f"  📝 Dialogue results: {len(dialogue_results)}")
 
+        # Visual/frame search
         if search_type in ("all", "visual"):
-            frame_results = pipeline.db.search_frames(q, limit=limit)
-            results.extend(frame_results)
+            # Fetch more results to allow for deduplication
+            frame_results = pipeline.db.search_frames(q, limit=limit * 3)
+            stats["total_frames_scanned"] = len(frame_results)
+            
+            # Log raw results to debug identical results issue
+            if frame_results:
+                logger.info(f"  🎬 Raw frame results: {len(frame_results)}")
+                # Log top 3 scores and descriptions to see if they're discriminative
+                for i, hit in enumerate(frame_results[:3]):
+                    desc = (hit.get("action") or "")[:80]
+                    logger.info(f"     #{i+1}: score={hit.get('score', 0):.4f} | '{desc}...'")
+            
+            # Group by video and deduplicate
+            unique_frames = []
+            seen_timestamps: dict[str, list[float]] = {}
+            occurrence_tracker: dict[str, dict] = defaultdict(lambda: {"count": 0, "timestamps": []})
+            
+            for hit in frame_results:
+                video = hit.get("video_path")
+                ts = hit.get("timestamp", 0)
+                score = hit.get("score", 0)
+                
+                # Track all occurrences for stats
+                if video:
+                    occurrence_tracker[video]["count"] += 1
+                    occurrence_tracker[video]["timestamps"].append(ts)
+                
+                # Deduplication: Skip if we already have a frame from this video within 5 seconds
+                # (reduced from 10s to get more diverse results)
+                if video in seen_timestamps:
+                    if any(abs(ts - existing) < 5.0 for existing in seen_timestamps[video]):
+                        continue
+                else:
+                    seen_timestamps[video] = []
+                
+                seen_timestamps[video].append(ts)
+                
+                # Expand to 7-second context (timestamp center)
+                start_context = max(0.0, ts - 3.5)
+                end_context = ts + 3.5
+                
+                # Add rich metadata
+                hit["result_type"] = "visual"
+                hit["start"] = start_context
+                hit["end"] = end_context
+                hit["original_timestamp"] = ts
+                
+                # Add URLs for thumbnail and playback
+                if video:
+                    safe_path = quote(str(video))
+                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
+                    hit["playback_url"] = f"/media?path={safe_path}#t={start_context}"
+                
+                unique_frames.append(hit)
+                if len(unique_frames) >= limit:
+                    break
+            
+            # Add occurrence stats to results
+            for hit in unique_frames:
+                video = hit.get("video_path")
+                if video and video in occurrence_tracker:
+                    hit["occurrence_count"] = occurrence_tracker[video]["count"]
+                    hit["occurrence_timestamps"] = sorted(occurrence_tracker[video]["timestamps"])[:10]  # Top 10
+            
+            stats["visual_count"] = len(unique_frames)
+            results.extend(unique_frames)
+            logger.info(f"  🖼️ Unique visual results: {len(unique_frames)} (from {len(frame_results)} raw)")
 
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        return results[:limit]
+        # Sort by score (highest first)
+        results.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
+        final_results = results[:limit]
+        
+        stats["returned_count"] = len(final_results)
+        
+        # Log final result summary
+        if final_results:
+            scores = [float(r.get("score", 0)) for r in final_results]
+            stats["score_range"] = {"min": min(scores), "max": max(scores), "avg": sum(scores)/len(scores)}
+            logger.info(f"  ✅ Returning {len(final_results)} results | Score range: {min(scores):.4f} - {max(scores):.4f}")
+        
+        return {
+            "results": final_results,
+            "stats": stats,
+        }
 
     @app.get("/library")
     async def get_library():
@@ -566,20 +821,25 @@ def create_app() -> FastAPI:
 
     # Face Clustering Endpoints
     @app.post("/faces/cluster")
-    async def trigger_face_clustering():
-        """Run production-grade HDBSCAN clustering on face embeddings.
+    async def trigger_face_clustering(
+        threshold: float = Query(0.6, description="Cosine distance threshold (0.6 = 40% similarity, VERY permissive)"),
+        algorithm: str = Query("chinese_whispers", description="Algorithm: chinese_whispers (best) or agglomerative"),
+    ):
+        """Run ultra-aggressive face clustering using Chinese Whispers algorithm.
         
-        Best practices implemented:
-        - L2 normalization for cosine similarity
-        - PCA dimensionality reduction (improves clustering in high-dim space)
-        - HDBSCAN (handles varying cluster densities better than DBSCAN)
+        Chinese Whispers is the INDUSTRY STANDARD for face clustering:
+        - Used by dlib, face_recognition library
+        - Powers Google Photos-like clustering
+        - Handles lighting, angles, expressions, glasses naturally
+        
+        Default threshold 0.6 = only 40% cosine similarity needed to merge.
+        This is EXTREMELY permissive to handle different angles/lighting.
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         
         import numpy as np
-        from sklearn.decomposition import PCA
-        import hdbscan
+        from sklearn.metrics.pairwise import cosine_distances
         
         faces = pipeline.db.get_all_face_embeddings()
         if not faces:
@@ -591,77 +851,141 @@ def create_app() -> FastAPI:
         embeddings = np.array([f["embedding"] for f in faces])
         
         # Check for zero-padding (SFace 128-dim padded to 512-dim)
-        # If the last 300 dimensions are all close to zero for all vectors, it's likely SFace data.
-        # We need to slice it to 128-dim for accurate clustering.
-        is_padded = False
+        is_sface = False
         if embeddings.shape[1] == 512:
-            # Check if dimensions 128:512 are effectively zero
             tail_energy = np.sum(np.abs(embeddings[:, 128:]))
             if tail_energy < 1e-3:
-                is_padded = True
+                is_sface = True
                 embeddings = embeddings[:, :128]
-                logger.info("Detected zero-padded embeddings (SFace). Sliced to 128-dim.")
+                logger.warning("⚠️ Using SFace (128d) fallback. Install InsightFace for better quality!")
+                # SFace needs even more tolerance
+                threshold = min(threshold + 0.1, 0.8)
         
-        # Step 1: L2 normalize embeddings (Critical for Cosine/Euclidean)
+        # L2 normalize
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1
-        embeddings = embeddings / norms
+        embeddings_norm = embeddings / norms
         
-        # Step 2: PCA dimensionality reduction
-        # Production Best Practice:
-        # - For small datasets (N < 50), PCA removes too much information (reducing 512d -> N-1 dims).
-        #   Better to use raw Euclidean distance on normalized vectors.
-        # - For large datasets, PCA helps denoise and speed up.
-        target_dims = min(128, embeddings.shape[0] - 1)
-        use_pca = (not is_padded) and (embeddings.shape[0] >= 50) and (target_dims > 5)
+        # Compute pairwise COSINE DISTANCE matrix
+        dist_matrix = cosine_distances(embeddings_norm)
         
-        if use_pca:
-            pca = PCA(n_components=target_dims)
-            embeddings_reduced = pca.fit_transform(embeddings)
+        logger.info(f"🔍 Face Clustering: {len(faces)} faces, Model={'SFace' if is_sface else 'InsightFace'}, "
+                   f"Algorithm={algorithm}, Threshold={threshold:.2f} (similarity={1-threshold:.0%})")
+        
+        if algorithm == "chinese_whispers":
+            labels = _chinese_whispers_cluster(dist_matrix, threshold)
         else:
-            embeddings_reduced = embeddings
-        
-        # Step 3: HDBSCAN clustering (Tuned for Google Photos-like grouping)
-        # - min_cluster_size=2: Smallest valid group.
-        # - cluster_selection_epsilon=0.65: VERY AGGRESSIVE MERGING.
-        #   Standard ArcFace verification threshold is ~0.6-0.7 for hard cases.
-        #   0.65 helps merge profile/frontal views for small datasets.
-        epsilon = 0.65
-        
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=2,
-            min_samples=1,
-            metric="euclidean",
-            cluster_selection_epsilon=epsilon,
-            cluster_selection_method="eom",
-        )
-        labels = clusterer.fit_predict(embeddings_reduced)
+            # Fallback to Agglomerative
+            from sklearn.cluster import AgglomerativeClustering
+            clusterer = AgglomerativeClustering(
+                n_clusters=None,
+                metric="precomputed",
+                linkage="single",  # Single linkage = "friends of friends" - most permissive
+                distance_threshold=threshold,
+            )
+            labels = clusterer.fit_predict(dist_matrix)
         
         # Update each face with its cluster ID
         updated = 0
         for i, face in enumerate(faces):
             cluster_id = int(labels[i])
-            # Noise points (label=-1) get unique negative cluster IDs to keep them separate
-            if cluster_id == -1:
-                cluster_id = -abs(hash(face["id"])) % (10**9)
-            
-            # Crucial: Update logical cluster ID in Qdrant payload so it persists
             pipeline.db.update_face_cluster_id(face["id"], cluster_id)
             updated += 1
         
-        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-        n_noise = list(labels).count(-1)
+        n_clusters = len(set(labels))
+        
+        # Log cluster size distribution
+        from collections import Counter
+        cluster_sizes = Counter(labels)
+        size_dist = dict(sorted(Counter(cluster_sizes.values()).items()))
+        
+        # Find largest clusters
+        largest = cluster_sizes.most_common(5)
+        
+        logger.info(f"✅ Created {n_clusters} clusters. Largest: {largest}")
         
         return {
             "status": "clustered",
             "total_faces": len(faces),
             "clusters": n_clusters,
-            "noise_points": n_noise,
             "updated": updated,
-            "algorithm": "HDBSCAN",
-            "model_type": "SFace (128d)" if is_padded else "InsightFace (512d)",
-            "pca_components": target_dims,
+            "algorithm": algorithm,
+            "model_type": "SFace (128d)" if is_sface else "InsightFace (512d)",
+            "distance_threshold": threshold,
+            "similarity_threshold": f"{(1-threshold)*100:.0f}%",
+            "cluster_size_distribution": size_dist,
+            "largest_clusters": largest,
         }
+
+    def _chinese_whispers_cluster(dist_matrix: "np.ndarray", threshold: float) -> list[int]:
+        """Chinese Whispers clustering algorithm.
+        
+        This is the same algorithm used by dlib/face_recognition library.
+        It's a graph-based clustering that naturally handles:
+        - Varying cluster sizes
+        - Transitive relationships (A~B, B~C → A,B,C same cluster)
+        - No need to specify number of clusters
+        
+        Algorithm:
+        1. Build similarity graph where edge exists if distance < threshold
+        2. Each node starts with unique label
+        3. Iterate: each node adopts the most common label among its neighbors
+        4. Repeat until convergence
+        """
+        import numpy as np
+        import random
+        
+        n = len(dist_matrix)
+        
+        # Build adjacency list from distance matrix
+        # Edge exists if cosine distance < threshold (i.e., similar enough)
+        adjacency = [[] for _ in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                if dist_matrix[i, j] < threshold:
+                    adjacency[i].append(j)
+                    adjacency[j].append(i)
+        
+        # Log connectivity
+        edges = sum(len(adj) for adj in adjacency) // 2
+        logger.info(f"  Chinese Whispers: {n} nodes, {edges} edges (threshold={threshold:.2f})")
+        
+        # Initialize each node with unique label
+        labels = list(range(n))
+        
+        # Iterate until convergence (or max iterations)
+        max_iterations = 100
+        for iteration in range(max_iterations):
+            changed = False
+            # Random order to avoid bias
+            order = list(range(n))
+            random.shuffle(order)
+            
+            for node in order:
+                if not adjacency[node]:
+                    continue
+                
+                # Count neighbor labels
+                neighbor_labels = [labels[neighbor] for neighbor in adjacency[node]]
+                from collections import Counter
+                label_counts = Counter(neighbor_labels)
+                
+                # Adopt most common neighbor label
+                most_common_label = label_counts.most_common(1)[0][0]
+                if labels[node] != most_common_label:
+                    labels[node] = most_common_label
+                    changed = True
+            
+            if not changed:
+                logger.info(f"  Converged after {iteration + 1} iterations")
+                break
+        
+        # Renumber labels to be consecutive 0, 1, 2, ...
+        unique_labels = sorted(set(labels))
+        label_map = {old: new for new, old in enumerate(unique_labels)}
+        labels = [label_map[l] for l in labels]
+        
+        return labels
 
     @app.get("/faces/clusters")
     async def get_face_clusters():
@@ -675,16 +999,21 @@ def create_app() -> FastAPI:
         for cluster_id, faces in clusters.items():
             # Pick the first face as representative
             representative = faces[0] if faces else None
+            
+            # Check if any face in the cluster is marked as main
+            is_main = any(f.get("is_main", False) for f in faces)
+            
             result.append({
                 "cluster_id": cluster_id,
                 "name": faces[0].get("name") if faces else None,
                 "face_count": len(faces),
                 "representative": representative,
                 "faces": faces,
+                "is_main": is_main,
             })
         
-        # Sort by face count descending
-        result.sort(key=lambda x: x["face_count"], reverse=True)
+        # Sort by is_main (desc) -> face_count (desc)
+        result.sort(key=lambda x: (x["is_main"], x["face_count"]), reverse=True)
         return {"clusters": result}
 
     @app.post("/faces/merge")
@@ -901,6 +1230,55 @@ def create_app() -> FastAPI:
             pass
         
         return {"results": results[:limit], "total": len(results)}
+
+    @app.get("/debug/frames")
+    async def debug_frame_descriptions(limit: int = 50):
+        """Debug endpoint to inspect stored frame descriptions.
+        
+        Helps diagnose why different queries might return identical results
+        by showing what descriptions are actually stored in the database.
+        """
+        if not pipeline:
+            return {"error": "Pipeline not initialized"}
+        
+        try:
+            # Scroll through all frames in the media_frames collection
+            resp = pipeline.db.client.scroll(
+                collection_name=pipeline.db.MEDIA_COLLECTION,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            
+            frames = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                frames.append({
+                    "id": str(point.id),
+                    "video_path": payload.get("video_path"),
+                    "timestamp": payload.get("timestamp"),
+                    "description": payload.get("action"),
+                    "type": payload.get("type"),
+                })
+            
+            # Analyze description diversity
+            descriptions = [f["description"] or "" for f in frames]
+            unique_descriptions = set(descriptions)
+            
+            # Check for identical descriptions
+            from collections import Counter
+            desc_counts = Counter(descriptions)
+            duplicates = {k: v for k, v in desc_counts.items() if v > 1}
+            
+            return {
+                "total_frames": len(frames),
+                "unique_descriptions": len(unique_descriptions),
+                "duplicate_descriptions": duplicates,
+                "diversity_ratio": len(unique_descriptions) / max(1, len(frames)),
+                "sample_frames": frames[:20],  # First 20 samples
+            }
+        except Exception as e:
+            return {"error": str(e)}
 
     thumb_path = settings.cache_dir / "thumbnails"
     thumb_path.mkdir(parents=True, exist_ok=True)

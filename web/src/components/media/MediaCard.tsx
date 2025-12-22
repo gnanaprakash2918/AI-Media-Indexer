@@ -11,6 +11,7 @@ interface MediaResult {
     text?: string;
     type?: string;
     action?: string;
+    thumbnail_url?: string;
 }
 
 export function MediaCard({ item }: { item: MediaResult }) {
@@ -20,7 +21,11 @@ export function MediaCard({ item }: { item: MediaResult }) {
     // Extract filename for thumbnail
     const filename = item.video_path.split(/[/\\]/).pop();
     const baseName = filename?.replace(/\\.[^/.]+$/, "") || "";
-    const thumbnailUrl = `http://localhost:8000/thumbnails/${filename}.jpg`;
+
+    // Use dynamic thumbnail if available, else fallback to static or placeholder
+    const thumbnailUrl = item.thumbnail_url
+        ? `http://localhost:8000${item.thumbnail_url}`
+        : `http://localhost:8000/thumbnails/${filename}.jpg`;
 
     // Format timestamp
     const formatTime = (s?: number) => {

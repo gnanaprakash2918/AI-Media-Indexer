@@ -48,19 +48,16 @@ def cleanup_vram() -> None:
 def select_embedding_model() -> tuple[str, int]:
     vram = get_available_vram()
     
-    # FAANG-level quality: prioritize accuracy over memory
-    if vram >= 8:
-        # State-of-the-art for retrieval (MTEB top tier)
+    # User requested "Highest Quality" - defaulting to SOTA model despite VRAM
+    # intfloat/e5-large-v2 is 1024d, excellent for retrieval.
+    # Fallback to smaller only if VRAM is critically low (<2GB)
+    
+    if vram >= 2:
         model = "intfloat/e5-large-v2"
         dim = 1024
-    elif vram >= 4:
-        model = "BAAI/bge-base-en-v1.5"
-        dim = 768
-    elif vram >= 2:
-        model = "BAAI/bge-small-en-v1.5"
-        dim = 384
     else:
-        model = "sentence-transformers/all-MiniLM-L6-v2"
+        # Only for very constrained systems
+        model = "BAAI/bge-small-en-v1.5"
         dim = 384
     
     log(f"Selected embedding model: {model} ({dim}d) for {vram:.1f}GB VRAM")

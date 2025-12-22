@@ -160,6 +160,9 @@ class Settings(BaseSettings):
 
     # Local (Docker) Langfuse
     langfuse_docker_host: str = "http://localhost:3300"
+    
+    # Advanced Overrides
+    embedding_model_override: str | None = None
 
     @computed_field
     @property
