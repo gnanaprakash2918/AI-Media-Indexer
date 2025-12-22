@@ -134,21 +134,17 @@ class VectorDB:
         texts: str | list[str],
         batch_size: int = 1,
         show_progress_bar: bool = False,
+        is_query: bool = False,
     ) -> list[list[float]]:
-        """Generate embeddings for a list of texts.
-
-        Args:
-            texts: A string or list of strings to encode.
-            batch_size: Batch size for inference.
-            show_progress_bar: Whether to show a tqdm progress bar.
-
-        Returns:
-            A list of vector embeddings (lists of floats).
-        """
         if isinstance(texts, str):
             texts_list = [texts]
         else:
             texts_list = list(texts)
+
+        # e5 models require prefix (query: or passage:)
+        if "e5" in self.MODEL_NAME.lower():
+            prefix = "query: " if is_query else "passage: "
+            texts_list = [prefix + t for t in texts_list]
 
         try:
             if torch.cuda.is_available():
@@ -273,7 +269,7 @@ class VectorDB:
         Returns:
             A list of matching segments with metadata.
         """
-        query_vector = self.encode_texts(query)[0]
+        query_vector = self.encode_texts(query, is_query=True)[0]
 
         conditions: list[models.Condition] = []
         if video_path:
@@ -375,7 +371,7 @@ class VectorDB:
         Returns:
             A list of matching frames.
         """
-        query_vector = self.encoder.encode(query).tolist()
+        query_vector = self.encode_texts(query, is_query=True)[0]
 
         resp = self.client.query_points(
             collection_name=self.MEDIA_COLLECTION,

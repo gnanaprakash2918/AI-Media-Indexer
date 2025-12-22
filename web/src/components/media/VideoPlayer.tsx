@@ -12,10 +12,6 @@ interface VideoPlayerProps {
 export function VideoPlayer({ videoPath, startTime, open, onClose }: VideoPlayerProps) {
     const [error, setError] = useState(false);
 
-    // For local files, we need a file:// URL or API endpoint
-    // Backend should serve video files via /media endpoint
-    const videoUrl = `http://localhost:8000/media?path=${encodeURIComponent(videoPath)}${startTime ? `#t=${startTime}` : ''}`;
-
     return (
         <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1 }}>
@@ -40,10 +36,16 @@ export function VideoPlayer({ videoPath, startTime, open, onClose }: VideoPlayer
                     <video
                         controls
                         autoPlay
+                        muted={false}
                         style={{ width: '100%', maxHeight: '70vh' }}
                         onError={() => setError(true)}
+                        onLoadedMetadata={(e) => {
+                            if (startTime) {
+                                (e.target as HTMLVideoElement).currentTime = startTime;
+                            }
+                        }}
                     >
-                        <source src={videoUrl} />
+                        <source src={`http://localhost:8000/media?path=${encodeURIComponent(videoPath)}`} type="video/mp4" />
                         Your browser does not support video playback.
                     </video>
                 )}
