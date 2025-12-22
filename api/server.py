@@ -108,6 +108,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Mount static files for thumbnails
+    thumb_dir = settings.cache_dir / "thumbnails"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/thumbnails", StaticFiles(directory=str(thumb_dir)), name="thumbnails")
+
     @app.middleware("http")
     async def observability_middleware(request: Request, call_next):
         _ = request.headers.get("x-trace-id", str(uuid4()))

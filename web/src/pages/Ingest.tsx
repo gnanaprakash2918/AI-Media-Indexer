@@ -84,6 +84,7 @@ export default function IngestPage() {
     const [mediaType, setMediaType] = useState('unknown');
     const [startTime, setStartTime] = useState('');
     const [endTime, setEndTime] = useState('');
+    const [pendingJobs, setPendingJobs] = useState<string[]>([]);
     const queryClient = useQueryClient();
     const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -139,10 +140,17 @@ export default function IngestPage() {
         const start = parseTime(startTime);
         const end = parseTime(endTime);
         validPaths.forEach(path => {
+            setPendingJobs(prev => [...prev, path.trim()]);
             ingestMutation.mutate({ path: path.trim(), hint: mediaType, start, end });
         });
         setPaths(['']);
+        setStartTime('');
+        setEndTime('');
     };
+
+    // Clear pending jobs when they appear in real jobs
+    const realJobPaths = jobs.data?.jobs?.map((j: Job) => j.file_path) || [];
+    const filteredPending = pendingJobs.filter(p => !realJobPaths.includes(p));
 
     const addPath = () => setPaths([...paths, '']);
     const removePath = (idx: number) => setPaths(paths.filter((_, i) => i !== idx));
