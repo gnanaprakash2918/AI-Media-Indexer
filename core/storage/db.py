@@ -15,8 +15,13 @@ from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 
 from config import settings
+from core.utils.hardware import select_embedding_model
 from core.utils.logger import log
 from core.utils.observe import observe
+
+
+# Auto-select embedding model based on available VRAM
+_SELECTED_MODEL, _SELECTED_DIM = select_embedding_model()
 
 
 class VectorDB:
@@ -27,12 +32,12 @@ class VectorDB:
     FACES_COLLECTION = "faces"
     VOICE_COLLECTION = "voice_segments"
 
-    MEDIA_VECTOR_SIZE = 384
+    MEDIA_VECTOR_SIZE = _SELECTED_DIM
     FACE_VECTOR_SIZE = 512  # InsightFace ArcFace (fallback SFace uses 128 but vectors are padded)
-    TEXT_DIM = 384
+    TEXT_DIM = _SELECTED_DIM
     VOICE_VECTOR_SIZE = 256
 
-    MODEL_NAME = "all-MiniLM-L6-v2"
+    MODEL_NAME = _SELECTED_MODEL
 
     client: QdrantClient
 

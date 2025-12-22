@@ -56,29 +56,49 @@ class IngestionPipeline:
         self.voice: VoiceProcessor | None = None
         self.frame_sampler = FrameSampler(every_n=5)
 
-    def _cleanup_memory(self) -> None:
-        """Force garbage collection and clear CUDA cache."""
+    def _cleanup_memory(self, context: str = "") -> None:
+        """Force garbage collection and clear CUDA cache.
+        
+        Args:
+            context: Optional context string for logging (e.g., "audio_complete")
+        """
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()  # Ensure all GPU operations complete
+        
+        # Log VRAM status if available
+        try:
+            from core.utils.hardware import log_vram_status
+            log_vram_status(context or "cleanup")
+        except Exception:
+            pass
 
     @observe("process_video")
     async def process_video(
         self,
         video_path: str | Path,
         media_type_hint: str = "unknown",
+        start_time: float | None = None,
+        end_time: float | None = None,
     ) -> str:
         """Process a single video file through the entire ingestion pipeline.
 
         Args:
             video_path: Path to the video file.
             media_type_hint: Optional hint about the media type (e.g., 'movie', 'eps').
+            start_time: Optional start time in seconds for partial processing.
+            end_time: Optional end time in seconds for partial processing.
 
         Returns:
             The job ID of the processing task.
         """
         job_id = str(uuid.uuid4())
         bind_context(component="pipeline")
+        
+        # Store time range for use in processing methods
+        self._start_time = start_time
+        self._end_time = end_time
         
         path = Path(video_path)
         progress_tracker.start(
@@ -109,6 +129,7 @@ class IngestionPipeline:
         try:
             progress_tracker.update(job_id, 5.0, stage="audio", message="Processing audio")
             await retry(lambda: self._process_audio(path))
+            self._cleanup_memory("audio_complete")  # Unload Whisper
             progress_tracker.update(job_id, 30.0, stage="audio", message="Audio complete")
 
             if progress_tracker.is_cancelled(job_id):
@@ -116,6 +137,7 @@ class IngestionPipeline:
 
             progress_tracker.update(job_id, 35.0, stage="voice", message="Processing voice")
             await retry(lambda: self._process_voice(path))
+            self._cleanup_memory("voice_complete")  # Unload Pyannote
             progress_tracker.update(job_id, 50.0, stage="voice", message="Voice complete")
 
             if progress_tracker.is_cancelled(job_id):
@@ -123,6 +145,7 @@ class IngestionPipeline:
 
             progress_tracker.update(job_id, 55.0, stage="frames", message="Processing frames")
             await retry(lambda: self._process_frames(path, job_id))
+            self._cleanup_memory("frames_complete")  # Unload Vision + Faces
             progress_tracker.complete(job_id, message=f"Completed: {path.name}")
 
             return job_id
@@ -227,10 +250,16 @@ class IngestionPipeline:
         self.vision = VisionAnalyzer()
         self.faces = FaceManager(use_gpu=settings.device == "cuda")
 
+        # Pass time range to extractor for partial processing
         frame_generator = self.extractor.extract(
             path,
             interval=self.frame_interval_seconds,
+            start_time=getattr(self, '_start_time', None),
+            end_time=getattr(self, '_end_time', None),
         )
+        
+        # Time offset for accurate timestamps in partial extraction
+        time_offset = getattr(self, '_start_time', None) or 0.0
 
         frame_count = 0
         CLEANUP_INTERVAL = 10  # Cleanup memory every N frames
@@ -239,7 +268,8 @@ class IngestionPipeline:
             if job_id and progress_tracker.is_cancelled(job_id):
                 break
             
-            timestamp = frame_count * float(self.frame_interval_seconds)
+            # Calculate actual timestamp including offset
+            timestamp = time_offset + (frame_count * float(self.frame_interval_seconds))
             try:
                 if self.frame_sampler.should_sample(frame_count):
                     await self._process_single_frame(

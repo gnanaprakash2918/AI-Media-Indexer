@@ -47,12 +47,20 @@ async def lifespan(app: FastAPI):
         pipeline.db.close()
     logger.info("shutdown")
 
+# Media file validation
+ALLOWED_MEDIA_EXTENSIONS = {
+    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv",  # Video
+    ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg",  # Audio
+}
+
 
 # Models
 class IngestRequest(BaseModel):
     """Request body for ingestion."""
     path: str
     media_type_hint: str = "unknown"
+    start_time: float | None = None  # Seconds (e.g., 600 = 10:00)
+    end_time: float | None = None    # Seconds (e.g., 1200 = 20:00)
 
 class ScanRequest(BaseModel):
     """Request body for folder scanning."""
@@ -184,11 +192,24 @@ def create_app() -> FastAPI:
                 status_code=404,
                 detail=f"File not found on server: {ingest_request.path}"
             )
+        
+        # Validate media file extension
+        ext = file_path.suffix.lower()
+        if ext not in ALLOWED_MEDIA_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_MEDIA_EXTENSIONS))}"
+            )
 
         async def run_pipeline():
             try:
                 assert pipeline is not None
-                await pipeline.process_video(file_path, ingest_request.media_type_hint)
+                await pipeline.process_video(
+                    file_path,
+                    ingest_request.media_type_hint,
+                    start_time=ingest_request.start_time,
+                    end_time=ingest_request.end_time,
+                )
             except Exception as e:
                 logger.error(f"Pipeline error: {e}")
 
@@ -197,6 +218,8 @@ def create_app() -> FastAPI:
         return {
             "status": "queued",
             "file": str(file_path),
+            "start_time": ingest_request.start_time,
+            "end_time": ingest_request.end_time,
             "message": "Processing started. Use /events for live updates.",
         }
 

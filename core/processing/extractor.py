@@ -42,12 +42,16 @@ class FrameExtractor:
         self,
         video_path: str | Path,
         interval: int = 2,
+        start_time: float | None = None,
+        end_time: float | None = None,
     ) -> AsyncGenerator[Path, None]:
         """Generator that extracts frames from a video file at specified intervals.
 
         Args:
             video_path: Path to the video file.
             interval: Time interval in seconds between extracted frames.
+            start_time: Optional start time in seconds for partial extraction.
+            end_time: Optional end time in seconds for partial extraction.
 
         Returns:
             An async generator yielding Paths to the extracted frame images.
@@ -58,6 +62,9 @@ class FrameExtractor:
             IsADirectoryError: If the provided path is a directory.
             OSError: For other OS-related errors during processing.
         """
+        # Store time offset for timestamp calculation
+        self._time_offset = start_time or 0.0
+        
         # Non-blocking async generator for frame extraction
         try:
             if isinstance(video_path, str):
@@ -81,18 +88,28 @@ class FrameExtractor:
             with FrameExtractor.FrameCache() as cache_dir:
                 output_pattern = cache_dir / "frame_%04d.jpg"
 
-                args_to_ffmpeg = [
-                    "ffmpeg",
-                    "-i",
-                    str(path_obj),
-                    "-vf",
-                    f"fps=1/{interval}",
-                    "-q:v",
-                    "2",
-                    "-f",
-                    "image2",
+                # Build FFmpeg command with optional time range
+                args_to_ffmpeg = ["ffmpeg"]
+                
+                # -ss before -i for fast seeking (input seeking)
+                if start_time is not None:
+                    args_to_ffmpeg.extend(["-ss", str(start_time)])
+                
+                args_to_ffmpeg.extend(["-i", str(path_obj)])
+                
+                # -t for duration (if end_time specified)
+                if end_time is not None:
+                    duration = end_time - (start_time or 0)
+                    if duration > 0:
+                        args_to_ffmpeg.extend(["-t", str(duration)])
+                
+                # Video filter and quality settings
+                args_to_ffmpeg.extend([
+                    "-vf", f"fps=1/{interval}",
+                    "-q:v", "2",  # High quality JPEG
+                    "-f", "image2",
                     str(output_pattern),
-                ]
+                ])
 
                 log(f"Starting async ffmpeg process for {path_obj.name}")
 
