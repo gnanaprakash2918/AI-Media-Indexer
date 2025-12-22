@@ -1,0 +1,274 @@
+import { useState, useEffect, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+    Box,
+    Typography,
+    TextField,
+    Button,
+    Paper,
+    Select,
+    MenuItem,
+    FormControl,
+    InputLabel,
+    LinearProgress,
+    Chip,
+    Alert,
+    List,
+    ListItem,
+    ListItemText,
+    IconButton,
+} from '@mui/material';
+import { CloudUpload, Stop, FolderOpen, Add, Delete } from '@mui/icons-material';
+
+import { ingestMedia, getJobs, cancelJob } from '../api/client';
+
+type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+interface Job {
+    job_id: string;
+    status: JobStatus;
+    progress: number;
+    file_path: string;
+    media_type: string;
+    current_stage: string;
+    message: string;
+    started_at: number;
+    completed_at: number | null;
+    error: string | null;
+}
+
+function JobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => void }) {
+    const isRunning = job.status === 'running';
+    const fileName = job.file_path.split(/[/\\]/).pop() || job.file_path;
+
+    return (
+        <Paper sx={{ p: 2, mb: 1.5, borderRadius: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: '60%' }}>
+                    {fileName}
+                </Typography>
+                <Chip
+                    size="small"
+                    label={job.status}
+                    color={
+                        job.status === 'completed' ? 'success' :
+                            job.status === 'failed' ? 'error' :
+                                isRunning ? 'primary' : 'default'
+                    }
+                />
+            </Box>
+            {isRunning && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <LinearProgress
+                        variant="determinate"
+                        value={job.progress}
+                        sx={{ flex: 1, height: 6, borderRadius: 3 }}
+                    />
+                    <Typography variant="caption" fontWeight={600}>
+                        {Math.round(job.progress)}%
+                    </Typography>
+                    <IconButton size="small" onClick={() => onCancel(job.job_id)} color="error">
+                        <Stop fontSize="small" />
+                    </IconButton>
+                </Box>
+            )}
+            {job.status === 'failed' && job.error && (
+                <Typography variant="caption" color="error">{job.error}</Typography>
+            )}
+        </Paper>
+    );
+}
+
+export default function IngestPage() {
+    const [paths, setPaths] = useState<string[]>(['']);
+    const [mediaType, setMediaType] = useState('unknown');
+    const queryClient = useQueryClient();
+    const eventSourceRef = useRef<EventSource | null>(null);
+
+    const jobs = useQuery({
+        queryKey: ['jobs'],
+        queryFn: getJobs,
+        refetchInterval: 5000,
+    });
+
+    const ingestMutation = useMutation({
+        mutationFn: (data: { path: string; hint: string }) => ingestMedia(data.path, data.hint),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        },
+    });
+
+    const cancelMutation = useMutation({
+        mutationFn: cancelJob,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        },
+    });
+
+    // SSE connection
+    useEffect(() => {
+        const es = new EventSource('http://localhost:8000/events');
+        eventSourceRef.current = es;
+        es.onmessage = () => queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        es.onerror = () => {
+            es.close();
+            setTimeout(() => {
+                const newEs = new EventSource('http://localhost:8000/events');
+                eventSourceRef.current = newEs;
+                newEs.onmessage = () => queryClient.invalidateQueries({ queryKey: ['jobs'] });
+            }, 5000);
+        };
+        return () => es.close();
+    }, [queryClient]);
+
+    const handleSubmit = () => {
+        const validPaths = paths.filter(p => p.trim());
+        if (validPaths.length === 0) return;
+
+        validPaths.forEach(path => {
+            ingestMutation.mutate({ path: path.trim(), hint: mediaType });
+        });
+        setPaths(['']);
+    };
+
+    const addPath = () => setPaths([...paths, '']);
+    const removePath = (idx: number) => setPaths(paths.filter((_, i) => i !== idx));
+    const updatePath = (idx: number, value: string) => {
+        const newPaths = [...paths];
+        newPaths[idx] = value;
+        setPaths(newPaths);
+    };
+
+    const activeJobs = jobs.data?.jobs?.filter((j: Job) => j.status === 'running') || [];
+    const recentJobs = jobs.data?.jobs?.filter((j: Job) => j.status !== 'running').slice(0, 5) || [];
+
+    return (
+        <Box>
+            <Typography variant="h5" fontWeight={700} gutterBottom>Ingest Media</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                Add files or directories. Supports Windows and Linux paths.
+            </Typography>
+
+            {/* Input Form */}
+            <Paper sx={{ p: 2, borderRadius: 2, mb: 3 }}>
+                {paths.map((path, idx) => (
+                    <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                        <TextField
+                            fullWidth
+                            size="small"
+                            placeholder="/path/to/video.mp4 or D:\Videos\movie.mkv"
+                            value={path}
+                            onChange={(e) => updatePath(idx, e.target.value)}
+                            slotProps={{
+                                input: { startAdornment: <FolderOpen sx={{ mr: 1, color: 'action.active' }} fontSize="small" /> }
+                            }}
+                        />
+                        {paths.length > 1 && (
+                            <IconButton size="small" onClick={() => removePath(idx)} color="error">
+                                <Delete fontSize="small" />
+                            </IconButton>
+                        )}
+                    </Box>
+                ))}
+
+                <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
+                    <Button size="small" startIcon={<Add />} onClick={addPath} variant="outlined">
+                        Add Path
+                    </Button>
+                    <Button
+                        size="small"
+                        startIcon={<FolderOpen />}
+                        onClick={async () => {
+                            try {
+                                const { browseFileSystem } = await import('../api/client');
+                                const path = await browseFileSystem();
+                                if (path) {
+                                    const newPaths = [...paths];
+                                    if (newPaths[newPaths.length - 1] === '') {
+                                        newPaths[newPaths.length - 1] = path;
+                                    } else {
+                                        newPaths.push(path);
+                                    }
+                                    setPaths(newPaths);
+                                }
+                            } catch (e) {
+                                console.error(e);
+                            }
+                        }}
+                        variant="outlined"
+                        color="secondary"
+                    >
+                        Browse System
+                    </Button>
+                    <FormControl size="small" sx={{ minWidth: 120 }}>
+                        <InputLabel>Type</InputLabel>
+                        <Select value={mediaType} label="Type" onChange={(e) => setMediaType(e.target.value)}>
+                            <MenuItem value="unknown">Auto</MenuItem>
+                            <MenuItem value="movie">Movie</MenuItem>
+                            <MenuItem value="tv">TV</MenuItem>
+                            <MenuItem value="personal">Personal</MenuItem>
+                        </Select>
+                    </FormControl>
+                    <Button
+                        variant="contained"
+                        startIcon={<CloudUpload />}
+                        onClick={handleSubmit}
+                        disabled={!paths.some(p => p.trim()) || ingestMutation.isPending}
+                    >
+                        Start
+                    </Button>
+                </Box>
+
+                {ingestMutation.isError && (
+                    <Alert severity="error" sx={{ mt: 1.5 }}>
+                        {(ingestMutation.error as Error)?.message || 'Failed to start'}
+                    </Alert>
+                )}
+            </Paper>
+
+            {/* Active Jobs */}
+            {activeJobs.length > 0 && (
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+                        Processing ({activeJobs.length})
+                    </Typography>
+                    {activeJobs.map((job: Job) => (
+                        <JobCard key={job.job_id} job={job} onCancel={(id) => cancelMutation.mutate(id)} />
+                    ))}
+                </Box>
+            )}
+
+            {/* Recent Jobs */}
+            {recentJobs.length > 0 && (
+                <Box>
+                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>Recent</Typography>
+                    <Paper sx={{ borderRadius: 2 }}>
+                        <List dense disablePadding>
+                            {recentJobs.map((job: Job, idx: number) => (
+                                <ListItem key={job.job_id} divider={idx < recentJobs.length - 1}>
+                                    <ListItemText
+                                        primary={job.file_path.split(/[/\\]/).pop()}
+                                        secondary={job.completed_at ? new Date(job.completed_at * 1000).toLocaleString() : job.status}
+                                    />
+                                    <Chip
+                                        size="small"
+                                        label={job.status}
+                                        color={job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'default'}
+                                    />
+                                </ListItem>
+                            ))}
+                        </List>
+                    </Paper>
+                </Box>
+            )}
+
+            {/* Empty State */}
+            {!jobs.isLoading && jobs.data?.jobs?.length === 0 && (
+                <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, bgcolor: 'action.hover' }}>
+                    <CloudUpload sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />
+                    <Typography color="text.secondary">No jobs yet. Add a file path above.</Typography>
+                </Paper>
+            )}
+        </Box>
+    );
+}

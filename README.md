@@ -46,6 +46,7 @@ The project has evolved into a robust Modular Monolith with the following capabi
   - **Vector Store**: Qdrant
   - **Orchestration**: Google ADK / MCP
   - **Backend**: FastAPI (Server) & Typer (CLI)
+  - **Frontend**: React 19 + MUI 7 + Vite
 
 ---
 
@@ -79,5 +80,51 @@ cd AI-Media-Indexer
 uv sync
 ```
 <!-- /carousel -->
+
+### 2. Run Backend
+```bash
+uv run uvicorn api.server:app --port 8000
+```
+
+### 3. Run Web UI
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+---
+
+## Configuration
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+cp .env.example .env
+```
+
+**Required for full functionality:**
+
+| Variable | Description |
+|----------|-------------|
+| `OLLAMA_MODEL` | Vision model (e.g., `llava`, `llama3.2-vision`) |
+| `HF_TOKEN` | Hugging Face token for voice analysis |
+| `QDRANT_HOST` | Vector database host (default: `localhost`) |
+
+See [Configuration Guide](docs/configuration.md) for complete documentation.
+
+### Docker Services
+
+Start required services:
+
+```bash
+docker compose up qdrant -d
+```
+
+---
 
 For detailed development workflows, see the [Developer Guide](docs/development.md).

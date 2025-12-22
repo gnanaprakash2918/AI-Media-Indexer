@@ -79,11 +79,16 @@ class IngestionPipeline:
         """
         job_id = str(uuid.uuid4())
         bind_context(component="pipeline")
-        progress_tracker.start(job_id)
-
+        
         path = Path(video_path)
+        progress_tracker.start(
+            job_id,
+            file_path=str(path),
+            media_type=media_type_hint,
+        )
+
         if not path.exists() or not path.is_file():
-            progress_tracker.fail(job_id)
+            progress_tracker.fail(job_id, error=f"Invalid media path: {path}")
             raise FileNotFoundError(f"Invalid media path: {path}")
 
         hint_enum = (
@@ -97,24 +102,33 @@ class IngestionPipeline:
         try:
             probed = self.prober.probe(path)
             _ = float(probed.get("format", {}).get("duration", 0.0))
-        except MediaProbeError:
-            progress_tracker.fail(job_id)
+        except MediaProbeError as e:
+            progress_tracker.fail(job_id, error=f"Media probe failed: {e}")
             raise
 
         try:
+            progress_tracker.update(job_id, 5.0, stage="audio", message="Processing audio")
             await retry(lambda: self._process_audio(path))
-            progress_tracker.update(job_id, 30.0)
+            progress_tracker.update(job_id, 30.0, stage="audio", message="Audio complete")
 
+            if progress_tracker.is_cancelled(job_id):
+                return job_id
+
+            progress_tracker.update(job_id, 35.0, stage="voice", message="Processing voice")
             await retry(lambda: self._process_voice(path))
-            progress_tracker.update(job_id, 50.0)
+            progress_tracker.update(job_id, 50.0, stage="voice", message="Voice complete")
 
-            await retry(lambda: self._process_frames(path))
-            progress_tracker.complete(job_id)
+            if progress_tracker.is_cancelled(job_id):
+                return job_id
+
+            progress_tracker.update(job_id, 55.0, stage="frames", message="Processing frames")
+            await retry(lambda: self._process_frames(path, job_id))
+            progress_tracker.complete(job_id, message=f"Completed: {path.name}")
 
             return job_id
 
-        except Exception:
-            progress_tracker.fail(job_id)
+        except Exception as e:
+            progress_tracker.fail(job_id, error=str(e))
             raise
 
     @observe("audio_processing")
@@ -155,14 +169,50 @@ class IngestionPipeline:
 
         try:
             voice_segments = await self.voice.process(path)
-            for seg in voice_segments or []:
+            
+            # Prepare voice thumbnails directory
+            thumb_dir = settings.cache_dir / "thumbnails" / "voices"
+            thumb_dir.mkdir(parents=True, exist_ok=True)
+            
+            import subprocess
+            import hashlib
+            
+            # Create safe prefix
+            safe_stem = hashlib.md5(path.stem.encode()).hexdigest()
+
+            for idx, seg in enumerate(voice_segments or []):
+                audio_path: str | None = None
                 if seg.embedding is not None:
+                    # Extract audio clip
+                    try:
+                        clip_name = f"{safe_stem}_{seg.start_time:.2f}_{seg.end_time:.2f}.mp3"
+                        clip_file = thumb_dir / clip_name
+                        
+                        if not clip_file.exists():
+                            cmd = [
+                                "ffmpeg",
+                                "-y",
+                                "-i", str(path),
+                                "-ss", str(seg.start_time),
+                                "-to", str(seg.end_time),
+                                "-q:a", "2",  # High quality MP3
+                                "-map", "a",
+                                str(clip_file)
+                            ]
+                            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        
+                        if clip_file.exists():
+                            audio_path = f"/thumbnails/voices/{clip_name}"
+                    except Exception:
+                        pass
+
                     self.db.insert_voice_segment(
                         media_path=str(path),
                         start=seg.start_time,
                         end=seg.end_time,
                         speaker_label=seg.speaker_label,
                         embedding=seg.embedding,
+                        audio_path=audio_path,
                     )
         finally:
             del self.voice
@@ -170,7 +220,7 @@ class IngestionPipeline:
             self._cleanup_memory()
 
     @observe("frame_processing")
-    async def _process_frames(self, path: Path) -> None:
+    async def _process_frames(self, path: Path, job_id: str | None = None) -> None:
         vision_task_type = "network" if settings.llm_provider == "gemini" else "compute"
         await resource_manager.throttle_if_needed(vision_task_type)
 
@@ -183,8 +233,12 @@ class IngestionPipeline:
         )
 
         frame_count = 0
+        CLEANUP_INTERVAL = 10  # Cleanup memory every N frames
 
         async for frame_path in frame_generator:
+            if job_id and progress_tracker.is_cancelled(job_id):
+                break
+            
             timestamp = frame_count * float(self.frame_interval_seconds)
             try:
                 if self.frame_sampler.should_sample(frame_count):
@@ -194,15 +248,30 @@ class IngestionPipeline:
                         timestamp=timestamp,
                         index=frame_count,
                     )
-                await asyncio.sleep(1)
+                    if job_id and frame_count % 5 == 0:
+                        progress = 55.0 + min(40.0, frame_count * 2.0)
+                        progress_tracker.update(
+                            job_id,
+                            progress,
+                            stage="frames",
+                            message=f"Frame {frame_count}",
+                        )
+                await asyncio.sleep(0.3)  # Reduced sleep for faster processing
             finally:
+                # Always delete the frame file after processing
                 if frame_path.exists():
                     try:
                         frame_path.unlink()
                     except Exception:
                         pass
+            
             frame_count += 1
+            
+            # Periodic memory cleanup to prevent memory buildup
+            if frame_count % CLEANUP_INTERVAL == 0:
+                self._cleanup_memory()
 
+        # Final cleanup
         del self.vision
         del self.faces
         self.vision = None
@@ -243,9 +312,60 @@ class IngestionPipeline:
         except Exception:
             return
 
-        for face in detected_faces:
+        # Save face thumbnails
+        thumb_dir = settings.cache_dir / "thumbnails" / "faces"
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create a safe file prefix using hash of the filename
+        import hashlib
+        safe_stem = hashlib.md5(video_path.stem.encode()).hexdigest()
+
+        for idx, face in enumerate(detected_faces):
             if face.embedding is not None:
-                self.db.insert_face(face.embedding, name=None, cluster_id=None)
+                # Crop and save face thumbnail with better quality
+                thumb_path: str | None = None
+                try:
+                    import cv2
+                    import numpy as np
+                    # Use cv2.imdecode for unicode path support on Windows
+                    img_data = np.fromfile(str(frame_path), dtype=np.uint8)
+                    img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        x, y, w, h = face.bbox
+                        # Increased padding for better context (40% instead of 20%)
+                        pad = int(max(w, h) * 0.4)
+                        y1 = max(0, y - pad)
+                        y2 = min(img.shape[0], y + h + pad)
+                        x1 = max(0, x - pad)
+                        x2 = min(img.shape[1], x + w + pad)
+                        face_crop = img[y1:y2, x1:x2]
+                        
+                        # Ensure minimum size for quality (resize up if too small)
+                        min_size = 150
+                        crop_h, crop_w = face_crop.shape[:2]
+                        if crop_h > 0 and crop_w > 0:
+                            if crop_h < min_size or crop_w < min_size:
+                                scale = max(min_size / crop_h, min_size / crop_w)
+                                new_w = int(crop_w * scale)
+                                new_h = int(crop_h * scale)
+                                face_crop = cv2.resize(face_crop, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+                            
+                            thumb_name = f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
+                            thumb_file = thumb_dir / thumb_name
+                            # Use higher JPEG quality (95 instead of default ~75)
+                            cv2.imwrite(str(thumb_file), face_crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                            thumb_path = f"/thumbnails/faces/{thumb_name}"
+                except Exception:
+                    pass
+
+                self.db.insert_face(
+                    face.embedding,
+                    name=None,
+                    cluster_id=None,
+                    media_path=str(video_path),
+                    timestamp=timestamp,
+                    thumbnail_path=thumb_path,
+                )
 
     def _prepare_segments_for_db(
         self,

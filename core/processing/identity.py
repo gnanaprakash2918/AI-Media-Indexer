@@ -121,8 +121,8 @@ class FaceManager:
             self.detector = cv2.FaceDetectorYN.create(
                 model=str(MODELS_DIR / YUNET_MODEL),
                 config="",
-                input_size=(320, 320),
-                score_threshold=0.6,
+                input_size=(settings.face_detection_resolution, settings.face_detection_resolution),
+                score_threshold=settings.face_detection_threshold,
                 nms_threshold=0.3,
                 top_k=5000,
                 backend_id=backend,

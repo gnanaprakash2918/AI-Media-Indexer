@@ -55,11 +55,11 @@ dependencies = [
     "fastapi>=0.124.2",
     "pillow>=12.0.0",
     "pyannote.audio>=3.1.1",
-    "psutil>=5.9.0",
+    "psutil>=5.9.0"
 ]
 
 [project.optional-dependencies]
-dev = ["black>=24.0.0", "mypy>=1.10.0"]
+dev = ["black>=24.0.0", "mypy>=1.10.0", "pyright>=1.1.380"]
 
 [tool.black]
 line-length = 88

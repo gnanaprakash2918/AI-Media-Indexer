@@ -166,3 +166,8 @@ setup_logger()
 def get_logger(name: str | None = None):
     """Get a logger instance (optionally bound to a name)."""
     return logger.bind(name=name)
+
+
+# Alias for backward compatibility
+configure_logger = setup_logger
+

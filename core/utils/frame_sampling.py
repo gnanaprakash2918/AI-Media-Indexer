@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from config import settings
 
 
 @dataclass(slots=True)
 class FrameSampler:
     """Helper to determine whether a frame should be sampled."""
 
-    every_n: int = 5
+    every_n: int = field(default_factory=lambda: settings.frame_sample_ratio)
 
     def should_sample(self, index: int) -> bool:
         """Check if the frame at `index` should be processed."""

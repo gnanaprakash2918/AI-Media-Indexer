@@ -90,25 +90,46 @@ class Settings(BaseSettings):
     omdb_api_key: str | None = None
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
-    frame_interval: int = Field(default=15, description="Seconds between frames")
+    frame_interval: int = Field(default=5, description="Seconds between frames")
     batch_size: int = Field(default=24)
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
     language: str | None = "ta"
-    whisper_model_map: dict[str, list[str]] = {
+        whisper_model_map: dict[str, list[str]] = {
         "ta": [
             # "ai4bharat/indicconformer",
             "openai/whisper-large-v3-turbo",
             "openai/whisper-large-v2",
+            "openai/whisper-medium",  # ~1.5GB, good balance
+            "openai/whisper-small",   # ~500MB, faster and lighter
         ],
         "en": [
             "openai/whisper-large-v3-turbo",
             "openai/whisper-large-v2",
             "distil-whisper/distil-large-v3",
+            "distil-whisper/distil-medium.en",  # ~500MB, optimized for English
+            "openai/whisper-small",   # ~500MB, multilingual fallback
         ],
     }
 
-    fallback_model_id: str = "distil-whisper/distil-large-v3"
+    # Fallback for memory-constrained systems
+    fallback_model_id: str = "openai/whisper-small"
+
+    # Frame Processing Settings
+    frame_sample_ratio: int = Field(
+        default=2, 
+        description="Process every Nth extracted frame (1=all, 2=half, 5=sparse)"
+    )
+    
+    # Face Detection Settings
+    face_detection_threshold: float = Field(
+        default=0.5,
+        description="Face detection confidence threshold (0.3-0.9, lower=more faces)"
+    )
+    face_detection_resolution: int = Field(
+        default=640,
+        description="Face detection input resolution (320=fast, 640=balanced, 960=accurate)"
+    )
 
     # Voice Intelligence
     enable_voice_analysis: bool = True

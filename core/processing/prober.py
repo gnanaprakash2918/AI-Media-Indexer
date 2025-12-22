@@ -175,4 +175,5 @@ class MediaProber:
 if __name__ == "__main__":
     scanner = MediaProber()
     path = ""
-    log(scanner.probe(path))
+    log(str(scanner.probe(path)))
+

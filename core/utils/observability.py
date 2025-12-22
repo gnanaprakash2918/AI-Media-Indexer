@@ -37,9 +37,12 @@ def init_langfuse() -> None:
             host=settings.langfuse_host,
         )
     elif settings.langfuse_backend == "docker":
+        # Use keys from settings if available, otherwise fall back to local
+        public_key = settings.langfuse_public_key or "local"
+        secret_key = settings.langfuse_secret_key or "local"
         langfuse_client = Langfuse(
-            public_key="local",
-            secret_key="local",
+            public_key=public_key,
+            secret_key=secret_key,
             host=settings.langfuse_docker_host,
         )
 
@@ -72,7 +75,7 @@ def end_trace(status: str = "success", error: str | None = None) -> None:
     trace_obj = trace_obj_ctx.get()
     
     if trace_obj:
-        update_kwargs = {"metadata": {"status": status, "error": error}}
+        update_kwargs: dict[str, Any] = {"metadata": {"status": status, "error": error}}
         if status == "error":
             update_kwargs["level"] = "ERROR"
             update_kwargs["status_message"] = error

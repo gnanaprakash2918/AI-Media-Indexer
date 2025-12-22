@@ -13,7 +13,7 @@ import uuid
 from typing import Any
 
 import ollama
-import structlog
+from loguru import logger
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import RequestHandler
 from a2a.types import (
@@ -37,7 +37,7 @@ from a2a.utils.errors import ServerError
 
 from core.agent.server import ingest_media, search_media
 
-logger = structlog.get_logger(__name__)
+
 
 DEFAULT_MODEL = os.getenv("MEDIA_AGENT_MODEL", "llama3.2:3b")
 

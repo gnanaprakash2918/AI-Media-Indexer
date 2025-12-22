@@ -6,6 +6,7 @@ for storing and retrieving media segments, frames, faces, and voice embeddings.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -399,6 +400,9 @@ class VectorDB:
         face_encoding: list[float],
         name: str | None = None,
         cluster_id: int | None = None,
+        media_path: str | None = None,
+        timestamp: float | None = None,
+        thumbnail_path: str | None = None,
     ) -> str:
         """Insert a face embedding.
 
@@ -406,15 +410,24 @@ class VectorDB:
             face_encoding: The numeric vector representing the face.
             name: Name of the person (if known).
             cluster_id: ID of the cluster this face belongs to.
+            media_path: Source media file path.
+            timestamp: Timestamp in the video where face was detected.
+            thumbnail_path: Path to the face thumbnail image.
 
         Returns:
             The generated ID of the inserted point.
         """
         point_id = str(uuid.uuid4())
+        # Auto-generate cluster_id from point_id hash if not provided
+        if cluster_id is None:
+            cluster_id = abs(hash(point_id)) % (10**9)
 
         payload = {
             "name": name,
             "cluster_id": cluster_id,
+            "media_path": media_path,
+            "timestamp": timestamp,
+            "thumbnail_path": thumbnail_path,
         }
 
         self.client.upsert(
@@ -477,6 +490,7 @@ class VectorDB:
         end: float,
         speaker_label: str,
         embedding: list[float],
+        audio_path: str | None = None,
     ) -> None:
         """Insert a voice segment embedding.
 
@@ -486,6 +500,7 @@ class VectorDB:
             end: End time of the segment.
             speaker_label: Label or ID of the speaker.
             embedding: The voice embedding vector.
+            audio_path: Path to the extracted audio clip.
 
         Raises:
             ValueError: If the embedding dimension does not match `VOICE_VECTOR_SIZE`.
@@ -510,6 +525,7 @@ class VectorDB:
                         "end": end,
                         "speaker_label": speaker_label,
                         "embedding_version": "wespeaker_resnet34_v1_l2",
+                        "audio_path": audio_path,
                     },
                 )
             ],
@@ -524,3 +540,383 @@ class VectorDB:
             self.client.close()
         except Exception:
             pass
+
+    @observe("db_get_unresolved_faces")
+    def get_unresolved_faces(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Get faces without assigned names.
+
+        Args:
+            limit: Maximum number of results.
+
+        Returns:
+            List of unnamed faces needing labeling.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.IsNullCondition(
+                            is_null=models.PayloadField(key="name")
+                        )
+                    ]
+                ),
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                cluster_id = payload.get("cluster_id")
+                # Use point id hash as fallback cluster_id if missing
+                if cluster_id is None:
+                    cluster_id = abs(hash(str(point.id))) % (10**9)
+                results.append({
+                    "id": point.id,
+                    "cluster_id": cluster_id,
+                    "name": payload.get("name"),
+                    "media_path": payload.get("media_path"),
+                    "timestamp": payload.get("timestamp"),
+                    "thumbnail_path": payload.get("thumbnail_path"),
+                })
+            return results
+        except Exception:
+            return []
+
+    @observe("db_update_face_name")
+    def update_face_name(self, cluster_id: int, name: str) -> int:
+        """Assign a name to all faces in a cluster.
+
+        Args:
+            cluster_id: The cluster ID to update.
+            name: The name to assign.
+
+        Returns:
+            Number of faces updated.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=True,
+                with_vectors=True,
+            )
+            points = resp[0]
+            updated = 0
+            for point in points:
+                payload = point.payload or {}
+                payload["name"] = name
+                self.client.set_payload(
+                    collection_name=self.FACES_COLLECTION,
+                    payload=payload,
+                    points=[point.id],
+                )
+                updated += 1
+            return updated
+        except Exception:
+            return 0
+
+    @observe("db_get_named_faces")
+    def get_named_faces(self) -> list[dict[str, Any]]:
+        """Get all named faces.
+
+        Returns:
+            List of named faces with their info.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must_not=[
+                        models.IsNullCondition(
+                            is_null=models.PayloadField(key="name")
+                        )
+                    ]
+                ),
+                limit=500,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                results.append({
+                    "id": point.id,
+                    "name": payload.get("name"),
+                    "cluster_id": payload.get("cluster_id"),
+                    "media_path": payload.get("media_path"),
+                    "timestamp": payload.get("timestamp"),
+                    "thumbnail_path": payload.get("thumbnail_path"),
+                })
+            return results
+        except Exception:
+            return []
+
+    @observe("db_delete_face")
+    def delete_face(self, face_id: str) -> bool:
+        """Delete a face by its ID.
+
+        Args:
+            face_id: The ID of the face to delete.
+
+        Returns:
+            True if deleted successfully, False otherwise.
+        """
+        try:
+            self.client.delete(
+                collection_name=self.FACES_COLLECTION,
+                points_selector=models.PointIdsList(points=[face_id]),
+            )
+            return True
+        except Exception:
+            return False
+
+    @observe("db_update_single_face_name")
+    def update_single_face_name(self, face_id: str, name: str) -> bool:
+        """Assign a name to a single face.
+
+        Args:
+            face_id: The ID of the face to update.
+            name: The name to assign.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        try:
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"name": name},
+                points=[face_id],
+            )
+            return True
+        except Exception:
+            return False
+
+    @observe("db_get_indexed_media")
+    def get_indexed_media(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Get list of all indexed media files.
+
+        Args:
+            limit: Maximum number of results.
+
+        Returns:
+            List of indexed media files with metadata.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            seen_paths: dict[str, dict[str, Any]] = {}
+            for point in resp[0]:
+                payload = point.payload or {}
+                video_path = payload.get("video_path")
+                if video_path and video_path not in seen_paths:
+                    seen_paths[video_path] = {
+                        "video_path": video_path,
+                        "segment_count": 1,
+                    }
+                elif video_path:
+                    seen_paths[video_path]["segment_count"] += 1
+            return list(seen_paths.values())
+        except Exception:
+            return []
+
+    @observe("db_get_voice_segments")
+    def get_voice_segments(
+        self,
+        media_path: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Get voice segments, optionally filtered by media path.
+
+        Args:
+            media_path: Optional filter by media file path.
+            limit: Maximum number of results.
+
+        Returns:
+            List of voice segments.
+        """
+        try:
+            conditions = []
+            if media_path:
+                conditions.append(
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchValue(value=media_path),
+                    )
+                )
+            qfilter = models.Filter(must=conditions) if conditions else None
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=qfilter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                results.append({
+                    "id": point.id,
+                    "media_path": payload.get("media_path"),
+                    "start": payload.get("start"),
+                    "end": payload.get("end"),
+                    "speaker_label": payload.get("speaker_label"),
+                    "audio_path": payload.get("audio_path"),
+                })
+            return results
+        except Exception:
+            return []
+
+    @observe("db_get_collection_stats")
+    def get_collection_stats(self) -> dict[str, Any]:
+        """Get statistics about all collections.
+
+        Returns:
+            Dictionary with counts for each collection.
+        """
+        stats = {}
+        for name in [
+            self.MEDIA_SEGMENTS_COLLECTION,
+            self.MEDIA_COLLECTION,
+            self.FACES_COLLECTION,
+            self.VOICE_COLLECTION,
+        ]:
+            try:
+                info = self.client.get_collection(name)
+                stats[name] = {
+                    "points_count": info.points_count,
+                    "vectors_count": getattr(info, "vectors_count", info.points_count),
+                }
+            except Exception:
+                stats[name] = {"points_count": 0, "vectors_count": 0}
+        return stats
+
+    @observe("db_delete_media")
+    def delete_media(self, video_path: str) -> int:
+        """Delete all data associated with a media file.
+
+        Args:
+            video_path: Path to the media file.
+
+        Returns:
+            Total number of points deleted.
+        """
+        deleted = 0
+        
+        # Cleanup Faces
+        try:
+            # 1. Get Faces to delete files
+            face_filter = models.Filter(must=[models.FieldCondition(key="media_path", match=models.MatchValue(value=video_path))])
+            face_points = self.client.scroll(self.FACES_COLLECTION, scroll_filter=face_filter, limit=10000, with_payload=True)[0]
+            for pt in face_points:
+                payload = pt.payload or {}
+                thumb = payload.get("thumbnail_path")
+                if thumb:
+                    try:
+                        if thumb.startswith("/thumbnails"):
+                             path = settings.cache_dir / thumb.lstrip("/")
+                             if path.exists():
+                                 path.unlink()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+            
+        # Cleanup Voice Segments
+        try:
+            voice_filter = models.Filter(must=[models.FieldCondition(key="media_path", match=models.MatchValue(value=video_path))])
+            voice_points = self.client.scroll(self.VOICE_COLLECTION, scroll_filter=voice_filter, limit=10000, with_payload=True)[0]
+            for pt in voice_points:
+                payload = pt.payload or {}
+                audio = payload.get("audio_path")
+                if audio:
+                    try:
+                        if audio.startswith("/thumbnails"):
+                             path = settings.cache_dir / audio.lstrip("/")
+                             if path.exists():
+                                 path.unlink()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        for collection in [
+            self.MEDIA_SEGMENTS_COLLECTION,
+            self.MEDIA_COLLECTION,
+            self.FACES_COLLECTION,
+            self.VOICE_COLLECTION,
+        ]:
+            try:
+                # For faces and voices, we need to match media_path
+                key = "video_path" if collection in [self.MEDIA_SEGMENTS_COLLECTION, self.MEDIA_COLLECTION] else "media_path"
+                
+                self.client.delete(
+                    collection_name=collection,
+                    points_selector=models.FilterSelector(
+                        filter=models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key=key,
+                                    match=models.MatchValue(value=video_path),
+                                )
+                            ]
+                        )
+                    ),
+                )
+                deleted += 1
+            except Exception:
+                pass
+        return deleted
+
+    @observe("db_delete_voice_segment")
+    def delete_voice_segment(self, segment_id: str) -> bool:
+        """Delete a voice segment and its audio file.
+
+        Args:
+            segment_id: The ID of the segment.
+
+        Returns:
+            True if deleted successfully.
+        """
+        try:
+            # 1. Get payload to find file
+            points = self.client.retrieve(
+                collection_name=self.VOICE_COLLECTION,
+                ids=[segment_id],
+                with_payload=True,
+            )
+            
+            if points:
+                payload = points[0].payload or {}
+                audio = payload.get("audio_path")
+                if audio:
+                    try:
+                        if audio.startswith("/thumbnails"):
+                             path = settings.cache_dir / audio.lstrip("/")
+                             if path.exists():
+                                 path.unlink()
+                    except Exception:
+                        pass
+
+            # 2. Delete point
+            self.client.delete(
+                collection_name=self.VOICE_COLLECTION,
+                points_selector=models.PointIdsList(points=[segment_id]),
+            )
+            return True
+        except Exception:
+            return False
+

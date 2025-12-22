@@ -25,6 +25,15 @@ postgres_data
 clickhouse_data
 minio_data
 
+# Frontend (Web)
+web/node_modules/
+web/dist/
+web/dist-ssr/
+web/*.local
+web/.vscode/
+web/.DS_Store
+web/.env*
+
 # C extensions
 *.so
 

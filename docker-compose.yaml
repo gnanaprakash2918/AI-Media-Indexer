@@ -131,7 +131,7 @@ services:
       CLICKHOUSE_PASSWORD: "langfuse"
       CLICKHOUSE_DB: "default"
       CLICKHOUSE_CLUSTER_ENABLED: "false"
-      CLICKHOUSE_URL: "clickhouse://default:langfuse@clickhouse:9000"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
       CLICKHOUSE_MIGRATION_URL: "clickhouse://default:langfuse@clickhouse:9000"
       
       NEXTAUTH_SECRET: "89ec276067b45f431662998a6915f0d579c8d672808006e001844b245780517f"

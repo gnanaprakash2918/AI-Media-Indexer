@@ -42,6 +42,13 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 class AudioTranscriber:
     """Main transcription class handling ASR lifecycle."""
 
+    # Smaller fallback models for memory-constrained systems
+    LOW_MEMORY_MODELS = [
+        "distil-whisper/distil-medium.en",  # ~500MB, English only
+        "openai/whisper-small",  # ~250MB, multilingual
+        "openai/whisper-base",  # ~140MB, multilingual
+    ]
+
     def __init__(self) -> None:
         """Initialize the AudioTranscriber instance.
 
@@ -52,6 +59,7 @@ class AudioTranscriber:
         self._current_model_size: str | None = None
         self.device = settings.device
         self.compute_type: str = "int8_float16" if self.device == "cuda" else "int8"
+        self._fallback_attempted = False
 
     def __enter__(self):
         """Called when entering the 'with' block."""
@@ -265,7 +273,10 @@ class AudioTranscriber:
             raise RuntimeError(f"Could not prepare {model_id}.") from e
 
     def _load_model(self, model_key: str) -> None:
-        """Loads the Faster-Whisper model."""
+        """Loads the Faster-Whisper model with memory-efficient settings.
+        
+        Falls back to smaller models if memory allocation fails.
+        """
         if self._model:
             del self._model
             del self._batched_model
@@ -282,17 +293,53 @@ class AudioTranscriber:
         )
 
         final_model_path = self._convert_and_cache_model(model_key)
+        
+        # Memory-efficient settings
+        cpu_threads = min(4, os.cpu_count() or 4)  # Limit CPU threads to reduce memory
+        
         try:
             self._model = WhisperModel(
                 final_model_path,
                 device=self.device,
                 compute_type=self.compute_type,
                 download_root=str(settings.model_cache_dir),
+                cpu_threads=cpu_threads,
+                num_workers=1,  # Single worker to minimize memory
             )
             self._batched_model = BatchedInferencePipeline(model=self._model)
             self._current_model_size = model_key
             log(f"[SUCCESS] Loaded {model_key} on {self.device}")
-        except Exception as e:
+        except (RuntimeError, MemoryError, Exception) as e:
+            error_msg = str(e).lower()
+            # Check for memory-related errors
+            if any(x in error_msg for x in ["memory", "mkl_malloc", "allocation", "oom"]):
+                log(f"[WARN] Memory error loading {model_key}: {e}")
+                if not self._fallback_attempted:
+                    self._fallback_attempted = True
+                    log("[INFO] Attempting fallback to smaller model...")
+                    # Try smaller models
+                    for fallback_model in self.LOW_MEMORY_MODELS:
+                        try:
+                            gc.collect()
+                            if self.device == "cuda" and torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                            log(f"[INFO] Trying fallback model: {fallback_model}")
+                            fallback_path = self._convert_and_cache_model(fallback_model)
+                            self._model = WhisperModel(
+                                fallback_path,
+                                device="cpu",  # Force CPU for stability
+                                compute_type="int8",  # Use int8 for minimal memory
+                                download_root=str(settings.model_cache_dir),
+                                cpu_threads=2,
+                                num_workers=1,
+                            )
+                            self._batched_model = BatchedInferencePipeline(model=self._model)
+                            self._current_model_size = fallback_model
+                            log(f"[SUCCESS] Loaded fallback model {fallback_model} on CPU")
+                            return
+                        except Exception as fallback_err:
+                            log(f"[WARN] Fallback {fallback_model} also failed: {fallback_err}")
+                            continue
             raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
 
     def _format_timestamp(self, seconds: float) -> str:
@@ -452,7 +499,7 @@ class AudioTranscriber:
 
         # Existing Sidecar / Embedded Subtitles
         if start_time == 0.0 and end_time is None:
-            if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang):
+            if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang or "en"):
                 log(f"[INFO] Parsing existing subtitles from {out_srt}...")
                 parsed_segments = parse_srt(out_srt)
                 log(
@@ -466,7 +513,7 @@ class AudioTranscriber:
         proc_path = self._slice_audio(audio_path, start_time, end_time)
         chunks: list[dict[str, Any]] = []
 
-        candidates = settings.whisper_model_map.get(lang, [settings.fallback_model_id])
+        candidates = settings.whisper_model_map.get(lang or "en", [settings.fallback_model_id])
         model_to_use = candidates[0] if candidates else settings.fallback_model_id
 
         try:
