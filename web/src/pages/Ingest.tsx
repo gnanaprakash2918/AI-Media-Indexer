@@ -268,6 +268,26 @@ export default function IngestPage() {
                 )}
             </Paper>
 
+            {/* Pending Jobs - Shows immediately after clicking ingest */}
+            {pendingJobs.length > 0 && (
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+                        Submitting... ({pendingJobs.length})
+                    </Typography>
+                    {pendingJobs.map((path, idx) => (
+                        <Paper key={idx} sx={{ p: 2, mb: 1.5, borderRadius: 2 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: '60%' }}>
+                                    {path.split(/[/\\]/).pop() || path}
+                                </Typography>
+                                <Chip size="small" label="submitting" color="warning" />
+                            </Box>
+                            <LinearProgress sx={{ height: 6, borderRadius: 3 }} />
+                        </Paper>
+                    ))}
+                </Box>
+            )}
+
             {/* Active Jobs */}
             {activeJobs.length > 0 && (
                 <Box sx={{ mb: 3 }}>
@@ -304,8 +324,8 @@ export default function IngestPage() {
                 </Box>
             )}
 
-            {/* Empty State */}
-            {!jobs.isLoading && jobs.data?.jobs?.length === 0 && (
+            {/* Empty State - Only show if no pending AND no real jobs */}
+            {!jobs.isLoading && jobs.data?.jobs?.length === 0 && pendingJobs.length === 0 && (
                 <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, bgcolor: 'action.hover' }}>
                     <CloudUpload sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />
                     <Typography color="text.secondary">No jobs yet. Add a file path above.</Typography>
