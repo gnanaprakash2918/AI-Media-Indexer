@@ -1,5 +1,5 @@
 import { createBrowserRouter, RouterProvider, Outlet, NavLink } from 'react-router-dom';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, lazy, Suspense } from 'react';
 import {
   ThemeProvider,
   CssBaseline,
@@ -17,6 +17,7 @@ import {
   useMediaQuery,
   Divider,
   Chip,
+  CircularProgress,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -35,7 +36,19 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { getTheme } from './theme';
 import { healthCheck } from './api/client';
 
-import { SearchPage, IngestPage, FacesPage, SettingsPage, DashboardPage, VoicesPage } from './pages';
+// Lazy load pages for faster initial load
+const DashboardPage = lazy(() => import('./pages/Dashboard'));
+const SearchPage = lazy(() => import('./pages/Search'));
+const IngestPage = lazy(() => import('./pages/Ingest'));
+const FacesPage = lazy(() => import('./pages/Faces'));
+const VoicesPage = lazy(() => import('./pages/Voices'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+
+const PageLoader = () => (
+  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
+    <CircularProgress />
+  </Box>
+);
 
 const DRAWER_WIDTH = 240;
 const DRAWER_WIDTH_COLLAPSED = 72;
@@ -291,12 +304,12 @@ const router = createBrowserRouter([
     path: '/',
     element: <Layout />,
     children: [
-      { index: true, element: <DashboardPage /> },
-      { path: 'search', element: <SearchPage /> },
-      { path: 'ingest', element: <IngestPage /> },
-      { path: 'faces', element: <FacesPage /> },
-      { path: 'voices', element: <VoicesPage /> },
-      { path: 'settings', element: <SettingsPage /> },
+      { index: true, element: <Suspense fallback={<PageLoader />}><DashboardPage /></Suspense> },
+      { path: 'search', element: <Suspense fallback={<PageLoader />}><SearchPage /></Suspense> },
+      { path: 'ingest', element: <Suspense fallback={<PageLoader />}><IngestPage /></Suspense> },
+      { path: 'faces', element: <Suspense fallback={<PageLoader />}><FacesPage /></Suspense> },
+      { path: 'voices', element: <Suspense fallback={<PageLoader />}><VoicesPage /></Suspense> },
+      { path: 'settings', element: <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense> },
     ],
   },
 ]);

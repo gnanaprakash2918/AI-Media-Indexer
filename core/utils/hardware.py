@@ -46,22 +46,17 @@ def cleanup_vram() -> None:
 
 
 def select_embedding_model() -> tuple[str, int]:
-    """Select embedding model based on available VRAM.
-    
-    Returns:
-        Tuple of (model_name, embedding_dimension)
-    """
     vram = get_available_vram()
     
-    # Models ranked by quality (MTEB leaderboard)
-    if vram >= 10:
+    # FAANG-level quality: prioritize accuracy over memory
+    if vram >= 8:
+        # State-of-the-art for retrieval (MTEB top tier)
         model = "intfloat/e5-large-v2"
         dim = 1024
-    elif vram >= 6:
+    elif vram >= 4:
         model = "BAAI/bge-base-en-v1.5"
         dim = 768
-    elif vram >= 3:
-        # Best balance for 8GB laptop with other models loaded
+    elif vram >= 2:
         model = "BAAI/bge-small-en-v1.5"
         dim = 384
     else:
