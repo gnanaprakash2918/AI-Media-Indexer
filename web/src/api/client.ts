@@ -102,6 +102,70 @@ export const deleteVoiceSegment = async (segmentId: string) => {
     return res.data;
 };
 
+// Face Clustering
+export const triggerFaceClustering = async () => {
+    const res = await apiClient.post('/faces/cluster');
+    return res.data;
+};
+
+export const getFaceClusters = async () => {
+    const res = await apiClient.get('/faces/clusters');
+    return res.data;
+};
+
+export const mergeFaceClusters = async (fromCluster: number, toCluster: number) => {
+    const res = await apiClient.post('/faces/merge', null, { params: { from_cluster: fromCluster, to_cluster: toCluster } });
+    return res.data;
+};
+
+// Voice Clustering
+export const triggerVoiceClustering = async () => {
+    const res = await apiClient.post('/voices/cluster');
+    return res.data;
+};
+
+export const getVoiceClusters = async () => {
+    const res = await apiClient.get('/voices/clusters');
+    return res.data;
+};
+
+export const renameVoiceSpeaker = async (segmentId: string, name: string) => {
+    const res = await apiClient.put(`/voices/${segmentId}/name`, { name });
+    return res.data;
+};
+
+export const mergeVoiceClusters = async (fromCluster: number, toCluster: number) => {
+    const res = await apiClient.post('/voices/merge', null, { params: { from_cluster: fromCluster, to_cluster: toCluster } });
+    return res.data;
+};
+
+// Manual Cluster Management
+export const moveFaceToCluster = async (faceId: string, clusterId: number) => {
+    const res = await apiClient.put(`/faces/${faceId}/cluster`, null, { params: { cluster_id: clusterId } });
+    return res.data;
+};
+
+export const createNewFaceCluster = async (faceIds: string[]) => {
+    const res = await apiClient.post('/faces/new-cluster', faceIds);
+    return res.data;
+};
+
+export const moveVoiceToCluster = async (segmentId: string, clusterId: number) => {
+    const res = await apiClient.put(`/voices/${segmentId}/cluster`, null, { params: { cluster_id: clusterId } });
+    return res.data;
+};
+
+export const createNewVoiceCluster = async (segmentIds: string[]) => {
+    const res = await apiClient.post('/voices/new-cluster', segmentIds);
+    return res.data;
+};
+
+// Name-Based Search
+export const searchByName = async (name: string, limit = 20) => {
+    const res = await apiClient.get('/search/by-name', { params: { name, limit } });
+    return res.data;
+};
+
 // Library
 export const getLibrary = async () => {
     const res = await apiClient.get('/library');

@@ -28,7 +28,7 @@ class VectorDB:
     VOICE_COLLECTION = "voice_segments"
 
     MEDIA_VECTOR_SIZE = 384
-    FACE_VECTOR_SIZE = 128
+    FACE_VECTOR_SIZE = 512  # InsightFace ArcFace (fallback SFace uses 128 but vectors are padded)
     TEXT_DIM = 384
     VOICE_VECTOR_SIZE = 256
 
@@ -625,6 +625,97 @@ class VectorDB:
         except Exception:
             return 0
 
+    @observe("db_update_face_cluster_id")
+    def update_face_cluster_id(self, face_id: str, cluster_id: int) -> bool:
+        """Update the cluster ID for a single face.
+        
+        Args:
+            face_id: The ID of the face to update.
+            cluster_id: The new cluster ID.
+            
+        Returns:
+            True if updated successfully.
+        """
+        try:
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"cluster_id": cluster_id},
+                points=[face_id],
+            )
+            return True
+        except Exception as e:
+            log("Failed to update face cluster ID", error=str(e))
+            return False
+
+    @observe("db_merge_face_clusters")
+    def merge_face_clusters(self, from_cluster: int, to_cluster: int) -> int:
+        """Merge all faces from one cluster into another.
+        
+        Args:
+            from_cluster: Source cluster ID.
+            to_cluster: Target cluster ID.
+            
+        Returns:
+            Number of faces moved.
+        """
+        try:
+            # First, check if the target cluster has a name
+            target_name = None
+            resp_target = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=to_cluster),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=True,
+            )
+            if resp_target[0]:
+                target_name = resp_target[0][0].payload.get("name")
+
+            # Get all faces in source cluster
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=from_cluster),
+                        )
+                    ]
+                ),
+                limit=1000,
+            )
+            
+            points = resp[0]
+            if not points:
+                return 0
+                
+            ids = [p.id for p in points]
+            
+            # Update cluster_id for all
+            payload = {"cluster_id": to_cluster}
+            # If target has a name, propagate it to the merged faces 
+            # (or if source had a name and target didn't, we might want to keep source name? 
+            # For now, let's assume target supersedes or we clear if ambiguous, but keeping target name is safer for HITL)
+            if target_name:
+                payload["name"] = target_name
+            
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload=payload,
+                points=ids,
+            )
+            
+            return len(ids)
+        except Exception as e:
+            log("Failed to merge clusters", error=str(e))
+            return 0
+
     @observe("db_get_named_faces")
     def get_named_faces(self) -> list[dict[str, Any]]:
         """Get all named faces.
@@ -919,4 +1010,267 @@ class VectorDB:
             return True
         except Exception:
             return False
+
+    @observe("db_get_all_face_embeddings")
+    def get_all_face_embeddings(self) -> list[dict[str, Any]]:
+        """Get all face embeddings with their IDs for clustering.
+
+        Returns:
+            List of dicts with 'id' and 'embedding' keys.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                limit=10000,
+                with_payload=True,
+                with_vectors=True,
+            )
+            results = []
+            for point in resp[0]:
+                if point.vector:
+                    results.append({
+                        "id": point.id,
+                        "embedding": list(point.vector) if isinstance(point.vector, (list, tuple)) else point.vector,
+                        "payload": point.payload or {},
+                    })
+            return results
+        except Exception:
+            return []
+
+    @observe("db_update_face_cluster_id")
+    def update_face_cluster_id(self, face_id: str, cluster_id: int) -> bool:
+        """Update the cluster_id for a single face.
+
+        Args:
+            face_id: The ID of the face to update.
+            cluster_id: The new cluster ID.
+
+        Returns:
+            True if updated successfully.
+        """
+        try:
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"cluster_id": cluster_id},
+                points=[face_id],
+            )
+            return True
+        except Exception:
+            return False
+
+    @observe("db_get_faces_grouped_by_cluster")
+    def get_faces_grouped_by_cluster(self, limit: int = 500) -> dict[int, list[dict[str, Any]]]:
+        """Get all faces grouped by cluster_id.
+
+        Args:
+            limit: Maximum number of faces to retrieve.
+
+        Returns:
+            Dictionary mapping cluster_id to list of faces in that cluster.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            clusters: dict[int, list[dict[str, Any]]] = {}
+            for point in resp[0]:
+                payload = point.payload or {}
+                cluster_id = payload.get("cluster_id", -1)
+                if cluster_id not in clusters:
+                    clusters[cluster_id] = []
+                clusters[cluster_id].append({
+                    "id": point.id,
+                    "name": payload.get("name"),
+                    "cluster_id": cluster_id,
+                    "media_path": payload.get("media_path"),
+                    "timestamp": payload.get("timestamp"),
+                    "thumbnail_path": payload.get("thumbnail_path"),
+                })
+            return clusters
+        except Exception:
+            return {}
+
+    @observe("db_merge_face_clusters")
+    def merge_face_clusters(self, from_cluster: int, to_cluster: int) -> int:
+        """Merge two face clusters into one.
+
+        Args:
+            from_cluster: The cluster ID to merge from (will be removed).
+            to_cluster: The cluster ID to merge into.
+
+        Returns:
+            Number of faces updated.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=from_cluster),
+                        )
+                    ]
+                ),
+                limit=10000,
+                with_payload=True,
+                with_vectors=False,
+            )
+            updated = 0
+            for point in resp[0]:
+                self.client.set_payload(
+                    collection_name=self.FACES_COLLECTION,
+                    payload={"cluster_id": to_cluster},
+                    points=[point.id],
+                )
+                updated += 1
+            return updated
+        except Exception:
+            return 0
+
+    @observe("db_update_voice_speaker_name")
+    def update_voice_speaker_name(self, segment_id: str, name: str) -> bool:
+        """Update the speaker name for a voice segment.
+
+        Args:
+            segment_id: The ID of the voice segment.
+            name: The human-readable speaker name.
+
+        Returns:
+            True if updated successfully.
+        """
+        try:
+            self.client.set_payload(
+                collection_name=self.VOICE_COLLECTION,
+                payload={"speaker_name": name},
+                points=[segment_id],
+            )
+            return True
+        except Exception:
+            return False
+
+    @observe("db_get_all_voice_embeddings")
+    def get_all_voice_embeddings(self) -> list[dict[str, Any]]:
+        """Get all voice embeddings with their IDs for clustering.
+
+        Returns:
+            List of dicts with 'id', 'embedding', and 'payload' keys.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                limit=10000,
+                with_payload=True,
+                with_vectors=True,
+            )
+            results = []
+            for point in resp[0]:
+                if point.vector:
+                    results.append({
+                        "id": point.id,
+                        "embedding": list(point.vector) if isinstance(point.vector, (list, tuple)) else point.vector,
+                        "payload": point.payload or {},
+                    })
+            return results
+        except Exception:
+            return []
+
+    @observe("db_update_voice_cluster_id")
+    def update_voice_cluster_id(self, segment_id: str, cluster_id: int) -> bool:
+        """Update the voice_cluster_id for a voice segment.
+
+        Args:
+            segment_id: The ID of the voice segment.
+            cluster_id: The new cluster ID.
+
+        Returns:
+            True if updated successfully.
+        """
+        try:
+            self.client.set_payload(
+                collection_name=self.VOICE_COLLECTION,
+                payload={"voice_cluster_id": cluster_id},
+                points=[segment_id],
+            )
+            return True
+        except Exception:
+            return False
+
+    @observe("db_get_voices_grouped_by_cluster")
+    def get_voices_grouped_by_cluster(self, limit: int = 500) -> dict[int, list[dict[str, Any]]]:
+        """Get all voice segments grouped by voice_cluster_id.
+
+        Args:
+            limit: Maximum number of segments to retrieve.
+
+        Returns:
+            Dictionary mapping cluster_id to list of voice segments.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            clusters: dict[int, list[dict[str, Any]]] = {}
+            for point in resp[0]:
+                payload = point.payload or {}
+                cluster_id = payload.get("voice_cluster_id", -1)
+                if cluster_id not in clusters:
+                    clusters[cluster_id] = []
+                clusters[cluster_id].append({
+                    "id": point.id,
+                    "media_path": payload.get("media_path"),
+                    "start": payload.get("start"),
+                    "end": payload.get("end"),
+                    "speaker_label": payload.get("speaker_label"),
+                    "speaker_name": payload.get("speaker_name"),
+                    "audio_path": payload.get("audio_path"),
+                    "voice_cluster_id": cluster_id,
+                })
+            return clusters
+        except Exception:
+            return {}
+
+    @observe("db_merge_voice_clusters")
+    def merge_voice_clusters(self, from_cluster: int, to_cluster: int) -> int:
+        """Merge two voice clusters into one.
+
+        Args:
+            from_cluster: The cluster ID to merge from.
+            to_cluster: The cluster ID to merge into.
+
+        Returns:
+            Number of segments updated.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=from_cluster),
+                        )
+                    ]
+                ),
+                limit=10000,
+                with_payload=True,
+                with_vectors=False,
+            )
+            updated = 0
+            for point in resp[0]:
+                self.client.set_payload(
+                    collection_name=self.VOICE_COLLECTION,
+                    payload={"voice_cluster_id": to_cluster},
+                    points=[point.id],
+                )
+                updated += 1
+            return updated
+        except Exception:
+            return 0
 

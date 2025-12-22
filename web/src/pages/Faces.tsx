@@ -19,13 +19,35 @@ import {
     Tab,
     InputAdornment,
     IconButton,
+    Badge,
+    CircularProgress,
+    Tooltip,
+    Collapse,
+    List,
+    ListItemButton,
+    ListItemAvatar,
+    ListItemText,
+    Divider,
 } from '@mui/material';
-import { Face, Search, Check, Edit, Delete, ZoomIn } from '@mui/icons-material';
+import {
+    Face, Search, Check, Edit, Delete, ZoomIn, AutoAwesome, Groups,
+    ExpandMore, ExpandLess, MoveUp
+} from '@mui/icons-material';
 import { motion } from 'framer-motion';
 
-import { getUnresolvedFaces, getNamedFaces, nameSingleFace, deleteFace } from '../api/client';
+import {
+    getUnresolvedFaces,
+    getNamedFaces,
+    getFaceClusters,
+    triggerFaceClustering,
+    nameFaceCluster,
+    nameSingleFace,
+    deleteFace,
+    moveFaceToCluster,
+    createNewFaceCluster,
+} from '../api/client';
 
-interface FaceCluster {
+interface FaceData {
     id: string;
     cluster_id: number;
     name: string | null;
@@ -34,253 +56,213 @@ interface FaceCluster {
     thumbnail_path?: string;
 }
 
+interface FaceClusterData {
+    cluster_id: number;
+    name: string | null;
+    face_count: number;
+    representative: FaceData | null;
+    faces: FaceData[];
+}
+
 function FaceCard({
     face,
     onLabel,
     onDelete,
     onZoom,
+    onMove,
+    compact = false,
 }: {
-    face: FaceCluster;
+    face: FaceData;
     onLabel: (faceId: string) => void;
     onDelete: (faceId: string) => void;
-    onZoom: (face: FaceCluster) => void;
+    onZoom: (face: FaceData) => void;
+    onMove?: (faceId: string) => void;
+    compact?: boolean;
 }) {
-    const [imageLoaded, setImageLoaded] = useState(false);
     const [imageError, setImageError] = useState(false);
-
-    const thumbUrl = face.thumbnail_path
-        ? `http://localhost:8000${face.thumbnail_path}`
-        : null;
-
+    const thumbUrl = face.thumbnail_path ? `http://localhost:8000${face.thumbnail_path}` : null;
     const hasValidImage = thumbUrl && !imageError;
+    const size = compact ? 64 : 96;
 
     return (
         <Paper
             component={motion.div}
-            whileHover={{ scale: 1.02, boxShadow: '0 8px 30px rgba(0,0,0,0.12)' }}
+            whileHover={{ scale: 1.02 }}
             sx={{
-                p: 2,
-                borderRadius: 3,
+                p: compact ? 1 : 2,
+                borderRadius: 2,
                 cursor: 'pointer',
                 textAlign: 'center',
-                transition: 'all 0.3s ease',
                 position: 'relative',
-                background: (theme) =>
-                    theme.palette.mode === 'dark'
-                        ? 'linear-gradient(145deg, rgba(30,30,40,0.9), rgba(20,20,30,0.95))'
-                        : 'linear-gradient(145deg, rgba(255,255,255,0.95), rgba(245,245,250,0.9))',
-                '&:hover': {
-                    boxShadow: 6,
-                },
+                minWidth: compact ? 100 : 140,
             }}
             onClick={() => onLabel(face.id)}
         >
             <IconButton
                 size="small"
-                sx={{
-                    position: 'absolute',
-                    top: 4,
-                    right: 4,
-                    opacity: 0,
-                    transition: 'opacity 0.2s',
-                    '.MuiPaper-root:hover &': {
-                        opacity: 0.8,
-                    },
-                    '&:hover': {
-                        opacity: 1,
-                        color: 'error.main',
-                    },
-                }}
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(face.id);
-                }}
+                sx={{ position: 'absolute', top: 2, right: 2, opacity: 0.6, '&:hover': { opacity: 1, color: 'error.main' } }}
+                onClick={(e) => { e.stopPropagation(); onDelete(face.id); }}
             >
                 <Delete fontSize="small" />
             </IconButton>
 
-            {/* Zoom button */}
             {hasValidImage && (
                 <IconButton
                     size="small"
-                    sx={{
-                        position: 'absolute',
-                        top: 4,
-                        left: 4,
-                        opacity: 0,
-                        transition: 'opacity 0.2s',
-                        bgcolor: 'rgba(0,0,0,0.5)',
-                        '.MuiPaper-root:hover &': {
-                            opacity: 0.8,
-                        },
-                        '&:hover': {
-                            opacity: 1,
-                            bgcolor: 'primary.main',
-                        },
-                    }}
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onZoom(face);
-                    }}
+                    sx={{ position: 'absolute', top: 2, left: 2, opacity: 0.6, '&:hover': { opacity: 1 } }}
+                    onClick={(e) => { e.stopPropagation(); onZoom(face); }}
                 >
-                    <ZoomIn fontSize="small" sx={{ color: 'white' }} />
+                    <ZoomIn fontSize="small" />
                 </IconButton>
             )}
 
-            {/* Face Thumbnail - Google Photos Style */}
-            <Box
-                sx={{
-                    position: 'relative',
-                    width: 96,
-                    height: 96,
-                    mx: 'auto',
-                    mb: 2,
-                }}
-            >
-                {/* Loading skeleton */}
-                {hasValidImage && !imageLoaded && (
-                    <Skeleton
-                        variant="circular"
-                        width={96}
-                        height={96}
-                        sx={{ position: 'absolute', top: 0, left: 0 }}
-                    />
-                )}
-
-                {/* Actual face image or fallback */}
-                <Avatar
-                    src={hasValidImage ? thumbUrl : undefined}
-                    onLoad={() => setImageLoaded(true)}
-                    onError={() => setImageError(true)}
-                    sx={{
-                        width: 96,
-                        height: 96,
-                        border: '3px solid',
-                        borderColor: face.name ? 'success.main' : 'primary.main',
-                        boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
-                        bgcolor: 'grey.800',
-                        fontSize: 40,
-                        opacity: hasValidImage && !imageLoaded ? 0 : 1,
-                        transition: 'opacity 0.3s ease, transform 0.3s ease',
-                        '& img': {
-                            objectFit: 'cover',
-                        },
-                    }}
+            {onMove && (
+                <IconButton
+                    size="small"
+                    sx={{ position: 'absolute', bottom: 2, right: 2, opacity: 0.6, '&:hover': { opacity: 1, color: 'primary.main' } }}
+                    onClick={(e) => { e.stopPropagation(); onMove(face.id); }}
                 >
-                    {!hasValidImage && <Face fontSize="large" />}
-                </Avatar>
-
-                {/* Subtle glow effect for named faces */}
-                {face.name && (
-                    <Box
-                        sx={{
-                            position: 'absolute',
-                            top: -4,
-                            left: -4,
-                            right: -4,
-                            bottom: -4,
-                            borderRadius: '50%',
-                            background: 'radial-gradient(circle, rgba(76,175,80,0.2) 0%, transparent 70%)',
-                            pointerEvents: 'none',
-                        }}
-                    />
-                )}
-            </Box>
-
-            {face.name ? (
-                <Chip
-                    label={face.name}
-                    color="success"
-                    size="small"
-                    icon={<Check />}
-                    sx={{
-                        fontWeight: 600,
-                        maxWidth: '100%',
-                        '& .MuiChip-label': {
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                        },
-                    }}
-                />
-            ) : (
-                <Chip
-                    label={face.timestamp !== undefined ? `${face.timestamp.toFixed(1)}s` : `#${face.cluster_id}`}
-                    variant="outlined"
-                    size="small"
-                    sx={{
-                        borderColor: 'primary.light',
-                        color: 'text.secondary',
-                    }}
-                />
+                    <MoveUp fontSize="small" />
+                </IconButton>
             )}
 
-            <Typography
-                variant="caption"
-                display="block"
-                color="text.secondary"
-                sx={{
-                    mt: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    maxWidth: '100%',
-                }}
+            <Avatar
+                src={hasValidImage ? thumbUrl : undefined}
+                onError={() => setImageError(true)}
+                sx={{ width: size, height: size, mx: 'auto', mb: 1, border: '2px solid', borderColor: face.name ? 'success.main' : 'grey.400' }}
             >
-                {face.media_path?.split(/[/\\]/).pop() || 'Unknown source'}
-            </Typography>
+                {!hasValidImage && <Face />}
+            </Avatar>
+
+            {face.name ? (
+                <Chip label={face.name} color="success" size="small" />
+            ) : (
+                <Typography variant="caption" color="text.secondary">
+                    {face.timestamp !== undefined ? `${face.timestamp.toFixed(1)}s` : 'Unnamed'}
+                </Typography>
+            )}
         </Paper>
     );
 }
 
-function LabelDialog({
-    open,
-    faceId: _faceId,
-    onClose,
-    onSave,
-    isLoading,
+function ClusterCard({
+    cluster,
+    onLabelCluster,
+    onLabelFace,
+    onDeleteFace,
+    onZoom,
+    onMoveFace,
+    onMerge,
 }: {
-    open: boolean;
-    faceId: string | null;
-    onClose: () => void;
-    onSave: (name: string) => void;
-    isLoading: boolean;
+    cluster: FaceClusterData;
+    onLabelCluster: (clusterId: number) => void;
+    onLabelFace: (faceId: string) => void;
+    onDeleteFace: (faceId: string) => void;
+    onZoom: (face: FaceData) => void;
+    onMoveFace: (faceId: string) => void;
+    onMerge?: () => void;
+}) {
+    const [expanded, setExpanded] = useState(false);
+    const [imageError, setImageError] = useState(false);
+    const representative = cluster.representative;
+    const thumbUrl = representative?.thumbnail_path ? `http://localhost:8000${representative.thumbnail_path}` : null;
+    const hasValidImage = thumbUrl && !imageError;
+
+    return (
+        <Paper sx={{ mb: 2, overflow: 'hidden' }}>
+            <Box
+                sx={{ display: 'flex', alignItems: 'center', p: 2, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
+                onClick={() => setExpanded(!expanded)}
+            >
+                <Avatar src={hasValidImage ? thumbUrl : undefined} onError={() => setImageError(true)} sx={{ width: 56, height: 56, mr: 2 }}>
+                    <Face />
+                </Avatar>
+                <Box sx={{ flex: 1 }}>
+                    {cluster.name ? (
+                        <Chip label={cluster.name} color="success" size="small" />
+                    ) : (
+                        <Typography variant="body1" fontWeight={600}>Cluster #{cluster.cluster_id}</Typography>
+                    )}
+                    <Typography variant="caption" color="text.secondary" display="block">
+                        {cluster.face_count} occurrence{cluster.face_count !== 1 ? 's' : ''}
+                    </Typography>
+                </Box>
+                <Badge badgeContent={cluster.face_count} color="primary" sx={{ mr: 2 }}><Groups /></Badge>
+
+                {onMerge && (
+                    <Button size="small" variant="outlined" color="warning" onClick={(e) => { e.stopPropagation(); onMerge(); }} sx={{ mr: 1 }}>
+                        <MoveUp fontSize="small" sx={{ mr: 0.5 }} /> Merge
+                    </Button>
+                )}
+
+                <Button size="small" variant="outlined" onClick={(e) => { e.stopPropagation(); onLabelCluster(cluster.cluster_id); }} sx={{ mr: 1 }}>
+                    <Edit fontSize="small" sx={{ mr: 0.5 }} /> Label All
+                </Button>
+                {expanded ? <ExpandLess /> : <ExpandMore />}
+            </Box>
+            <Collapse in={expanded}>
+                <Divider />
+                <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                        All faces in this cluster:
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                        {cluster.faces.map((face) => (
+                            <FaceCard key={face.id} face={face} onLabel={onLabelFace} onDelete={onDeleteFace} onZoom={onZoom} onMove={onMoveFace} compact />
+                        ))}
+                    </Box>
+                </Box>
+            </Collapse>
+        </Paper>
+    );
+}
+
+function LabelDialog({ open, isCluster, onClose, onSave, isLoading }: {
+    open: boolean; isCluster: boolean; onClose: () => void; onSave: (name: string) => void; isLoading: boolean;
 }) {
     const [name, setName] = useState('');
-
-    const handleSave = () => {
-        if (name.trim()) {
-            onSave(name.trim());
-            setName('');
-        }
-    };
+    const handleSave = () => { if (name.trim()) { onSave(name.trim()); setName(''); } };
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>Label Face</DialogTitle>
+            <DialogTitle>{isCluster ? 'Label Entire Cluster' : 'Label Face'}</DialogTitle>
             <DialogContent>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Enter a name for this person. All faces in this cluster will be labeled with this name.
+                    {isCluster ? 'All faces in this cluster will be labeled.' : 'Label this specific face.'}
                 </Typography>
-                <TextField
-                    fullWidth
-                    autoFocus
-                    label="Person's Name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-                    placeholder="e.g., John Doe"
-                />
+                <TextField fullWidth autoFocus label="Name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSave()} />
             </DialogContent>
             <DialogActions>
                 <Button onClick={onClose}>Cancel</Button>
-                <Button
-                    variant="contained"
-                    onClick={handleSave}
-                    disabled={!name.trim() || isLoading}
-                >
-                    {isLoading ? 'Saving...' : 'Save Label'}
-                </Button>
+                <Button variant="contained" onClick={handleSave} disabled={!name.trim() || isLoading}>{isLoading ? 'Saving...' : 'Save'}</Button>
             </DialogActions>
+        </Dialog>
+    );
+}
+
+function MoveDialog({ open, clusters, onClose, onMove, onNewCluster }: {
+    open: boolean; clusters: FaceClusterData[]; onClose: () => void; onMove: (clusterId: number) => void; onNewCluster: () => void;
+}) {
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle>Move Face to Cluster</DialogTitle>
+            <DialogContent>
+                <List>
+                    <ListItemButton onClick={onNewCluster}>
+                        <ListItemText primary="+ Create New Cluster" secondary="Create a new separate identity" />
+                    </ListItemButton>
+                    <Divider />
+                    {clusters.map((c) => (
+                        <ListItemButton key={c.cluster_id} onClick={() => onMove(c.cluster_id)}>
+                            <ListItemAvatar>
+                                <Avatar src={c.representative?.thumbnail_path ? `http://localhost:8000${c.representative.thumbnail_path}` : undefined}><Face /></Avatar>
+                            </ListItemAvatar>
+                            <ListItemText primary={c.name || `Cluster #${c.cluster_id}`} secondary={`${c.face_count} faces`} />
+                        </ListItemButton>
+                    ))}
+                </List>
+            </DialogContent>
+            <DialogActions><Button onClick={onClose}>Cancel</Button></DialogActions>
         </Dialog>
     );
 }
@@ -288,209 +270,158 @@ function LabelDialog({
 export default function FacesPage() {
     const [tab, setTab] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null);
     const [selectedFaceId, setSelectedFaceId] = useState<string | null>(null);
-    const [zoomFace, setZoomFace] = useState<FaceCluster | null>(null);
+    const [moveFaceId, setMoveFaceId] = useState<string | null>(null);
+    const [zoomFace, setZoomFace] = useState<FaceData | null>(null);
+    const [isClustering, setIsClustering] = useState(false);
     const queryClient = useQueryClient();
 
-    const unresolvedFaces = useQuery({
-        queryKey: ['faces', 'unresolved'],
-        queryFn: () => getUnresolvedFaces(),
+    const clustersQuery = useQuery({ queryKey: ['faces', 'clusters'], queryFn: () => getFaceClusters() });
+    const unresolvedQuery = useQuery({ queryKey: ['faces', 'unresolved'], queryFn: () => getUnresolvedFaces(500) });
+    const namedQuery = useQuery({ queryKey: ['faces', 'named'], queryFn: () => getNamedFaces() });
+
+    const labelClusterMutation = useMutation({
+        mutationFn: ({ clusterId, name }: { clusterId: number; name: string }) => nameFaceCluster(clusterId, name),
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); setSelectedClusterId(null); },
     });
 
-    const namedFaces = useQuery({
-        queryKey: ['faces', 'named'],
-        queryFn: () => getNamedFaces(),
-    });
-
-    const labelMutation = useMutation({
-        mutationFn: ({ faceId, name }: { faceId: string; name: string }) =>
-            nameSingleFace(faceId, name),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['faces'] });
-            setSelectedFaceId(null);
-        },
+    const labelFaceMutation = useMutation({
+        mutationFn: ({ faceId, name }: { faceId: string; name: string }) => nameSingleFace(faceId, name),
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); setSelectedFaceId(null); },
     });
 
     const deleteMutation = useMutation({
         mutationFn: (faceId: string) => deleteFace(faceId),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['faces'] });
-        },
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); },
     });
 
-    const handleLabel = (name: string) => {
-        if (selectedFaceId !== null) {
-            labelMutation.mutate({ faceId: selectedFaceId, name });
-        }
+    const moveMutation = useMutation({
+        mutationFn: ({ faceId, clusterId }: { faceId: string; clusterId: number }) => moveFaceToCluster(faceId, clusterId),
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); setMoveFaceId(null); },
+    });
+
+    const newClusterMutation = useMutation({
+        mutationFn: (faceIds: string[]) => createNewFaceCluster(faceIds),
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); setMoveFaceId(null); },
+    });
+
+    const handleTriggerClustering = async () => {
+        setIsClustering(true);
+        try { await triggerFaceClustering(); queryClient.invalidateQueries({ queryKey: ['faces'] }); }
+        finally { setIsClustering(false); }
     };
 
-    const handleDelete = (faceId: string) => {
-        if (confirm('Delete this face?')) {
-            deleteMutation.mutate(faceId);
-        }
+    const handleDeleteFace = (faceId: string) => { if (confirm('Delete this face?')) deleteMutation.mutate(faceId); };
+
+    const clusters: FaceClusterData[] = clustersQuery.data?.clusters || [];
+    const allFaces: FaceData[] = [...(unresolvedQuery.data?.faces || []), ...(namedQuery.data?.faces || [])];
+    const unresolvedFaces: FaceData[] = unresolvedQuery.data?.faces || [];
+    const namedFaces: FaceData[] = namedQuery.data?.faces || [];
+    const isLoading = clustersQuery.isLoading || unresolvedQuery.isLoading;
+
+    const filterFaces = (faces: FaceData[]) => {
+        if (!searchQuery) return faces;
+        const q = searchQuery.toLowerCase();
+        return faces.filter(f => f.name?.toLowerCase().includes(q) || f.media_path?.toLowerCase().includes(q));
     };
 
-    const faces = tab === 0 ? unresolvedFaces.data?.faces : namedFaces.data?.faces;
-    const isLoading = tab === 0 ? unresolvedFaces.isLoading : namedFaces.isLoading;
+    const displayFaces = tab === 0 ? allFaces : tab === 1 ? unresolvedFaces : namedFaces;
+    const filteredFaces = filterFaces(displayFaces);
 
-    const filteredFaces = faces?.filter((f: FaceCluster) => {
-        if (!searchQuery) return true;
-        const query = searchQuery.toLowerCase();
-        return (
-            f.name?.toLowerCase().includes(query) ||
-            f.media_path?.toLowerCase().includes(query) ||
-            String(f.cluster_id).includes(query)
-        );
+    const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
+
+    const mergeClustersMutation = useMutation({
+        mutationFn: ({ from, to }: { from: number; to: number }) => fetch(`http://localhost:8000/faces/merge?from_cluster=${from}&to_cluster=${to}`, { method: 'POST' }).then(res => res.json()),
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['faces'] }); setMergeSourceId(null); },
     });
 
     return (
         <Box>
-            <Typography variant="h4" fontWeight={700} gutterBottom>
-                Face Gallery
-            </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-                Review detected faces and assign names for better search results.
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                <Typography variant="h4" fontWeight={700}>Face Gallery</Typography>
+                <Tooltip title="Run DBSCAN clustering">
+                    <Button variant="outlined" startIcon={isClustering ? <CircularProgress size={16} /> : <AutoAwesome />} onClick={handleTriggerClustering} disabled={isClustering} size="small">
+                        {isClustering ? 'Clustering...' : 'Cluster Faces'}
+                    </Button>
+                </Tooltip>
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>View all face occurrences or grouped clusters.</Typography>
 
-            {/* Tabs and Search */}
             <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
                 <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-                    <Tab
-                        label={`Unresolved (${unresolvedFaces.data?.faces?.length || 0})`}
-                        icon={<Edit fontSize="small" />}
-                        iconPosition="start"
-                    />
-                    <Tab
-                        label={`Named (${namedFaces.data?.faces?.length || 0})`}
-                        icon={<Check fontSize="small" />}
-                        iconPosition="start"
-                    />
+                    <Tab label={`All (${allFaces.length})`} />
+                    <Tab label={`Unresolved (${unresolvedFaces.length})`} icon={<Edit fontSize="small" />} iconPosition="start" />
+                    <Tab label={`Named (${namedFaces.length})`} icon={<Check fontSize="small" />} iconPosition="start" />
+                    <Tab label={`Clusters (${clusters.length})`} icon={<Groups fontSize="small" />} iconPosition="start" />
                 </Tabs>
                 <Box sx={{ flex: 1 }} />
-                <TextField
-                    size="small"
-                    placeholder="Search faces..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    slotProps={{
-                        input: {
-                            startAdornment: (
-                                <InputAdornment position="start">
-                                    <Search fontSize="small" />
-                                </InputAdornment>
-                            ),
-                        },
-                    }}
-                    sx={{ minWidth: 200 }}
-                />
+                <TextField size="small" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                    slotProps={{ input: { startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> } }} sx={{ minWidth: 200 }} />
             </Box>
 
-            {/* Grid */}
             {isLoading ? (
                 <Grid container spacing={2}>
-                    {Array.from({ length: 8 }).map((_, i) => (
-                        <Grid key={i} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
-                            <Skeleton variant="rounded" height={160} />
-                        </Grid>
-                    ))}
+                    {Array.from({ length: 8 }).map((_, i) => (<Grid key={i} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}><Skeleton variant="rounded" height={160} /></Grid>))}
                 </Grid>
-            ) : filteredFaces?.length > 0 ? (
-                <Grid container spacing={2}>
-                    {filteredFaces.map((face: FaceCluster, idx: number) => (
-                        <Grid key={face.id || idx} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
-                            <FaceCard
-                                face={face}
-                                onLabel={setSelectedFaceId}
-                                onDelete={handleDelete}
+            ) : tab === 3 ? (
+                clusters.length > 0 ? (
+                    <Box>
+                        {clusters.map((cluster) => (
+                            <ClusterCard
+                                key={cluster.cluster_id}
+                                cluster={cluster}
+                                onLabelCluster={setSelectedClusterId}
+                                onLabelFace={setSelectedFaceId}
+                                onDeleteFace={handleDeleteFace}
                                 onZoom={setZoomFace}
+                                onMoveFace={setMoveFaceId}
+                                onMerge={() => setMergeSourceId(cluster.cluster_id)}
                             />
-                        </Grid>
-                    ))}
-                </Grid>
+                        ))}
+                    </Box>
+                ) : (
+                    <Paper sx={{ p: 4, textAlign: 'center' }}><Groups sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} /><Typography variant="h6" color="text.secondary">No clusters yet</Typography>
+                        <Button variant="contained" startIcon={<AutoAwesome />} onClick={handleTriggerClustering} sx={{ mt: 2 }}>Run Face Clustering</Button></Paper>
+                )
             ) : (
-                <Paper sx={{ p: 6, textAlign: 'center', borderRadius: 3, bgcolor: 'action.hover' }}>
-                    <Face sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-                    <Typography variant="h6" color="text.secondary">
-                        {tab === 0 ? 'No unresolved faces' : 'No named faces yet'}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                        {tab === 0
-                            ? 'All detected faces have been labeled'
-                            : 'Label some faces from the Unresolved tab'}
-                    </Typography>
-                </Paper>
+                filteredFaces.length > 0 ? (
+                    <Grid container spacing={2}>
+                        {filteredFaces.map((face, idx) => (<Grid key={face.id || idx} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}><FaceCard face={face} onLabel={setSelectedFaceId} onDelete={handleDeleteFace} onZoom={setZoomFace} onMove={setMoveFaceId} /></Grid>))}
+                    </Grid>
+                ) : (<Paper sx={{ p: 4, textAlign: 'center' }}><Face sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} /><Typography variant="h6" color="text.secondary">No faces found</Typography></Paper>)
             )}
 
-            {/* Label Dialog */}
-            <LabelDialog
-                open={selectedFaceId !== null}
-                faceId={selectedFaceId}
-                onClose={() => setSelectedFaceId(null)}
-                onSave={handleLabel}
-                isLoading={labelMutation.isPending}
-            />
+            <LabelDialog open={selectedClusterId !== null} isCluster onClose={() => setSelectedClusterId(null)} onSave={(name) => labelClusterMutation.mutate({ clusterId: selectedClusterId!, name })} isLoading={labelClusterMutation.isPending} />
+            <LabelDialog open={selectedFaceId !== null} isCluster={false} onClose={() => setSelectedFaceId(null)} onSave={(name) => labelFaceMutation.mutate({ faceId: selectedFaceId!, name })} isLoading={labelFaceMutation.isPending} />
+            <MoveDialog open={moveFaceId !== null} clusters={clusters} onClose={() => setMoveFaceId(null)} onMove={(clusterId) => moveMutation.mutate({ faceId: moveFaceId!, clusterId })} onNewCluster={() => newClusterMutation.mutate([moveFaceId!])} />
 
-            {/* Zoom Dialog for full-size preview */}
-            <Dialog
-                open={zoomFace !== null}
-                onClose={() => setZoomFace(null)}
-                maxWidth="md"
-                PaperProps={{
-                    sx: {
-                        bgcolor: 'transparent',
-                        boxShadow: 'none',
-                        overflow: 'visible',
-                    },
-                }}
-            >
-                <Box
-                    sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        p: 2,
-                    }}
-                >
-                    {zoomFace?.thumbnail_path && (
-                        <Box
-                            component="img"
-                            src={`http://localhost:8000${zoomFace.thumbnail_path}`}
-                            alt={zoomFace.name || 'Face'}
-                            sx={{
-                                maxWidth: '80vw',
-                                maxHeight: '70vh',
-                                borderRadius: 3,
-                                boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-                                objectFit: 'contain',
-                            }}
-                        />
-                    )}
-                    <Box sx={{ mt: 2, textAlign: 'center' }}>
-                        {zoomFace?.name && (
-                            <Chip
-                                label={zoomFace.name}
-                                color="success"
-                                icon={<Check />}
-                                sx={{ mb: 1 }}
-                            />
-                        )}
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ color: 'white', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}
-                        >
-                            {zoomFace?.media_path?.split(/[/\\]/).pop()}
-                            {zoomFace?.timestamp !== undefined && ` @ ${zoomFace.timestamp.toFixed(1)}s`}
-                        </Typography>
-                    </Box>
+            <Dialog open={mergeSourceId !== null} onClose={() => setMergeSourceId(null)} maxWidth="sm" fullWidth>
+                <DialogTitle>Merge Cluster</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" sx={{ mb: 2 }}>Select a target cluster to merge into.</Typography>
+                    <List>
+                        {clusters.filter(c => c.cluster_id !== mergeSourceId).map((c) => (
+                            <ListItemButton key={c.cluster_id} onClick={() => mergeClustersMutation.mutate({ from: mergeSourceId!, to: c.cluster_id })}>
+                                <ListItemAvatar>
+                                    <Avatar src={c.representative?.thumbnail_path ? `http://localhost:8000${c.representative.thumbnail_path}` : undefined}><Face /></Avatar>
+                                </ListItemAvatar>
+                                <ListItemText primary={c.name || `Cluster #${c.cluster_id}`} secondary={`${c.face_count} faces`} />
+                            </ListItemButton>
+                        ))}
+                    </List>
+                </DialogContent>
+                <DialogActions><Button onClick={() => setMergeSourceId(null)}>Cancel</Button></DialogActions>
+            </Dialog>
+
+            <Dialog open={zoomFace !== null} onClose={() => setZoomFace(null)} maxWidth="md">
+                <Box sx={{ p: 2, textAlign: 'center' }}>
+                    {zoomFace?.thumbnail_path && <Box component="img" src={`http://localhost:8000${zoomFace.thumbnail_path}`} sx={{ maxWidth: '80vw', maxHeight: '70vh', borderRadius: 2 }} />}
+                    <Typography variant="body2" sx={{ mt: 1 }}>{zoomFace?.media_path?.split(/[/\\]/).pop()}{zoomFace?.timestamp !== undefined && ` @ ${zoomFace.timestamp.toFixed(1)}s`}</Typography>
                 </Box>
             </Dialog>
 
-            {labelMutation.isError && (
-                <Alert severity="error" sx={{ mt: 2 }}>
-                    Failed to save label. Please try again.
-                </Alert>
-            )}
+            {(labelClusterMutation.isError || labelFaceMutation.isError || deleteMutation.isError || mergeClustersMutation.isError) && <Alert severity="error" sx={{ mt: 2 }}>Operation failed.</Alert>}
         </Box>
     );
 }

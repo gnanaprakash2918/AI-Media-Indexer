@@ -335,18 +335,26 @@ class IngestionPipeline:
                         top, right, bottom, left = face.bbox
                         face_w = right - left
                         face_h = bottom - top
-                        # Increased padding for better context (40%)
-                        pad = int(max(face_w, face_h) * 0.4)
-                        y1 = max(0, top - pad)
-                        y2 = min(img.shape[0], bottom + pad)
-                        x1 = max(0, left - pad)
-                        x2 = min(img.shape[1], right + pad)
+                        
+                        # Tighter padding (15%) to avoid chest/body, focusing on the face
+                        pad_w = int(face_w * 0.15)
+                        pad_h = int(face_h * 0.15)
+                        
+                        # Shift crop slightly up (10%) to prioritize head/hair over neck
+                        shift_up = int(face_h * 0.1)
+                        
+                        y1 = max(0, top - pad_h - shift_up)
+                        y2 = min(img.shape[0], bottom + pad_h - shift_up)
+                        x1 = max(0, left - pad_w)
+                        x2 = min(img.shape[1], right + pad_w)
+                        
                         face_crop = img[y1:y2, x1:x2]
                         
                         # Ensure minimum size for quality (resize up if too small)
-                        min_size = 150
+                        min_size = 200  # Increased from 150 for better visual quality
                         crop_h, crop_w = face_crop.shape[:2]
-                        if crop_h > 0 and crop_w > 0:
+                        
+                        if crop_h > 10 and crop_w > 10:  # Basic sanity check
                             if crop_h < min_size or crop_w < min_size:
                                 scale = max(min_size / crop_h, min_size / crop_w)
                                 new_w = int(crop_w * scale)
@@ -355,10 +363,11 @@ class IngestionPipeline:
                             
                             thumb_name = f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
                             thumb_file = thumb_dir / thumb_name
-                            # Use higher JPEG quality (95 instead of default ~75)
+                            # Use high JPEG quality
                             cv2.imwrite(str(thumb_file), face_crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
                             thumb_path = f"/thumbnails/faces/{thumb_name}"
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Thumbnail generation failed: {e}")
                     pass
 
                 self.db.insert_face(

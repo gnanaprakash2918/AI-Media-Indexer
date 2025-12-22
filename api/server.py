@@ -507,6 +507,344 @@ def create_app() -> FastAPI:
             },
         }
 
+    # Face Clustering Endpoints
+    @app.post("/faces/cluster")
+    async def trigger_face_clustering():
+        """Run production-grade HDBSCAN clustering on face embeddings.
+        
+        Best practices implemented:
+        - L2 normalization for cosine similarity
+        - PCA dimensionality reduction (improves clustering in high-dim space)
+        - HDBSCAN (handles varying cluster densities better than DBSCAN)
+        """
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        import numpy as np
+        from sklearn.decomposition import PCA
+        import hdbscan
+        
+        faces = pipeline.db.get_all_face_embeddings()
+        if not faces:
+            return {"status": "no_faces", "clusters": 0}
+        
+        if len(faces) < 2:
+            return {"status": "insufficient_faces", "clusters": 0, "message": "Need at least 2 faces"}
+        
+        embeddings = np.array([f["embedding"] for f in faces])
+        
+        # Check for zero-padding (SFace 128-dim padded to 512-dim)
+        # If the last 300 dimensions are all close to zero for all vectors, it's likely SFace data.
+        # We need to slice it to 128-dim for accurate clustering.
+        is_padded = False
+        if embeddings.shape[1] == 512:
+            # Check if dimensions 128:512 are effectively zero
+            tail_energy = np.sum(np.abs(embeddings[:, 128:]))
+            if tail_energy < 1e-3:
+                is_padded = True
+                embeddings = embeddings[:, :128]
+                logger.info("Detected zero-padded embeddings (SFace). Sliced to 128-dim.")
+        
+        # Step 1: L2 normalize embeddings (Critical for Cosine/Euclidean)
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        embeddings = embeddings / norms
+        
+        # Step 2: PCA dimensionality reduction
+        # Production Best Practice:
+        # - For small datasets (N < 50), PCA removes too much information (reducing 512d -> N-1 dims).
+        #   Better to use raw Euclidean distance on normalized vectors.
+        # - For large datasets, PCA helps denoise and speed up.
+        target_dims = min(128, embeddings.shape[0] - 1)
+        use_pca = (not is_padded) and (embeddings.shape[0] >= 50) and (target_dims > 5)
+        
+        if use_pca:
+            pca = PCA(n_components=target_dims)
+            embeddings_reduced = pca.fit_transform(embeddings)
+        else:
+            embeddings_reduced = embeddings
+        
+        # Step 3: HDBSCAN clustering (Tuned for Google Photos-like grouping)
+        # - min_cluster_size=2: Smallest valid group.
+        # - cluster_selection_epsilon=0.65: VERY AGGRESSIVE MERGING.
+        #   Standard ArcFace verification threshold is ~0.6-0.7 for hard cases.
+        #   0.65 helps merge profile/frontal views for small datasets.
+        epsilon = 0.65
+        
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=2,
+            min_samples=1,
+            metric="euclidean",
+            cluster_selection_epsilon=epsilon,
+            cluster_selection_method="eom",
+        )
+        labels = clusterer.fit_predict(embeddings_reduced)
+        
+        # Update each face with its cluster ID
+        updated = 0
+        for i, face in enumerate(faces):
+            cluster_id = int(labels[i])
+            # Noise points (label=-1) get unique negative cluster IDs to keep them separate
+            if cluster_id == -1:
+                cluster_id = -abs(hash(face["id"])) % (10**9)
+            
+            # Crucial: Update logical cluster ID in Qdrant payload so it persists
+            pipeline.db.update_face_cluster_id(face["id"], cluster_id)
+            updated += 1
+        
+        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+        n_noise = list(labels).count(-1)
+        
+        return {
+            "status": "clustered",
+            "total_faces": len(faces),
+            "clusters": n_clusters,
+            "noise_points": n_noise,
+            "updated": updated,
+            "algorithm": "HDBSCAN",
+            "model_type": "SFace (128d)" if is_padded else "InsightFace (512d)",
+            "pca_components": target_dims,
+        }
+
+    @app.get("/faces/clusters")
+    async def get_face_clusters():
+        """Get all faces grouped by cluster."""
+        if not pipeline:
+            return {"error": "Pipeline not initialized", "clusters": {}}
+        clusters = pipeline.db.get_faces_grouped_by_cluster()
+        
+        # Transform to API-friendly format
+        result = []
+        for cluster_id, faces in clusters.items():
+            # Pick the first face as representative
+            representative = faces[0] if faces else None
+            result.append({
+                "cluster_id": cluster_id,
+                "name": faces[0].get("name") if faces else None,
+                "face_count": len(faces),
+                "representative": representative,
+                "faces": faces,
+            })
+        
+        # Sort by face count descending
+        result.sort(key=lambda x: x["face_count"], reverse=True)
+        return {"clusters": result}
+
+    @app.post("/faces/merge")
+    async def merge_face_clusters(from_cluster: int, to_cluster: int):
+        """Merge two face clusters into one."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        updated = pipeline.db.merge_face_clusters(from_cluster, to_cluster)
+        return {"merged": updated, "from": from_cluster, "to": to_cluster}
+
+    # Voice Clustering and HITL Endpoints
+    @app.post("/voices/cluster")
+    async def trigger_voice_clustering():
+        """Run production-grade HDBSCAN clustering on voice embeddings.
+        
+        Best practices:
+        - L2 normalization
+        - PCA dimensionality reduction (256 → 50)
+        - HDBSCAN for varying cluster densities
+        """
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        import numpy as np
+        from sklearn.decomposition import PCA
+        import hdbscan
+        
+        voices = pipeline.db.get_all_voice_embeddings()
+        if not voices:
+            return {"status": "no_voices", "clusters": 0}
+        
+        if len(voices) < 2:
+            return {"status": "insufficient_voices", "clusters": 0}
+        
+        embeddings = np.array([v["embedding"] for v in voices])
+        
+        # Step 1: L2 normalize
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        embeddings = embeddings / norms
+        
+        # Step 2: PCA dimensionality reduction
+        # Voice vectors are 256-dim. Reduce to ~50 to focus on speaker identity features.
+        target_dims = min(50, embeddings.shape[0] - 1, embeddings.shape[1])
+        if target_dims > 5:
+            pca = PCA(n_components=target_dims)
+            embeddings_reduced = pca.fit_transform(embeddings)
+        else:
+            embeddings_reduced = embeddings
+        
+        # Step 3: HDBSCAN clustering
+        # epsilon=0.4 allows for some variation in speaker tone/mic quality
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=2,
+            min_samples=1,
+            metric="euclidean",
+            cluster_selection_epsilon=0.4,
+            cluster_selection_method="eom",
+        )
+        labels = clusterer.fit_predict(embeddings_reduced)
+        
+        # Update each voice segment with its cluster ID
+        updated = 0
+        for i, voice in enumerate(voices):
+            cluster_id = int(labels[i])
+            if cluster_id == -1:
+                cluster_id = -abs(hash(voice["id"])) % (10**9)
+            pipeline.db.update_voice_cluster_id(voice["id"], cluster_id)
+            updated += 1
+        
+        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+        n_noise = list(labels).count(-1)
+        
+        return {
+            "status": "clustered",
+            "total_segments": len(voices),
+            "clusters": n_clusters,
+            "noise_points": n_noise,
+            "updated": updated,
+            "algorithm": "HDBSCAN",
+        }
+
+    @app.get("/voices/clusters")
+    async def get_voice_clusters():
+        """Get all voice segments grouped by cluster."""
+        if not pipeline:
+            return {"error": "Pipeline not initialized", "clusters": {}}
+        clusters = pipeline.db.get_voices_grouped_by_cluster()
+        
+        result = []
+        for cluster_id, segments in clusters.items():
+            representative = segments[0] if segments else None
+            result.append({
+                "cluster_id": cluster_id,
+                "speaker_name": segments[0].get("speaker_name") if segments else None,
+                "segment_count": len(segments),
+                "representative": representative,
+                "segments": segments,
+            })
+        
+        result.sort(key=lambda x: x["segment_count"], reverse=True)
+        return {"clusters": result}
+
+    @app.put("/voices/{segment_id}/name")
+    async def rename_voice_speaker(segment_id: str, name_request: NameFaceRequest):
+        """Rename a speaker for a voice segment."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        success = pipeline.db.update_voice_speaker_name(segment_id, name_request.name)
+        if not success:
+            raise HTTPException(status_code=404, detail="Segment not found")
+        return {"success": True, "segment_id": segment_id, "name": name_request.name}
+
+    @app.post("/voices/merge")
+    async def merge_voice_clusters(from_cluster: int, to_cluster: int):
+        """Merge two voice clusters into one."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        updated = pipeline.db.merge_voice_clusters(from_cluster, to_cluster)
+        return {"merged": updated, "from": from_cluster, "to": to_cluster}
+
+    # Manual Cluster Management Endpoints
+    @app.put("/faces/{face_id}/cluster")
+    async def move_face_to_cluster(face_id: str, cluster_id: int):
+        """Move a single face to a different cluster."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        success = pipeline.db.update_face_cluster_id(face_id, cluster_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Face not found")
+        return {"success": True, "face_id": face_id, "cluster_id": cluster_id}
+
+    @app.post("/faces/new-cluster")
+    async def create_new_face_cluster(face_ids: list[str]):
+        """Move faces to a new cluster (generates new cluster ID)."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        import random
+        new_cluster_id = random.randint(100000, 999999)
+        updated = 0
+        for face_id in face_ids:
+            if pipeline.db.update_face_cluster_id(face_id, new_cluster_id):
+                updated += 1
+        return {"success": True, "new_cluster_id": new_cluster_id, "faces_moved": updated}
+
+    @app.put("/voices/{segment_id}/cluster")
+    async def move_voice_to_cluster(segment_id: str, cluster_id: int):
+        """Move a voice segment to a different cluster."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        success = pipeline.db.update_voice_cluster_id(segment_id, cluster_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Segment not found")
+        return {"success": True, "segment_id": segment_id, "cluster_id": cluster_id}
+
+    @app.post("/voices/new-cluster")
+    async def create_new_voice_cluster(segment_ids: list[str]):
+        """Move voice segments to a new cluster."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        import random
+        new_cluster_id = random.randint(100000, 999999)
+        updated = 0
+        for seg_id in segment_ids:
+            if pipeline.db.update_voice_cluster_id(seg_id, new_cluster_id):
+                updated += 1
+        return {"success": True, "new_cluster_id": new_cluster_id, "segments_moved": updated}
+
+    # Name-Based Search
+    @app.get("/search/by-name")
+    async def search_by_name(name: str, limit: int = 20):
+        """Search for media by face name or speaker name."""
+        if not pipeline:
+            return {"error": "Pipeline not initialized", "results": []}
+        
+        results = []
+        name_lower = name.lower()
+        
+        # Search faces by name
+        try:
+            face_clusters = pipeline.db.get_faces_grouped_by_cluster()
+            for cluster_id, faces in face_clusters.items():
+                for face in faces:
+                    face_name = face.get("name") or ""
+                    if name_lower in face_name.lower():
+                        results.append({
+                            "type": "face",
+                            "name": face_name,
+                            "media_path": face.get("media_path"),
+                            "timestamp": face.get("timestamp"),
+                            "thumbnail_path": face.get("thumbnail_path"),
+                            "cluster_id": cluster_id,
+                        })
+        except Exception:
+            pass
+        
+        # Search voices by speaker name
+        try:
+            voice_clusters = pipeline.db.get_voices_grouped_by_cluster()
+            for cluster_id, segments in voice_clusters.items():
+                for seg in segments:
+                    speaker_name = seg.get("speaker_name") or ""
+                    if name_lower in speaker_name.lower():
+                        results.append({
+                            "type": "voice",
+                            "name": speaker_name,
+                            "media_path": seg.get("media_path"),
+                            "start": seg.get("start"),
+                            "end": seg.get("end"),
+                            "audio_path": seg.get("audio_path"),
+                            "cluster_id": cluster_id,
+                        })
+        except Exception:
+            pass
+        
+        return {"results": results[:limit], "total": len(results)}
+
     thumb_path = settings.cache_dir / "thumbnails"
     thumb_path.mkdir(parents=True, exist_ok=True)
     app.mount("/thumbnails", StaticFiles(directory=str(thumb_path)), name="thumbnails")
