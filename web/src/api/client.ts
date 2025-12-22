@@ -33,8 +33,18 @@ export const searchMedia = async (query: string, limit = 20): Promise<any[]> => 
 };
 
 // Ingestion
-export const ingestMedia = async (path: string, hint: string = 'unknown') => {
-    const res = await apiClient.post('/ingest', { path, media_type_hint: hint });
+export const ingestMedia = async (
+    path: string,
+    hint: string = 'unknown',
+    startTime?: number,
+    endTime?: number
+) => {
+    const res = await apiClient.post('/ingest', {
+        path,
+        media_type_hint: hint,
+        start_time: startTime,
+        end_time: endTime,
+    });
     return res.data;
 };
 

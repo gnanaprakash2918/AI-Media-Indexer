@@ -82,6 +82,8 @@ function JobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => void }
 export default function IngestPage() {
     const [paths, setPaths] = useState<string[]>(['']);
     const [mediaType, setMediaType] = useState('unknown');
+    const [startTime, setStartTime] = useState('');
+    const [endTime, setEndTime] = useState('');
     const queryClient = useQueryClient();
     const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -91,8 +93,17 @@ export default function IngestPage() {
         refetchInterval: 5000,
     });
 
+    const parseTime = (t: string): number | undefined => {
+        if (!t) return undefined;
+        const parts = t.split(':').map(Number);
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        if (parts.length === 1) return parts[0];
+        return undefined;
+    };
+
     const ingestMutation = useMutation({
-        mutationFn: (data: { path: string; hint: string }) => ingestMedia(data.path, data.hint),
+        mutationFn: (data: { path: string; hint: string; start?: number; end?: number }) =>
+            ingestMedia(data.path, data.hint, data.start, data.end),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['jobs'] });
         },
@@ -125,8 +136,10 @@ export default function IngestPage() {
         const validPaths = paths.filter(p => p.trim());
         if (validPaths.length === 0) return;
 
+        const start = parseTime(startTime);
+        const end = parseTime(endTime);
         validPaths.forEach(path => {
-            ingestMutation.mutate({ path: path.trim(), hint: mediaType });
+            ingestMutation.mutate({ path: path.trim(), hint: mediaType, start, end });
         });
         setPaths(['']);
     };
@@ -200,6 +213,22 @@ export default function IngestPage() {
                     >
                         Browse System
                     </Button>
+                    <TextField
+                        size="small"
+                        sx={{ width: 90 }}
+                        placeholder="0:00"
+                        label="Start"
+                        value={startTime}
+                        onChange={(e) => setStartTime(e.target.value)}
+                    />
+                    <TextField
+                        size="small"
+                        sx={{ width: 90 }}
+                        placeholder="5:00"
+                        label="End"
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                    />
                     <FormControl size="small" sx={{ minWidth: 120 }}>
                         <InputLabel>Type</InputLabel>
                         <Select value={mediaType} label="Type" onChange={(e) => setMediaType(e.target.value)}>

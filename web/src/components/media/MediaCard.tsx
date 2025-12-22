@@ -140,18 +140,34 @@ export function MediaCard({ item }: { item: MediaResult }) {
                     </Typography>
                 </Box>
 
-                <Typography variant="body2" color="text.secondary" sx={{
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                    lineHeight: 1.6,
-                    fontWeight: 500
-                }}>
-                    {item.text || item.action || "Visual match detected in scene."}
-                </Typography>
+                {/* Subtitle with time range */}
+                {item.text && (
+                    <Box sx={{ bgcolor: 'action.hover', p: 1, borderRadius: 1, mb: 1 }}>
+                        <Typography variant="body2" sx={{ fontStyle: 'italic', fontWeight: 500 }}>
+                            "{item.text}"
+                        </Typography>
+                        {item.start !== undefined && item.end !== undefined && (
+                            <Typography variant="caption" color="text.secondary">
+                                {formatTime(item.start)} - {formatTime(item.end)}
+                            </Typography>
+                        )}
+                    </Box>
+                )}
 
-                <Typography variant="caption" color="text.disabled" sx={{ mt: 1.5, display: 'block', fontFamily: 'monospace' }} noWrap>
+                {!item.text && (
+                    <Typography variant="body2" color="text.secondary" sx={{
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        lineHeight: 1.6,
+                        fontWeight: 500
+                    }}>
+                        {item.action || "Visual match detected in scene."}
+                    </Typography>
+                )}
+
+                <Typography variant="caption" color="text.disabled" sx={{ mt: 1, display: 'block', fontFamily: 'monospace' }} noWrap>
                     {baseName}
                 </Typography>
             </CardContent>
