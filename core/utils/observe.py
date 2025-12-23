@@ -19,7 +19,9 @@ def observe(name: str) -> Callable[[F], F]:
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             start = time.perf_counter()
-            start_span(name)
+            # Capture args safely (concise)
+            metadata = {"args": [str(a)[:200] for a in args], "kwargs": {k: str(v)[:200] for k, v in kwargs.items()}}
+            start_span(name, metadata=metadata)
             try:
                 result = await func(*args, **kwargs)
                 end_span("success")
@@ -33,7 +35,9 @@ def observe(name: str) -> Callable[[F], F]:
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             start = time.perf_counter()
-            start_span(name)
+            # Capture args safely (concise)
+            metadata = {"args": [str(a)[:200] for a in args], "kwargs": {k: str(v)[:200] for k, v in kwargs.items()}}
+            start_span(name, metadata=metadata)
             try:
                 result = func(*args, **kwargs)
                 end_span("success")

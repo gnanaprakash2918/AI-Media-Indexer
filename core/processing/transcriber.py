@@ -168,6 +168,7 @@ class AudioTranscriber:
         log("[INFO] No existing subtitles found. Proceeding to ASR.")
         return False
 
+    @observe("transcriber_slice_audio")
     def _slice_audio(self, input_path: Path, start: float, end: float | None) -> Path:
         """Slice audio using ffmpeg into a temporary WAV file.
 
@@ -272,6 +273,7 @@ class AudioTranscriber:
             log(f"[ERROR] Model download/conversion failed: {e}")
             raise RuntimeError(f"Could not prepare {model_id}.") from e
 
+    @observe("transcriber_load_model")
     def _load_model(self, model_key: str) -> None:
         """Loads the Faster-Whisper model with memory-efficient settings.
         

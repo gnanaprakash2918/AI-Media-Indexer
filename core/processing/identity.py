@@ -108,6 +108,7 @@ class FaceManager:
         """Return embedding version string for cache invalidation."""
         return f"{self._model_type}_v1_{self._embedding_dim}d"
 
+    @observe("face_model_init")
     async def _lazy_init(self) -> None:
         """Initialize face models with fallback chain."""
         if self._initialized:
@@ -343,6 +344,7 @@ class FaceManager:
                 out.append(faces)
         return out
 
+    @observe("face_detect_frame")
     async def _detect_frame(self, frame: NDArray[np.uint8]) -> list[DetectedFace]:
         """Detect faces in a single frame."""
         await self._lazy_init()

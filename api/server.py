@@ -372,6 +372,9 @@ def create_app() -> FastAPI:
             )
 
         async def run_pipeline():
+            # Start a new trace for the background task
+            trace_name = f"ingest_{file_path.name}"
+            start_trace(name="background_ingest", metadata={"file": str(file_path)})
             try:
                 assert pipeline is not None
                 await pipeline.process_video(
@@ -380,8 +383,10 @@ def create_app() -> FastAPI:
                     start_time=ingest_request.start_time,
                     end_time=ingest_request.end_time,
                 )
+                end_trace("success")
             except Exception as e:
                 logger.error(f"Pipeline error: {e}")
+                end_trace("error", str(e))
 
         background_tasks.add_task(run_pipeline)
 
@@ -620,15 +625,21 @@ def create_app() -> FastAPI:
         files = list(scanner.scan(dir_path))
 
         async def process_all():
-            for media_asset in files:
-                try:
-                    assert pipeline is not None
-                    await pipeline.process_video(
-                        media_asset.file_path,
-                        media_asset.media_type.value,
-                    )
-                except Exception as e:
-                    logger.error(f"Error processing {media_asset.file_path}: {e}")
+            # Start a new trace for the background scan
+            start_trace(name="background_scan", metadata={"directory": str(dir_path), "files": len(files)})
+            try:
+                for media_asset in files:
+                    try:
+                        assert pipeline is not None
+                        await pipeline.process_video(
+                            media_asset.file_path,
+                            media_asset.media_type.value,
+                        )
+                    except Exception as e:
+                        logger.error(f"Error processing {media_asset.file_path}: {e}")
+                end_trace("success")
+            except Exception as e:
+                 end_trace("error", str(e))
 
         background_tasks.add_task(process_all)
 

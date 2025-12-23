@@ -10,6 +10,7 @@ from typing import Any
 import ollama
 
 from .interface import LLMInterface, T
+from core.utils.observe import observe
 
 
 class OllamaLLM(LLMInterface):
@@ -44,6 +45,7 @@ class OllamaLLM(LLMInterface):
             print(f"Failed to construct Ollama AsyncClient: {e}")
             raise RuntimeError(f"Failed to construct Ollama AsyncClient: {e}") from e
 
+    @observe("llm_generate")
     async def generate(self, prompt: str, **kwargs: Any) -> str:
         """Generate text from the Ollama service for a user prompt."""
         debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
@@ -61,6 +63,7 @@ class OllamaLLM(LLMInterface):
             print(f"Ollama generation failed: {e}")
             raise RuntimeError(f"Ollama generation failed: {e}") from e
 
+    @observe("llm_generate_structured")
     async def generate_structured(
         self,
         schema: type[T],
@@ -82,6 +85,7 @@ class OllamaLLM(LLMInterface):
             print(f"Ollama structured generation failed: {e}")
             raise RuntimeError(f"Ollama structured generation failed: {e}") from e
 
+    @observe("llm_describe_image")
     async def describe_image(
         self,
         prompt: str,
