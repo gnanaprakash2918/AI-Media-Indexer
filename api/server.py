@@ -452,13 +452,16 @@ def create_app() -> FastAPI:
         start: float = Query(..., description="Start time in seconds"),
         end: float = Query(None, description="End time in seconds (default: start + 10)"),
     ):
-        """Stream a specific segment using FFmpeg's fast-seek.
+        """Stream a specific video segment with caching.
         
-        Optimized for INSTANT playback:
-        - Uses input format for output (no re-encoding)
-        - Fast keyframe seek with -ss before -i
-        - Stream copy mode (-c copy)
+        Strategy: 
+        - First request: Fast H264 encode and cache to disk (~5-10s)
+        - Subsequent requests: Serve from cache (instant)
         """
+        from fastapi.responses import FileResponse
+        import subprocess
+        import hashlib
+        
         file_path = Path(path)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
@@ -466,60 +469,57 @@ def create_app() -> FastAPI:
         # Default segment duration
         duration = (end - start) if end else 10.0
         
-        # Detect input format to use same for output (enables true stream copy)
-        suffix = file_path.suffix.lower()
-        format_map = {
-            '.webm': ('webm', 'video/webm'),
-            '.mp4': ('mp4', 'video/mp4'),
-            '.mkv': ('matroska', 'video/x-matroska'),
-            '.avi': ('avi', 'video/x-msvideo'),
-            '.mov': ('mov', 'video/quicktime'),
-            '.m4v': ('mp4', 'video/mp4'),
-        }
-        out_format, media_type = format_map.get(suffix, ('mp4', 'video/mp4'))
+        # Create cache directory for segments
+        cache_dir = settings.cache_dir / "segments"
+        cache_dir.mkdir(parents=True, exist_ok=True)
         
-        async def generate_segment():
-            # Build FFmpeg command optimized for speed
-            cmd = [
-                "ffmpeg",
-                "-ss", str(start),       # Fast seek BEFORE input (keyframe seek)
-                "-i", str(file_path),
-                "-t", str(duration),     # Duration limit
-                "-c", "copy",            # Stream copy (NO re-encoding)
-                "-avoid_negative_ts", "make_zero",  # Fix timestamp issues
-            ]
-            
-            # Format-specific options
-            if out_format == 'mp4':
-                cmd.extend(["-movflags", "frag_keyframe+empty_moov+faststart"])
-            elif out_format == 'webm':
-                cmd.extend(["-cluster_size_limit", "2M", "-cluster_time_limit", "5000"])
-            
-            cmd.extend(["-f", out_format, "-"])
-            
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+        # Generate cache filename based on path + start + end
+        cache_key = f"{file_path.stem}_{start:.2f}_{duration:.2f}"
+        cache_hash = hashlib.md5(f"{path}_{start}_{duration}".encode()).hexdigest()[:8]
+        cache_file = cache_dir / f"{cache_key}_{cache_hash}.mp4"
+        
+        # Serve from cache if exists
+        if cache_file.exists():
+            return FileResponse(
+                cache_file, 
+                media_type="video/mp4",
+                headers={"Cache-Control": "public, max-age=86400"}
             )
-            
-            # Stream output in larger chunks for better throughput
-            while True:
-                chunk = await process.stdout.read(256 * 1024)  # 256KB chunks
-                if not chunk:
-                    break
-                yield chunk
-            
-            await process.wait()
         
-        return StreamingResponse(
-            generate_segment(),
-            media_type=media_type,
-            headers={
-                "Content-Type": media_type,
-                "Cache-Control": "public, max-age=3600",
-            }
+        # Encode segment using fast H264
+        # Using ultrafast preset + CRF 28 for speed over quality
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start),           # Fast seek before input
+            "-i", str(file_path),
+            "-t", str(duration),
+            "-c:v", "libx264",           # H264 encoding
+            "-preset", "ultrafast",       # Fastest encoding
+            "-crf", "28",                 # Good quality/speed balance
+            "-c:a", "aac",               # AAC audio
+            "-b:a", "128k",
+            "-movflags", "+faststart",    # Enable fast start for streaming
+            "-f", "mp4",
+            str(cache_file)
+        ]
+        
+        # Run synchronously (blocking but cached)
+        result = subprocess.run(
+            cmd, 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.PIPE,
+            timeout=60  # Max 60 seconds for encoding
         )
+        
+        if cache_file.exists():
+            return FileResponse(
+                cache_file,
+                media_type="video/mp4", 
+                headers={"Cache-Control": "public, max-age=86400"}
+            )
+        else:
+            logger.error(f"Segment encoding failed: {result.stderr.decode()[:500]}")
+            raise HTTPException(status_code=500, detail="Segment encoding failed")
 
     @app.get("/media/thumbnail")
     async def get_media_thumbnail(path: str = Query(...), time: float = 0.0):
@@ -669,6 +669,66 @@ def create_app() -> FastAPI:
                 detail="Job not found or not running",
             )
         return {"status": "cancelled", "job_id": job_id}
+
+    @app.post("/media/regenerate-thumbnails")
+    async def regenerate_thumbnails(path: str = Query(...)):
+        """Regenerate all face thumbnails and voice clips for a media file.
+        
+        Uses parallel batch extraction for speed (4 concurrent FFmpeg processes).
+        """
+        from core.utils.batch_extract import extract_frames_batch, extract_audio_clips_batch
+        import hashlib
+        
+        file_path = Path(path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        if not pipeline or not pipeline.db:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        # Get prefix for output files
+        prefix = hashlib.md5(file_path.stem.encode()).hexdigest()
+        
+        face_output_dir = settings.cache_dir / "thumbnails" / "faces"
+        voice_output_dir = settings.cache_dir / "thumbnails" / "voices"
+        face_output_dir.mkdir(parents=True, exist_ok=True)
+        voice_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get all faces and voice segments for this media from database
+        faces = pipeline.db.get_faces_by_media(str(file_path))
+        voices = pipeline.db.get_voice_segments(str(file_path))
+        
+        # Extract timestamps and segments
+        face_timestamps = list(set(f.get("timestamp", 0) for f in faces if f.get("timestamp") is not None))
+        voice_segments = [(v.get("start", 0), v.get("end", v.get("start", 0) + 3)) for v in voices]
+        
+        # Run batch extraction in thread pool
+        import asyncio
+        
+        face_results = {}
+        voice_results = {}
+        
+        if face_timestamps:
+            face_results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                extract_frames_batch,
+                file_path, face_timestamps, face_output_dir, prefix
+            )
+        
+        if voice_segments:
+            voice_results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                extract_audio_clips_batch,
+                file_path, voice_segments, voice_output_dir, prefix
+            )
+        
+        return {
+            "status": "completed",
+            "faces_generated": len(face_results),
+            "voices_generated": len(voice_results),
+            "total_faces": len(faces),
+            "total_voices": len(voices),
+        }
 
     @app.get("/search")
     async def search(

@@ -809,6 +809,46 @@ class VectorDB:
         except Exception:
             return False
 
+    def get_faces_by_media(self, media_path: str, limit: int = 1000) -> list[dict[str, Any]]:
+        """Get all faces for a specific media file.
+        
+        Args:
+            media_path: Path to the media file.
+            limit: Maximum number of results.
+            
+        Returns:
+            List of face data dicts.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="media_path",
+                            match=models.MatchValue(value=media_path),
+                        )
+                    ]
+                ),
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                results.append({
+                    "id": point.id,
+                    "media_path": payload.get("media_path"),
+                    "timestamp": payload.get("timestamp"),
+                    "name": payload.get("name"),
+                    "cluster_id": payload.get("cluster_id"),
+                    "thumbnail_path": payload.get("thumbnail_path"),
+                })
+            return results
+        except Exception:
+            return []
+
     def set_face_main(self, cluster_id: int, is_main: bool = True) -> bool:
         try:
             resp = self.client.scroll(

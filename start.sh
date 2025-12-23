@@ -236,7 +236,15 @@ if [ "$SKIP_DOCKER" = false ]; then
         docker compose pull
         echo -e "${GREEN}  Docker images updated!${NC}"
     else
-        echo -e "${GRAY}[6/9] Skipping image pull (use --pull-images to update)${NC}"
+        # Check if Langfuse images exist, pull only if missing
+        LANGFUSE_IMAGE=$(docker images "langfuse/langfuse" --format "{{.Repository}}" 2>/dev/null)
+        if [ -z "$LANGFUSE_IMAGE" ]; then
+            echo -e "${YELLOW}[6/9] Langfuse images not found, pulling...${NC}"
+            docker compose pull langfuse langfuse-worker
+            echo -e "${GREEN}  Langfuse images pulled!${NC}"
+        else
+            echo -e "${GRAY}[6/9] Langfuse images already present (use --pull-images to update)${NC}"
+        fi
     fi
     
     echo ""
