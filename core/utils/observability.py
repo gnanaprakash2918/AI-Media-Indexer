@@ -1,106 +1,143 @@
-"""Observability module for distributed tracing with Langfuse."""
+"""Observability module for distributed tracing with Langfuse SDK v3."""
 
 from __future__ import annotations
 
+import os
 import time
+import base64
+import json
+import logging
 from contextvars import ContextVar
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from langfuse import Langfuse
+import requests
 from loguru import logger
 
 from config import settings
 from core.utils.logger import bind_context, clear_context
 
-langfuse_client: Langfuse | None = None
+# Module-level flag for initialization
+_langfuse_initialized = False
 
+# ContextVars
 trace_id_ctx: ContextVar[str | None] = ContextVar("obs_trace_id", default=None)
-
+# Stack items: {"name": str, "id": str, "start_time": float}
 span_stack_ctx: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "obs_span_stack", default=None
 )
-
+# We no longer store SDK objects
 trace_obj_ctx: ContextVar[Any | None] = ContextVar("obs_trace_obj", default=None)
 
 
 def init_langfuse() -> None:
-    """Initialize Langfuse client based on configuration."""
-    global langfuse_client
+    """Initialize Langfuse via environment variables (checking only)."""
+    global _langfuse_initialized
     
-    logger.info(f"🔍 Langfuse init: backend={settings.langfuse_backend}")
+    backend = settings.langfuse_backend
     
-    if settings.langfuse_backend == "disabled":
-        langfuse_client = None
-        logger.info("  Langfuse disabled")
+    # Auto-enable cloud if keys are present and backend is disabled (default)
+    if backend == "disabled" and settings.langfuse_public_key and settings.langfuse_secret_key:
+        backend = "cloud"
+        logger.info("🔍 Langfuse: Auto-enabling cloud mode (keys detected)")
+    
+    logger.info(f"🔍 Langfuse init: backend={backend}")
+    
+    if backend == "disabled":
         return
+    
+    # Set environment variables (kept for compatibility or if we use SDK later)
+    if settings.langfuse_public_key:
+        os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+    if settings.langfuse_secret_key:
+        os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+    
+    if backend == "cloud":
+        os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+        logger.info(f"  ✅ Langfuse cloud configured: {settings.langfuse_host}")
+    elif backend == "docker":
+        host = settings.langfuse_docker_host or "http://localhost:3300"
+        os.environ["LANGFUSE_HOST"] = host
+        logger.info(f"  ✅ Langfuse docker configured: {host}")
         
-    if settings.langfuse_backend == "cloud" and settings.langfuse_public_key:
-        langfuse_client = Langfuse(
-            public_key=settings.langfuse_public_key,
-            secret_key=settings.langfuse_secret_key,
-            host=settings.langfuse_host,
-        )
-        logger.info(f"  ✅ Langfuse cloud initialized: {settings.langfuse_host}")
+    _langfuse_initialized = True
+    logger.info("  ✅ Langfuse raw client ready")
+
+
+def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:
+    """Send a raw ingestion event to Langfuse API."""
+    try:
+        # Resolving config with fallback to settings
+        host = os.environ.get("LANGFUSE_HOST") or settings.langfuse_docker_host or "http://localhost:3300"
+        pk = os.environ.get("LANGFUSE_PUBLIC_KEY") or settings.langfuse_public_key
+        sk = os.environ.get("LANGFUSE_SECRET_KEY") or settings.langfuse_secret_key
         
-    elif settings.langfuse_backend == "docker":
-        public_key = settings.langfuse_public_key or "local"
-        secret_key = settings.langfuse_secret_key or "local"
-        # Use LANGFUSE_HOST if set, otherwise default docker host
-        host = settings.langfuse_host if settings.langfuse_host != "https://cloud.langfuse.com" else settings.langfuse_docker_host
-        langfuse_client = Langfuse(
-            public_key=public_key,
-            secret_key=secret_key,
-            host=host,
-        )
-        logger.info(f"  ✅ Langfuse docker initialized: {host}")
-    else:
-        logger.warning(f"  ⚠️ Langfuse not initialized: backend={settings.langfuse_backend}, key_present={bool(settings.langfuse_public_key)}")
+        if not pk or not sk:
+            # logger.warning(f"Langfuse skipped: Missing keys (pk={bool(pk)}, sk={bool(sk)})")
+            return
+
+        auth_str = f"{pk}:{sk}"
+        b64_auth = base64.b64encode(auth_str.encode()).decode()
+        
+        url = f"{host}/api/public/ingestion"
+        headers = {
+            "Authorization": f"Basic {b64_auth}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "batch": [
+                {
+                    "id": str(uuid4()),
+                    "type": event_type,
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "body": body
+                }
+            ]
+        }
+        
+        # logger.info(f"Langfuse Sending {event_type} to {url}...")
+        
+        try:
+             resp = requests.post(url, headers=headers, json=payload, timeout=2.0)
+             if resp.status_code not in (200, 201, 207):
+                 logger.warning(f"Langfuse API Error {resp.status_code}: {resp.text}")
+             # else:
+             #    logger.info(f"Langfuse Sent {event_type}: {resp.status_code}")
+                 
+        except requests.exceptions.ReadTimeout:
+             logger.warning(f"Langfuse timeout sending {event_type}")
+        except Exception as e:
+             logger.warning(f"Langfuse ingestion error: {e}")
+             
+    except Exception as e:
+        logger.warning(f"Langfuse raw send failed: {e}")
 
 
 def start_trace(name: str, metadata: dict[str, Any] | None = None) -> str:
     """Start a new trace."""
-    
-    # Reset contexts
     clear_context()
     
-    if langfuse_client:
-        trace_obj = langfuse_client.start_span(
-            name=name,
-            metadata=metadata or {},
-        )
-        trace_obj_ctx.set(trace_obj)
-        trace_id = trace_obj.trace_id
-    else:
-        trace_id = str(uuid4())
-        
+    trace_id = str(uuid4())
     trace_id_ctx.set(trace_id)
     bind_context(trace_id=trace_id)
+    
+    # Send trace-create
+    _send_ingestion_event("trace-create", {
+        "id": trace_id,
+        "name": name,
+        "userId": "system",
+        "metadata": metadata or {},
+        # "timestamp": datetime.utcnow().isoformat() + "Z"  # Let server set timestamp to avoid 'delayed' queue
+    })
         
     logger.info("trace_start", trace=name)
     return trace_id
 
 
 def end_trace(status: str = "success", error: str | None = None) -> None:
-    """End the current trace."""
-    trace_obj = trace_obj_ctx.get()
-    
-    if trace_obj:
-        update_kwargs: dict[str, Any] = {"metadata": {"status": status, "error": error}}
-        if status == "error":
-            update_kwargs["level"] = "ERROR"
-            update_kwargs["status_message"] = error
-            
-        trace_obj.update(**update_kwargs)
-        trace_obj.end()
-        
-        # Flush to ensure trace is sent to server
-        if langfuse_client:
-            try:
-                langfuse_client.flush()
-            except Exception:
-                pass
-        
+    """End the current trace (not strictly required for Langfuse trace-create but good for logging)."""
     logger.info("trace_end", status=status, error=error)
     trace_id_ctx.set(None)
     span_stack_ctx.set(None)
@@ -109,57 +146,85 @@ def end_trace(status: str = "success", error: str | None = None) -> None:
 
 
 def start_span(name: str, metadata: dict[str, Any] | None = None) -> None:
-    """Start a new span."""
+    """Start a new span using raw API."""
+    trace_id = trace_id_ctx.get()
+    if not trace_id:
+        return # Cannot start span without trace
+        
     stack = span_stack_ctx.get() or []
-    parent_item = stack[-1] if stack else None
+    
+    # Determine parent
+    parent_id = None
+    if stack:
+        parent_id = stack[-1]["id"]
+    
+    span_id = str(uuid4())
+    start_time = time.time()
+    
     bind_context(span=name)
-    span_client = None
-    if langfuse_client:
-        # Get parent: either the last span or the root trace object
-        parent = None
-        if parent_item and parent_item.get("span"):
-             parent = parent_item["span"]
-        else:
-             parent = trace_obj_ctx.get()
-
-        if parent:
-            span_client = parent.start_span(
-                name=name,
-                metadata=metadata or {},
-            )
-            
+    
+    # Send span-create
+    body = {
+        "id": span_id,
+        "traceId": trace_id,
+        "name": name,
+        # "startTime": datetime.utcfromtimestamp(start_time).isoformat() + "Z", # Let server set start
+        "metadata": metadata or {},
+        "type": "span"
+    }
+    if parent_id:
+        body["parentObservationId"] = parent_id
+        
+    _send_ingestion_event("span-create", body)
+    
     # Push to stack
-    new_item = {"name": name, "span": span_client}
+    new_item = {"name": name, "id": span_id, "start_time": start_time}
     span_stack_ctx.set(stack + [new_item])
+    
     logger.info("span_start", span=name)
 
 
 def end_span(status: str = "success", error: str | None = None) -> None:
-    """End the current span."""
+    """End the current span using raw API."""
     stack = span_stack_ctx.get()
     if not stack:
         return
 
     item = stack[-1]
     name = item["name"]
-    span_client = item["span"]
-
-    if span_client:
-        update_kwargs = {}
+    span_id = item["id"]
+    start_time = item["start_time"]
+    
+    end_time = time.time()
+    
+    trace_id = trace_id_ctx.get()
+    
+    # Send span-create (upsert) with end time
+    if trace_id:
+        body = {
+            "id": span_id,
+            "traceId": trace_id,
+            "name": name,
+            "startTime": datetime.utcfromtimestamp(start_time).isoformat() + "Z",
+            "endTime": datetime.utcfromtimestamp(end_time).isoformat() + "Z",
+            "type": "span"
+        }
+        
         if status == "error":
-            update_kwargs["level"] = "ERROR"
-            update_kwargs["status_message"] = error
-            
-        span_client.update(**update_kwargs)
-        span_client.end()
+            body["level"] = "ERROR"
+            body["statusMessage"] = error or "Unknown Error"
+        
+        # We assume parentId hasn't changed. Sending minimal fields + endTime might behave as upsert
+        # but Langfuse ingestion usually expects full object or at least required fields.
+        # We re-send required fields.
+        
+        _send_ingestion_event("span-create", body)
 
     logger.info("span_end", span=name, status=status, error=error)
     
-    # Pop
     new_stack = stack[:-1]
     span_stack_ctx.set(new_stack)
     
-    # Restore context
     if new_stack:
         bind_context(span=new_stack[-1]["name"])
     else:

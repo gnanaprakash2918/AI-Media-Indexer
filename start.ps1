@@ -234,7 +234,11 @@ if (-not $SkipDocker) {
         docker compose pull
         Write-Host "  Docker images updated!" -ForegroundColor Green
     } else {
-        Write-Host "[6/8] Skipping image pull (use -PullImages to update)" -ForegroundColor Gray
+        # Force pull Langfuse to ensure we have the worker-enabled image
+        Write-Host "[6/8] Ensuring latest Langfuse images (web & worker)..." -ForegroundColor Yellow
+        docker compose pull langfuse langfuse-worker
+        
+        Write-Host "  Skipping other images pull (use -PullImages to update all)" -ForegroundColor Gray
     }
     
     Write-Host ""

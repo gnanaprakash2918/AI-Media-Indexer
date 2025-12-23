@@ -57,7 +57,8 @@ dependencies = [
     "pyannote.audio>=3.1.1",
     "psutil>=5.9.0",
     "insightface>=0.7.3",
-    "onnxruntime>=1.16.0" 
+    "onnxruntime>=1.16.0",
+    "hdbscan>=0.8.36",
 ]
 
 [project.optional-dependencies]

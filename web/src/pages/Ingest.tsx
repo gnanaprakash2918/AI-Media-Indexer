@@ -151,10 +151,23 @@ export default function IngestPage() {
         setEndTime('');
     };
 
+    // Helper to normalize path for comparison (handles Windows/Linux differences)
+    const normalizePath = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+    const getBasename = (p: string) => p.split(/[/\\]/).pop()?.toLowerCase() || '';
+
     // Clear pending jobs when they appear in real jobs
     useEffect(() => {
-        const realJobPaths = jobs.data?.jobs?.map((j: Job) => j.file_path) || [];
-        setPendingJobs(prev => prev.filter(p => !realJobPaths.includes(p)));
+        if (!jobs.data?.jobs?.length) return;
+
+        const realJobPaths = jobs.data.jobs.map((j: Job) => normalizePath(j.file_path));
+        const realJobBasenames = jobs.data.jobs.map((j: Job) => getBasename(j.file_path));
+
+        setPendingJobs(prev => prev.filter(p => {
+            const normalizedPending = normalizePath(p);
+            const pendingBasename = getBasename(p);
+            // Clear if exact path matches OR if basename matches (fallback)
+            return !realJobPaths.includes(normalizedPending) && !realJobBasenames.includes(pendingBasename);
+        }));
     }, [jobs.data]);
 
     const addPath = () => setPaths([...paths, '']);

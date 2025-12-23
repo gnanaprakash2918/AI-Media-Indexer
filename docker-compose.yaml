@@ -153,10 +153,52 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       
       LANGFUSE_ENABLE_TELEMETRY: "false"
+      
+      # Worker settings
+      LANGFUSE_WORKER_CONCURRENCY: "1"
     deploy:
       resources:
         limits:
           memory: 1G
+    restart: unless-stopped
+
+  langfuse-worker:
+    profiles: ["docker"]
+    image: langfuse/langfuse-worker:3
+    container_name: media_agent_langfuse_worker
+    depends_on:
+      - langfuse
+      - redis
+      - postgres
+      - clickhouse
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
+      
+      CLICKHOUSE_USER: "default"
+      CLICKHOUSE_PASSWORD: "langfuse"
+      CLICKHOUSE_DB: "default"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_MIGRATION_URL: "clickhouse://default:langfuse@clickhouse:9000"
+      
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: "redispass"
+      
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "minio"
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "miniosecret"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: "us-east-1"
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      
+      LANGFUSE_ENABLE_TELEMETRY: "false"
+      ENCRYPTION_KEY: "92ae3af72cce9731d13da597943582a6cd1134f5a95c7f6a78f0484e03f99d7d"
+      SALT: "89ec276067b45f431662998a6915f0d579c8d672808006e001844b245780517f"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     restart: unless-stopped
 
 volumes:

@@ -49,9 +49,13 @@ def setup_logger() -> None:
     logger.remove()
     
     def _patcher(record):
-        record["extra"].setdefault("trace_id", None)
-        record["extra"].setdefault("span", None)
-        record["extra"].setdefault("component", None)
+        # actively fetch from context if not already present in extra
+        if record["extra"].get("trace_id") is None:
+            record["extra"]["trace_id"] = trace_id_ctx.get()
+        if record["extra"].get("span") is None:
+            record["extra"]["span"] = span_ctx.get()
+        if record["extra"].get("component") is None:
+            record["extra"]["component"] = component_ctx.get()
 
     # Ensure trace_id always exists to prevent KeyErrors in format string
     logger.configure(patcher=_patcher)

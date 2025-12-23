@@ -1026,66 +1026,91 @@ def create_app() -> FastAPI:
 
     # Voice Clustering and HITL Endpoints
     @app.post("/voices/cluster")
-    async def trigger_voice_clustering():
-        """Run production-grade HDBSCAN clustering on voice embeddings.
+    async def trigger_voice_clustering(
+        threshold: float = Query(0.5, description="Cosine distance threshold (0.5 = 50% similarity)"),
+        algorithm: str = Query("chinese_whispers", description="Algorithm: chinese_whispers (best), hdbscan, agglomerative"),
+    ):
+        """Run production-grade voice clustering.
         
-        Best practices:
-        - L2 normalization
-        - PCA dimensionality reduction (256 → 50)
-        - HDBSCAN for varying cluster densities
+        Algorithms:
+        - chinese_whispers: Graph-based, handles transitive relationships (RECOMMENDED)
+        - hdbscan: Density-based, good for varying cluster densities
+        - agglomerative: Hierarchical, good fallback for small datasets
+        
+        Chinese Whispers is the industry standard (used by dlib, face_recognition).
+        Default threshold 0.5 = 50% cosine similarity needed to consider same speaker.
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         
         import numpy as np
-        from sklearn.decomposition import PCA
-        import hdbscan
+        from sklearn.metrics.pairwise import cosine_distances
         
         voices = pipeline.db.get_all_voice_embeddings()
         if not voices:
             return {"status": "no_voices", "clusters": 0}
         
         if len(voices) < 2:
-            return {"status": "insufficient_voices", "clusters": 0}
+            return {"status": "insufficient_voices", "clusters": 1, "message": "Need at least 2 voice segments"}
         
         embeddings = np.array([v["embedding"] for v in voices])
         
-        # Step 1: L2 normalize
+        # Step 1: L2 normalize embeddings (should already be normalized, but ensure)
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1
-        embeddings = embeddings / norms
+        embeddings_norm = embeddings / norms
         
-        # Step 2: PCA dimensionality reduction
-        # Voice vectors are 256-dim. Reduce to ~50 to focus on speaker identity features.
-        target_dims = min(50, embeddings.shape[0] - 1, embeddings.shape[1])
-        if target_dims > 5:
-            pca = PCA(n_components=target_dims)
-            embeddings_reduced = pca.fit_transform(embeddings)
+        # Step 2: Compute pairwise COSINE DISTANCE matrix
+        dist_matrix = cosine_distances(embeddings_norm)
+        
+        logger.info(f"🎤 Voice Clustering: {len(voices)} segments, "
+                   f"Algorithm={algorithm}, Threshold={threshold:.2f} (similarity={1-threshold:.0%})")
+        
+        if algorithm == "chinese_whispers":
+            # Use same proven algorithm as face clustering
+            labels = _chinese_whispers_cluster(dist_matrix, threshold)
+        elif algorithm == "hdbscan":
+            import hdbscan
+            # Use precomputed distance matrix with HDBSCAN
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=2,
+                min_samples=1,
+                metric="precomputed",
+                cluster_selection_epsilon=threshold * 0.5,  # Tighter for speaker ID
+                cluster_selection_method="leaf",  # More fine-grained clusters
+            )
+            labels = clusterer.fit_predict(dist_matrix)
         else:
-            embeddings_reduced = embeddings
-        
-        # Step 3: HDBSCAN clustering
-        # epsilon=0.4 allows for some variation in speaker tone/mic quality
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=2,
-            min_samples=1,
-            metric="euclidean",
-            cluster_selection_epsilon=0.4,
-            cluster_selection_method="eom",
-        )
-        labels = clusterer.fit_predict(embeddings_reduced)
+            # Fallback: Agglomerative with single linkage (friends-of-friends)
+            from sklearn.cluster import AgglomerativeClustering
+            clusterer = AgglomerativeClustering(
+                n_clusters=None,
+                metric="precomputed",
+                linkage="average",  # Average linkage for voice (more stable)
+                distance_threshold=threshold,
+            )
+            labels = clusterer.fit_predict(dist_matrix)
         
         # Update each voice segment with its cluster ID
         updated = 0
         for i, voice in enumerate(voices):
             cluster_id = int(labels[i])
+            # Handle HDBSCAN noise points (-1) by giving them unique IDs
             if cluster_id == -1:
                 cluster_id = -abs(hash(voice["id"])) % (10**9)
             pipeline.db.update_voice_cluster_id(voice["id"], cluster_id)
             updated += 1
         
         n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-        n_noise = list(labels).count(-1)
+        n_noise = list(labels).count(-1) if hasattr(labels, '__iter__') else 0
+        
+        # Log cluster size distribution
+        from collections import Counter
+        cluster_sizes = Counter(labels)
+        size_dist = dict(sorted(Counter(cluster_sizes.values()).items()))
+        largest = cluster_sizes.most_common(5)
+        
+        logger.info(f"✅ Voice Clustering: {n_clusters} clusters. Largest: {largest}")
         
         return {
             "status": "clustered",
@@ -1093,7 +1118,11 @@ def create_app() -> FastAPI:
             "clusters": n_clusters,
             "noise_points": n_noise,
             "updated": updated,
-            "algorithm": "HDBSCAN",
+            "algorithm": algorithm,
+            "distance_threshold": threshold,
+            "similarity_threshold": f"{(1-threshold)*100:.0f}%",
+            "cluster_size_distribution": size_dist,
+            "largest_clusters": largest,
         }
 
     @app.get("/voices/clusters")
