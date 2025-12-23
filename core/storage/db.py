@@ -1317,3 +1317,83 @@ class VectorDB:
         except Exception:
             return 0
 
+    def get_face_by_thumbnail(self, thumbnail_path: str) -> dict[str, Any] | None:
+        """Look up a face by its thumbnail_path.
+        
+        Args:
+            thumbnail_path: The thumbnail path stored in the database.
+            
+        Returns:
+            Face data dict or None if not found.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="thumbnail_path",
+                            match=models.MatchValue(value=thumbnail_path),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if resp[0]:
+                point = resp[0][0]
+                payload = point.payload or {}
+                return {
+                    "id": point.id,
+                    "media_path": payload.get("media_path"),
+                    "timestamp": payload.get("timestamp", 0),
+                    "name": payload.get("name"),
+                    "cluster_id": payload.get("cluster_id"),
+                    "thumbnail_path": payload.get("thumbnail_path"),
+                }
+            return None
+        except Exception as e:
+            log(f"get_face_by_thumbnail error: {e}")
+            return None
+
+    def get_voice_by_audio_path(self, audio_path: str) -> dict[str, Any] | None:
+        """Look up a voice segment by its audio_path.
+        
+        Args:
+            audio_path: The audio clip path stored in the database.
+            
+        Returns:
+            Voice segment data dict or None if not found.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="audio_path",
+                            match=models.MatchValue(value=audio_path),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if resp[0]:
+                point = resp[0][0]
+                payload = point.payload or {}
+                return {
+                    "id": point.id,
+                    "media_path": payload.get("media_path"),
+                    "start": payload.get("start", 0),
+                    "end": payload.get("end", 0),
+                    "speaker_label": payload.get("speaker_label"),
+                    "speaker_name": payload.get("speaker_name"),
+                    "audio_path": payload.get("audio_path"),
+                }
+            return None
+        except Exception as e:
+            log(f"get_voice_by_audio_path error: {e}")
+            return None

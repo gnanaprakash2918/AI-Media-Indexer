@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { PlayArrow, AccessTime, Videocam, GraphicEq, TextFields } from '@mui/icons-material';
 import { Card, CardMedia, CardContent, Typography, Box, Chip, IconButton, alpha, useTheme } from '@mui/material';
 import { VideoPlayer } from './VideoPlayer';
@@ -14,7 +14,7 @@ interface MediaResult {
     thumbnail_url?: string;
 }
 
-export function MediaCard({ item }: { item: MediaResult }) {
+export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }) {
     const theme = useTheme();
     const [playerOpen, setPlayerOpen] = useState(false);
 
@@ -188,9 +188,10 @@ export function MediaCard({ item }: { item: MediaResult }) {
             <VideoPlayer
                 videoPath={item.video_path}
                 startTime={item.start}
+                endTime={item.end}
                 open={playerOpen}
                 onClose={() => setPlayerOpen(false)}
             />
         </>
     );
-}
+});

@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     voice_embedding_model: str = "pyannote/wespeaker-voxceleb-resnet34-LM"
     min_speakers: int | None = None
     max_speakers: int | None = None
+    voice_clustering_threshold: float = Field(
+        default=0.3,
+        description="Voice clustering cosine distance threshold (0.2-0.6, lower=tighter clusters)"
+    )
 
     # Resource
     enable_resource_monitoring: bool = True

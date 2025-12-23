@@ -22,7 +22,7 @@ from core.processing.voice import VoiceProcessor
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.utils.frame_sampling import FrameSampler
-from core.utils.logger import bind_context
+from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager

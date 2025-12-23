@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
+import time
 from pathlib import Path
 from uuid import uuid4
 import sys
@@ -15,6 +16,23 @@ import sys
 # Windows-specific asyncio fix for "WinError 10054" noise
 if sys.platform == "win32":
     import asyncio
+    import logging
+    
+    # Custom filter to suppress ConnectionResetError from logging
+    class ConnectionResetFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = str(record.getMessage())
+            if "ConnectionResetError" in msg or "WinError 10054" in msg:
+                return False
+            if record.exc_info:
+                exc_type = record.exc_info[0]
+                if exc_type and issubclass(exc_type, ConnectionResetError):
+                    return False
+            return True
+    
+    # Apply filter to root logger and common loggers
+    for logger_name in ['', 'uvicorn', 'uvicorn.error', 'asyncio']:
+        logging.getLogger(logger_name).addFilter(ConnectionResetFilter())
     
     class SilenceEventLoopPolicy(asyncio.WindowsProactorEventLoopPolicy):
         def _loop_factory(self) -> asyncio.AbstractEventLoop:
@@ -22,9 +40,13 @@ if sys.platform == "win32":
             
             def exception_handler(loop, context):
                 # Suppress connection reset errors typical in Windows
-                if "ConnectionResetError" in str(context.get("exception", "")) or \
-                   "WinError 10054" in str(context.get("exception", "")):
-                    return
+                exc = context.get("exception")
+                if exc:
+                    if isinstance(exc, ConnectionResetError):
+                        return
+                    exc_str = str(exc)
+                    if "ConnectionResetError" in exc_str or "WinError 10054" in exc_str:
+                        return
                 # Default handler for everything else
                 loop.default_exception_handler(context)
 
@@ -133,9 +155,132 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Mount static files for thumbnails
+    # Mount static files for pre-generated thumbnails
     thumb_dir = settings.cache_dir / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create subdirectories
+    (thumb_dir / "faces").mkdir(exist_ok=True)
+    (thumb_dir / "voices").mkdir(exist_ok=True)
+
+    # Dynamic face thumbnail endpoint - generates on-demand if file doesn't exist
+    @app.get("/thumbnails/faces/{filename}")
+    async def get_face_thumbnail(filename: str):
+        """Serve face thumbnail, generating on-demand if missing."""
+        from fastapi.responses import FileResponse, Response
+        import cv2
+        import numpy as np
+        
+        file_path = thumb_dir / "faces" / filename
+        
+        # If file exists, serve it
+        if file_path.exists():
+            return FileResponse(file_path, media_type="image/jpeg")
+        
+        # Parse filename to get info: {hash}_{timestamp}_{idx}.jpg
+        # Try to find the face in database and generate thumbnail
+        try:
+            if not pipeline or not pipeline.db:
+                raise HTTPException(status_code=503, detail="Database not ready")
+            
+            # Look up face by thumbnail_path
+            face_data = pipeline.db.get_face_by_thumbnail(f"/thumbnails/faces/{filename}")
+            if not face_data:
+                raise HTTPException(status_code=404, detail="Face not found")
+            
+            media_path = face_data.get("media_path")
+            timestamp = face_data.get("timestamp", 0)
+            
+            if not media_path or not Path(media_path).exists():
+                raise HTTPException(status_code=404, detail="Source video not found")
+            
+            # Extract frame at timestamp using OpenCV
+            cap = cv2.VideoCapture(media_path)
+            cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
+            ret, frame = cap.read()
+            cap.release()
+            
+            if not ret or frame is None:
+                raise HTTPException(status_code=500, detail="Could not read frame")
+            
+            # Return full frame as fallback (we don't have bbox info in the request)
+            # Scale down for thumbnail
+            h, w = frame.shape[:2]
+            scale = min(256 / h, 256 / w)
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LANCZOS4)
+            
+            # Encode and save
+            success, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if success:
+                # Save for future requests
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(file_path, "wb") as f:
+                    f.write(buffer.tobytes())
+                return Response(content=buffer.tobytes(), media_type="image/jpeg")
+            else:
+                raise HTTPException(status_code=500, detail="Encoding failed")
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Face thumbnail generation failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Dynamic voice audio endpoint - generates on-demand if file doesn't exist
+    @app.get("/thumbnails/voices/{filename}")
+    async def get_voice_audio(filename: str):
+        """Serve voice audio clip, generating on-demand if missing."""
+        from fastapi.responses import FileResponse
+        import subprocess
+        
+        file_path = thumb_dir / "voices" / filename
+        
+        # If file exists, serve it
+        if file_path.exists():
+            return FileResponse(file_path, media_type="audio/mpeg")
+        
+        # Parse filename: {hash}_{start}_{end}.mp3
+        try:
+            if not pipeline or not pipeline.db:
+                raise HTTPException(status_code=503, detail="Database not ready")
+            
+            # Look up voice segment by audio_path
+            segment = pipeline.db.get_voice_by_audio_path(f"/thumbnails/voices/{filename}")
+            if not segment:
+                raise HTTPException(status_code=404, detail="Voice segment not found")
+            
+            media_path = segment.get("media_path")
+            start = segment.get("start", 0)
+            end = segment.get("end", start + 5)
+            
+            if not media_path or not Path(media_path).exists():
+                raise HTTPException(status_code=404, detail="Source video not found")
+            
+            # Extract audio segment using FFmpeg
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(start),
+                "-i", media_path,
+                "-t", str(end - start),
+                "-q:a", "2",
+                "-map", "a",
+                str(file_path)
+            ]
+            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            if file_path.exists():
+                return FileResponse(file_path, media_type="audio/mpeg")
+            else:
+                raise HTTPException(status_code=500, detail="Audio extraction failed")
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Voice audio generation failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Static fallback for other thumbnail files
     app.mount("/thumbnails", StaticFiles(directory=str(thumb_dir)), name="thumbnails")
 
     @app.middleware("http")
@@ -300,6 +445,81 @@ def create_app() -> FastAPI:
                 headers=headers,
                 media_type=media_type,
             )
+
+    @app.get("/media/segment")
+    async def stream_segment(
+        path: str = Query(...),
+        start: float = Query(..., description="Start time in seconds"),
+        end: float = Query(None, description="End time in seconds (default: start + 10)"),
+    ):
+        """Stream a specific segment using FFmpeg's fast-seek.
+        
+        Optimized for INSTANT playback:
+        - Uses input format for output (no re-encoding)
+        - Fast keyframe seek with -ss before -i
+        - Stream copy mode (-c copy)
+        """
+        file_path = Path(path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Default segment duration
+        duration = (end - start) if end else 10.0
+        
+        # Detect input format to use same for output (enables true stream copy)
+        suffix = file_path.suffix.lower()
+        format_map = {
+            '.webm': ('webm', 'video/webm'),
+            '.mp4': ('mp4', 'video/mp4'),
+            '.mkv': ('matroska', 'video/x-matroska'),
+            '.avi': ('avi', 'video/x-msvideo'),
+            '.mov': ('mov', 'video/quicktime'),
+            '.m4v': ('mp4', 'video/mp4'),
+        }
+        out_format, media_type = format_map.get(suffix, ('mp4', 'video/mp4'))
+        
+        async def generate_segment():
+            # Build FFmpeg command optimized for speed
+            cmd = [
+                "ffmpeg",
+                "-ss", str(start),       # Fast seek BEFORE input (keyframe seek)
+                "-i", str(file_path),
+                "-t", str(duration),     # Duration limit
+                "-c", "copy",            # Stream copy (NO re-encoding)
+                "-avoid_negative_ts", "make_zero",  # Fix timestamp issues
+            ]
+            
+            # Format-specific options
+            if out_format == 'mp4':
+                cmd.extend(["-movflags", "frag_keyframe+empty_moov+faststart"])
+            elif out_format == 'webm':
+                cmd.extend(["-cluster_size_limit", "2M", "-cluster_time_limit", "5000"])
+            
+            cmd.extend(["-f", out_format, "-"])
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            
+            # Stream output in larger chunks for better throughput
+            while True:
+                chunk = await process.stdout.read(256 * 1024)  # 256KB chunks
+                if not chunk:
+                    break
+                yield chunk
+            
+            await process.wait()
+        
+        return StreamingResponse(
+            generate_segment(),
+            media_type=media_type,
+            headers={
+                "Content-Type": media_type,
+                "Cache-Control": "public, max-age=3600",
+            }
+        )
 
     @app.get("/media/thumbnail")
     async def get_media_thumbnail(path: str = Query(...), time: float = 0.0):
