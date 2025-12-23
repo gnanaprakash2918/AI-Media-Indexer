@@ -473,7 +473,8 @@ def create_app() -> FastAPI:
         from urllib.parse import quote
         from collections import defaultdict
         
-        logger.info(f"🔍 Search query: '{q}' | type: {search_type} | limit: {limit}")
+        start_time_search = time.perf_counter()
+        logger.info(f"Search query: '{q}' | type: {search_type} | limit: {limit}")
 
         results = []
         stats = {
@@ -500,7 +501,7 @@ def create_app() -> FastAPI:
                     hit["playback_url"] = f"/media?path={safe_path}#t={start_time}"
             
             results.extend(dialogue_results)
-            logger.info(f"  📝 Dialogue results: {len(dialogue_results)}")
+            logger.info(f"  Dialogue results: {len(dialogue_results)}")
 
         # Visual/frame search
         if search_type in ("all", "visual"):
@@ -510,11 +511,11 @@ def create_app() -> FastAPI:
             
             # Log raw results to debug identical results issue
             if frame_results:
-                logger.info(f"  🎬 Raw frame results: {len(frame_results)}")
+                logger.info(f"  Raw frame results: {len(frame_results)}")
                 # Log top 3 scores and descriptions to see if they're discriminative
                 for i, hit in enumerate(frame_results[:3]):
                     desc = (hit.get("action") or "")[:80]
-                    logger.info(f"     #{i+1}: score={hit.get('score', 0):.4f} | '{desc}...'")
+                    logger.info(f"     Match #{i+1}: score={hit.get('score', 0):.4f} | '{desc}...'")
             
             # Group by video and deduplicate
             unique_frames = []
@@ -570,7 +571,7 @@ def create_app() -> FastAPI:
             
             stats["visual_count"] = len(unique_frames)
             results.extend(unique_frames)
-            logger.info(f"  🖼️ Unique visual results: {len(unique_frames)} (from {len(frame_results)} raw)")
+            logger.info(f"  Unique visual results: {len(unique_frames)} (from {len(frame_results)} raw)")
 
         # Sort by score (highest first)
         results.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
@@ -582,7 +583,8 @@ def create_app() -> FastAPI:
         if final_results:
             scores = [float(r.get("score", 0)) for r in final_results]
             stats["score_range"] = {"min": min(scores), "max": max(scores), "avg": sum(scores)/len(scores)}
-            logger.info(f"  ✅ Returning {len(final_results)} results | Score range: {min(scores):.4f} - {max(scores):.4f}")
+            duration = time.perf_counter() - start_time_search
+            logger.info(f"  Search complete: {len(final_results)} results | Score={min(scores):.4f}-{max(scores):.4f} | Duration={duration:.3f}s")
         
         return {
             "results": final_results,
@@ -868,7 +870,7 @@ def create_app() -> FastAPI:
             if tail_energy < 1e-3:
                 is_sface = True
                 embeddings = embeddings[:, :128]
-                logger.warning("⚠️ Using SFace (128d) fallback. Install InsightFace for better quality!")
+                logger.warning("Using SFace (128d) fallback. Install InsightFace for better quality!")
                 # SFace needs even more tolerance
                 threshold = min(threshold + 0.1, 0.8)
         
@@ -880,8 +882,9 @@ def create_app() -> FastAPI:
         # Compute pairwise COSINE DISTANCE matrix
         dist_matrix = cosine_distances(embeddings_norm)
         
-        logger.info(f"🔍 Face Clustering: {len(faces)} faces, Model={'SFace' if is_sface else 'InsightFace'}, "
-                   f"Algorithm={algorithm}, Threshold={threshold:.2f} (similarity={1-threshold:.0%})")
+        start_time_cluster = time.perf_counter()
+        logger.info(f"Face Clustering: {len(faces)} faces | Model={'SFace' if is_sface else 'InsightFace'} | "
+                   f"Algo={algorithm} | Threshold={threshold:.2f}")
         
         if algorithm == "chinese_whispers":
             labels = _chinese_whispers_cluster(dist_matrix, threshold)
@@ -913,7 +916,8 @@ def create_app() -> FastAPI:
         # Find largest clusters
         largest = cluster_sizes.most_common(5)
         
-        logger.info(f"✅ Created {n_clusters} clusters. Largest: {largest}")
+        duration = time.perf_counter() - start_time_cluster
+        logger.info(f"Face Clustering complete: {n_clusters} clusters | Largest cluster size: {largest[0][1] if largest else 0} | Duration={duration:.3f}s")
         
         return {
             "status": "clustered",
@@ -1074,8 +1078,8 @@ def create_app() -> FastAPI:
         # Step 2: Compute pairwise COSINE DISTANCE matrix
         dist_matrix = cosine_distances(embeddings_norm)
         
-        logger.info(f"🎤 Voice Clustering: {len(voices)} segments, "
-                   f"Algorithm={algorithm}, Threshold={threshold:.2f} (similarity={1-threshold:.0%})")
+        start_time_voice = time.perf_counter()
+        logger.info(f"Voice Clustering: {len(voices)} segments | Algo={algorithm} | Threshold={threshold:.2f}")
         
         if algorithm == "chinese_whispers":
             # Use same proven algorithm as face clustering
@@ -1121,7 +1125,8 @@ def create_app() -> FastAPI:
         size_dist = dict(sorted(Counter(cluster_sizes.values()).items()))
         largest = cluster_sizes.most_common(5)
         
-        logger.info(f"✅ Voice Clustering: {n_clusters} clusters. Largest: {largest}")
+        duration = time.perf_counter() - start_time_voice
+        logger.info(f"Voice Clustering complete: {n_clusters} clusters | Largest cluster size: {largest[0][1] if largest else 0} | Duration={duration:.3f}s")
         
         return {
             "status": "clustered",

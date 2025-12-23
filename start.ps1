@@ -38,9 +38,7 @@ param(
 $ErrorActionPreference = "Continue"
 $ProjectRoot = $PSScriptRoot
 
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  AI-Media-Indexer Full System Startup" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ">>> AI-Media-Indexer Full System Startup" -ForegroundColor Cyan
 Write-Host ""
 
 # Change to project root
@@ -372,9 +370,7 @@ if ($Integrated) {
     Write-Host "  Frontend started (PID: $($frontendProcess.Id))" -ForegroundColor Green
     
     Write-Host ""
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  System startup complete!" -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host ">>> System startup complete!" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Backend:  http://localhost:8000" -ForegroundColor White
     Write-Host "  Frontend: http://localhost:5173" -ForegroundColor White
@@ -412,9 +408,7 @@ if ($Integrated) {
     Write-Host "  Frontend started in new terminal (port 5173)" -ForegroundColor Green
     
     Write-Host ""
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  System startup complete!" -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host ">>> System startup complete!" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Backend:  http://localhost:8000" -ForegroundColor White
     Write-Host "  Frontend: http://localhost:5173" -ForegroundColor White

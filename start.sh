@@ -47,9 +47,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}  AI-Media-Indexer Full System Startup${NC}"
-echo -e "${CYAN}========================================${NC}"
+echo -e "${CYAN}>>> AI-Media-Indexer Full System Startup${NC}"
 echo ""
 
 echo -e "${YELLOW}[1/9] Working directory: $SCRIPT_DIR${NC}"
@@ -324,9 +322,7 @@ if [ "$INTEGRATED" = true ]; then
     trap cleanup EXIT
     
     echo ""
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${GREEN}  System startup complete!${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo -e "${CYAN}>>> System startup complete!${NC}"
     echo ""
     echo -e "  Backend:  http://localhost:8000"
     echo -e "  Frontend: http://localhost:5173"
@@ -387,9 +383,7 @@ else
     echo -e "${GREEN}  Frontend started (port 5173)${NC}"
     
     echo ""
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${GREEN}  System startup complete!${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo -e "${CYAN}>>> System startup complete!${NC}"
     echo ""
     echo -e "  Backend:  http://localhost:8000"
     echo -e "  Frontend: http://localhost:5173"

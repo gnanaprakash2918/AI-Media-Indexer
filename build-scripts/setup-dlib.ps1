@@ -38,7 +38,7 @@ function Full-Cleanup-Dlib {
         Remove-Item -Path $DlibSourceDir -Recurse -Force
     }
 
-    Write-Host "✅ Full Cleanup finished." -ForegroundColor Green
+    Write-Host "Full Cleanup finished." -ForegroundColor Green
 }
 
 function Setup-DlibBuild {

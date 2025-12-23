@@ -40,9 +40,9 @@ def init_langfuse() -> None:
     # Auto-enable cloud if keys are present and backend is disabled (default)
     if backend == "disabled" and settings.langfuse_public_key and settings.langfuse_secret_key:
         backend = "cloud"
-        logger.info("🔍 Langfuse: Auto-enabling cloud mode (keys detected)")
+        logger.info("Langfuse: Auto-enabling cloud mode (keys detected)")
     
-    logger.info(f"🔍 Langfuse init: backend={backend}")
+    logger.info(f"Langfuse init: backend={backend}")
     
     if backend == "disabled":
         return
@@ -55,14 +55,14 @@ def init_langfuse() -> None:
     
     if backend == "cloud":
         os.environ["LANGFUSE_HOST"] = settings.langfuse_host
-        logger.info(f"  ✅ Langfuse cloud configured: {settings.langfuse_host}")
+        logger.info(f"  Langfuse cloud configured: {settings.langfuse_host}")
     elif backend == "docker":
         host = settings.langfuse_docker_host or "http://localhost:3300"
         os.environ["LANGFUSE_HOST"] = host
-        logger.info(f"  ✅ Langfuse docker configured: {host}")
+        logger.info(f"  Langfuse docker configured: {host}")
         
     _langfuse_initialized = True
-    logger.info("  ✅ Langfuse raw client ready")
+    logger.info("  Langfuse raw client ready")
 
 
 def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:

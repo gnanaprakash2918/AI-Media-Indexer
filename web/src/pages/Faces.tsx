@@ -191,7 +191,7 @@ function ClusterCard({
                         )}
                     </Box>
                     <Typography variant="caption" color="text.secondary" display="block">
-                        {cluster.face_count} occurrence{cluster.face_count !== 1 ? 's' : ''}{cluster.is_main ? ' • Main Character' : ''}
+                        {cluster.face_count} occurrence{cluster.face_count !== 1 ? 's' : ''}{cluster.is_main ? ' | Main Character' : ''}
                     </Typography>
                 </Box>
                 <Badge badgeContent={cluster.face_count} color="primary" sx={{ mr: 2 }}><Groups /></Badge>
