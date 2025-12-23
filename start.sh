@@ -180,10 +180,52 @@ else
     echo -e "${GRAY}[4/9] Keeping Qdrant data (use --nuke-qdrant to delete)${NC}"
 fi
 
-# Stop and clean Docker
+# Check and Start Docker
 if [ "$SKIP_DOCKER" = false ]; then
     echo ""
-    echo -e "${YELLOW}[5/9] Stopping Docker containers...${NC}"
+    echo -e "${YELLOW}[5/9] Checking Docker status...${NC}"
+    
+    if ! docker info > /dev/null 2>&1; then
+        echo -e "${YELLOW}  Docker Daemon is not running. Attempting to start...${NC}"
+        
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            open -a Docker
+            echo -e "${GRAY}  Launched Docker Desktop (macOS). Waiting for daemon...${NC}"
+        elif command -v systemctl &> /dev/null; then
+            echo -e "${GRAY}  Attempting: sudo systemctl start docker${NC}"
+            sudo systemctl start docker || true
+        elif command -v service &> /dev/null; then
+             echo -e "${GRAY}  Attempting: sudo service docker start${NC}"
+             sudo service docker start || true
+        else
+             echo -e "${RED}  Could not auto-start Docker. Please start it manually.${NC}"
+             # Don't exit, just let it fail at next step or user interaction
+        fi
+        
+        # Wait for Docker (up to 60s)
+        RETRIES=60
+        while [ $RETRIES -gt 0 ]; do
+            echo -n "."
+            sleep 2
+            if docker info > /dev/null 2>&1; then
+                echo ""
+                echo -e "${GREEN}  Docker Daemon is ready!${NC}"
+                break
+            fi
+            RETRIES=$((RETRIES-1))
+        done
+        
+        if ! docker info > /dev/null 2>&1; then
+             echo ""
+             echo -e "${RED}  ERROR: Docker failed to become ready.${NC}"
+             exit 1
+        fi
+    else
+        echo -e "${GREEN}  Docker Daemon is already running${NC}"
+    fi
+
+    echo ""
+    echo -e "${YELLOW}[5.5/9] Stopping Docker containers...${NC}"
     
     docker compose down --remove-orphans 2>/dev/null || true
     
@@ -217,15 +259,37 @@ fi
 # Start Ollama
 if [ "$SKIP_OLLAMA" = false ]; then
     echo ""
-    echo -e "${YELLOW}[8/9] Starting Ollama...${NC}"
+    echo -e "${YELLOW}[8/9] Checking Ollama status...${NC}"
     
-    if pgrep -x "ollama" > /dev/null; then
+    # Check if port 11434 is open (using nc or curl)
+    OLLAMA_READY=false
+    if command -v nc &> /dev/null; then
+        if nc -z localhost 11434 2>/dev/null; then OLLAMA_READY=true; fi
+    elif command -v curl &> /dev/null; then
+        if curl -s http://localhost:11434 > /dev/null; then OLLAMA_READY=true; fi
+    elif pgrep -x "ollama" > /dev/null; then
+        # Fallback to process check
+        OLLAMA_READY=true
+    fi
+    
+    if [ "$OLLAMA_READY" = true ]; then
         echo -e "${GREEN}  Ollama is already running${NC}"
     else
+        echo -e "${YELLOW}  Ollama not detected on port 11434. Starting...${NC}"
         if command -v ollama &> /dev/null; then
             ollama serve &>/dev/null &
-            echo -e "${GREEN}  Ollama started in background${NC}"
-            sleep 2
+            echo -e "${GREEN}  Ollama launched in background. Waiting for API...${NC}"
+            
+            # Wait for API
+            RETRIES=10
+            while [ $RETRIES -gt 0 ]; do
+                sleep 1
+                if curl -s http://localhost:11434 > /dev/null 2>&1; then
+                    echo -e "${GREEN}  Ollama API is ready!${NC}"
+                    break
+                fi
+                RETRIES=$((RETRIES-1))
+            done
         else
             echo -e "${YELLOW}  WARNING: Ollama not found in PATH. Please start it manually.${NC}"
         fi

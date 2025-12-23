@@ -217,10 +217,59 @@ if ($NukeQdrant) {
     Write-Host "[4/8] Keeping Qdrant data (use -NukeQdrant to delete)" -ForegroundColor Gray
 }
 
-# Stop and clean Docker
+# Check and Start Docker
 if (-not $SkipDocker) {
     Write-Host ""
-    Write-Host "[5/8] Stopping Docker containers..." -ForegroundColor Yellow
+    Write-Host "[5/8] Checking Docker status..." -ForegroundColor Yellow
+    
+    $dockerRunning = $false
+    try {
+        $null = docker info 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $dockerRunning = $true
+        }
+    } catch {
+        $dockerRunning = $false
+    }
+    
+    if (-not $dockerRunning) {
+        Write-Host "  Docker Daemon is not running. Attempting to start Docker Desktop..." -ForegroundColor Yellow
+        $dockerPath = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+        if (Test-Path $dockerPath) {
+            Start-Process -FilePath $dockerPath -WindowStyle Hidden
+            Write-Host "  Docker Desktop launched. Waiting for daemon to start (this may take a minute)..." -ForegroundColor Gray
+            
+            # Wait for Docker to be ready
+            $retries = 60
+            while ($retries -gt 0) {
+                Write-Host "." -NoNewline -ForegroundColor Gray
+                Start-Sleep -Seconds 2
+                try {
+                    $null = docker info 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host ""
+                        Write-Host "  Docker Daemon is ready!" -ForegroundColor Green
+                        $dockerRunning = $true
+                        break
+                    }
+                } catch {}
+                $retries--
+            }
+            if (-not $dockerRunning) {
+                Write-Host ""
+                Write-Host "  ERROR: Docker failed to start within timeout. Please start Docker Desktop manually." -ForegroundColor Red
+                exit 1
+            }
+        } else {
+            Write-Host "  ERROR: Docker Desktop not found at default location ($dockerPath). Please start it manually." -ForegroundColor Red
+            exit 1
+        }
+    } else {
+        Write-Host "  Docker Daemon is already running" -ForegroundColor Green
+    }
+
+    Write-Host ""
+    Write-Host "[5.5/8] Stopping Docker containers..." -ForegroundColor Yellow
     
     # Stop all containers (redirect stderr to null to avoid PowerShell treating progress as error)
     $null = docker compose down --remove-orphans 2>&1
@@ -263,19 +312,40 @@ if (-not $SkipDocker) {
 # Start Ollama
 if (-not $SkipOllama) {
     Write-Host ""
-    Write-Host "[8/8] Starting Ollama..." -ForegroundColor Yellow
+    Write-Host "[8/8] Checking Ollama status..." -ForegroundColor Yellow
     
-    # Check if Ollama is already running
-    $ollamaProcess = Get-Process -Name "ollama" -ErrorAction SilentlyContinue
-    if ($ollamaProcess) {
-        Write-Host "  Ollama is already running (PID: $($ollamaProcess.Id))" -ForegroundColor Green
+    # Check if Ollama is running by checking the port (more reliable than process name)
+    $ollamaRunning = $false
+    try {
+        $tcpConn = Test-NetConnection -ComputerName localhost -Port 11434 -InformationLevel Quiet
+        if ($tcpConn) {
+            $ollamaRunning = $true
+        }
+    } catch {
+        $ollamaRunning = $false
+    }
+
+    if ($ollamaRunning) {
+        Write-Host "  Ollama is already running (Port 11434)" -ForegroundColor Green
     } else {
+        Write-Host "  Ollama not detected on port 11434. Starting..." -ForegroundColor Yellow
+        
         # Try to start Ollama
         $ollamaPath = Get-Command "ollama" -ErrorAction SilentlyContinue
         if ($ollamaPath) {
             Start-Process -FilePath "ollama" -ArgumentList "serve" -WindowStyle Hidden
-            Write-Host "  Ollama started in background" -ForegroundColor Green
-            Start-Sleep -Seconds 2
+            Write-Host "  Ollama launched in background. Waiting for API..." -ForegroundColor Gray
+            
+            # Wait for Ollama to be ready
+            $retries = 10
+            while ($retries -gt 0) {
+                 Start-Sleep -Seconds 1
+                 if (Test-NetConnection -ComputerName localhost -Port 11434 -InformationLevel Quiet) {
+                     Write-Host "  Ollama API is ready!" -ForegroundColor Green
+                     break
+                 }
+                 $retries--
+            }
         } else {
             Write-Host "  WARNING: Ollama not found in PATH. Please start it manually." -ForegroundColor Yellow
         }
