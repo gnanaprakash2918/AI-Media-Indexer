@@ -23,6 +23,8 @@
     Pull latest Docker images before starting
 .PARAMETER Integrated
     Run backend in foreground with frontend as background process (instead of separate windows)
+.PARAMETER NoInteractive
+    Skip interactive menu, use defaults
 #>
 
 param(
@@ -32,7 +34,8 @@ param(
     [switch]$RecreateVenv,
     [switch]$NukeQdrant,
     [switch]$PullImages,
-    [switch]$Integrated
+    [switch]$Integrated,
+    [switch]$NoInteractive
 )
 
 $ErrorActionPreference = "Continue"
@@ -43,6 +46,111 @@ Write-Host ""
 
 # Change to project root
 Set-Location $ProjectRoot
+
+# Interactive menu (unless -NoInteractive or any flags are passed)
+$anyFlagsSet = $SkipOllama -or $SkipDocker -or $SkipClean -or $RecreateVenv -or $NukeQdrant -or $PullImages -or $Integrated
+
+if (-not $NoInteractive -and -not $anyFlagsSet) {
+    Write-Host "============================================================" -ForegroundColor Gray
+    Write-Host "  STARTUP OPTIONS" -ForegroundColor Cyan
+    Write-Host "============================================================" -ForegroundColor Gray
+    Write-Host ""
+    
+    # Detect current system state for smart recommendations
+    $hasVenv = Test-Path (Join-Path $ProjectRoot ".venv")
+    $hasQdrant = Test-Path (Join-Path $ProjectRoot "qdrant_data_embedded")
+    $hasCache = Test-Path (Join-Path $ProjectRoot ".cache")
+    $cacheSize = 0
+    if ($hasCache) {
+        $cacheSize = [math]::Round((Get-ChildItem (Join-Path $ProjectRoot ".cache") -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+    }
+    
+    Write-Host "  Current system state:" -ForegroundColor Yellow
+    Write-Host "    - Virtual env: $(if ($hasVenv) { 'exists' } else { 'NOT FOUND' })" -ForegroundColor Gray
+    Write-Host "    - Qdrant data: $(if ($hasQdrant) { 'exists' } else { 'fresh' })" -ForegroundColor Gray
+    Write-Host "    - Cache size:  $($cacheSize) MB" -ForegroundColor Gray
+    Write-Host ""
+    
+    Write-Host "  Choose startup mode:" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  [1] Quick Start (RECOMMENDED)" -ForegroundColor Green
+    Write-Host "      - Keeps caches and data intact" -ForegroundColor Gray
+    Write-Host "      - Fastest startup time" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [2] Fresh Start" -ForegroundColor Yellow
+    Write-Host "      - Clears all caches" -ForegroundColor Gray
+    Write-Host "      - Keeps Qdrant data (your indexed videos)" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [3] Complete Reset" -ForegroundColor Red
+    Write-Host "      - Clears caches AND Qdrant data" -ForegroundColor Gray
+    Write-Host "      - You'll need to re-ingest all videos" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [4] Dev Mode" -ForegroundColor Magenta
+    Write-Host "      - Recreate virtual environment" -ForegroundColor Gray
+    Write-Host "      - Pull latest Docker images" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [5] Custom (use command line flags)" -ForegroundColor White
+    Write-Host "      - Run: ./start.ps1 -help for options" -ForegroundColor Gray
+    Write-Host ""
+    
+    $choice = Read-Host "Enter choice [1-5] or press Enter for Quick Start"
+    
+    switch ($choice) {
+        "1" { 
+            $SkipClean = $true
+            Write-Host "`n  >> Quick Start selected" -ForegroundColor Green
+        }
+        "2" { 
+            $SkipClean = $false
+            Write-Host "`n  >> Fresh Start selected (clearing caches)" -ForegroundColor Yellow
+        }
+        "3" { 
+            $SkipClean = $false
+            $NukeQdrant = $true
+            Write-Host "`n  >> Complete Reset selected (clearing everything)" -ForegroundColor Red
+        }
+        "4" { 
+            $RecreateVenv = $true
+            $PullImages = $true
+            Write-Host "`n  >> Dev Mode selected (recreating venv, pulling images)" -ForegroundColor Magenta
+        }
+        "5" {
+            Write-Host "`n  Startup flags:" -ForegroundColor Cyan
+            Write-Host "    -SkipOllama     Skip Ollama startup" -ForegroundColor Gray
+            Write-Host "    -SkipDocker     Skip Docker operations" -ForegroundColor Gray
+            Write-Host "    -SkipClean      Skip cache cleanup" -ForegroundColor Gray
+            Write-Host "    -RecreateVenv   Recreate virtual environment" -ForegroundColor Gray
+            Write-Host "    -NukeQdrant     Delete all indexed data" -ForegroundColor Gray
+            Write-Host "    -PullImages     Pull latest Docker images" -ForegroundColor Gray
+            Write-Host "    -Integrated     Run in single terminal" -ForegroundColor Gray
+            Write-Host "    -NoInteractive  Skip this menu" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "  Example: ./start.ps1 -SkipDocker -SkipOllama" -ForegroundColor White
+            Write-Host ""
+            Write-Host "  Video Conversion Tool (for faster playback):" -ForegroundColor Cyan
+            Write-Host "    # Convert single file" -ForegroundColor Gray
+            Write-Host "    python -m tools.convert `"C:\path\to\video.webm`"" -ForegroundColor Gray
+            Write-Host "" -ForegroundColor Gray
+            Write-Host "    # Batch convert entire directory (4 parallel workers)" -ForegroundColor Gray
+            Write-Host "    python -m tools.convert `"C:\Downloads\Videos`" --workers 4" -ForegroundColor Gray
+            Write-Host "" -ForegroundColor Gray
+            Write-Host "    # Faster conversion (lower quality)" -ForegroundColor Gray
+            Write-Host "    python -m tools.convert `"C:\path\to\video.webm`" --preset ultrafast" -ForegroundColor Gray
+            Write-Host ""
+            exit 0
+        }
+        "" { 
+            $SkipClean = $true
+            Write-Host "`n  >> Quick Start (default)" -ForegroundColor Green
+        }
+        default { 
+            $SkipClean = $true
+            Write-Host "`n  >> Invalid choice, using Quick Start" -ForegroundColor Yellow
+        }
+    }
+    Write-Host ""
+}
+
 Write-Host "[1/8] Working directory: $ProjectRoot" -ForegroundColor Yellow
 
 # Handle virtual environment

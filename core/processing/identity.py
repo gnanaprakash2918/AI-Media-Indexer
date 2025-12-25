@@ -232,7 +232,7 @@ class FaceManager:
             return await self._detect_yunet_only(image)
 
     async def _detect_insightface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
-        """Detect faces using InsightFace."""
+        """Detect faces using InsightFace with quality metrics."""
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
             faces = self._insightface_app.get(bgr)
@@ -243,16 +243,29 @@ class FaceManager:
             # Convert to (top, right, bottom, left) format
             box = (int(bbox[1]), int(bbox[2]), int(bbox[3]), int(bbox[0]))
             
+            # Quality metrics for clustering
+            det_score = float(face.det_score) if hasattr(face, 'det_score') else 1.0
+            bbox_width = int(bbox[2] - bbox[0])
+            bbox_height = int(bbox[3] - bbox[1])
+            bbox_size = min(bbox_width, bbox_height)
+            
             # Get embedding and normalize
             emb = face.embedding.astype(np.float64)
             emb /= np.linalg.norm(emb) + 1e-9
             
-            results.append(DetectedFace(bbox=box, embedding=emb.tolist()))
+            results.append(DetectedFace(
+                bbox=box, 
+                embedding=emb.tolist(),
+                confidence=det_score,  # Store detection confidence
+                # Note: bbox_size will be passed separately to insert_face
+            ))
+            # Store bbox_size as an attribute for pipeline to access
+            results[-1]._bbox_size = bbox_size
         
         return results
 
     async def _detect_sface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
-        """Detect faces using SFace with CLAHE normalization."""
+        """Detect faces using SFace with CLAHE normalization and quality metrics."""
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         
         async with GPU_SEMAPHORE:
@@ -267,6 +280,10 @@ class FaceManager:
         for d in dets:
             x, y, bw, bh = d[:4]
             box = (int(y), int(x + bw), int(y + bh), int(x))
+            
+            # Quality metrics for clustering
+            det_score = float(d[14]) if len(d) > 14 else 0.9  # YuNet confidence at index 14
+            bbox_size = int(min(bw, bh))
             
             # Get face crop and apply CLAHE for lighting normalization
             face_box = np.array([[x, y, bw, bh]], dtype=np.int32)
@@ -286,7 +303,13 @@ class FaceManager:
             emb_padded = np.zeros(512, dtype=np.float64)
             emb_padded[:len(emb)] = emb
             
-            results.append(DetectedFace(bbox=box, embedding=emb_padded.tolist()))
+            results.append(DetectedFace(
+                bbox=box, 
+                embedding=emb_padded.tolist(),
+                confidence=det_score,
+            ))
+            # Store bbox_size as an attribute for pipeline to access
+            results[-1]._bbox_size = bbox_size
         
         return results
 

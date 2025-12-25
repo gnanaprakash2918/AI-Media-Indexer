@@ -166,19 +166,18 @@ def create_app() -> FastAPI:
     # Dynamic face thumbnail endpoint - generates on-demand if file doesn't exist
     @app.get("/thumbnails/faces/{filename}")
     async def get_face_thumbnail(filename: str):
-        """Serve face thumbnail, generating on-demand if missing."""
+        """Serve face thumbnail, generating on-demand if missing using FFmpeg fast-seek."""
         from fastapi.responses import FileResponse, Response
-        import cv2
-        import numpy as np
+        import subprocess
+        from subprocess import DEVNULL
         
         file_path = thumb_dir / "faces" / filename
         
-        # If file exists, serve it
+        # If file exists, serve it immediately
         if file_path.exists():
             return FileResponse(file_path, media_type="image/jpeg")
         
-        # Parse filename to get info: {hash}_{timestamp}_{idx}.jpg
-        # Try to find the face in database and generate thumbnail
+        # Generate on-demand using FFmpeg (10-50x faster than OpenCV)
         try:
             if not pipeline or not pipeline.db:
                 raise HTTPException(status_code=503, detail="Database not ready")
@@ -194,32 +193,35 @@ def create_app() -> FastAPI:
             if not media_path or not Path(media_path).exists():
                 raise HTTPException(status_code=404, detail="Source video not found")
             
-            # Extract frame at timestamp using OpenCV
-            cap = cv2.VideoCapture(media_path)
-            cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
-            ret, frame = cap.read()
-            cap.release()
+            # Ensure directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             
-            if not ret or frame is None:
-                raise HTTPException(status_code=500, detail="Could not read frame")
+            # FFmpeg fast-seek: -ss BEFORE -i for fast seeking (vs slow decode-seek)
+            # Use scale filter for 192px thumbnail, quality 5 for small file
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(timestamp),      # Fast seek before input
+                "-i", str(media_path),
+                "-frames:v", "1",
+                "-vf", "scale=192:-2",       # 192px width, maintain aspect
+                "-q:v", "5",                 # Quality 5 (~75% JPEG)
+                str(file_path)
+            ]
             
-            # Return full frame as fallback (we don't have bbox info in the request)
-            # Scale down for thumbnail
-            h, w = frame.shape[:2]
-            scale = min(256 / h, 256 / w)
-            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LANCZOS4)
+            result = subprocess.run(
+                cmd, 
+                stdout=DEVNULL, 
+                stderr=DEVNULL, 
+                timeout=10  # 10 second timeout
+            )
             
-            # Encode and save
-            success, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            if success:
-                # Save for future requests
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(file_path, "wb") as f:
-                    f.write(buffer.tobytes())
-                return Response(content=buffer.tobytes(), media_type="image/jpeg")
+            if result.returncode == 0 and file_path.exists():
+                return FileResponse(file_path, media_type="image/jpeg")
             else:
-                raise HTTPException(status_code=500, detail="Encoding failed")
+                raise HTTPException(status_code=500, detail="FFmpeg extraction failed")
                 
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="Thumbnail generation timeout")
         except HTTPException:
             raise
         except Exception as e:
@@ -1115,18 +1117,22 @@ def create_app() -> FastAPI:
     # Face Clustering Endpoints
     @app.post("/faces/cluster")
     async def trigger_face_clustering(
-        threshold: float = Query(0.6, description="Cosine distance threshold (0.6 = 40% similarity, VERY permissive)"),
-        algorithm: str = Query("chinese_whispers", description="Algorithm: chinese_whispers (best) or agglomerative"),
+        threshold: float = Query(None, description="Cross-video cosine distance threshold (default 0.35 = 65% similarity)"),
+        intra_video_threshold: float = Query(0.50, description="Same-video threshold (0.50 = 50% similarity, balanced for pose)"),
+        algorithm: str = Query("chinese_whispers", description="Algorithm: chinese_whispers, connected_components, or agglomerative"),
+        min_bbox_size: int = Query(None, description="Min face size in pixels (default from config)"),
+        min_det_score: float = Query(None, description="Min detection confidence (default from config)"),
+        temporal_boost: bool = Query(True, description="Apply temporal boost for same-video faces"),
     ):
-        """Run ultra-aggressive face clustering using Chinese Whispers algorithm.
+        """Run production-grade face clustering with BALANCED intra-video grouping.
         
-        Chinese Whispers is the INDUSTRY STANDARD for face clustering:
-        - Used by dlib, face_recognition library
-        - Powers Google Photos-like clustering
-        - Handles lighting, angles, expressions, glasses naturally
-        
-        Default threshold 0.6 = only 40% cosine similarity needed to merge.
-        This is EXTREMELY permissive to handle different angles/lighting.
+        Key features:
+        - **Balanced same-video clustering**: Uses 0.50 threshold (50% similarity) for faces
+          in the same video - handles moderate pose variations without over-merging
+        - **Moderate temporal boosting**: +0.12 for faces <5s, +0.08 for <30s, +0.05 for <2min
+          (Max effective threshold: 0.62 for close faces)
+        - **Quality filtering**: Skip small/low-confidence faces
+        - **Transitive closure**: If A~B and B~C, then A,B,C all grouped together
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
@@ -1134,14 +1140,38 @@ def create_app() -> FastAPI:
         import numpy as np
         from sklearn.metrics.pairwise import cosine_distances
         
-        faces = pipeline.db.get_all_face_embeddings()
-        if not faces:
+        # Use config defaults if not specified
+        if threshold is None:
+            threshold = settings.face_clustering_threshold
+        if min_bbox_size is None:
+            min_bbox_size = settings.face_min_bbox_size
+        if min_det_score is None:
+            min_det_score = settings.face_min_det_score
+        
+        all_faces = pipeline.db.get_all_face_embeddings()
+        if not all_faces:
             return {"status": "no_faces", "clusters": 0}
         
-        if len(faces) < 2:
-            return {"status": "insufficient_faces", "clusters": 0, "message": "Need at least 2 faces"}
+        # Quality filtering - skip low-quality faces
+        quality_faces = []
+        filtered_count = 0
+        for f in all_faces:
+            bbox_ok = f.get("bbox_size") is None or f.get("bbox_size", 100) >= min_bbox_size
+            det_ok = f.get("det_score") is None or f.get("det_score", 1.0) >= min_det_score
+            if bbox_ok and det_ok:
+                quality_faces.append(f)
+            else:
+                filtered_count += 1
         
-        embeddings = np.array([f["embedding"] for f in faces])
+        if len(quality_faces) < 2:
+            return {
+                "status": "insufficient_quality_faces", 
+                "clusters": 0, 
+                "message": f"Only {len(quality_faces)} quality faces (filtered {filtered_count} low-quality)",
+                "total_faces": len(all_faces),
+            }
+        
+        embeddings = np.array([f["embedding"] for f in quality_faces])
         
         # Check for zero-padding (SFace 128-dim padded to 512-dim)
         is_sface = False
@@ -1151,8 +1181,8 @@ def create_app() -> FastAPI:
                 is_sface = True
                 embeddings = embeddings[:, :128]
                 logger.warning("Using SFace (128d) fallback. Install InsightFace for better quality!")
-                # SFace needs even more tolerance
-                threshold = min(threshold + 0.1, 0.8)
+                # SFace needs STRICTER threshold (less discriminative embeddings)
+                threshold = min(threshold, 0.28)
         
         # L2 normalize
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
@@ -1163,11 +1193,59 @@ def create_app() -> FastAPI:
         dist_matrix = cosine_distances(embeddings_norm)
         
         start_time_cluster = time.perf_counter()
-        logger.info(f"Face Clustering: {len(faces)} faces | Model={'SFace' if is_sface else 'InsightFace'} | "
+        logger.info(f"Face Clustering: {len(quality_faces)} faces (filtered {filtered_count}) | "
+                   f"Model={'SFace' if is_sface else 'InsightFace'} | "
                    f"Algo={algorithm} | Threshold={threshold:.2f}")
         
         if algorithm == "chinese_whispers":
-            labels = _chinese_whispers_cluster(dist_matrix, threshold)
+            labels = _chinese_whispers_cluster(
+                dist_matrix, 
+                threshold, 
+                quality_faces if temporal_boost else None,
+                intra_video_threshold,
+            )
+        elif algorithm == "connected_components":
+            # Guaranteed transitive closure via graph connected components
+            try:
+                import networkx as nx
+            except ImportError:
+                logger.warning("NetworkX not installed, falling back to chinese_whispers")
+                labels = _chinese_whispers_cluster(dist_matrix, threshold, quality_faces if temporal_boost else None, intra_video_threshold)
+            else:
+                G = nx.Graph()
+                G.add_nodes_from(range(len(quality_faces)))
+                for i in range(len(quality_faces)):
+                    for j in range(i + 1, len(quality_faces)):
+                        same_video = quality_faces[i].get("media_path") == quality_faces[j].get("media_path")
+                        
+                        if same_video and temporal_boost:
+                            # AGGRESSIVE same-video clustering
+                            # Use higher threshold since same-video = high prior of same person
+                            effective_threshold = intra_video_threshold
+                            
+                            # Additional temporal boost based on time proximity
+                            ts_i = quality_faces[i].get("timestamp", 0) or 0
+                            ts_j = quality_faces[j].get("timestamp", 0) or 0
+                            time_diff = abs(ts_i - ts_j)
+                            
+                            if time_diff < 5.0:       # Within 5 seconds
+                                effective_threshold += 0.12
+                            elif time_diff < 30.0:    # Within 30 seconds
+                                effective_threshold += 0.08
+                            elif time_diff < 120.0:   # Within 2 minutes
+                                effective_threshold += 0.05
+                        else:
+                            # Cross-video: use stricter threshold
+                            effective_threshold = threshold
+                        
+                        if dist_matrix[i, j] < effective_threshold:
+                            G.add_edge(i, j)
+                
+                components = list(nx.connected_components(G))
+                labels = [0] * len(quality_faces)
+                for cluster_id, component in enumerate(components):
+                    for node in component:
+                        labels[node] = cluster_id
         else:
             # Fallback to Agglomerative
             from sklearn.cluster import AgglomerativeClustering
@@ -1181,7 +1259,7 @@ def create_app() -> FastAPI:
         
         # Update each face with its cluster ID
         updated = 0
-        for i, face in enumerate(faces):
+        for i, face in enumerate(quality_faces):
             cluster_id = int(labels[i])
             pipeline.db.update_face_cluster_id(face["id"], cluster_id)
             updated += 1
@@ -1197,29 +1275,45 @@ def create_app() -> FastAPI:
         largest = cluster_sizes.most_common(5)
         
         duration = time.perf_counter() - start_time_cluster
-        logger.info(f"Face Clustering complete: {n_clusters} clusters | Largest cluster size: {largest[0][1] if largest else 0} | Duration={duration:.3f}s")
+        logger.info(f"Face Clustering complete: {n_clusters} clusters | "
+                   f"Largest: {largest[0][1] if largest else 0} | "
+                   f"Duration={duration:.3f}s")
         
         return {
             "status": "clustered",
-            "total_faces": len(faces),
+            "total_faces": len(all_faces),
+            "quality_faces": len(quality_faces),
+            "filtered_faces": filtered_count,
             "clusters": n_clusters,
             "updated": updated,
             "algorithm": algorithm,
             "model_type": "SFace (128d)" if is_sface else "InsightFace (512d)",
-            "distance_threshold": threshold,
-            "similarity_threshold": f"{(1-threshold)*100:.0f}%",
+            "cross_video_threshold": threshold,
+            "cross_video_similarity": f"{(1-threshold)*100:.0f}%",
+            "intra_video_threshold": intra_video_threshold,
+            "intra_video_similarity": f"{(1-intra_video_threshold)*100:.0f}%",
+            "temporal_boost": temporal_boost,
             "cluster_size_distribution": size_dist,
             "largest_clusters": largest,
         }
 
-    def _chinese_whispers_cluster(dist_matrix: "np.ndarray", threshold: float) -> list[int]:
-        """Chinese Whispers clustering algorithm.
+    def _chinese_whispers_cluster(
+        dist_matrix: "np.ndarray", 
+        threshold: float,
+        faces: list[dict] | None = None,
+        intra_video_threshold: float = 0.55,
+    ) -> list[int]:
+        """Chinese Whispers clustering algorithm with aggressive intra-video clustering.
         
         This is the same algorithm used by dlib/face_recognition library.
         It's a graph-based clustering that naturally handles:
         - Varying cluster sizes
         - Transitive relationships (A~B, B~C → A,B,C same cluster)
         - No need to specify number of clusters
+        
+        If faces metadata is provided, applies aggressive same-video clustering:
+        - Uses intra_video_threshold (0.55) for any same-video faces
+        - Additional boost: +0.25 for <5s, +0.15 for <30s, +0.10 for <2min
         
         Algorithm:
         1. Build similarity graph where edge exists if distance < threshold
@@ -1237,13 +1331,34 @@ def create_app() -> FastAPI:
         adjacency = [[] for _ in range(n)]
         for i in range(n):
             for j in range(i + 1, n):
-                if dist_matrix[i, j] < threshold:
+                same_video = False
+                if faces is not None:
+                    same_video = faces[i].get("media_path") == faces[j].get("media_path")
+                
+                if same_video and faces is not None:
+                    # AGGRESSIVE same-video clustering
+                    effective_threshold = intra_video_threshold
+                    
+                    ts_i = faces[i].get("timestamp", 0) or 0
+                    ts_j = faces[j].get("timestamp", 0) or 0
+                    time_diff = abs(ts_i - ts_j)
+                    
+                    if time_diff < 5.0:       # Within 5 seconds
+                        effective_threshold += 0.12
+                    elif time_diff < 30.0:    # Within 30 seconds
+                        effective_threshold += 0.08
+                    elif time_diff < 120.0:   # Within 2 minutes
+                        effective_threshold += 0.05
+                else:
+                    effective_threshold = threshold
+                
+                if dist_matrix[i, j] < effective_threshold:
                     adjacency[i].append(j)
                     adjacency[j].append(i)
         
         # Log connectivity
         edges = sum(len(adj) for adj in adjacency) // 2
-        logger.info(f"  Chinese Whispers: {n} nodes, {edges} edges (threshold={threshold:.2f})")
+        logger.info(f"  Chinese Whispers: {n} nodes, {edges} edges (threshold={threshold:.2f}, intra_video={intra_video_threshold:.2f})")
         
         # Initialize each node with unique label
         labels = list(range(n))

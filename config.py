@@ -130,6 +130,20 @@ class Settings(BaseSettings):
         default=960,
         description="Face detection input resolution (320=fast, 640=balanced, 960=accurate)"
     )
+    
+    # Face Clustering Settings
+    face_clustering_threshold: float = Field(
+        default=0.35,
+        description="Face clustering cosine distance threshold (0.3-0.4 recommended, lower=stricter)"
+    )
+    face_min_bbox_size: int = Field(
+        default=48,
+        description="Minimum face bounding box size in pixels for clustering"
+    )
+    face_min_det_score: float = Field(
+        default=0.6,
+        description="Minimum face detection confidence for clustering (0.5-0.8)"
+    )
 
     # Voice Intelligence
     enable_voice_analysis: bool = True

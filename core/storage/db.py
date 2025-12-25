@@ -417,6 +417,10 @@ class VectorDB:
         media_path: str | None = None,
         timestamp: float | None = None,
         thumbnail_path: str | None = None,
+        # Quality metrics for clustering (optional for backward compat)
+        bbox_size: int | None = None,
+        det_score: float | None = None,
+        blur_score: float | None = None,
     ) -> str:
         """Insert a face embedding.
 
@@ -427,6 +431,9 @@ class VectorDB:
             media_path: Source media file path.
             timestamp: Timestamp in the video where face was detected.
             thumbnail_path: Path to the face thumbnail image.
+            bbox_size: Minimum dimension of face bounding box in pixels.
+            det_score: Face detection confidence score.
+            blur_score: Laplacian variance blur score (higher=sharper).
 
         Returns:
             The generated ID of the inserted point.
@@ -442,6 +449,10 @@ class VectorDB:
             "media_path": media_path,
             "timestamp": timestamp,
             "thumbnail_path": thumbnail_path,
+            # Quality metrics
+            "bbox_size": bbox_size,
+            "det_score": det_score,
+            "blur_score": blur_score,
         }
 
         self.client.upsert(

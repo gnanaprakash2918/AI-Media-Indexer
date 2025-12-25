@@ -413,6 +413,9 @@ class IngestionPipeline:
                     media_path=str(video_path),
                     timestamp=timestamp,
                     thumbnail_path=thumb_path,
+                    # Quality metrics for clustering
+                    bbox_size=getattr(face, '_bbox_size', None),
+                    det_score=face.confidence if hasattr(face, 'confidence') else None,
                 )
         
         return description

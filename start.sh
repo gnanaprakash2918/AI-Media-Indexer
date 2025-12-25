@@ -10,6 +10,7 @@
 #   --nuke-qdrant        Delete Qdrant data directories
 #   --pull-images        Pull latest Docker images before starting
 #   --integrated         Run in single terminal (backend foreground, frontend background)
+#   --no-interactive     Skip interactive menu, use defaults
 
 set -e
 
@@ -18,7 +19,9 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 GRAY='\033[0;90m'
+WHITE='\033[1;37m'
 NC='\033[0m' # No Color
 
 # Parse arguments
@@ -29,8 +32,11 @@ RECREATE_VENV=false
 NUKE_QDRANT=false
 PULL_IMAGES=false
 INTEGRATED=false
+NO_INTERACTIVE=false
+ANY_FLAGS=false
 
 while [[ $# -gt 0 ]]; do
+    ANY_FLAGS=true
     case $1 in
         --skip-ollama) SKIP_OLLAMA=true; shift ;;
         --skip-docker) SKIP_DOCKER=true; shift ;;
@@ -39,6 +45,7 @@ while [[ $# -gt 0 ]]; do
         --nuke-qdrant) NUKE_QDRANT=true; shift ;;
         --pull-images) PULL_IMAGES=true; shift ;;
         --integrated) INTEGRATED=true; shift ;;
+        --no-interactive|-y) NO_INTERACTIVE=true; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -49,6 +56,111 @@ cd "$SCRIPT_DIR"
 
 echo -e "${CYAN}>>> AI-Media-Indexer Full System Startup${NC}"
 echo ""
+
+# Interactive menu (unless --no-interactive or any flags are passed)
+if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS" = false ]; then
+    echo -e "${GRAY}============================================================${NC}"
+    echo -e "${CYAN}  STARTUP OPTIONS${NC}"
+    echo -e "${GRAY}============================================================${NC}"
+    echo ""
+    
+    # Detect current system state for smart recommendations
+    HAS_VENV="NOT FOUND"
+    [ -d "$SCRIPT_DIR/.venv" ] && HAS_VENV="exists"
+    
+    HAS_QDRANT="fresh"
+    [ -d "$SCRIPT_DIR/qdrant_data_embedded" ] && HAS_QDRANT="exists"
+    
+    CACHE_SIZE="0"
+    if [ -d "$SCRIPT_DIR/.cache" ]; then
+        CACHE_SIZE=$(du -sm "$SCRIPT_DIR/.cache" 2>/dev/null | cut -f1 || echo "0")
+    fi
+    
+    echo -e "${YELLOW}  Current system state:${NC}"
+    echo -e "${GRAY}    - Virtual env: $HAS_VENV${NC}"
+    echo -e "${GRAY}    - Qdrant data: $HAS_QDRANT${NC}"
+    echo -e "${GRAY}    - Cache size:  ${CACHE_SIZE} MB${NC}"
+    echo ""
+    
+    echo -e "${CYAN}  Choose startup mode:${NC}"
+    echo ""
+    echo -e "${GREEN}  [1] Quick Start (RECOMMENDED)${NC}"
+    echo -e "${GRAY}      - Keeps caches and data intact${NC}"
+    echo -e "${GRAY}      - Fastest startup time${NC}"
+    echo ""
+    echo -e "${YELLOW}  [2] Fresh Start${NC}"
+    echo -e "${GRAY}      - Clears all caches${NC}"
+    echo -e "${GRAY}      - Keeps Qdrant data (your indexed videos)${NC}"
+    echo ""
+    echo -e "${RED}  [3] Complete Reset${NC}"
+    echo -e "${GRAY}      - Clears caches AND Qdrant data${NC}"
+    echo -e "${GRAY}      - You'll need to re-ingest all videos${NC}"
+    echo ""
+    echo -e "${MAGENTA}  [4] Dev Mode${NC}"
+    echo -e "${GRAY}      - Recreate virtual environment${NC}"
+    echo -e "${GRAY}      - Pull latest Docker images${NC}"
+    echo ""
+    echo -e "${WHITE}  [5] Custom (use command line flags)${NC}"
+    echo -e "${GRAY}      - Run: ./start.sh --help for options${NC}"
+    echo ""
+    
+    read -p "Enter choice [1-5] or press Enter for Quick Start: " choice
+    
+    case $choice in
+        1)
+            SKIP_CLEAN=true
+            echo -e "\n${GREEN}  >> Quick Start selected${NC}"
+            ;;
+        2)
+            SKIP_CLEAN=false
+            echo -e "\n${YELLOW}  >> Fresh Start selected (clearing caches)${NC}"
+            ;;
+        3)
+            SKIP_CLEAN=false
+            NUKE_QDRANT=true
+            echo -e "\n${RED}  >> Complete Reset selected (clearing everything)${NC}"
+            ;;
+        4)
+            RECREATE_VENV=true
+            PULL_IMAGES=true
+            echo -e "\n${MAGENTA}  >> Dev Mode selected (recreating venv, pulling images)${NC}"
+            ;;
+        5)
+            echo -e "\n${CYAN}  Startup flags:${NC}"
+            echo -e "${GRAY}    --skip-ollama      Skip Ollama startup${NC}"
+            echo -e "${GRAY}    --skip-docker      Skip Docker operations${NC}"
+            echo -e "${GRAY}    --skip-clean       Skip cache cleanup${NC}"
+            echo -e "${GRAY}    --recreate-venv    Recreate virtual environment${NC}"
+            echo -e "${GRAY}    --nuke-qdrant      Delete all indexed data${NC}"
+            echo -e "${GRAY}    --pull-images      Pull latest Docker images${NC}"
+            echo -e "${GRAY}    --integrated       Run in single terminal${NC}"
+            echo -e "${GRAY}    --no-interactive   Skip this menu${NC}"
+            echo ""
+            echo -e "${WHITE}  Example: ./start.sh --skip-docker --skip-ollama${NC}"
+            echo ""
+            echo -e "${CYAN}  Video Conversion Tool (for faster playback):${NC}"
+            echo -e "${GRAY}    # Convert single file${NC}"
+            echo -e "${GRAY}    python -m tools.convert \"/path/to/video.webm\"${NC}"
+            echo ""
+            echo -e "${GRAY}    # Batch convert entire directory (4 parallel workers)${NC}"
+            echo -e "${GRAY}    python -m tools.convert \"/Downloads/Videos\" --workers 4${NC}"
+            echo ""
+            echo -e "${GRAY}    # Faster conversion (lower quality)${NC}"
+            echo -e "${GRAY}    python -m tools.convert \"/path/to/video.webm\" --preset ultrafast${NC}"
+            echo ""
+            exit 0
+            ;;
+        "")
+            SKIP_CLEAN=true
+            echo -e "\n${GREEN}  >> Quick Start (default)${NC}"
+            ;;
+        *)
+            SKIP_CLEAN=true
+            echo -e "\n${YELLOW}  >> Invalid choice, using Quick Start${NC}"
+            ;;
+    esac
+    echo ""
+fi
 
 echo -e "${YELLOW}[1/9] Working directory: $SCRIPT_DIR${NC}"
 
