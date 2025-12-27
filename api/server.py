@@ -60,6 +60,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import numpy as np
 
 from config import settings
 from core.ingestion.pipeline import IngestionPipeline
@@ -819,10 +820,11 @@ def create_app() -> FastAPI:
                 if video in seen_timestamps:
                     if any(abs(ts - existing) < 5.0 for existing in seen_timestamps[video]):
                         continue
-                else:
+                elif video is not None:
                     seen_timestamps[video] = []
                 
-                seen_timestamps[video].append(ts)
+                if video is not None:
+                    seen_timestamps[video].append(ts)
                 
                 # Expand to 7-second context (timestamp center)
                 start_context = max(0.0, ts - 3.5)

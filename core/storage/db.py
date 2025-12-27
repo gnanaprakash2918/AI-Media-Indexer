@@ -493,7 +493,7 @@ class VectorDB:
                 limit=1,
                 with_payload=True,
             )
-            if resp[0]:
+            if resp[0] and resp[0][0].payload:
                 return resp[0][0].payload.get("cluster_id")
             return None
         except Exception:
@@ -820,7 +820,7 @@ class VectorDB:
                 limit=1,
                 with_payload=True,
             )
-            if resp_target[0]:
+            if resp_target[0] and resp_target[0][0].payload:
                 target_name = resp_target[0][0].payload.get("name")
 
             # Get all faces in source cluster
@@ -854,7 +854,7 @@ class VectorDB:
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
                 payload=payload,
-                points=ids,
+                points=models.PointIdsList(points=ids),
             )
             
             return len(ids)
@@ -993,12 +993,12 @@ class VectorDB:
                 limit=1000,
                 with_payload=False,
             )
-            face_ids = [str(p.id) for p in resp[0]]
+            face_ids = [p.id for p in resp[0]]
             if face_ids:
                 self.client.set_payload(
                     collection_name=self.FACES_COLLECTION,
                     payload={"is_main": is_main},
-                    points=face_ids,
+                    points=models.PointIdsList(points=face_ids),
                 )
             return True
         except Exception:
@@ -1249,27 +1249,6 @@ class VectorDB:
         except Exception:
             return []
 
-    @observe("db_update_face_cluster_id")
-    def update_face_cluster_id(self, face_id: str, cluster_id: int) -> bool:
-        """Update the cluster_id for a single face.
-
-        Args:
-            face_id: The ID of the face to update.
-            cluster_id: The new cluster ID.
-
-        Returns:
-            True if updated successfully.
-        """
-        try:
-            self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
-                payload={"cluster_id": cluster_id},
-                points=[face_id],
-            )
-            return True
-        except Exception:
-            return False
-
     @observe("db_get_faces_grouped_by_cluster")
     def get_faces_grouped_by_cluster(self, limit: int = 500) -> dict[int, list[dict[str, Any]]]:
         """Get all faces grouped by cluster_id.
@@ -1305,43 +1284,6 @@ class VectorDB:
         except Exception:
             return {}
 
-    @observe("db_merge_face_clusters")
-    def merge_face_clusters(self, from_cluster: int, to_cluster: int) -> int:
-        """Merge two face clusters into one.
-
-        Args:
-            from_cluster: The cluster ID to merge from (will be removed).
-            to_cluster: The cluster ID to merge into.
-
-        Returns:
-            Number of faces updated.
-        """
-        try:
-            resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="cluster_id",
-                            match=models.MatchValue(value=from_cluster),
-                        )
-                    ]
-                ),
-                limit=10000,
-                with_payload=True,
-                with_vectors=False,
-            )
-            updated = 0
-            for point in resp[0]:
-                self.client.set_payload(
-                    collection_name=self.FACES_COLLECTION,
-                    payload={"cluster_id": to_cluster},
-                    points=[point.id],
-                )
-                updated += 1
-            return updated
-        except Exception:
-            return 0
 
     @observe("db_update_voice_speaker_name")
     def update_voice_speaker_name(self, segment_id: str, name: str) -> bool:

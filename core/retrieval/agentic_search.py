@@ -197,16 +197,14 @@ class SearchAgent:
             query_vector = self.db.encode_texts(search_text or "scene activity", is_query=True)[0]
             
             if filters:
-                results = self.db.search_frames_filtered(
-                    query_vector=query_vector,
-                    face_cluster_ids=None,  # Already in filters
-                    limit=limit,
-                )
-                # Apply additional filters via Qdrant
+                # Cast filters to List[Condition] for Qdrant
+                conditions: list[models.Condition] = list(filters)
+                
+                # Apply filters via Qdrant
                 results = self.db.client.query_points(
                     collection_name=self.db.MEDIA_COLLECTION,
                     query=query_vector,
-                    query_filter=models.Filter(should=filters) if len(filters) > 1 else models.Filter(must=filters),
+                    query_filter=models.Filter(should=conditions) if len(conditions) > 1 else models.Filter(must=conditions),
                     limit=limit,
                 ).points
                 # Format results

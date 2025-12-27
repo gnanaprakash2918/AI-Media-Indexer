@@ -100,6 +100,7 @@ class OllamaLLM(LLMInterface):
         print(f"Ollama generating text for prompt: {debug_prompt}")
 
         # Apply rate limiting
+        assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             
@@ -153,6 +154,7 @@ Now respond with JSON:"""
             full_prompt = f"{system_prompt}\n\n{full_prompt}"
 
         # Apply rate limiting
+        assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             
@@ -261,6 +263,7 @@ Now respond with JSON:"""
         )
 
         # Apply rate limiting
+        assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             
@@ -324,6 +327,7 @@ Return JSON:"""
         })
 
         # Apply rate limiting
+        assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             

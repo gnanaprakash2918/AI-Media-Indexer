@@ -233,6 +233,7 @@ class FaceManager:
 
     async def _detect_insightface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
         """Detect faces using InsightFace with quality metrics."""
+        assert self._insightface_app is not None, "InsightFace not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
             faces = self._insightface_app.get(bgr)
@@ -266,6 +267,8 @@ class FaceManager:
 
     async def _detect_sface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
         """Detect faces using SFace with CLAHE normalization and quality metrics."""
+        assert self._opencv_detector is not None, "OpenCV detector not initialized"
+        assert self._opencv_recognizer is not None, "OpenCV recognizer not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         
         async with GPU_SEMAPHORE:
@@ -315,6 +318,7 @@ class FaceManager:
 
     async def _detect_yunet_only(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
         """Detect faces with YuNet only (no embeddings)."""
+        assert self._opencv_detector is not None, "OpenCV detector not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         
         async with GPU_SEMAPHORE:

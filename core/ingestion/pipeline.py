@@ -460,20 +460,19 @@ class IngestionPipeline:
             vector = self.db.encoder.encode(description).tolist()
             
             # Build structured payload for accurate search with filterable fields
-            payload = {
+            payload: dict[str, Any] = {
                 "face_cluster_ids": face_cluster_ids,
             }
             
             # Add structured data if available for hybrid search
             if analysis:
-                payload.update({
-                    "structured_data": analysis.model_dump(),
-                    "visible_text": analysis.scene.visible_text if analysis.scene else [],
-                    "entity_names": [e.name for e in analysis.entities] if analysis.entities else [],
-                    "entity_categories": list({e.category for e in analysis.entities}) if analysis.entities else [],
-                    "scene_location": analysis.scene.location if analysis.scene else "",
-                    "main_action": analysis.action or "",
-                })
+                payload["structured_data"] = analysis.model_dump()
+                payload["visible_text"] = analysis.scene.visible_text if analysis.scene else []
+                payload["entity_names"] = [e.name for e in analysis.entities] if analysis.entities else []
+                payload["entity_categories"] = list({e.category for e in analysis.entities}) if analysis.entities else []
+                payload["scene_location"] = analysis.scene.location if analysis.scene else ""
+                payload["main_action"] = analysis.action or ""
+
             
             self.db.upsert_media_frame(
                 point_id=f"{video_path}_{timestamp:.3f}",

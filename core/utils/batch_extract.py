@@ -150,7 +150,7 @@ async def regenerate_media_thumbnails(
     media_path: str,
     face_output_dir: Path | None = None,
     voice_output_dir: Path | None = None,
-) -> dict[str, int]:
+) -> dict[str, int | str]:
     """Regenerate all face thumbnails and voice clips for a media file.
     
     Args:
@@ -160,8 +160,9 @@ async def regenerate_media_thumbnails(
         voice_output_dir: Output directory for voice clips
     
     Returns:
-        Dict with counts of generated thumbnails and clips
+        Dict with counts of generated thumbnails and clips, or error string.
     """
+    from typing import Any
     from pathlib import Path as P
     
     video_path = P(media_path)

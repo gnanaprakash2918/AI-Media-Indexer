@@ -17,7 +17,10 @@ from __future__ import annotations
 import io
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    from core.retrieval.agentic_search import SearchAgent
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -78,12 +81,13 @@ def _get_pipeline() -> IngestionPipeline:
     return _pipeline
 
 
-def _get_agentic_search():
+def _get_agentic_search() -> "SearchAgent":
     """Return a shared SearchAgent instance for FAANG-level search."""
     global _agentic_search
     if _agentic_search is None:
         from core.retrieval.agentic_search import SearchAgent
         _agentic_search = SearchAgent(db=_get_vector_db())
+    assert _agentic_search is not None
     return _agentic_search
 
 
