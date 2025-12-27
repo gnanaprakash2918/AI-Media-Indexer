@@ -873,6 +873,48 @@ def create_app() -> FastAPI:
             "stats": stats,
         }
 
+    @app.get("/search/agentic")
+    async def agentic_search(
+        q: str,
+        limit: int = 20,
+        use_expansion: bool = True,
+    ):
+        """FAANG-level search with LLM query expansion and identity resolution.
+
+        This endpoint uses:
+        1. LLM to parse query and extract entities (persons, actions, objects, brands)
+        2. Query expansion (e.g., 'South Indian food' → 'idli, dosa, sambar')
+        3. Identity resolution (person names → face cluster IDs)
+        4. Filtered vector search (frames with matching face IDs)
+
+        Args:
+            q: Natural language query (e.g., 'Prakash bowling at Brunswick')
+            limit: Maximum results to return
+            use_expansion: Whether to use LLM for query expansion
+
+        Returns:
+            Dict with results, parsed query, resolved identity, and metadata
+        """
+        if not pipeline:
+            return {"error": "Pipeline not initialized", "results": []}
+
+        try:
+            from core.retrieval.agentic_search import SearchAgent
+            agent = SearchAgent(db=pipeline.db)
+            result = await agent.search(q, limit=limit, use_expansion=use_expansion)
+            return result
+        except Exception as e:
+            logger.error(f"Agentic search failed: {e}")
+            # Fallback to regular search
+            regular_results = pipeline.db.search_frames(query=q, limit=limit)
+            return {
+                "query": q,
+                "parsed": None,
+                "error": str(e),
+                "fallback": True,
+                "results": regular_results,
+            }
+
     @app.get("/library")
     async def get_library():
         """Get list of all indexed media files."""

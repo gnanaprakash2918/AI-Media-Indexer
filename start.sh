@@ -412,6 +412,30 @@ if [ "$SKIP_OLLAMA" = false ]; then
             echo -e "${YELLOW}  WARNING: Ollama not found in PATH. Please start it manually.${NC}"
         fi
     fi
+    
+    # Auto-pull Ollama model if not present
+    echo -e "${GRAY}  Checking Ollama vision model...${NC}"
+    
+    # Read model from .env or use default
+    OLLAMA_MODEL="moondream"  # Default lightweight model
+    if [ -f "$SCRIPT_DIR/.env" ]; then
+        MODEL_MATCH=$(grep -E '^OLLAMA_MODEL\s*=' "$SCRIPT_DIR/.env" | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        if [ -n "$MODEL_MATCH" ]; then
+            OLLAMA_MODEL="$MODEL_MATCH"
+        fi
+    fi
+    
+    # Check if model exists, pull if not
+    if ! ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
+        echo -e "${YELLOW}  Model '$OLLAMA_MODEL' not found. Pulling...${NC}"
+        if ollama pull "$OLLAMA_MODEL"; then
+            echo -e "${GREEN}  Model '$OLLAMA_MODEL' pulled successfully!${NC}"
+        else
+            echo -e "${RED}  WARNING: Failed to pull model. Vision features may not work.${NC}"
+        fi
+    else
+        echo -e "${GREEN}  Model '$OLLAMA_MODEL' is available.${NC}"
+    fi
 else
     echo -e "${GRAY}[8/9] Skipping Ollama startup (--skip-ollama)${NC}"
 fi

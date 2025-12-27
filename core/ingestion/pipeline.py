@@ -247,7 +247,10 @@ class IngestionPipeline:
         vision_task_type = "network" if settings.llm_provider == "gemini" else "compute"
         await resource_manager.throttle_if_needed(vision_task_type)
 
-        self.vision = VisionAnalyzer()
+        # Use the configured LLM provider from settings
+        from llm.factory import LLMFactory
+        vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
+        self.vision = VisionAnalyzer(llm=vision_llm)
         self.faces = FaceManager(use_gpu=settings.device == "cuda")
 
         # Pass time range to extractor for partial processing
@@ -264,8 +267,10 @@ class IngestionPipeline:
         frame_count = 0
         CLEANUP_INTERVAL = 10  # Cleanup memory every N frames
         
-        # Keep track of context for narrative continuity
-        last_description: str | None = None
+        # Sliding window context for narrative continuity (FAANG-level)
+        # Keep last 3 frames of context instead of just 1
+        from collections import deque
+        context_window: deque[str] = deque(maxlen=3)
 
         async for frame_path in frame_generator:
             if job_id and progress_tracker.is_cancelled(job_id):
@@ -275,15 +280,20 @@ class IngestionPipeline:
             timestamp = time_offset + (frame_count * float(self.frame_interval_seconds))
             try:
                 if self.frame_sampler.should_sample(frame_count):
+                    # Build narrative context from sliding window
+                    narrative_context = " -> ".join(context_window) if context_window else "Start of video"
+                    
                     new_desc = await self._process_single_frame(
                         video_path=path,
                         frame_path=frame_path,
                         timestamp=timestamp,
                         index=frame_count,
-                        context=last_description,
+                        context=narrative_context,
                     )
                     if new_desc:
-                        last_description = new_desc
+                        # Truncate description for context to save tokens
+                        context_chunk = new_desc[:200] if len(new_desc) > 200 else new_desc
+                        context_window.append(f"[{timestamp:.1f}s] {context_chunk}")
                         
                     if job_id and frame_count % 5 == 0:
                         progress = 55.0 + min(40.0, frame_count * 2.0)
@@ -325,30 +335,26 @@ class IngestionPipeline:
         index: int,
         context: str | None = None,
     ) -> str | None:
+        """Process a single frame with face-frame linking and structured analysis.
+        
+        Order: Faces FIRST → Vision Analysis → Store with linked identities
+        
+        Uses incremental face clustering (not hash-based) for consistent identity.
+        """
         if not self.vision or not self.faces:
             return None
 
-        description: str | None = None
-        try:
-            description = await self.vision.describe(frame_path, context=context)
-        except Exception:
-            pass
+        # Track cluster centroids across frames (initialized once per video)
+        if not hasattr(self, '_face_clusters'):
+            self._face_clusters: dict[int, list[float]] = {}
 
-        if description:
-            vector = self.db.encoder.encode(description).tolist()
-            self.db.upsert_media_frame(
-                point_id=f"{video_path}_{timestamp:.3f}",
-                vector=vector,
-                video_path=str(video_path),
-                timestamp=timestamp,
-                action=description,
-                dialogue=None,
-            )
-
+        # 1. DETECT FACES FIRST (Capture Identity before Vision)
+        face_cluster_ids: list[int] = []
+        detected_faces = []
         try:
             detected_faces = await self.faces.detect_faces(frame_path)
         except Exception:
-            return None
+            pass
 
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"
@@ -360,6 +366,14 @@ class IngestionPipeline:
 
         for idx, face in enumerate(detected_faces):
             if face.embedding is not None:
+                # PROPER CLUSTERING: Use embedding similarity, not hash
+                cluster_id, self._face_clusters = self.faces.match_or_create_cluster(
+                    embedding=face.embedding,
+                    existing_clusters=self._face_clusters,
+                    threshold=settings.face_clustering_threshold,
+                )
+                face_cluster_ids.append(cluster_id)
+
                 # Crop and save face thumbnail with better quality
                 thumb_path: str | None = None
                 try:
@@ -406,10 +420,11 @@ class IngestionPipeline:
                     logger.error(f"Thumbnail generation failed: {e}")
                     pass
 
+                # Store face with PROPER cluster_id (not hash-based)
                 self.db.insert_face(
                     face.embedding,
                     name=None,
-                    cluster_id=None,
+                    cluster_id=cluster_id,  # Use proper cluster ID
                     media_path=str(video_path),
                     timestamp=timestamp,
                     thumbnail_path=thumb_path,
@@ -417,6 +432,57 @@ class IngestionPipeline:
                     bbox_size=getattr(face, '_bbox_size', None),
                     det_score=face.confidence if hasattr(face, 'confidence') else None,
                 )
+        
+        # 2. RUN VISION ANALYSIS (With OCR and structured output)
+        description: str | None = None
+        analysis = None
+        
+        try:
+            # Use structured analysis that outputs FrameAnalysis
+            analysis = await self.vision.analyze_frame(frame_path)
+            if analysis:
+                # Generate searchable text with specific terms (Idly not food)
+                description = analysis.to_search_content()
+                # Inject face cluster IDs into analysis
+                analysis.face_ids = [str(cid) for cid in face_cluster_ids]
+        except Exception as e:
+            logger.warning(f"Structured analysis failed: {e}, falling back to describe")
+            
+        # Fallback to unstructured description
+        if not description:
+            try:
+                description = await self.vision.describe(frame_path, context=context)
+            except Exception:
+                pass
+
+        # 3. STORE FRAME WITH LINKED IDENTITIES AND STRUCTURED PAYLOAD
+        if description:
+            vector = self.db.encoder.encode(description).tolist()
+            
+            # Build structured payload for accurate search with filterable fields
+            payload = {
+                "face_cluster_ids": face_cluster_ids,
+            }
+            
+            # Add structured data if available for hybrid search
+            if analysis:
+                payload.update({
+                    "structured_data": analysis.model_dump(),
+                    "visible_text": analysis.scene.visible_text if analysis.scene else [],
+                    "entity_names": [e.name for e in analysis.entities] if analysis.entities else [],
+                    "entity_categories": list({e.category for e in analysis.entities}) if analysis.entities else [],
+                    "scene_location": analysis.scene.location if analysis.scene else "",
+                    "main_action": analysis.action or "",
+                })
+            
+            self.db.upsert_media_frame(
+                point_id=f"{video_path}_{timestamp:.3f}",
+                vector=vector,
+                video_path=str(video_path),
+                timestamp=timestamp,
+                action=description,
+                payload=payload,
+            )
         
         return description
 

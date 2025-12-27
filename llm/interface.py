@@ -164,3 +164,20 @@ class LLMInterface(ABC):
     ) -> str:
         """Describe an image and return the textual description."""
         raise NotImplementedError
+
+    async def describe_image_structured(
+        self,
+        schema: type[T],
+        prompt: str,
+        image_path: str | Path,
+        system_prompt: str = "",
+        **kwargs: Any,
+    ) -> T:
+        """Describe an image and return a structured Pydantic object.
+        
+        Default implementation: describe image, then parse JSON.
+        Subclasses can override to use native format=json with image.
+        """
+        # Default: get text description, then try to parse as JSON
+        response = await self.describe_image(prompt, image_path, system_prompt, **kwargs)
+        return self.parse_json_response(response, schema)

@@ -13,7 +13,7 @@ class LLMFactory:
 
     @staticmethod
     def create_llm(
-        provider: Literal["gemini", "ollama"] = "gemini",
+        provider: Literal["gemini", "ollama"] = "ollama",
         prompt_dir: str = "./prompts",
         **kwargs,
     ) -> LLMInterface:
@@ -31,11 +31,11 @@ class LLMFactory:
     @staticmethod
     def get_default_llm(prompt_dir: str = "./prompts") -> LLMInterface:
         """Return the default LLM based on the LLM_PROVIDER environment variable."""
-        provider = os.getenv("LLM_PROVIDER", "gemini")
+        provider = os.getenv("LLM_PROVIDER", "ollama")
         provider = provider.lower()
 
         if provider not in ("gemini", "ollama"):
-            provider = "gemini"
+            provider = "ollama"
 
         return LLMFactory.create_llm(
             cast(Literal["gemini", "ollama"], provider), prompt_dir

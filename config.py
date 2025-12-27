@@ -84,13 +84,13 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-1.5-flash"
 
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llava:7b"
+    ollama_model: str = "moondream"  # Lightweight vision model (~2GB VRAM vs 5GB for llava)
 
     tmdb_api_key: str | None = None
     omdb_api_key: str | None = None
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
-    frame_interval: int = Field(default=2, description="Seconds between frames")
+    frame_interval: int = Field(default=5, description="Seconds between frames (5=faster, 2=detailed)")
     batch_size: int = Field(default=24)
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 

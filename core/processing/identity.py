@@ -345,6 +345,61 @@ class FaceManager:
             metric=self.dbscan_metric,
         ).fit_predict(data)
 
+    def match_or_create_cluster(
+        self,
+        embedding: list[float],
+        existing_clusters: dict[int, list[float]],
+        threshold: float = 0.4,
+    ) -> tuple[int, dict[int, list[float]]]:
+        """Match face to existing cluster or create new one (incremental clustering).
+
+        This solves the hash-based ID problem by using actual embedding similarity.
+        Each cluster is represented by its centroid embedding.
+
+        Args:
+            embedding: The 512-dim face embedding to match.
+            existing_clusters: Dict mapping cluster_id -> centroid embedding.
+            threshold: Cosine distance threshold (0.4 = 60% similarity required).
+
+        Returns:
+            Tuple of (cluster_id, updated_clusters_dict).
+        """
+        import numpy as np
+
+        emb = np.array(embedding, dtype=np.float64)
+        emb_norm = emb / (np.linalg.norm(emb) + 1e-9)
+
+        best_cluster_id = None
+        best_similarity = -1.0
+
+        for cluster_id, centroid in existing_clusters.items():
+            centroid_arr = np.array(centroid, dtype=np.float64)
+            centroid_norm = centroid_arr / (np.linalg.norm(centroid_arr) + 1e-9)
+
+            # Cosine similarity
+            similarity = float(np.dot(emb_norm, centroid_norm))
+
+            # Convert to distance: distance = 1 - similarity
+            # threshold of 0.4 means we need similarity >= 0.6
+            if similarity > (1.0 - threshold) and similarity > best_similarity:
+                best_similarity = similarity
+                best_cluster_id = cluster_id
+
+        if best_cluster_id is not None:
+            # Update centroid with running average
+            old_centroid = np.array(existing_clusters[best_cluster_id], dtype=np.float64)
+            # Simple average (could weight by count for better accuracy)
+            new_centroid = (old_centroid + emb) / 2.0
+            new_centroid = new_centroid / (np.linalg.norm(new_centroid) + 1e-9)
+            existing_clusters[best_cluster_id] = new_centroid.tolist()
+            return best_cluster_id, existing_clusters
+
+        # Create new cluster
+        new_cluster_id = max(existing_clusters.keys(), default=0) + 1
+        existing_clusters[new_cluster_id] = emb_norm.tolist()
+        return new_cluster_id, existing_clusters
+
+
     @staticmethod
     def _load_image(path: Path) -> NDArray[np.uint8]:
         with Image.open(path) as img:

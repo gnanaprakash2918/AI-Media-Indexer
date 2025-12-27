@@ -460,6 +460,34 @@ if (-not $SkipOllama) {
             Write-Host "  WARNING: Ollama not found in PATH. Please start it manually." -ForegroundColor Yellow
         }
     }
+    
+    # Auto-pull Ollama model if not present
+    Write-Host "  Checking Ollama vision model..." -ForegroundColor Gray
+    
+    # Read model from .env or use default
+    $ollamaModel = "moondream"  # Default lightweight model
+    $envFile = Join-Path $ProjectRoot ".env"
+    if (Test-Path $envFile) {
+        $envContent = Get-Content $envFile -Raw
+        $modelMatch = [regex]::Match($envContent, 'OLLAMA_MODEL\s*=\s*"?([^"\r\n]+)"?')
+        if ($modelMatch.Success) {
+            $ollamaModel = $modelMatch.Groups[1].Value.Trim()
+        }
+    }
+    
+    # Check if model exists, pull if not
+    $modelList = ollama list 2>&1
+    if ($modelList -notmatch [regex]::Escape($ollamaModel)) {
+        Write-Host "  Model '$ollamaModel' not found. Pulling..." -ForegroundColor Yellow
+        ollama pull $ollamaModel
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  Model '$ollamaModel' pulled successfully!" -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: Failed to pull model. Vision features may not work." -ForegroundColor Red
+        }
+    } else {
+        Write-Host "  Model '$ollamaModel' is available." -ForegroundColor Green
+    }
 } else {
     Write-Host "[8/8] Skipping Ollama startup (--SkipOllama)" -ForegroundColor Gray
 }

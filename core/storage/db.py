@@ -335,8 +335,9 @@ class VectorDB:
         timestamp: float,
         action: str | None = None,
         dialogue: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
-        """Upsert a single frame embedding.
+        """Upsert a single frame embedding with structured metadata.
 
         Args:
             point_id: Unique ID for the point.
@@ -345,16 +346,21 @@ class VectorDB:
             timestamp: Timestamp of the frame in the video.
             action: Visual description of the frame.
             dialogue: Associated dialogue (optional).
+            payload: Additional structured data (face_cluster_ids, ocr_text, etc).
         """
         safe_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
 
-        payload = {
+        final_payload = {
             "video_path": video_path,
             "timestamp": timestamp,
             "action": action,
             "dialogue": dialogue,
             "type": "visual",
         }
+        
+        # Merge structured data (face_cluster_ids, ocr_text, structured_data)
+        if payload:
+            final_payload.update(payload)
 
         self.client.upsert(
             collection_name=self.MEDIA_COLLECTION,
@@ -362,7 +368,7 @@ class VectorDB:
                 models.PointStruct(
                     id=safe_point_id,
                     vector=vector,
-                    payload=payload,
+                    payload=final_payload,
                 )
             ],
         )
@@ -407,6 +413,118 @@ class VectorDB:
             )
 
         return results
+
+    @observe("db_search_frames_filtered")
+    def search_frames_filtered(
+        self,
+        query_vector: list[float],
+        face_cluster_ids: list[int] | None = None,
+        limit: int = 20,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search frames with optional identity filtering.
+
+        Used by agentic search to filter by face_cluster_ids.
+
+        Args:
+            query_vector: The query embedding vector.
+            face_cluster_ids: Face cluster IDs to filter by (identity filter).
+            limit: Maximum number of results.
+            score_threshold: Minimum similarity score.
+
+        Returns:
+            A list of matching frames with full payload.
+        """
+        # Build filter for face cluster IDs
+        query_filter = None
+        if face_cluster_ids:
+            query_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="face_cluster_ids",
+                        match=models.MatchAny(any=face_cluster_ids),
+                    )
+                ]
+            )
+
+        resp = self.client.query_points(
+            collection_name=self.MEDIA_COLLECTION,
+            query=query_vector,
+            limit=limit,
+            query_filter=query_filter,
+            score_threshold=score_threshold,
+        )
+
+        results = []
+        for hit in resp.points:
+            payload = hit.payload or {}
+            result = {
+                "score": hit.score,
+                "id": str(hit.id),
+                **payload,  # Include all payload fields
+            }
+            results.append(result)
+
+        return results
+
+    def get_cluster_id_by_name(self, name: str) -> int | None:
+        """Resolve a person's name to their cluster ID.
+
+        Used by agentic search to filter frames by identity.
+
+        Args:
+            name: The person's name (from HITL naming).
+
+        Returns:
+            The cluster_id if found, None otherwise.
+        """
+        try:
+            # Case-insensitive search for name
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="name",
+                            match=models.MatchText(text=name),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=True,
+            )
+            if resp[0]:
+                return resp[0][0].payload.get("cluster_id")
+            return None
+        except Exception:
+            return None
+
+    def get_face_ids_by_cluster(self, cluster_id: int) -> list[str]:
+        """Get all face point IDs belonging to a cluster.
+
+        Args:
+            cluster_id: The cluster ID to look up.
+
+        Returns:
+            List of face point IDs in that cluster.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=False,
+            )
+            return [str(p.id) for p in resp[0]]
+        except Exception:
+            return []
 
     @observe("db_insert_face")
     def insert_face(

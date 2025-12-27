@@ -1,11 +1,44 @@
-Describe this image in extreme detail for a search index. 
-1. **Action**: What exactly is happening? (e.g., "bowling a strike", "running", "arguing"). Infer the likely preceding and succeeding actions.
-2. **Subjects**: Describe people in detail:
-   - Clothing: Color, type (e.g., "red Nike jacket", "green shoes with untied laces").
-   - Accessories: Headphones, glasses, ID cards (try to read text like "INFY").
-   - Appearance: Hair, estimated age, emotion.
-3. **Setting**: Where is this? (e.g., "Brunswick bowling alley", "kitchen", "office"). Note lighting and background objects.
-4. **Text**: Read ANY visible text (signs, screens, badges).
-5. **Context**: Synthesize "what is going on" into a narrative sentence.
+Analyze this video frame for a FAANG-level search engine with extreme precision.
 
-Output as a detailed paragraph without bullet points.
+## CORE PRINCIPLE: SPECIFICITY OVER GENERICS
+The LLM knows millions of specific terms. USE THEM.
+
+### FOODS (Never say "food" or "dish")
+- Indian: Idli, Dosa, Vada, Sambar, Rasam, Biryani, Puri, Roti, Paratha, Pongal
+- Japanese: Sushi, Ramen, Tempura, Miso, Onigiri
+- Italian: Pasta, Pizza, Risotto, Lasagna
+- Mexican: Taco, Burrito, Quesadilla, Nachos
+- American: Burger, Hot Dog, Fries, Pancakes
+
+### CLOTHING (Never say "clothes" or "dress")
+- Indian: Saree, Kurta, Dhoti, Salwar Kameez, Sherwani, Lehenga
+- Western: Jeans, T-shirt, Hoodie, Blazer, Sneakers
+- Japanese: Kimono, Yukata
+- Always include COLOR and BRAND if visible
+
+### BRANDS
+If text is detected by OCR, LINK it to objects:
+- "LensKart" on glasses → "LensKart glasses"
+- "Nike" on shoes → "Nike sneakers"
+- "Brunswick" on sign → "Brunswick bowling alley"
+
+### ACTIONS (Be Precise)
+Don't say "eating" - say "dipping idli in sambar"
+Don't say "playing" - say "bowling a strike"
+Note PHYSICS: "wobbling", "spinning fast", "falling slowly", "steam rising"
+
+### CULTURAL MARKERS
+Identify from ANY culture accurately:
+- Settings: Temple, Mosque, Church, Bowling Alley, Kitchen
+- Events: Wedding, Festival, Birthday, Graduation
+- Objects: Diya, Rangoli, Menorah, Christmas Tree
+
+## OUTPUT FORMAT
+Write a DENSE, SEARCHABLE paragraph including:
+1. Specific names (Idli not food, Saree not dress)
+2. Brand associations (Nike shoes, LensKart glasses)
+3. Action physics (wobbling, spinning, steaming)
+4. Colors and patterns (blue checkered shirt)
+5. Scene location (Brunswick bowling alley)
+
+EXAMPLE: "A young man in a blue Nike dri-fit t-shirt and green cargo pants at a Brunswick bowling alley, releasing a black bowling ball. The 'BRUNSWICK' sign is visible on the lane display showing 'STRIKE'. He wears black-framed LensKart glasses and white Nike Air Force sneakers. The bowling pins are wobbling after impact."

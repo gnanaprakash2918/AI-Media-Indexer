@@ -40,6 +40,7 @@ mcp = FastMCP("MediaIndexer")
 _vector_db: VectorDB | None = None
 _search_engine: SearchEngine | None = None
 _pipeline: IngestionPipeline | None = None
+_agentic_search: "SearchAgent | None" = None
 
 
 def _get_vector_db() -> VectorDB:
@@ -77,7 +78,60 @@ def _get_pipeline() -> IngestionPipeline:
     return _pipeline
 
 
+def _get_agentic_search():
+    """Return a shared SearchAgent instance for FAANG-level search."""
+    global _agentic_search
+    if _agentic_search is None:
+        from core.retrieval.agentic_search import SearchAgent
+        _agentic_search = SearchAgent(db=_get_vector_db())
+    return _agentic_search
+
+
 # MCP tools
+
+
+@mcp.tool()
+async def agentic_search(
+    query: Annotated[
+        str,
+        Field(
+            description="Natural language search query with entity support "
+            "(e.g. 'Prakash bowling at Brunswick', 'someone eating idli').",
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results to return.",
+            ge=1,
+            le=50,
+        ),
+    ] = 10,
+    use_expansion: Annotated[
+        bool, 
+        Field(
+            description="Use LLM to expand query (e.g. 'South Indian food' → 'idli, dosa').",
+        ),
+    ] = True,
+) -> dict:
+    """FAANG-level search with LLM query expansion and identity resolution.
+
+    This tool uses an LLM to:
+    1. Parse the query to extract person names, actions, objects, brands
+    2. Expand cultural terms (e.g., 'South Indian breakfast' → 'idli, dosa')
+    3. Resolve person names to face cluster IDs from HITL
+    4. Filter frames by identity before vector search
+
+    Args:
+        query: Natural language query with optional entity references.
+        limit: Maximum number of results.
+        use_expansion: Whether to use LLM for query expansion.
+
+    Returns:
+        Dict with results, parsed query, and metadata.
+    """
+    agent = _get_agentic_search()
+    return await agent.search(query, limit=limit, use_expansion=use_expansion)
 
 
 @mcp.tool()

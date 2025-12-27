@@ -19,6 +19,105 @@ class MediaType(str, Enum):
     PERSONAL = "personal"
     UNKNOWN = "unknown"
 
+
+# --- UNIVERSAL PERCEPTION SCHEMAS (For FAANG-level search) ---
+
+class EntityDetail(BaseModel):
+    """Details about ANY specific object, food, item, or tool in a frame.
+    
+    Forces AI to use SPECIFIC names instead of generic terms.
+    Works for ANY category: Food, Vehicles, Electronics, Weapons, Clothing, etc.
+    """
+    name: str = Field(
+        ..., 
+        description="Specific name (e.g., 'Idly', 'iPhone 15 Pro', 'Katana', 'Tesla Model 3', 'Nike Air Jordan')"
+    )
+    category: str = Field(
+        ..., 
+        description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle', 'Footwear', 'Beverage', 'Furniture')"
+    )
+    visual_details: str = Field(
+        default="", 
+        description="Color, state, texture (e.g., 'Steaming hot', 'Cracked screen', 'Bloodied', 'Dented bumper')"
+    )
+
+
+class SceneContext(BaseModel):
+    """Contextual understanding of the scene - works for ANY scene type."""
+    location: str = Field(
+        default="", 
+        description="Specific location (e.g., 'Bowling Alley', 'Mars Colony', 'Operating Room', 'Tokyo Intersection')"
+    )
+    action_narrative: str = Field(
+        default="", 
+        description="Precise action physics (e.g., 'Pin wobbling before falling', 'Surgeon making incision', 'Car drifting')"
+    )
+    cultural_context: str | None = Field(
+        default=None, 
+        description="Inferred cultural setting (e.g., 'South Indian Breakfast', 'Japanese Tea Ceremony', 'American Football')"
+    )
+    visible_text: list[str] = Field(
+        default_factory=list, 
+        description="All readable text/brands (e.g., 'LensKart', 'Tesla', 'Brunswick', 'Nike', 'Stop')"
+    )
+
+
+class FrameAnalysis(BaseModel):
+    """Universal Structured Knowledge for ANY video frame.
+    
+    This schema forces the AI to output SPECIFIC names instead of generics.
+    Examples: 'Idly' not 'food', 'Katana' not 'weapon', 'Tesla Model 3' not 'car'
+    """
+    main_subject: str = Field(
+        default="", 
+        description="Main person or object in focus (e.g., 'Samurai warrior', 'Chef', 'Racing driver')"
+    )
+    action: str = Field(
+        default="", 
+        description="Precise action (e.g., 'eating idly', 'slashing with katana', 'drifting around corner')"
+    )
+    entities: list[EntityDetail] = Field(
+        default_factory=list, 
+        description="Key objects, foods, tools, vehicles, weapons, or brands"
+    )
+    scene: SceneContext = Field(default_factory=SceneContext)
+    
+    # Identity linking (filled by pipeline)
+    face_cluster_ids: list[int] = Field(
+        default_factory=list, 
+        description="Face cluster IDs in this frame"
+    )
+    
+    def to_search_content(self) -> str:
+        """Generate a rich semantic search string with specific terms."""
+        parts = []
+        
+        # Main subject and action
+        if self.main_subject:
+            parts.append(self.main_subject)
+        if self.action:
+            parts.append(self.action)
+        
+        # Entities with details (e.g., "Idly (Steaming hot)")
+        for e in self.entities:
+            entity_str = e.name
+            if e.visual_details:
+                entity_str += f" ({e.visual_details})"
+            parts.append(entity_str)
+        
+        # Scene location
+        if self.scene.location:
+            parts.append(self.scene.location)
+        
+        # OCR text / brands
+        parts.extend(self.scene.visible_text)
+        
+        # Cultural context
+        if self.scene.cultural_context:
+            parts.append(self.scene.cultural_context)
+        
+        return " ".join(filter(None, parts))
+
 class MediaMetadata(BaseModel):
     """Extracted metadata from a media file."""
     year: int | None = None
