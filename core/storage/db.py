@@ -209,6 +209,16 @@ class VectorDB:
                 ),
             )
 
+        # SAM 3 Masklets collection (for spatio-temporal segmentation)
+        if not self.client.collection_exists("masklets"):
+            self.client.create_collection(
+                collection_name="masklets",
+                vectors_config=models.VectorParams(
+                    size=1,  # Minimal vector, queries use payload filters
+                    distance=models.Distance.COSINE,
+                ),
+            )
+
         log("Qdrant collections ensured")
 
     def list_collections(self) -> models.CollectionsResponse:

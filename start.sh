@@ -33,6 +33,8 @@ NUKE_QDRANT=false
 PULL_IMAGES=false
 INTEGRATED=false
 NO_INTERACTIVE=false
+AGENT_MODE=false
+AGENT_TASK="analyze"
 ANY_FLAGS=false
 
 while [[ $# -gt 0 ]]; do
@@ -46,6 +48,8 @@ while [[ $# -gt 0 ]]; do
         --pull-images) PULL_IMAGES=true; shift ;;
         --integrated) INTEGRATED=true; shift ;;
         --no-interactive|-y) NO_INTERACTIVE=true; shift ;;
+        --agent) AGENT_MODE=true; shift ;;
+        --task) AGENT_TASK="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -535,5 +539,15 @@ else
     echo -e "  Qdrant:   http://localhost:6333"
     echo ""
     echo -e "${GRAY}  Two new terminal windows have been opened.${NC}"
+    echo ""
+fi
+
+# Agent Mode info
+if [ "$AGENT_MODE" = true ]; then
+    echo ""
+    echo -e "${MAGENTA}>>> Antigravity Agent Mode${NC}"
+    echo ""
+    echo -e "${GRAY}  To run the agent:${NC}"
+    echo -e "${WHITE}    uv run python agent_main.py video.mp4 --task='$AGENT_TASK'${NC}"
     echo ""
 fi

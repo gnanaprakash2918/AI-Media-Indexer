@@ -1,26 +1,49 @@
-# Ignore git
+# Git
 .git
 .gitignore
 
-# Ignore local Python junk
+# Python
+.venv
 __pycache__
 *.pyc
-.venv
-venv
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs
+*.egg
 
-# Ignore huge data folders (They are mounted via Compose instead)
-models/
-qdrant_data/
-downloads/
-.cache
-.env
-*.log
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Data directories (don't ship to container)
 qdrant_data
 postgres_data
-clickhouse_data
-minio_data
+langfuse_data
+.cache
+.face_cache
+logs
+reports
 
-# Ignore local requirements to force usage of docker version
-requirements.txt
+# Test files
+tests
+*.log
+.coverage
+htmlcov
 
+# Documentation
+docs
+*.md
+!README.md
 
+# Models (download at runtime)
+models/*.onnx
+models/*.pt
+models/*.bin
+
+# Environment
+.env
+.env.example

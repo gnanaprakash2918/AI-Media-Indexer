@@ -403,6 +403,44 @@ class FaceManager:
         existing_clusters[new_cluster_id] = emb_norm.tolist()
         return new_cluster_id, existing_clusters
 
+    def resolve_identity_conflict(
+        self,
+        track_id: int,
+        current_crop: NDArray[np.uint8],
+        known_identities: dict[int, NDArray[np.float32]],
+    ) -> int:
+        """Verify track ID against biometric identity, correcting if needed.
+        
+        Args:
+            track_id: ID suggested by visual tracker.
+            current_crop: BGR face crop from current frame.
+            known_identities: Dict mapping cluster_id -> ArcFace embedding.
+            
+        Returns:
+            Verified cluster_id (may differ from track_id if biometrics disagree).
+        """
+        from core.processing.biometrics import get_biometric_arbitrator
+        
+        arbitrator = get_biometric_arbitrator()
+        current_emb = arbitrator.get_embedding(current_crop)
+        
+        if current_emb is None:
+            return track_id
+            
+        # Check if claimed identity matches
+        if track_id in known_identities:
+            if arbitrator.verify_identity(current_emb, known_identities[track_id]):
+                return track_id
+            print(f"[FaceManager] Identity conflict: track {track_id} rejected by biometrics")
+        
+        # Search for correct identity
+        match_id = arbitrator.find_matching_identity(current_emb, known_identities)
+        if match_id is not None:
+            print(f"[FaceManager] Identity corrected: {track_id} -> {match_id}")
+            return match_id
+            
+        return track_id
+
 
     @staticmethod
     def _load_image(path: Path) -> NDArray[np.uint8]:

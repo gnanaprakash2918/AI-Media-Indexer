@@ -35,7 +35,9 @@ param(
     [switch]$NukeQdrant,
     [switch]$PullImages,
     [switch]$Integrated,
-    [switch]$NoInteractive
+    [switch]$NoInteractive,
+    [switch]$Agent,
+    [string]$AgentTask = "analyze"
 )
 
 $ErrorActionPreference = "Continue"
@@ -557,5 +559,17 @@ if ($Integrated) {
     Write-Host ""
     Write-Host "  Two new terminal windows have been opened." -ForegroundColor Gray
     Write-Host "  Close them manually or use: Get-Process powershell | Stop-Process" -ForegroundColor Gray
+    Write-Host ""
+}
+
+# Agent Mode (runs the new Antigravity pipeline)
+if ($Agent) {
+    Write-Host ""
+    Write-Host ">>> Running Antigravity Agent Mode" -ForegroundColor Magenta
+    Write-Host ""
+    Write-Host "  Usage: ./start.ps1 -Agent -AgentTask 'remove the red car' path\to\video.mp4" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  To run agent manually:" -ForegroundColor Yellow
+    Write-Host "    uv run python agent_main.py video.mp4 --task='$AgentTask'" -ForegroundColor White
     Write-Host ""
 }

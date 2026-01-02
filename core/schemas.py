@@ -23,100 +23,110 @@ class MediaType(str, Enum):
 # --- UNIVERSAL PERCEPTION SCHEMAS (For FAANG-level search) ---
 
 class EntityDetail(BaseModel):
-    """Details about ANY specific object, food, item, or tool in a frame.
-    
-    Forces AI to use SPECIFIC names instead of generic terms.
-    Works for ANY category: Food, Vehicles, Electronics, Weapons, Clothing, etc.
-    """
+    """Details about ANY specific object, food, item, or tool in a frame."""
     name: str = Field(
         ..., 
-        description="Specific name (e.g., 'Idly', 'iPhone 15 Pro', 'Katana', 'Tesla Model 3', 'Nike Air Jordan')"
+        description="Specific name (e.g., 'Idly', 'iPhone 15 Pro', 'Katana', 'Tesla Model 3')"
     )
     category: str = Field(
         ..., 
-        description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle', 'Footwear', 'Beverage', 'Furniture')"
+        description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle')"
     )
-    visual_details: str = Field(
+    visual_details: str | dict | list = Field(
         default="", 
-        description="Color, state, texture (e.g., 'Steaming hot', 'Cracked screen', 'Bloodied', 'Dented bumper')"
+        description="Color, state, texture - accepts string or structured data from LLM"
     )
+    
+    def details_as_string(self) -> str:
+        """Convert visual_details to string for search indexing."""
+        if isinstance(self.visual_details, str):
+            return self.visual_details
+        if isinstance(self.visual_details, dict):
+            return ", ".join(f"{k}: {v}" for k, v in self.visual_details.items())
+        if isinstance(self.visual_details, list):
+            parts = []
+            for item in self.visual_details:
+                if isinstance(item, dict):
+                    parts.append(", ".join(f"{k}: {v}" for k, v in item.items()))
+                else:
+                    parts.append(str(item))
+            return "; ".join(parts)
+        return str(self.visual_details)
 
 
 class SceneContext(BaseModel):
-    """Contextual understanding of the scene - works for ANY scene type."""
-    location: str = Field(
-        default="", 
-        description="Specific location (e.g., 'Bowling Alley', 'Mars Colony', 'Operating Room', 'Tokyo Intersection')"
-    )
-    action_narrative: str = Field(
-        default="", 
-        description="Precise action physics (e.g., 'Pin wobbling before falling', 'Surgeon making incision', 'Car drifting')"
-    )
-    cultural_context: str | None = Field(
-        default=None, 
-        description="Inferred cultural setting (e.g., 'South Indian Breakfast', 'Japanese Tea Ceremony', 'American Football')"
-    )
-    visible_text: list[str] = Field(
-        default_factory=list, 
-        description="All readable text/brands (e.g., 'LensKart', 'Tesla', 'Brunswick', 'Nike', 'Stop')"
-    )
+    """Contextual understanding of the scene."""
+    location: str = Field(default="", description="Specific location")
+    action_narrative: str = Field(default="", description="Precise action physics")
+    cultural_context: str | None = Field(default=None, description="Inferred cultural setting")
+    visible_text: list = Field(default_factory=list, description="Readable text/brands")
+    
+    def get_text_strings(self) -> list[str]:
+        """Extract text strings from visible_text (handles dicts from LLM)."""
+        result = []
+        for item in self.visible_text:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, dict):
+                result.append(item.get("text", str(item)))
+            else:
+                result.append(str(item))
+        return result
 
 
 class FrameAnalysis(BaseModel):
-    """Universal Structured Knowledge for ANY video frame.
+    """Universal Structured Knowledge for ANY video frame. Accepts flexible LLM output."""
+    main_subject: str | dict | list = Field(default="", description="Main person/object in focus")
+    action: str | dict | list = Field(default="", description="Precise action occurring")
+    action_physics: str | dict | list = Field(default="", description="Physical motion details")
+    entities: list = Field(default_factory=list, description="Key objects")
+    scene: SceneContext | dict = Field(default_factory=SceneContext)
+    face_cluster_ids: list[int] = Field(default_factory=list, description="Face cluster IDs")
     
-    This schema forces the AI to output SPECIFIC names instead of generics.
-    Examples: 'Idly' not 'food', 'Katana' not 'weapon', 'Tesla Model 3' not 'car'
-    """
-    main_subject: str = Field(
-        default="", 
-        description="Main person or object in focus (e.g., 'Samurai warrior', 'Chef', 'Racing driver')"
-    )
-    action: str = Field(
-        default="", 
-        description="Precise action (e.g., 'eating idly', 'slashing with katana', 'drifting around corner')"
-    )
-    entities: list[EntityDetail] = Field(
-        default_factory=list, 
-        description="Key objects, foods, tools, vehicles, weapons, or brands"
-    )
-    scene: SceneContext = Field(default_factory=SceneContext)
-    
-    # Identity linking (filled by pipeline)
-    face_cluster_ids: list[int] = Field(
-        default_factory=list, 
-        description="Face cluster IDs in this frame"
-    )
+    def _to_str(self, val) -> str:
+        """Convert any value to string for search indexing."""
+        if isinstance(val, str):
+            return val
+        if isinstance(val, dict):
+            return ", ".join(f"{k}: {v}" for k, v in val.items())
+        if isinstance(val, list):
+            return "; ".join(self._to_str(item) for item in val)
+        return str(val) if val else ""
     
     def to_search_content(self) -> str:
-        """Generate a rich semantic search string with specific terms."""
+        """Generate a rich semantic search string."""
         parts = []
         
-        # Main subject and action
         if self.main_subject:
-            parts.append(self.main_subject)
+            parts.append(self._to_str(self.main_subject))
         if self.action:
-            parts.append(self.action)
+            parts.append(self._to_str(self.action))
+        if self.action_physics:
+            parts.append(self._to_str(self.action_physics))
         
-        # Entities with details (e.g., "Idly (Steaming hot)")
         for e in self.entities:
-            entity_str = e.name
-            if e.visual_details:
-                entity_str += f" ({e.visual_details})"
-            parts.append(entity_str)
+            if isinstance(e, dict):
+                name = e.get("name", "")
+                details = e.get("visual_details", "")
+                if name:
+                    parts.append(f"{name} ({self._to_str(details)})" if details else name)
+            elif hasattr(e, 'name'):
+                entity_str = e.name
+                if hasattr(e, 'details_as_string'):
+                    entity_str += f" ({e.details_as_string()})"
+                elif e.visual_details:
+                    entity_str += f" ({self._to_str(e.visual_details)})"
+                parts.append(entity_str)
         
-        # Scene location
-        if self.scene.location:
-            parts.append(self.scene.location)
-        
-        # OCR text / brands
-        parts.extend(self.scene.visible_text)
-        
-        # Cultural context
-        if self.scene.cultural_context:
-            parts.append(self.scene.cultural_context)
+        scene = self.scene if isinstance(self.scene, SceneContext) else SceneContext(**self.scene) if isinstance(self.scene, dict) else SceneContext()
+        if scene.location:
+            parts.append(scene.location)
+        parts.extend(scene.get_text_strings() if hasattr(scene, 'get_text_strings') else [])
+        if scene.cultural_context:
+            parts.append(scene.cultural_context)
         
         return " ".join(filter(None, parts))
+
 
 class MediaMetadata(BaseModel):
     """Extracted metadata from a media file."""

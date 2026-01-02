@@ -179,6 +179,32 @@ class Settings(BaseSettings):
     # Local (Docker) Langfuse
     langfuse_docker_host: str = "http://localhost:3300"
     
+    # --- Antigravity Feature Flags ---
+    use_indic_asr: bool = Field(
+        default=False, 
+        description="Use AI4Bharat IndicConformer instead of Whisper"
+    )
+    
+    enable_sam3_tracking: bool = Field(
+        default=False,
+        description="Enable SAM 3 Promptable Concept Segmentation"
+    )
+    
+    manipulation_backend: Literal["disabled", "wan", "propainter", "auto"] = Field(
+        default="disabled",
+        description="Backend for video inpainting/manipulation"
+    )
+
+    # --- Biometrics Configuration ---
+    arcface_model_path: Path = Field(
+        default=Path("models/arcface/w600k_r50.onnx"),
+        description="Path to ArcFace ONNX model for twin verification"
+    )
+    biometric_threshold: float = Field(
+        default=0.6,
+        description="Distance threshold for ArcFace identity verification"
+    )
+
     # Advanced Overrides
     embedding_model_override: str | None = None
 

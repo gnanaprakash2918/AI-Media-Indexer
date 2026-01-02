@@ -305,12 +305,15 @@ Now respond with JSON:"""
 
 {schema_example}
 
-CRITICAL RULES:
-1. "entities" must be a LIST OF OBJECTS with "name", "category", "visual_details" keys
-2. "scene" must be an OBJECT with "location", "action_narrative", "cultural_context", "visible_text" keys
-3. DO NOT return strings for "entities" or "scene" - they must be OBJECTS
-4. "face_cluster_ids" should be an empty list: []
-5. Be SPECIFIC: "Idly" not "food", "Tesla Model 3" not "car", "Nike Air Jordan" not "shoes"
+CRITICAL TYPE RULES:
+1. "visual_details" MUST be a STRING like "red color, worn out" - NEVER an object or list
+2. "name" and "category" MUST be STRINGS
+3. "entities" must be a LIST OF OBJECTS: [{{"name": "string", "category": "string", "visual_details": "string"}}]
+4. "scene" must be an OBJECT with string fields
+5. "face_cluster_ids" should be an empty list: []
+
+SPECIFIC NAMING:
+- Use "Idly" not "food", "Tesla Model 3" not "car", "Nike Air Jordan" not "shoes"
 
 {prompt}
 

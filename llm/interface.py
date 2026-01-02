@@ -85,13 +85,24 @@ class LLMInterface(ABC):
             f"Prompt '{filename}' not found on disk or in defaults."
         )
 
-    def parse_json_response(self, response_text: str, schema: type[T]) -> T:
-        """Extract JSON from a model response and validate via Pydantic.
+    def _repair_json(self, text: str) -> str:
+        """Attempt to repair common JSON errors from LLMs."""
+        # Remove trailing commas before closing braces/brackets
+        text = re.sub(r',\s*([}\]])', r'\1', text)
+        
+        # Count braces and add missing closing braces
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+        
+        if open_braces > 0:
+            text = text.rstrip() + '}' * open_braces
+        if open_brackets > 0:
+            text = text.rstrip() + ']' * open_brackets
+            
+        return text
 
-        The method strips common markdown fences and attempts to find the first
-        JSON object in the text. Validation errors are raised as RuntimeError
-        chained from the original exceptions.
-        """
+    def parse_json_response(self, response_text: str, schema: type[T]) -> T:
+        """Extract JSON from a model response and validate via Pydantic."""
         clean_text = (
             re.sub(r"```[a-zA-Z]*", "", response_text).replace("```", "").strip()
         )
@@ -100,12 +111,21 @@ class LLMInterface(ABC):
         if match:
             clean_text = match.group(1)
 
+        # Try parsing as-is first
         try:
             data = json.loads(clean_text)
             return schema.model_validate(data)
+        except json.JSONDecodeError:
+            pass
+        
+        # Try with JSON repair
+        repaired = self._repair_json(clean_text)
+        try:
+            data = json.loads(repaired)
+            return schema.model_validate(data)
         except json.JSONDecodeError as e:
             print(f"JSON Parsing Failed: {e}")
-            print(f"Failed Payload: {clean_text}")
+            print(f"Failed Payload: {clean_text[:500]}...")
             raise RuntimeError("Invalid JSON format received from LLM") from e
         except Exception as e:
             print(f"Schema Validation Failed: {e}")
