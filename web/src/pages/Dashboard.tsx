@@ -12,7 +12,9 @@ import {
     ListItemIcon,
     Divider,
     Button,
+    IconButton,
 } from '@mui/material';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     VideoLibrary,
     Face,
@@ -23,10 +25,12 @@ import {
     CheckCircle,
     Error as ErrorIcon,
     Schedule,
+    Pause,
+    Stop,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 
-import { getStats, getJobs, healthCheck } from '../api/client';
+import { getStats, getJobs, healthCheck, pauseJob, resumeJob, cancelJob } from '../api/client';
 
 interface Stats {
     collections: {
@@ -92,6 +96,7 @@ function StatCard({
 
 export default function DashboardPage() {
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
 
     const stats = useQuery({
         queryKey: ['stats'],
@@ -102,7 +107,7 @@ export default function DashboardPage() {
     const jobs = useQuery({
         queryKey: ['jobs'],
         queryFn: getJobs,
-        refetchInterval: 5000,
+        refetchInterval: 2000, // Faster updates for progress
     });
 
     const health = useQuery({
@@ -110,8 +115,25 @@ export default function DashboardPage() {
         queryFn: healthCheck,
     });
 
+    const handlePause = async (jobId: string) => {
+        await pauseJob(jobId);
+        queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    };
+
+    const handleResume = async (jobId: string) => {
+        await resumeJob(jobId);
+        queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    };
+
+    const handleCancel = async (jobId: string) => {
+        if (confirm("Stop this job? This cannot be undone.")) {
+            await cancelJob(jobId);
+            queryClient.invalidateQueries({ queryKey: ['jobs'] });
+        }
+    };
+
     const data = stats.data as Stats | undefined;
-    const activeJobs = jobs.data?.jobs?.filter((j: any) => j.status === 'running') || [];
+    const activeJobs = jobs.data?.jobs?.filter((j: any) => ['running', 'paused'].includes(j.status)) || [];
     const recentJobs = jobs.data?.jobs?.slice(0, 5) || [];
 
     return (
@@ -190,16 +212,48 @@ export default function DashboardPage() {
                                 {activeJobs.map((job: any) => (
                                     <ListItem key={job.job_id} sx={{ px: 0 }}>
                                         <ListItemIcon>
-                                            <Schedule color="primary" />
+                                            {job.status === 'paused' ? (
+                                                <Pause color="warning" />
+                                            ) : (
+                                                <Schedule color="primary" />
+                                            )}
                                         </ListItemIcon>
                                         <ListItemText
                                             primary={job.file_path.split(/[/\\]/).pop()}
-                                            secondary={`${job.current_stage} - ${Math.round(job.progress)}%`}
+                                            secondary={
+                                                <Box>
+                                                    <Typography variant="body2" component="span" display="block">
+                                                        {job.status === 'paused' ? 'PAUSED: ' : ''}
+                                                        {job.message || job.current_stage}
+                                                    </Typography>
+                                                    {job.total_frames && job.total_frames > 0 && (
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            Frame: {job.processed_frames}/{job.total_frames} |
+                                                            Time: {job.timestamp?.toFixed(1)}s / {job.duration?.toFixed(1)}s
+                                                        </Typography>
+                                                    )}
+                                                </Box>
+                                            }
                                         />
-                                        <Box sx={{ width: 100 }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            {job.status === 'paused' ? (
+                                                <IconButton size="small" onClick={() => handleResume(job.job_id)} title="Resume">
+                                                    <PlayArrow fontSize="small" color="primary" />
+                                                </IconButton>
+                                            ) : (
+                                                <IconButton size="small" onClick={() => handlePause(job.job_id)} title="Pause">
+                                                    <Pause fontSize="small" color="warning" />
+                                                </IconButton>
+                                            )}
+                                            <IconButton size="small" onClick={() => handleCancel(job.job_id)} title="Stop">
+                                                <Stop fontSize="small" color="error" />
+                                            </IconButton>
+                                        </Box>
+                                        <Box sx={{ width: 100, ml: 2 }}>
                                             <LinearProgress
                                                 variant="determinate"
                                                 value={job.progress}
+                                                color={job.status === 'paused' ? "warning" : "primary"}
                                                 sx={{ height: 6, borderRadius: 3 }}
                                             />
                                         </Box>

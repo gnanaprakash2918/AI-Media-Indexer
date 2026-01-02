@@ -15,6 +15,7 @@ class JobStatus(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -34,6 +35,12 @@ class JobInfo:
     completed_at: float | None = None
     error: str | None = None
     current_stage: str = ""
+    
+    # Granular Progress Details
+    total_frames: int = 0
+    processed_frames: int = 0
+    current_frame_timestamp: float = 0.0
+    total_duration: float = 0.0
 
 
 class ProgressTracker:
@@ -125,7 +132,7 @@ class ProgressTracker:
         with self._lock:
             if job_id in self._jobs:
                 job = self._jobs[job_id]
-                if job.status == JobStatus.RUNNING:
+                if job.status in (JobStatus.RUNNING, JobStatus.PAUSED):
                     job.status = JobStatus.CANCELLED
                     job.completed_at = time.time()
                     self._broadcast({
@@ -134,6 +141,65 @@ class ProgressTracker:
                     })
                     return True
         return False
+
+    def pause(self, job_id: str) -> bool:
+        """Pause a running job."""
+        with self._lock:
+            if job_id in self._jobs:
+                job = self._jobs[job_id]
+                if job.status == JobStatus.RUNNING:
+                    job.status = JobStatus.PAUSED
+                    self._broadcast({"event": "job_paused", "job_id": job_id})
+                    return True
+        return False
+
+    def resume(self, job_id: str) -> bool:
+        """Resume a paused job."""
+        with self._lock:
+            if job_id in self._jobs:
+                job = self._jobs[job_id]
+                if job.status == JobStatus.PAUSED:
+                    job.status = JobStatus.RUNNING
+                    self._broadcast({"event": "job_resumed", "job_id": job_id})
+                    return True
+        return False
+
+    def update_granular(
+        self,
+        job_id: str,
+        processed_frames: int | None = None,
+        total_frames: int | None = None,
+        current_timestamp: float | None = None,
+        total_duration: float | None = None,
+    ) -> None:
+        """Update granular progress details."""
+        with self._lock:
+            if job_id in self._jobs:
+                job = self._jobs[job_id]
+                if processed_frames is not None:
+                    job.processed_frames = processed_frames
+                if total_frames is not None:
+                    job.total_frames = total_frames
+                if current_timestamp is not None:
+                    job.current_frame_timestamp = current_timestamp
+                if total_duration is not None:
+                    job.total_duration = total_duration
+        
+        # Broadcast detailed update (could throttle this if needed)
+        self._broadcast({
+            "event": "job_granular_update",
+            "job_id": job_id,
+            "processed_frames": job.processed_frames,
+            "total_frames": job.total_frames,
+            "timestamp": job.current_frame_timestamp,
+            "duration": job.total_duration
+        })
+
+    def is_paused(self, job_id: str) -> bool:
+        """Check if a job is paused."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return job is not None and job.status == JobStatus.PAUSED
 
     def get(self, job_id: str) -> JobInfo | None:
         """Get job info by ID."""

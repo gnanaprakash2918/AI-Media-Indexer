@@ -60,7 +60,8 @@ if (-not $NoInteractive -and -not $anyFlagsSet) {
     
     # Detect current system state for smart recommendations
     $hasVenv = Test-Path (Join-Path $ProjectRoot ".venv")
-    $hasQdrant = Test-Path (Join-Path $ProjectRoot "qdrant_data_embedded")
+    # Check for both embedded and docker data folders
+    $hasQdrant = (Test-Path (Join-Path $ProjectRoot "qdrant_data")) -or (Test-Path (Join-Path $ProjectRoot "qdrant_data_embedded"))
     $hasCache = Test-Path (Join-Path $ProjectRoot ".cache")
     $cacheSize = 0
     if ($hasCache) {
@@ -307,20 +308,80 @@ if (Test-Path $envFile) {
 }
 
 # Nuke Qdrant data
+# Nuke Qdrant data
 if ($NukeQdrant) {
     Write-Host ""
-    Write-Host "[4/8] Nuking Qdrant data..." -ForegroundColor Yellow
+    Write-Host "[4/8] Performing Complete Data Reset..." -ForegroundColor Red
     
-    $qdrantDirs = @("qdrant_data", "qdrant_data_embedded")
-    foreach ($dir in $qdrantDirs) {
+    # 1. Kill any existing backend/frontend processes to release locks
+    Write-Host "  Terminating existing AI-Media-Indexer processes..." -ForegroundColor Gray
+    Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*api/server.py*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*vite*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+    # 2. Stop Docker and remove named volumes (Critical for MinIO/ClickHouse)
+    Write-Host "  Stopping Docker containers and removing volumes..." -ForegroundColor Gray
+    try {
+        # Using & (call operator) to ensure flags are passed correctly
+        & docker compose down -v --remove-orphans 2>&1 | Out-Null
+        
+        # NUCLEAR OPTION: Force remove specific containers if they are stuck
+        # This addresses the issue where Qdrant would remain running despite 'down'
+        $containers = @(
+            "media_agent_qdrant", 
+            "media_agent_postgres", 
+            "media_agent_minio", 
+            "media_agent_redis", 
+            "media_agent_clickhouse", 
+            "media_agent_langfuse", 
+            "media_agent_langfuse_worker", 
+            "media_agent_createbuckets"
+        )
+        foreach ($c in $containers) {
+            docker rm -f $c 2>&1 | Out-Null
+        }
+        
+        Write-Host "  Docker services stopped and volumes removed." -ForegroundColor Green
+    } catch {
+        Write-Host "  Warning: Docker down failed: $_" -ForegroundColor Yellow
+    }
+
+    # 3. Wipe local bind-mount directories
+    $dataDirs = @("qdrant_data", "qdrant_data_embedded", "thumbnails", "logs", ".cache")
+    
+    # Optional: Wipe Postgres (Langfuse)
+    Write-Host ""
+    $wipeLangfuse = Read-Host "  [?] Also wipe Langfuse/Postgres data (Resets API keys)? (y/N)"
+    if ($wipeLangfuse -match "^[yY]") {
+        $dataDirs += "postgres_data"
+        Write-Host "  >> Including Postgres/Langfuse in wipe list." -ForegroundColor Yellow
+    } else {
+        Write-Host "  >> Preserving Postgres/Langfuse data (Keys kept safe)." -ForegroundColor Green
+    }
+
+    foreach ($dir in $dataDirs) {
         $path = Join-Path $ProjectRoot $dir
         if (Test-Path $path) {
             Write-Host "  Removing: $dir" -ForegroundColor Gray
-            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+            # Use rd /s /q for aggressive Windows deletion
+            cmd /c "rd /s /q `"$path`"" 2>&1 | Out-Null
+            
+            # Verification
+            if (Test-Path $path) {
+                # Try PowerShell native as backup
+                Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                if (Test-Path $path) {
+                    Write-Host "  ERROR: Could not delete $dir. Folder is locked." -ForegroundColor Red
+                    Write-Host "  Please close all applications (Explorer, VS Code) open in that folder." -ForegroundColor Yellow
+                } else {
+                    Write-Host "  $dir deleted successfully (backup method)." -ForegroundColor Green
+                }
+            } else {
+                Write-Host "  $dir deleted successfully." -ForegroundColor Green
+            }
         }
     }
     
-    Write-Host "  Qdrant data nuked!" -ForegroundColor Green
+    Write-Host "  Data reset complete!" -ForegroundColor Green
 } else {
     Write-Host "[4/8] Keeping Qdrant data (use -NukeQdrant to delete)" -ForegroundColor Gray
 }
@@ -405,16 +466,24 @@ if (-not $SkipDocker) {
     Write-Host ""
     Write-Host "[7/8] Starting Docker services..." -ForegroundColor Yellow
     
-    # Start containers
-    $dockerOutput = docker compose up -d 2>&1
-    $dockerOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+    # Start containers (using direct invocation which is most reliable in this context)
+    Write-Host "  Starting containers..." -ForegroundColor Gray
     
-    # Wait for services to be healthy
-    Write-Host "  Waiting for services to be healthy..." -ForegroundColor Gray
-    Start-Sleep -Seconds 5
-    
-    docker compose ps --format "table {{.Name}}\t{{.Status}}"
-    Write-Host "  Docker services started!" -ForegroundColor Green
+    # Try using 'docker-compose' (standalone) first, as 'docker compose' (plugin) is flaky here
+    if (Get-Command "docker-compose" -ErrorAction SilentlyContinue) {
+        Write-Host "  Using docker-compose standalone binary..." -ForegroundColor Gray
+        docker-compose up -d
+    } else {
+        Write-Host "  Using docker compose plugin..." -ForegroundColor Gray
+        # Attempt standard plugin command
+        docker compose up -d --wait
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ERROR: Docker start failed" -ForegroundColor Red
+    } else {
+        Write-Host "  Docker services started and healthy!" -ForegroundColor Green
+    }
 } else {
     Write-Host "[5/8] Skipping Docker cleanup (--SkipDocker)" -ForegroundColor Gray
     Write-Host "[6/8] Skipping Docker pull (--SkipDocker)" -ForegroundColor Gray

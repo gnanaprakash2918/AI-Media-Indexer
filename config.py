@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     omdb_api_key: str | None = None
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
-    frame_interval: int = Field(default=5, description="Seconds between frames (5=faster, 2=detailed)")
+    frame_interval: float = Field(default=1.0, description="Seconds between frames (0.5=2fps, 1.0=1fps)")
     batch_size: int = Field(default=24)
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
@@ -117,8 +117,8 @@ class Settings(BaseSettings):
 
     # Frame Processing Settings
     frame_sample_ratio: int = Field(
-        default=2, 
-        description="Process every Nth extracted frame (1=all, 2=half, 5=sparse)"
+        default=1, 
+        description="Process every Nth extracted frame (1=all for max accuracy)"
     )
     
     # Face Detection Settings
@@ -133,15 +133,15 @@ class Settings(BaseSettings):
     
     # Face Clustering Settings
     face_clustering_threshold: float = Field(
-        default=0.35,
-        description="Face clustering cosine distance threshold (0.3-0.4 recommended, lower=stricter)"
+        default=0.45,
+        description="Face clustering cosine distance (lower=stricter, 0.45=55% similarity required - balanced for wild videos)"
     )
     face_min_bbox_size: int = Field(
         default=48,
         description="Minimum face bounding box size in pixels for clustering"
     )
     face_min_det_score: float = Field(
-        default=0.6,
+        default=0.65,
         description="Minimum face detection confidence for clustering (0.5-0.8)"
     )
 
@@ -152,8 +152,8 @@ class Settings(BaseSettings):
     min_speakers: int | None = None
     max_speakers: int | None = None
     voice_clustering_threshold: float = Field(
-        default=0.3,
-        description="Voice clustering cosine distance threshold (0.2-0.6, lower=tighter clusters)"
+        default=0.45,
+        description="Voice clustering cosine distance (lower=stricter, 0.45=55% similarity required)"
     )
 
     # Resource
@@ -181,8 +181,13 @@ class Settings(BaseSettings):
     
     # --- Antigravity Feature Flags ---
     use_indic_asr: bool = Field(
-        default=False, 
-        description="Use AI4Bharat IndicConformer instead of Whisper"
+        default=True, 
+        description="Use AI4Bharat IndicConformer for Indic languages"
+    )
+    
+    auto_detect_language: bool = Field(
+        default=True,
+        description="Auto-detect audio language before transcription"
     )
     
     enable_sam3_tracking: bool = Field(
@@ -205,8 +210,26 @@ class Settings(BaseSettings):
         description="Distance threshold for ArcFace identity verification"
     )
 
-    # Advanced Overrides
-    embedding_model_override: str | None = None
+    # Advanced Overrides - SOTA Embeddings for 100% accuracy
+    embedding_model_override: str = Field(
+        default="BAAI/bge-m3",
+        description="Text embedding model (BGE-M3 = 1024d, SOTA multilingual)"
+    )
+    
+    siglip_model: str = Field(
+        default="google/siglip-so400m-patch14-384",
+        description="Visual embedding model for cross-modal search"
+    )
+    
+    enable_visual_embeddings: bool = Field(
+        default=True,
+        description="Store SigLIP visual embeddings for cross-modal retrieval"
+    )
+    
+    enable_hybrid_search: bool = Field(
+        default=True,
+        description="Use hybrid search (vector + keyword + identity)"
+    )
 
     @computed_field
     @property

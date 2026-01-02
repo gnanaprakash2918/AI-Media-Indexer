@@ -1,22 +1,36 @@
 import { useState, memo } from 'react';
-import { PlayArrow, AccessTime, Videocam, GraphicEq, TextFields } from '@mui/icons-material';
-import { Card, CardMedia, CardContent, Typography, Box, Chip, IconButton, alpha, useTheme } from '@mui/material';
+import { PlayArrow, AccessTime, Videocam, GraphicEq, TextFields, Face, Mic, LocalOffer, Room, Visibility } from '@mui/icons-material';
+import { Card, CardMedia, CardContent, Typography, Box, Chip, IconButton, alpha, useTheme, Tooltip, Collapse } from '@mui/material';
 import { VideoPlayer } from './VideoPlayer';
 
 interface MediaResult {
     score: number;
+    base_score?: number;
+    keyword_boost?: number;
     video_path: string;
     start?: number;
     end?: number;
+    timestamp?: number;
     text?: string;
     type?: string;
     action?: string;
+    description?: string;
     thumbnail_url?: string;
+    // HITL Identity Fields
+    face_names?: string[];
+    speaker_names?: string[];
+    face_cluster_ids?: number[];
+    // Structured Analysis Fields
+    entities?: string[];
+    visible_text?: string[];
+    scene_location?: string;
+    identity_text?: string;
 }
 
 export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }) {
     const theme = useTheme();
     const [playerOpen, setPlayerOpen] = useState(false);
+    const [expanded, setExpanded] = useState(false);
 
     // Extract filename for thumbnail
     const filename = item.video_path.split(/[/\\]/).pop();
@@ -43,9 +57,23 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
 
     const handlePlay = () => setPlayerOpen(true);
 
+    // Check if we have HITL data
+    const hasFaces = item.face_names && item.face_names.length > 0;
+    const hasSpeakers = item.speaker_names && item.speaker_names.length > 0;
+    const hasEntities = item.entities && item.entities.length > 0;
+    const hasVisibleText = item.visible_text && item.visible_text.length > 0;
+    const hasScene = item.scene_location && item.scene_location.length > 0;
+    const hasDetails = hasFaces || hasSpeakers || hasEntities || hasVisibleText || hasScene;
+
+    // Use timestamp or start
+    const timeValue = item.timestamp ?? item.start;
+
     return (
         <>
-            <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            <Card
+                sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}
+                onClick={() => hasDetails && setExpanded(!expanded)}
+            >
                 <Box sx={{ position: 'relative', paddingTop: '56.25%' /* 16:9 Aspect Ratio */ }}>
                     <CardMedia
                         component="img"
@@ -77,7 +105,7 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                     />
 
                     {/* Timestamp Badge */}
-                    {item.start !== undefined && (
+                    {timeValue !== undefined && (
                         <Box
                             sx={{
                                 position: 'absolute',
@@ -97,7 +125,36 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                             }}
                         >
                             <AccessTime sx={{ fontSize: 14 }} />
-                            {formatTime(item.start)}
+                            {formatTime(timeValue)}
+                        </Box>
+                    )}
+
+                    {/* Face Names Badge (top-left) */}
+                    {hasFaces && (
+                        <Box
+                            sx={{
+                                position: 'absolute',
+                                top: 8,
+                                left: 8,
+                                display: 'flex',
+                                gap: 0.5,
+                                flexWrap: 'wrap',
+                            }}
+                        >
+                            {item.face_names!.slice(0, 2).map((name, i) => (
+                                <Chip
+                                    key={i}
+                                    icon={<Face sx={{ fontSize: 14 }} />}
+                                    label={name}
+                                    size="small"
+                                    sx={{
+                                        bgcolor: alpha(theme.palette.info.main, 0.9),
+                                        color: 'white',
+                                        fontWeight: 600,
+                                        height: 24,
+                                    }}
+                                />
+                            ))}
                         </Box>
                     )}
 
@@ -120,7 +177,7 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                         }}
                     >
                         <IconButton
-                            onClick={handlePlay}
+                            onClick={(e) => { e.stopPropagation(); handlePlay(); }}
                             sx={{
                                 bgcolor: 'rgba(255,255,255,0.2)',
                                 backdropFilter: 'blur(8px)',
@@ -135,6 +192,7 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                 </Box>
 
                 <CardContent sx={{ flexGrow: 1, p: 2 }}>
+                    {/* Score and Type Row */}
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                         <Chip
                             icon={getIcon()}
@@ -148,10 +206,32 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                                 color: theme.palette.primary.main
                             }}
                         />
-                        <Typography variant="caption" sx={{ color: 'success.main', fontWeight: 700, fontFamily: 'monospace' }}>
-                            {(item.score * 100).toFixed(0)}%
-                        </Typography>
+                        <Tooltip title={
+                            item.base_score !== undefined ?
+                                `Base: ${(item.base_score * 100).toFixed(0)}% + Keyword: ${((item.keyword_boost || 0) * 100).toFixed(0)}%` :
+                                "Confidence Score"
+                        }>
+                            <Typography variant="caption" sx={{ color: 'success.main', fontWeight: 700, fontFamily: 'monospace' }}>
+                                {(item.score * 100).toFixed(0)}%
+                            </Typography>
+                        </Tooltip>
                     </Box>
+
+                    {/* Speaker Names */}
+                    {hasSpeakers && (
+                        <Box sx={{ display: 'flex', gap: 0.5, mb: 1, flexWrap: 'wrap' }}>
+                            {item.speaker_names!.map((name, i) => (
+                                <Chip
+                                    key={i}
+                                    icon={<Mic sx={{ fontSize: 12 }} />}
+                                    label={name}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                            ))}
+                        </Box>
+                    )}
 
                     {/* Subtitle with time range */}
                     {item.text && (
@@ -176,18 +256,74 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                             lineHeight: 1.6,
                             fontWeight: 500
                         }}>
-                            {item.action || "Visual match detected in scene."}
+                            {item.action || item.description || "Visual match detected in scene."}
                         </Typography>
                     )}
+
+                    {/* Expandable Details */}
+                    <Collapse in={expanded}>
+                        <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+                            {/* Entities */}
+                            {hasEntities && (
+                                <Box sx={{ mb: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                                        <LocalOffer sx={{ fontSize: 12, color: 'text.secondary' }} />
+                                        <Typography variant="caption" color="text.secondary">Entities</Typography>
+                                    </Box>
+                                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                        {item.entities!.slice(0, 5).map((e, i) => (
+                                            <Chip key={i} label={e} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />
+                                        ))}
+                                    </Box>
+                                </Box>
+                            )}
+
+                            {/* Scene Location */}
+                            {hasScene && (
+                                <Box sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Room sx={{ fontSize: 12, color: 'text.secondary' }} />
+                                    <Typography variant="caption">{item.scene_location}</Typography>
+                                </Box>
+                            )}
+
+                            {/* Visible Text (OCR) */}
+                            {hasVisibleText && (
+                                <Box sx={{ mb: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                                        <Visibility sx={{ fontSize: 12, color: 'text.secondary' }} />
+                                        <Typography variant="caption" color="text.secondary">Visible Text</Typography>
+                                    </Box>
+                                    <Typography variant="caption" sx={{ fontFamily: 'monospace', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5 }}>
+                                        {item.visible_text!.join(' | ')}
+                                    </Typography>
+                                </Box>
+                            )}
+
+                            {/* Score Breakdown */}
+                            {item.base_score !== undefined && (
+                                <Box sx={{ display: 'flex', gap: 1, fontSize: '0.65rem', color: 'text.secondary' }}>
+                                    <span>Base: {(item.base_score * 100).toFixed(0)}%</span>
+                                    <span>Boost: +{((item.keyword_boost || 0) * 100).toFixed(0)}%</span>
+                                </Box>
+                            )}
+                        </Box>
+                    </Collapse>
 
                     <Typography variant="caption" color="text.disabled" sx={{ mt: 1, display: 'block', fontFamily: 'monospace' }} noWrap>
                         {baseName}
                     </Typography>
+
+                    {/* Expand indicator */}
+                    {hasDetails && (
+                        <Typography variant="caption" color="primary" sx={{ cursor: 'pointer', display: 'block', textAlign: 'center', mt: 0.5 }}>
+                            {expanded ? '▲ Less' : '▼ More details'}
+                        </Typography>
+                    )}
                 </CardContent>
             </Card>
             <VideoPlayer
                 videoPath={item.video_path}
-                startTime={item.start}
+                startTime={item.start ?? item.timestamp}
                 endTime={item.end}
                 open={playerOpen}
                 onClose={() => setPlayerOpen(false)}
@@ -195,3 +331,4 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
         </>
     );
 });
+

@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, FilePath
+from pydantic import BaseModel, ConfigDict, Field, FilePath, field_validator
 
 
 class MediaType(str, Enum):
@@ -81,6 +81,15 @@ class FrameAnalysis(BaseModel):
     action_physics: str | dict | list = Field(default="", description="Physical motion details")
     entities: list = Field(default_factory=list, description="Key objects")
     scene: SceneContext | dict = Field(default_factory=SceneContext)
+    
+    @field_validator("scene", mode="before")
+    @classmethod
+    def validate_scene(cls, v: Any) -> Any:
+        """Handle Ollama returning a list for scene instead of a dict."""
+        if isinstance(v, list) and len(v) > 0:
+            return v[0]  # Extract first item if it's a list
+        return v
+    
     face_cluster_ids: list[int] = Field(default_factory=list, description="Face cluster IDs")
     
     def _to_str(self, val) -> str:

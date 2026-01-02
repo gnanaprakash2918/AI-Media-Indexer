@@ -78,14 +78,14 @@ class IngestionPipeline:
     async def process_video(
         self,
         video_path: str | Path,
-        media_type_hint: str = "unknown",
+        media_type_hint: str | None = None,
         start_time: float | None = None,
         end_time: float | None = None,
-    ) -> str:
-        """Process a single video file through the entire ingestion pipeline.
-
+    ):
+        """Initialize the media ingestion pipeline.
+        
         Args:
-            video_path: Path to the video file.
+            frame_interval: Interval in seconds between extracting frames (0.0=every frame).
             media_type_hint: Optional hint about the media type (e.g., 'movie', 'eps').
             start_time: Optional start time in seconds for partial processing.
             end_time: Optional end time in seconds for partial processing.
@@ -121,7 +121,7 @@ class IngestionPipeline:
 
         try:
             probed = self.prober.probe(path)
-            _ = float(probed.get("format", {}).get("duration", 0.0))
+            duration = float(probed.get("format", {}).get("duration", 0.0))
         except MediaProbeError as e:
             progress_tracker.fail(job_id, error=f"Media probe failed: {e}")
             raise
@@ -144,7 +144,7 @@ class IngestionPipeline:
                 return job_id
 
             progress_tracker.update(job_id, 55.0, stage="frames", message="Processing frames")
-            await retry(lambda: self._process_frames(path, job_id))
+            await retry(lambda: self._process_frames(path, job_id, total_duration=duration))
             self._cleanup_memory("frames_complete")  # Unload Vision + Faces
             progress_tracker.complete(job_id, message=f"Completed: {path.name}")
 
@@ -156,12 +156,19 @@ class IngestionPipeline:
 
     @observe("audio_processing")
     async def _process_audio(self, path: Path) -> None:
+        """Process audio with auto language detection and AI4Bharat for Indic languages."""
+        from core.utils.logger import log
+        
         audio_segments: list[dict[str, Any]] = []
         srt_path = path.with_suffix(".srt")
 
+        # Check for existing sidecar SRT
         if srt_path.exists():
             audio_segments = parse_srt(srt_path) or []
+            if audio_segments:
+                log(f"[Audio] Using existing SRT: {len(audio_segments)} segments")
 
+        # Check for embedded subtitles
         if not audio_segments:
             await resource_manager.throttle_if_needed("compute")
             try:
@@ -169,21 +176,97 @@ class IngestionPipeline:
                     temp_srt = path.with_suffix(".embedded.srt")
                     if transcriber._find_existing_subtitles(path, temp_srt, None, "ta"):
                         audio_segments = parse_srt(temp_srt) or []
+                        if audio_segments:
+                            log(f"[Audio] Extracted embedded subs: {len(audio_segments)} segments")
                         if temp_srt.exists():
                             temp_srt.unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                log(f"[Audio] Embedded subtitle extraction failed: {e}")
 
+        # Run ASR if no existing subtitles
         if not audio_segments:
             await resource_manager.throttle_if_needed("compute")
-            with AudioTranscriber() as transcriber:
-                audio_segments = transcriber.transcribe(path) or []
+            
+            # Auto-detect language if enabled
+            detected_lang = "en"
+            if settings.auto_detect_language:
+                detected_lang = await self._detect_audio_language(path)
+                log(f"[Audio] Detected language: {detected_lang}")
+            else:
+                detected_lang = settings.language or "en"
+            
+            # Choose transcriber based on language
+            indic_languages = ["ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"]
+            
+            if settings.use_indic_asr and detected_lang in indic_languages:
+                # Use AI4Bharat for Indic languages
+                log(f"[Audio] Using AI4Bharat IndicConformer for '{detected_lang}'")
+                try:
+                    from core.processing.indic_transcriber import IndicASRPipeline
+                    transcriber = IndicASRPipeline(lang=detected_lang)
+                    audio_segments = transcriber.transcribe(path) or []
+                except Exception as e:
+                    log(f"[Audio] AI4Bharat failed: {e}, falling back to Whisper")
+                    with AudioTranscriber() as transcriber:
+                        audio_segments = transcriber.transcribe(path, language=detected_lang) or []
+            else:
+                # Use Whisper for English and other languages  
+                log(f"[Audio] Using Whisper turbo for '{detected_lang}'")
+                with AudioTranscriber() as transcriber:
+                    audio_segments = transcriber.transcribe(path, language=detected_lang) or []
+            
+            if audio_segments:
+                log(f"[Audio] Transcription SUCCESS: {len(audio_segments)} segments")
+            else:
+                log(f"[Audio] Transcription FAILED - NO SEGMENTS for {path.name}")
 
         if audio_segments:
             prepared = self._prepare_segments_for_db(path=path, chunks=audio_segments)
             self.db.insert_media_segments(str(path), prepared)
+            log(f"[Audio] Stored {len(prepared)} dialogue segments in DB")
 
         self._cleanup_memory()
+
+    async def _detect_audio_language(self, path: Path) -> str:
+        """Detect audio language from first 30 seconds using Whisper.
+        
+        Returns:
+            ISO 639-1 language code (e.g., 'en', 'ta', 'hi')
+        """
+        from core.utils.logger import log
+        
+        try:
+            from faster_whisper import WhisperModel
+            
+            # Use small model on CPU for fast detection
+            model = WhisperModel(
+                "openai/whisper-base",
+                device="cpu",
+                compute_type="int8",
+                download_root=str(settings.model_cache_dir),
+            )
+            
+            # Detect language from first segment
+            _, info = model.transcribe(
+                str(path),
+                task="detect_language",
+            )
+            
+            detected = info.language
+            probability = info.language_probability
+            
+            log(f"[Audio] Language detection: {detected} ({probability:.1%} confidence)")
+            
+            # Return detected only if confidence is high enough
+            if probability > 0.5:
+                return detected
+            else:
+                log(f"[Audio] Low confidence, defaulting to 'en'")
+                return "en"
+                
+        except Exception as e:
+            log(f"[Audio] Language detection failed: {e}, defaulting to 'en'")
+            return "en"
 
     @observe("voice_processing")
     async def _process_voice(self, path: Path) -> None:
@@ -243,7 +326,7 @@ class IngestionPipeline:
             self._cleanup_memory()
 
     @observe("frame_processing")
-    async def _process_frames(self, path: Path, job_id: str | None = None) -> None:
+    async def _process_frames(self, path: Path, job_id: str | None = None, total_duration: float = 0.0) -> None:
         vision_task_type = "network" if settings.llm_provider == "gemini" else "compute"
         await resource_manager.throttle_if_needed(vision_task_type)
 
@@ -295,15 +378,48 @@ class IngestionPipeline:
                         context_chunk = new_desc[:200] if len(new_desc) > 200 else new_desc
                         context_window.append(f"[{timestamp:.1f}s] {context_chunk}")
                         
-                    if job_id and frame_count % 5 == 0:
-                        progress = 55.0 + min(40.0, frame_count * 2.0)
+                if job_id:
+                    # Check for PAUSE functionality
+                    while progress_tracker.is_paused(job_id):
+                        await asyncio.sleep(1)
+                        if progress_tracker.is_cancelled(job_id):
+                            return
+
+                    if progress_tracker.is_cancelled(job_id):
+                        return
+
+                    # Update Granular Stats
+                    # Use provided duration for 100% accuracy, fallback to metadata
+                    video_duration = total_duration
+                    if not video_duration:
+                        meta = self.metadata_engine.get_metadata(video_path)
+                        video_duration = meta.duration if meta and meta.duration else 0.0
+                    
+                    interval = float(self.frame_interval_seconds)
+                    
+                    total_est_frames = int(video_duration / interval) if video_duration else 0
+                    current_ts = frame_count * interval
+                    
+                    status_msg = f"Processing frame {frame_count}/{total_est_frames} at {current_ts:.1f}s"
+                    
+                    progress_tracker.update_granular(
+                        job_id,
+                        processed_frames=frame_count,
+                        total_frames=total_est_frames,
+                        current_timestamp=current_ts,
+                        total_duration=video_duration
+                    )
+                    
+                    if frame_count % 5 == 0:
+                        progress = 55.0 + min(40.0, (current_ts / (video_duration or 1)) * 40.0) if video_duration else 55.0
                         progress_tracker.update(
                             job_id,
                             progress,
                             stage="frames",
-                            message=f"Frame {frame_count}",
+                            message=status_msg,
                         )
-                await asyncio.sleep(0.3)  # Reduced sleep for faster processing
+
+                await asyncio.sleep(0.01)  # Minimal sleep for responsiveness
             finally:
                 # Always delete the frame file after processing
                 if frame_path.exists():
@@ -411,14 +527,25 @@ class IngestionPipeline:
                                 new_h = int(crop_h * scale)
                                 face_crop = cv2.resize(face_crop, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
                             
+                            # Use slightly lower quality (95) to save memory/space, explicit int cast for resize
                             thumb_name = f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
                             thumb_file = thumb_dir / thumb_name
-                            # Max JPEG quality
-                            cv2.imwrite(str(thumb_file), face_crop, [cv2.IMWRITE_JPEG_QUALITY, 98])
-                            thumb_path = f"/thumbnails/faces/{thumb_name}"
+                            
+                            try:
+                                # Pre-check memory availability or just robust try/catch
+                                cv2.imwrite(str(thumb_file), face_crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                                thumb_path = f"/thumbnails/faces/{thumb_name}"
+                            except cv2.error as e:
+                                logger.warning(f"Thumbnail save skipped (OpenCV error): {e}")
+                                # Clean up if partial write happened
+                                if thumb_file.exists() and thumb_file.stat().st_size == 0:
+                                    thumb_file.unlink()
+                            
+                except (MemoryError, cv2.error) as e:
+                    logger.warning(f"Thumbnail generation skipped (OOM/CV error): {e}")
+                    gc.collect() # Try to recover leaks
                 except Exception as e:
                     logger.error(f"Thumbnail generation failed: {e}")
-                    pass
 
                 # Store face with PROPER cluster_id (not hash-based)
                 self.db.insert_face(
@@ -462,17 +589,86 @@ class IngestionPipeline:
             # Build structured payload for accurate search with filterable fields
             payload: dict[str, Any] = {
                 "face_cluster_ids": face_cluster_ids,
+                "face_names": [],
+                "speaker_names": [],
             }
+            
+            # 3a. FACE-AUDIO MAPPING: Link faces to speakers at this timestamp
+            # Get speaker name if someone is speaking at this frame's timestamp
+            try:
+                speaker_cluster_ids = self._get_speaker_clusters_at_time(
+                    media_path=str(video_path),
+                    timestamp=timestamp,
+                )
+                
+                # Bi-directional Name Propagation
+                # If we have a named Face and an unnamed Speaker -> Name the Speaker
+                # If we have a named Speaker and an unnamed Face -> Name the Face
+                
+                # First, gather face names for this frame
+                current_face_names = {} # cluster_id -> name
+                for cid in face_cluster_ids:
+                    fname = self.db.get_face_name_by_cluster(cid)
+                    if fname:
+                        current_face_names[cid] = fname
+                        payload["face_names"].append(fname)
+
+                # Now process speaker clusters
+                for cluster_id in speaker_cluster_ids:
+                    speaker_name = self.db.get_speaker_name_by_cluster(cluster_id)
+                    
+                    if speaker_name:
+                        payload["speaker_names"].append(speaker_name)
+                        # Propagate Speaker Name -> Unnamed Faces
+                        if not current_face_names and face_cluster_ids:
+                             # Heuristic: If there's exactly one unnamed face and one named speaker, link them
+                             if len(face_cluster_ids) == 1:
+                                 face_cid = face_cluster_ids[0]
+                                 logger.info(f"Auto-mapping Speaker '{speaker_name}' -> Face Cluster {face_cid}")
+                                 self.db.set_face_name(face_cid, speaker_name)
+                                 payload["face_names"].append(speaker_name) # Update current payload
+                    
+                    elif current_face_names:
+                        # Propagate Face Name -> Unnamed Speaker
+                        # Heuristic: If exactly one named face is visible, assume they are the speaker
+                        if len(current_face_names) == 1:
+                            face_name = list(current_face_names.values())[0]
+                            logger.info(f"Auto-mapping Face '{face_name}' -> Speaker Cluster {cluster_id}")
+                            self.db.set_speaker_name(cluster_id, face_name)
+                            payload["speaker_names"].append(face_name) # Update current payload
+
+            except Exception as e:
+                logger.warning(f"Face-Audio mapping error: {e}")
+            
+            # 3b. (Skipped redundant loop, handled above)
+            
+            # 3c. Build identity text for searchability
+            identity_parts = []
+            if payload["face_names"]:
+                identity_parts.append(f"Visible: {', '.join(payload['face_names'])}")
+            if payload["speaker_names"]:
+                identity_parts.append(f"Speaking: {', '.join(payload['speaker_names'])}")
+            if identity_parts:
+                payload["identity_text"] = ". ".join(identity_parts)
             
             # Add structured data if available for hybrid search
             if analysis:
                 payload["structured_data"] = analysis.model_dump()
                 payload["visible_text"] = analysis.scene.visible_text if analysis.scene else []
-                payload["entity_names"] = [e.name for e in analysis.entities] if analysis.entities else []
+                payload["entities"] = [e.name for e in analysis.entities] if analysis.entities else []
                 payload["entity_categories"] = list({e.category for e in analysis.entities}) if analysis.entities else []
                 payload["scene_location"] = analysis.scene.location if analysis.scene else ""
-                payload["main_action"] = analysis.action or ""
+                payload["action"] = analysis.action or ""
+                payload["description"] = description
 
+            
+            # 3d. Generate Vector (Include identity for searchability)
+            # "A man walking. Visible: John. Speaking: John"
+            full_text = description
+            if "identity_text" in payload:
+                full_text = f"{description}. {payload['identity_text']}"
+                
+            vector = self.db.encoder.encode(full_text).tolist()
             
             self.db.upsert_media_frame(
                 point_id=f"{video_path}_{timestamp:.3f}",
@@ -484,6 +680,34 @@ class IngestionPipeline:
             )
         
         return description
+
+    def _get_speaker_clusters_at_time(self, media_path: str, timestamp: float) -> list[int]:
+        """Get speaker cluster IDs who are speaking at a given timestamp.
+        
+        This enables face-audio mapping by finding which speaker is talking
+        when a particular face is visible.
+        
+        Args:
+            media_path: Path to the media file.
+            timestamp: Frame timestamp in seconds.
+            
+        Returns:
+            List of speaker cluster IDs who are speaking at this time.
+        """
+        clusters = []
+        try:
+            # Query voice segments that overlap with this timestamp
+            voice_segments = self.db.get_voice_segments_for_media(media_path)
+            for seg in voice_segments:
+                start = seg.get("start", 0)
+                end = seg.get("end", 0)
+                if start <= timestamp <= end:
+                    cluster_id = seg.get("cluster_id")
+                    if cluster_id is not None and cluster_id not in clusters:
+                        clusters.append(cluster_id)
+        except Exception:
+            pass
+        return clusters
 
     def _prepare_segments_for_db(
         self,

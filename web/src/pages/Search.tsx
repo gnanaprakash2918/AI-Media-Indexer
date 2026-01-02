@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
     Box,
     Typography,
@@ -11,26 +11,24 @@ import {
     CircularProgress,
     IconButton,
     Alert,
+    FormControl,
+    InputLabel,
+    Select,
+    MenuItem,
 } from '@mui/material';
 import { Search as SearchIcon, PlayArrow } from '@mui/icons-material';
 
-import { searchMedia } from '../api/client';
+import { searchHybrid, getLibrary } from '../api/client';
 import { MediaCard } from '../components/media/MediaCard';
 
 interface SearchStats {
-    query: string;
-    dialogue_count: number;
-    visual_count: number;
-    total_frames_scanned: number;
-    returned_count: number;
-    score_range?: {
-        min: number;
-        max: number;
-        avg: number;
-    };
+    total: number;
+    duration_seconds: number;
 }
 
 interface SearchResponse {
+    query: string;
+    video_filter: string | null;
     results: any[];
     stats: SearchStats;
 }
@@ -38,15 +36,20 @@ interface SearchResponse {
 export default function SearchPage() {
     const [query, setQuery] = useState('');
     const [lastQuery, setLastQuery] = useState('');
+    const [selectedVideo, setSelectedVideo] = useState<string>('');
 
-    // Use mutation instead of query to require explicit trigger
+    // Fetch indexed videos for filter dropdown
+    const { data: libraryData } = useQuery({
+        queryKey: ['library'],
+        queryFn: getLibrary,
+    });
+
+    const videos: string[] = (libraryData?.media || []).map((m: any) => m.video_path);
+
+    // Use hybrid search mutation
     const search = useMutation({
         mutationFn: async (q: string): Promise<SearchResponse> => {
-            const response = await searchMedia(q);
-            // Handle both old array format and new {results, stats} format
-            if (Array.isArray(response)) {
-                return { results: response, stats: { query: q, dialogue_count: 0, visual_count: response.length, total_frames_scanned: 0, returned_count: response.length } };
-            }
+            const response = await searchHybrid(q, selectedVideo || undefined);
             return response as SearchResponse;
         },
     });
@@ -56,7 +59,7 @@ export default function SearchPage() {
             setLastQuery(query);
             search.mutate(query);
         }
-    }, [query, search]);
+    }, [query, search, selectedVideo]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
@@ -137,15 +140,36 @@ export default function SearchPage() {
                         }}
                     />
                 </Box>
+
+                {/* Video Filter */}
+                {videos.length > 0 && (
+                    <Box sx={{ maxWidth: 600, mx: 'auto', mt: 2 }}>
+                        <FormControl size="small" sx={{ minWidth: 200 }}>
+                            <InputLabel>Filter by Video</InputLabel>
+                            <Select
+                                value={selectedVideo}
+                                onChange={(e) => setSelectedVideo(e.target.value)}
+                                label="Filter by Video"
+                            >
+                                <MenuItem value="">All Videos</MenuItem>
+                                {videos.map((v: string) => (
+                                    <MenuItem key={v} value={v}>
+                                        {v.split(/[/\\]/).pop()}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                    </Box>
+                )}
             </Box>
 
             {/* Stats Bar */}
             {stats && (
                 <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
-                    <strong>"{stats.query}"</strong>: {stats.returned_count} results
-                    ({stats.visual_count} visual, {stats.dialogue_count} dialogue)
-                    {stats.score_range && (
-                        <> | Scores: {stats.score_range.min.toFixed(2)} - {stats.score_range.max.toFixed(2)}</>
+                    <strong>"{lastQuery}"</strong>: {stats.total} results
+                    {selectedVideo && <> (filtered to {selectedVideo.split(/[/\\]/).pop()})</>}
+                    {stats.duration_seconds && (
+                        <> | Search time: {(stats.duration_seconds * 1000).toFixed(0)}ms</>
                     )}
                 </Alert>
             )}

@@ -73,7 +73,9 @@ if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS" = false ]; then
     [ -d "$SCRIPT_DIR/.venv" ] && HAS_VENV="exists"
     
     HAS_QDRANT="fresh"
-    [ -d "$SCRIPT_DIR/qdrant_data_embedded" ] && HAS_QDRANT="exists"
+    if [ -d "$SCRIPT_DIR/qdrant_data" ] || [ -d "$SCRIPT_DIR/qdrant_data_embedded" ]; then
+        HAS_QDRANT="exists"
+    fi
     
     CACHE_SIZE="0"
     if [ -d "$SCRIPT_DIR/.cache" ]; then
@@ -280,16 +282,57 @@ fi
 # Nuke Qdrant data
 if [ "$NUKE_QDRANT" = true ]; then
     echo ""
-    echo -e "${YELLOW}[4/9] Nuking Qdrant data...${NC}"
+    echo -e "${RED}[4/9] Performing Complete Data Reset...${NC}"
     
-    for dir in "qdrant_data" "qdrant_data_embedded"; do
+    # 1. Kill any existing backend/frontend processes to release locks
+    echo -e "${GRAY}  Terminating existing AI-Media-Indexer processes...${NC}"
+    pkill -f "python.*api/server.py" || true
+    pkill -f "node.*vite" || true
+
+    # 2. Stop Docker and remove named volumes
+    echo -e "${GRAY}  Stopping Docker containers and removing volumes...${NC}"
+    # -v is essential to wipe named volumes
+    if docker compose down -v --remove-orphans; then
+        echo -e "${GREEN}  Docker services stopped and volumes removed.${NC}"
+    else
+        echo -e "${YELLOW}  Warning: Docker down failed. Attempting force removal...${NC}"
+    fi
+    
+    # Force remove specific containers to ensure nothing is stuck
+    CONTAINERS=("media_agent_qdrant" "media_agent_postgres" "media_agent_minio" "media_agent_redis" "media_agent_clickhouse" "media_agent_langfuse" "media_agent_langfuse_worker" "media_agent_createbuckets")
+    for container in "${CONTAINERS[@]}"; do
+        docker rm -f "$container" >/dev/null 2>&1 || true
+    done
+
+    # 3. Wipe local bind-mount directories
+    DATA_DIRS=("qdrant_data" "qdrant_data_embedded" "thumbnails" "logs" ".cache")
+    
+    echo ""
+    read -p "  [?] Also wipe Langfuse/Postgres data (Resets API keys)? (y/N): " wipe_langfuse
+    if [[ "$wipe_langfuse" =~ ^[yY] ]]; then
+        DATA_DIRS+=("postgres_data")
+        echo -e "${YELLOW}  >> Including Postgres/Langfuse in wipe list.${NC}"
+    else
+        echo -e "${GREEN}  >> Preserving Postgres/Langfuse data (Keys kept safe).${NC}"
+    fi
+
+    for dir in "${DATA_DIRS[@]}"; do
         if [ -d "$dir" ]; then
             echo -e "${GRAY}  Removing: $dir${NC}"
-            rm -rf "$dir"
+            if rm -rf "$dir"; then
+                 # Verify deletion
+                 if [ -d "$dir" ]; then
+                     echo -e "${RED}  ERROR: Failed to delete $dir. Folder still exists.${NC}"
+                 else
+                     echo -e "${GREEN}  $dir deleted successfully.${NC}"
+                 fi
+            else
+                 echo -e "${RED}  ERROR: Failed to delete $dir.${NC}"
+            fi
         fi
     done
     
-    echo -e "${GREEN}  Qdrant data nuked!${NC}"
+    echo -e "${GREEN}  Data reset complete!${NC}"
 else
     echo -e "${GRAY}[4/9] Keeping Qdrant data (use --nuke-qdrant to delete)${NC}"
 fi

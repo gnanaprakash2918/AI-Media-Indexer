@@ -41,7 +41,7 @@ class FrameExtractor:
     async def extract(
         self,
         video_path: str | Path,
-        interval: int = 2,
+        interval: float = 2.0,
         start_time: float | None = None,
         end_time: float | None = None,
     ) -> AsyncGenerator[Path, None]:
@@ -49,18 +49,12 @@ class FrameExtractor:
 
         Args:
             video_path: Path to the video file.
-            interval: Time interval in seconds between extracted frames.
+            interval: Time interval in seconds between extracted frames. 0.0 = every frame.
             start_time: Optional start time in seconds for partial extraction.
             end_time: Optional end time in seconds for partial extraction.
-
+        
         Returns:
             An async generator yielding Paths to the extracted frame images.
-
-        Raises:
-            ValueError: If the provided path is empty or invalid.
-            FileNotFoundError: If the video file does not exist.
-            IsADirectoryError: If the provided path is a directory.
-            OSError: For other OS-related errors during processing.
         """
         # Store time offset for timestamp calculation
         self._time_offset = start_time or 0.0
@@ -104,8 +98,17 @@ class FrameExtractor:
                         args_to_ffmpeg.extend(["-t", str(duration)])
                 
                 # Video filter and quality settings
+                video_filters = []
+                
+                # Zero interval means "every frame" - skip fps filter
+                if interval > 0:
+                    # FPS = 1 / interval (e.g., 0.5s -> 2fps)
+                    video_filters.append(f"fps=1/{interval}")
+                    
+                if video_filters:
+                    args_to_ffmpeg.extend(["-vf", ",".join(video_filters)])
+                
                 args_to_ffmpeg.extend([
-                    "-vf", f"fps=1/{interval}",
                     "-q:v", "2",  # High quality JPEG
                     "-f", "image2",
                     str(output_pattern),

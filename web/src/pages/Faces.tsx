@@ -420,14 +420,42 @@ export default function FacesPage() {
             <Dialog open={mergeSourceId !== null} onClose={() => setMergeSourceId(null)} maxWidth="sm" fullWidth>
                 <DialogTitle>Merge Cluster</DialogTitle>
                 <DialogContent>
-                    <Typography variant="body2" sx={{ mb: 2 }}>Select a target cluster to merge into.</Typography>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                        Select a target cluster to merge into. Named clusters are shown first.
+                    </Typography>
                     <List>
-                        {clusters.filter(c => c.cluster_id !== mergeSourceId).map((c) => (
-                            <ListItemButton key={c.cluster_id} onClick={() => mergeClustersMutation.mutate({ from: mergeSourceId!, to: c.cluster_id })}>
+                        {clusters
+                            .filter(c => c.cluster_id !== mergeSourceId)
+                            .sort((a, b) => {
+                                // Named clusters first, then by face count
+                                if (a.name && !b.name) return -1;
+                                if (!a.name && b.name) return 1;
+                                return (b.face_count || 0) - (a.face_count || 0);
+                            })
+                            .map((c) => (
+                            <ListItemButton 
+                                key={c.cluster_id} 
+                                onClick={() => mergeClustersMutation.mutate({ from: mergeSourceId!, to: c.cluster_id })}
+                                sx={{
+                                    border: c.name ? '2px solid' : 'none',
+                                    borderColor: c.name ? 'primary.main' : 'transparent',
+                                    borderRadius: 1,
+                                    mb: 0.5,
+                                    bgcolor: c.name ? 'action.selected' : 'transparent',
+                                }}
+                            >
                                 <ListItemAvatar>
                                     <Avatar src={c.representative?.thumbnail_path ? `http://localhost:8000${c.representative.thumbnail_path}` : undefined}><Face /></Avatar>
                                 </ListItemAvatar>
-                                <ListItemText primary={c.name || `Cluster #${c.cluster_id}`} secondary={`${c.face_count} faces`} />
+                                <ListItemText 
+                                    primary={
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            {c.name || `Cluster #${c.cluster_id}`}
+                                            {c.name && <Chip size="small" label="Named" color="primary" variant="outlined" />}
+                                        </Box>
+                                    } 
+                                    secondary={`${c.face_count} faces`} 
+                                />
                             </ListItemButton>
                         ))}
                     </List>

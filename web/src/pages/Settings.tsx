@@ -291,9 +291,26 @@ export default function SettingsPage() {
                                 size="small"
                                 label="Frame Interval (sec)"
                                 type="number"
-                                value={formData.frame_interval || 5}
-                                onChange={(e) => handleChange('frame_interval', parseInt(e.target.value) || 5)}
-                                helperText="Extract frames every N seconds (lower = more frames)"
+                                inputProps={{ step: 0.1, min: 0 }}
+                                value={formData.frame_interval ?? 1}
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    handleChange('frame_interval', isNaN(val) ? 0 : val);
+                                }}
+                                error={formData.frame_interval === 0}
+                                helperText={
+                                    formData.frame_interval === 0
+                                        ? "⚠️ EXTREME LOAD: Extracting every frame (24-60 FPS)"
+                                        : (formData.frame_interval || 1) < 0.5
+                                            ? "High Load: >2 FPS"
+                                            : "Recommended: 0.5s - 2.0s"
+                                }
+                                sx={{
+                                    '& .MuiFormHelperText-root': {
+                                        color: formData.frame_interval === 0 ? 'error.main' : 'text.secondary',
+                                        fontWeight: formData.frame_interval === 0 ? 700 : 400
+                                    }
+                                }}
                             />
                             <TextField
                                 size="small"
