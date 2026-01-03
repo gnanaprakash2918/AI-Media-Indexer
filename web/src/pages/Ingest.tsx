@@ -17,12 +17,13 @@ import {
     ListItem,
     ListItemText,
     IconButton,
+    Tooltip,
 } from '@mui/material';
-import { CloudUpload, Stop, FolderOpen, Add, Delete } from '@mui/icons-material';
+import { CloudUpload, Stop, FolderOpen, Add, Delete, Pause, PlayArrow } from '@mui/icons-material';
 
-import { ingestMedia, getJobs, cancelJob } from '../api/client';
+import { ingestMedia, getJobs, cancelJob, pauseJob, resumeJob, deleteLibraryItem } from '../api/client';
 
-type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused';
 
 interface Job {
     job_id: string;
@@ -35,45 +36,103 @@ interface Job {
     started_at: number;
     completed_at: number | null;
     error: string | null;
+    // Granular stats
+    processed_frames?: number;
+    total_frames?: number;
+    timestamp?: number;
+    duration?: number;
 }
 
-function JobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => void }) {
+function JobCard({ job, onCancel, onPause, onResume }: { job: Job; onCancel: (id: string) => void, onPause: (id: string) => void, onResume: (id: string) => void }) {
     const isRunning = job.status === 'running';
+    const isPaused = job.status === 'paused';
     const fileName = job.file_path.split(/[/\\]/).pop() || job.file_path;
+
+    // Granular Stats
+    const framesText = (job.processed_frames !== undefined && job.total_frames) 
+        ? `Frames: ${job.processed_frames} / ${job.total_frames}` 
+        : '';
+        
+    const timeText = (job.timestamp !== undefined && job.duration) 
+        ? `Time: ${new Date(job.timestamp * 1000).toISOString().substr(11, 8)} / ${new Date(job.duration * 1000).toISOString().substr(11, 8)}` 
+        : '';
+    
+    // Calculate accurate percentage if available
+    let progress = job.progress;
+    if (job.duration && job.timestamp) {
+        progress = (job.timestamp / job.duration) * 100;
+        // Adjust for stage coverage if needed, but timestamp is best indicator for user
+    }
 
     return (
         <Paper sx={{ p: 2, mb: 1.5, borderRadius: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: '60%' }}>
-                    {fileName}
-                </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                <Box>
+                    <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: 300 }} title={job.file_path}>
+                        {fileName}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                        {job.message || job.current_stage || 'Initializing...'}
+                    </Typography>
+                </Box>
                 <Chip
                     size="small"
                     label={job.status}
                     color={
                         job.status === 'completed' ? 'success' :
                             job.status === 'failed' ? 'error' :
-                                isRunning ? 'primary' : 'default'
+                                isRunning ? 'primary' : 
+                                isPaused ? 'warning' : 'default'
                     }
                 />
             </Box>
-            {isRunning && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <LinearProgress
-                        variant="determinate"
-                        value={job.progress}
-                        sx={{ flex: 1, height: 6, borderRadius: 3 }}
-                    />
-                    <Typography variant="caption" fontWeight={600}>
-                        {Math.round(job.progress)}%
-                    </Typography>
-                    <IconButton size="small" onClick={() => onCancel(job.job_id)} color="error">
-                        <Stop fontSize="small" />
-                    </IconButton>
-                </Box>
+            
+            {(isRunning || isPaused) && (
+                <>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                        <LinearProgress
+                            variant="determinate"
+                            value={progress}
+                            sx={{ flex: 1, height: 6, borderRadius: 3 }}
+                        />
+                        <Typography variant="caption" fontWeight={600} sx={{ minWidth: 35 }}>
+                            {Math.round(progress)}%
+                        </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                         <Box sx={{ display: 'flex', gap: 2 }}>
+                            {framesText && <Typography variant="caption" color="text.secondary">{framesText}</Typography>}
+                            {timeText && <Typography variant="caption" color="text.secondary">{timeText}</Typography>}
+                         </Box>
+                         <Box>
+                            {isRunning && (
+                                <Tooltip title="Pause">
+                                    <IconButton size="small" onClick={() => onPause(job.job_id)} color="primary">
+                                        <Pause fontSize="small" />
+                                    </IconButton>
+                                </Tooltip>
+                            )}
+                            {isPaused && (
+                                <Tooltip title="Resume">
+                                    <IconButton size="small" onClick={() => onResume(job.job_id)} color="success">
+                                        <PlayArrow fontSize="small" />
+                                    </IconButton>
+                                </Tooltip>
+                            )}
+                            <Tooltip title="Stop">
+                                <IconButton size="small" onClick={() => onCancel(job.job_id)} color="error">
+                                    <Stop fontSize="small" />
+                                </IconButton>
+                            </Tooltip>
+                         </Box>
+                    </Box>
+                </>
             )}
             {job.status === 'failed' && job.error && (
                 <Typography variant="caption" color="error">{job.error}</Typography>
+            )}
+            {job.status === 'paused' && !job.message && (
+                 <Typography variant="caption" color="warning.main">Job is paused. Click resume to continue.</Typography>
             )}
         </Paper>
     );
@@ -115,9 +174,22 @@ export default function IngestPage() {
 
     const cancelMutation = useMutation({
         mutationFn: cancelJob,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['jobs'] });
-        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
+    });
+
+    const pauseMutation = useMutation({
+        mutationFn: pauseJob,
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
+    });
+
+    const resumeMutation = useMutation({
+        mutationFn: resumeJob,
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
+    });
+
+    const deleteMutation = useMutation({
+        mutationFn: deleteLibraryItem,
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
     });
 
     // SSE connection
@@ -178,8 +250,13 @@ export default function IngestPage() {
         setPaths(newPaths);
     };
 
-    const activeJobs = jobs.data?.jobs?.filter((j: Job) => j.status === 'running') || [];
-    const recentJobs = jobs.data?.jobs?.filter((j: Job) => j.status !== 'running').slice(0, 5) || [];
+    const activeJobs = jobs.data?.jobs?.filter((j: Job) => 
+        ['running', 'paused', 'pending'].includes(j.status)
+    ) || [];
+    
+    const historyJobs = jobs.data?.jobs?.filter((j: Job) => 
+        !['running', 'paused', 'pending'].includes(j.status)
+    ) || [];
 
     return (
         <Box>
@@ -305,30 +382,57 @@ export default function IngestPage() {
             {activeJobs.length > 0 && (
                 <Box sx={{ mb: 3 }}>
                     <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                        Processing ({activeJobs.length})
+                        Active Jobs ({activeJobs.length})
                     </Typography>
                     {activeJobs.map((job: Job) => (
-                        <JobCard key={job.job_id} job={job} onCancel={(id) => cancelMutation.mutate(id)} />
+                        <JobCard 
+                            key={job.job_id} 
+                            job={job} 
+                            onCancel={(id) => cancelMutation.mutate(id)}
+                            onPause={(id) => pauseMutation.mutate(id)}
+                            onResume={(id) => resumeMutation.mutate(id)}
+                        />
                     ))}
                 </Box>
             )}
 
-            {/* Recent Jobs */}
-            {recentJobs.length > 0 && (
+            {/* History */}
+            {historyJobs.length > 0 && (
                 <Box>
-                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>Recent</Typography>
+                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>History</Typography>
                     <Paper sx={{ borderRadius: 2 }}>
                         <List dense disablePadding>
-                            {recentJobs.map((job: Job, idx: number) => (
-                                <ListItem key={job.job_id} divider={idx < recentJobs.length - 1}>
+                            {historyJobs.map((job: Job, idx: number) => (
+                                <ListItem 
+                                    key={job.job_id} 
+                                    divider={idx < historyJobs.length - 1}
+                                    secondaryAction={
+                                        <Tooltip title="Delete from Library">
+                                            <IconButton edge="end" aria-label="delete" onClick={() => {
+                                                if (window.confirm('Delete this media from the library? This will remove all index data and thumbnails.')) {
+                                                    deleteMutation.mutate(job.file_path);
+                                                }
+                                            }}>
+                                                <Delete fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                    }
+                                >
                                     <ListItemText
                                         primary={job.file_path.split(/[/\\]/).pop()}
-                                        secondary={job.completed_at ? new Date(job.completed_at * 1000).toLocaleString() : job.status}
+                                        secondary={
+                                            <>
+                                                {job.completed_at ? new Date(job.completed_at * 1000).toLocaleString() : job.status}
+                                                {job.status === 'failed' && ` - ${job.error}`}
+                                            </>
+                                        }
+                                        sx={{ mr: 4 }}
                                     />
                                     <Chip
                                         size="small"
                                         label={job.status}
                                         color={job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'default'}
+                                        sx={{ mr: 2 }}
                                     />
                                 </ListItem>
                             ))}
@@ -337,7 +441,7 @@ export default function IngestPage() {
                 </Box>
             )}
 
-            {/* Empty State - Only show if no pending AND no real jobs */}
+            {/* Empty State */}
             {!jobs.isLoading && jobs.data?.jobs?.length === 0 && pendingJobs.length === 0 && (
                 <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2, bgcolor: 'action.hover' }}>
                     <CloudUpload sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />

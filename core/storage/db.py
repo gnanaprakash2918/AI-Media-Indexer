@@ -1984,3 +1984,44 @@ class VectorDB:
         except Exception as e:
             log(f"Failed to update frame identity: {e}")
             return False
+
+    @observe("db_delete_media")
+    def delete_media_by_path(self, media_path: str) -> None:
+        """Delete all data associated with a media file."""
+        for collection in [
+            self.MEDIA_SEGMENTS_COLLECTION, 
+            self.MEDIA_COLLECTION, 
+            self.FACES_COLLECTION, 
+            self.VOICE_COLLECTION
+        ]:
+            try:
+                # Try with "media_path" key
+                self.client.delete(
+                    collection_name=collection,
+                    points_selector=models.FilterSelector(
+                        filter=models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key="media_path",
+                                    match=models.MatchValue(value=media_path)
+                                )
+                            ]
+                        )
+                    )
+                )
+                # Try with "video_path" key (legacy/mixed usage)
+                self.client.delete(
+                    collection_name=collection,
+                    points_selector=models.FilterSelector(
+                        filter=models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key="video_path",
+                                    match=models.MatchValue(value=media_path)
+                                )
+                            ]
+                        )
+                    )
+                )
+            except Exception as e:
+                log(f"Failed to delete from {collection}: {e}")

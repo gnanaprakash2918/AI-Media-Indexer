@@ -64,10 +64,11 @@ import numpy as np
 
 from config import settings
 from core.ingestion.pipeline import IngestionPipeline
+from core.ingestion.jobs import job_manager, JobStatus
 from core.ingestion.scanner import LibraryScanner
 from core.utils.logger import bind_context, clear_context, logger
 from core.utils.observability import end_trace, init_langfuse, start_trace
-from core.utils.progress import JobStatus, progress_tracker
+from core.utils.progress import progress_tracker
 
 pipeline: IngestionPipeline | None = None
 
@@ -85,6 +86,17 @@ async def lifespan(app: FastAPI):
     try:
         pipeline = IngestionPipeline()
         logger.info("Pipeline initialized")
+        
+        # Restart Safety Check
+        # Mark any 'RUNNING' jobs as 'PAUSED' so user can resume them
+        active_jobs = job_manager.get_all_jobs()
+        for job in active_jobs:
+            if job.status == JobStatus.RUNNING:
+                logger.warning(f"Marking interrupted job {job.job_id} as PAUSED")
+                # Use progress_tracker to keep cache in sync
+                # Explicitly force status update in case tracker logic checks running state strictness
+                job_manager.update_job(job.job_id, status=JobStatus.PAUSED, message="Interrupted by server restart")
+                
     except Exception as exc:
         pipeline = None
         logger.error(f"Pipeline init failed: {exc}")
@@ -694,15 +706,86 @@ def create_app() -> FastAPI:
         return {"status": "paused", "job_id": job_id}
 
     @app.post("/jobs/{job_id}/resume")
-    async def resume_job(job_id: str):
+    async def resume_job(job_id: str, background_tasks: BackgroundTasks):
         """Resume a paused job."""
-        success = progress_tracker.resume(job_id)
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail="Job not found or not paused",
-            )
-        return {"status": "resumed", "job_id": job_id}
+        # 1. Check if job exists
+        job = job_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job.status != JobStatus.PAUSED:
+             # Allow resuming failed/cancelled jobs too if user wants to retry? 
+             # For now strict adherence to "Resume" implies Paused.
+             # But let's allow "FAILED" or "CANCELLED" to restart as well (retry).
+             if job.status not in (JobStatus.PAUSED, JobStatus.FAILED, JobStatus.CANCELLED):
+                raise HTTPException(status_code=400, detail=f"Job is {job.status}, cannot resume")
+
+        # 2. Update status
+        progress_tracker.resume(job_id)
+        
+        # 3. Determine resume point
+        start_time = 0.0
+        if job.checkpoint_data and "timestamp" in job.checkpoint_data:
+            start_time = float(job.checkpoint_data["timestamp"])
+            
+        logger.info(f"Resuming job {job_id} ({job.file_path}) from {start_time:.1f}s")
+
+        # 4. Respawn pipeline
+        async def run_pipeline_resume():
+            # Start trace
+            start_trace(name="resume_ingest", metadata={"file": job.file_path, "job_id": job_id})
+            try:
+                assert pipeline is not None
+                await pipeline.process_video(
+                    job.file_path,
+                    job.media_type,
+                    start_time=start_time,
+                    job_id=job_id
+                )
+                end_trace("success")
+            except Exception as e:
+                logger.error(f"Pipeline resume error: {e}")
+                progress_tracker.fail(job_id, error=str(e))
+                end_trace("error", str(e))
+
+        background_tasks.add_task(run_pipeline_resume)
+        
+        return {"status": "resumed", "job_id": job_id, "start_time": start_time}
+    
+    @app.delete("/library")
+    async def delete_library_item(path: str = Query(...)):
+        """Remove a media file from the library (DB + Thumbnails + Jobs)."""
+        if not pipeline or not pipeline.db:
+             raise HTTPException(status_code=503, detail="Database not ready")
+        
+        logger.info(f"Deleting media: {path}")
+        
+        # 1. Delete from Qdrant
+        pipeline.db.delete_media_by_path(path)
+        
+        # 2. Delete job history
+        all_jobs = job_manager.get_all_jobs(limit=1000)
+        for job in all_jobs:
+            if job.file_path == path:
+                job_manager.delete_job(job.job_id)
+        
+        # 3. Clean up thumbnails
+        import hashlib
+        try:
+             safe_stem = hashlib.md5(Path(path).stem.encode()).hexdigest()
+             thumb_dir = settings.cache_dir / "thumbnails"
+             
+             # Delete generic thumbnails
+             for f in (thumb_dir / "faces").glob(f"{safe_stem}_*"):
+                 try: f.unlink()
+                 except: pass
+             for f in (thumb_dir / "voices").glob(f"{safe_stem}_*"):
+                 try: f.unlink()
+                 except: pass
+        except Exception as e:
+            logger.warning(f"Thumbnail cleanup failed: {e}")
+            
+        return {"status": "deleted", "path": path}
 
     @app.post("/media/regenerate-thumbnails")
     async def regenerate_thumbnails(path: str = Query(...)):

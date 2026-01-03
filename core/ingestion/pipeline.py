@@ -81,19 +81,15 @@ class IngestionPipeline:
         media_type_hint: str | None = None,
         start_time: float | None = None,
         end_time: float | None = None,
+        job_id: str | None = None,
     ):
-        """Initialize the media ingestion pipeline.
-        
-        Args:
-            frame_interval: Interval in seconds between extracting frames (0.0=every frame).
-            media_type_hint: Optional hint about the media type (e.g., 'movie', 'eps').
-            start_time: Optional start time in seconds for partial processing.
-            end_time: Optional end time in seconds for partial processing.
+        """Initialize the media ingestion pipeline."""
+        resume = False
+        if job_id:
+            resume = True
+        else:
+            job_id = str(uuid.uuid4())
 
-        Returns:
-            The job ID of the processing task.
-        """
-        job_id = str(uuid.uuid4())
         bind_context(component="pipeline")
         
         # Store time range for use in processing methods
@@ -105,6 +101,7 @@ class IngestionPipeline:
             job_id,
             file_path=str(path),
             media_type=media_type_hint,
+            resume=resume,
         )
 
         if not path.exists() or not path.is_file():
@@ -134,18 +131,37 @@ class IngestionPipeline:
 
             if progress_tracker.is_cancelled(job_id):
                 return job_id
+            if progress_tracker.is_paused(job_id):
+                return job_id
 
             progress_tracker.update(job_id, 35.0, stage="voice", message="Processing voice")
             await retry(lambda: self._process_voice(path))
             self._cleanup_memory("voice_complete")  # Unload Pyannote
             progress_tracker.update(job_id, 50.0, stage="voice", message="Voice complete")
 
+            with open("debug_flow.log", "a") as f: f.write(f"Voice complete. Checking cancelled...\n")
+
             if progress_tracker.is_cancelled(job_id):
+                with open("debug_flow.log", "a") as f: f.write(f"Cancelled.\n")
+                return job_id
+                
+            with open("debug_flow.log", "a") as f: f.write(f"Checking paused...\n")
+            if progress_tracker.is_paused(job_id):
+                with open("debug_flow.log", "a") as f: f.write(f"Paused.\n")
                 return job_id
 
+            with open("debug_flow.log", "a") as f: f.write(f"Starting frames...\n")
             progress_tracker.update(job_id, 55.0, stage="frames", message="Processing frames")
+            
+            with open("debug_flow.log", "a") as f: f.write(f"Calling _process_frames...\n")
             await retry(lambda: self._process_frames(path, job_id, total_duration=duration))
+            
+            with open("debug_flow.log", "a") as f: f.write(f"Frames complete cleanup...\n")
             self._cleanup_memory("frames_complete")  # Unload Vision + Faces
+            
+            if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
+                return job_id
+
             progress_tracker.complete(job_id, message=f"Completed: {path.name}")
 
             return job_id
@@ -356,8 +372,9 @@ class IngestionPipeline:
         context_window: deque[str] = deque(maxlen=3)
 
         async for frame_path in frame_generator:
-            if job_id and progress_tracker.is_cancelled(job_id):
-                break
+            if job_id:
+                if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
+                    break
             
             # Calculate actual timestamp including offset
             timestamp = time_offset + (frame_count * float(self.frame_interval_seconds))
@@ -380,13 +397,12 @@ class IngestionPipeline:
                         
                 if job_id:
                     # Check for PAUSE functionality
-                    while progress_tracker.is_paused(job_id):
-                        await asyncio.sleep(1)
-                        if progress_tracker.is_cancelled(job_id):
-                            return
+                    if progress_tracker.is_paused(job_id):
+                        logger.info(f"Job {job_id} paused. Stopping frame loop.")
+                        break # Exit loop (checkpoint saved in update_granular)
 
                     if progress_tracker.is_cancelled(job_id):
-                        return
+                        break
 
                     # Update Granular Stats
                     # Use provided duration for 100% accuracy, fallback to metadata
@@ -398,13 +414,14 @@ class IngestionPipeline:
                     interval = float(self.frame_interval_seconds)
                     
                     total_est_frames = int(video_duration / interval) if video_duration else 0
-                    current_ts = frame_count * interval
+                    current_ts = timestamp 
+                    current_frame_index = int(current_ts / interval) if interval > 0 else frame_count
                     
-                    status_msg = f"Processing frame {frame_count}/{total_est_frames} at {current_ts:.1f}s"
+                    status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
                     
                     progress_tracker.update_granular(
                         job_id,
-                        processed_frames=frame_count,
+                        processed_frames=current_frame_index,
                         total_frames=total_est_frames,
                         current_timestamp=current_ts,
                         total_duration=video_duration

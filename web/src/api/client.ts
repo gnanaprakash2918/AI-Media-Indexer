@@ -209,10 +209,13 @@ export const getLibrary = async () => {
     return res.data;
 };
 
-export const deleteFromLibrary = async (path: string) => {
-    const res = await apiClient.delete(`/library/${encodeURIComponent(path)}`);
+export const deleteLibraryItem = async (path: string) => {
+    const res = await apiClient.delete('/library', { params: { path } });
     return res.data;
 };
+
+// Alias for backward compatibility if needed
+export const deleteFromLibrary = deleteLibraryItem;
 
 // SSE Event Source helper
 export function createEventSource(onMessage: (event: any) => void, onError?: () => void): EventSource {
