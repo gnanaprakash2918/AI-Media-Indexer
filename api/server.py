@@ -151,6 +151,18 @@ class AdvancedSearchRequest(BaseModel):
     query: str
     use_rerank: bool = False
     limit: int = 20
+    min_confidence: float = 0.0
+
+class IdentityMergeRequest(BaseModel):
+    target_identity_id: str
+
+class IdentityRenameRequest(BaseModel):
+    name: str
+
+class RedactRequest(BaseModel):
+    video_path: str
+    identity_id: str
+    output_path: str | None = None
 
 
 def create_app() -> FastAPI:
@@ -811,10 +823,132 @@ def create_app() -> FastAPI:
             limit=req.limit,
         )
         
+        filtered = [r for r in results if r.score >= req.min_confidence]
+        
         return {
             "query": req.query,
-            "total": len(results),
-            "results": [r.model_dump() for r in results],
+            "total": len(filtered),
+            "results": [r.model_dump() for r in filtered],
+        }
+
+    @app.get("/api/media/thumbnail")
+    async def get_video_thumbnail(path: str = Query(...), time: float = Query(0.0)):
+        from fastapi.responses import Response
+        import subprocess
+        video_path = Path(path)
+        if not video_path.exists():
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        cmd = [
+            "ffmpeg", "-ss", str(time),
+            "-i", str(video_path),
+            "-frames:v", "1",
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-q:v", "5",
+            "pipe:1",
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=10)
+            if result.returncode == 0 and result.stdout:
+                return Response(content=result.stdout, media_type="image/jpeg")
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to extract thumbnail")
+
+    # === IDENTITY MANAGEMENT ===
+    @app.get("/identities")
+    async def list_identities():
+        from core.storage.identity_graph import identity_graph
+        identities = identity_graph.list_identities()
+        result = []
+        for ident in identities:
+            tracks = identity_graph.get_tracks_for_identity(ident.id)
+            result.append({
+                "id": ident.id,
+                "name": ident.name,
+                "is_verified": ident.is_verified,
+                "face_track_count": len(tracks),
+                "created_at": ident.created_at,
+            })
+        return {"identities": result, "total": len(result)}
+
+    @app.post("/identities/{identity_id}/merge")
+    async def merge_identities(identity_id: str, req: IdentityMergeRequest):
+        from core.storage.identity_graph import identity_graph
+        try:
+            identity_graph.merge_identities(identity_id, req.target_identity_id)
+            return {"status": "merged", "source": identity_id, "target": req.target_identity_id}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.patch("/identities/{identity_id}")
+    async def rename_identity(identity_id: str, req: IdentityRenameRequest):
+        from core.storage.identity_graph import identity_graph
+        identity = identity_graph.get_identity(identity_id)
+        if not identity:
+            raise HTTPException(status_code=404, detail="Identity not found")
+        identity_graph.update_identity_name(identity_id, req.name)
+        return {"status": "renamed", "id": identity_id, "name": req.name}
+
+    @app.delete("/identities/{identity_id}")
+    async def delete_identity(identity_id: str):
+        from core.storage.identity_graph import identity_graph
+        identity_graph.delete_identity(identity_id)
+        return {"status": "deleted", "id": identity_id}
+
+    # === JOB CONTROL (SQLite-backed) ===
+    @app.post("/jobs/{job_id}/pause")
+    async def pause_job(job_id: str):
+        from core.ingestion.jobs import JobStatus
+        job = job_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job_manager.update_job(job_id, status=JobStatus.PAUSED)
+        return {"status": "paused", "job_id": job_id}
+
+    @app.post("/jobs/{job_id}/resume")
+    async def resume_job(job_id: str):
+        from core.ingestion.jobs import JobStatus
+        job = job_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job_manager.update_job(job_id, status=JobStatus.PENDING)
+        return {"status": "resumed", "job_id": job_id}
+
+    @app.delete("/jobs/{job_id}")
+    async def delete_job(job_id: str, background_tasks: BackgroundTasks):
+        job = job_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        progress_tracker.cancel(job_id)
+        job_manager.delete_job(job_id)
+        return {"status": "deleted", "job_id": job_id}
+
+    # === PRIVACY TOOLS ===
+    @app.post("/tools/redact")
+    async def redact_identity(req: RedactRequest, background_tasks: BackgroundTasks):
+        from core.tools.privacy import VideoRedactor
+        video_path = Path(req.video_path)
+        if not video_path.exists():
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        output_path = Path(req.output_path) if req.output_path else None
+        
+        async def run_redaction():
+            redactor = VideoRedactor()
+            result = await redactor.redact_identity(
+                video_path=video_path,
+                target_identity_id=req.identity_id,
+                output_path=output_path,
+            )
+            logger.info(f"Redaction complete: {result}")
+        
+        background_tasks.add_task(asyncio.create_task, run_redaction())
+        return {
+            "status": "started",
+            "video": req.video_path,
+            "identity_id": req.identity_id,
         }
 
     @app.post("/media/regenerate-thumbnails")

@@ -307,3 +307,24 @@ class MediaFile(BaseModel):
     def file_path(self) -> Path:
         """Get the file path as a Path object."""
         return Path(self.path)
+
+
+class MatchReason(str, Enum):
+    IDENTITY_FACE = "identity_face"
+    IDENTITY_VOICE = "identity_voice"
+    SEMANTIC_VISUAL = "semantic_visual"
+    SEMANTIC_AUDIO = "semantic_audio"
+    VLM_VERIFIED = "vlm_verified"
+
+
+class SearchResultDetail(BaseModel):
+    video_id: str
+    file_path: str
+    start_time: float
+    end_time: float
+    score: float = Field(..., ge=0.0, le=1.0, description="Normalized confidence 0.0-1.0")
+    match_reasons: list[MatchReason]
+    explanation: str = Field(default="", description="VLM-generated explanation")
+    thumbnail_url: str | None = None
+    dense_context: str = ""
+    matched_identities: list[str] = Field(default_factory=list)

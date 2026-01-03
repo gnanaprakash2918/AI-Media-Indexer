@@ -32,11 +32,13 @@ interface Job {
     file_path: string;
     media_type: string;
     current_stage: string;
+    pipeline_stage: string;
     message: string;
     started_at: number;
     completed_at: number | null;
     error: string | null;
-    // Granular stats
+    current_item_index?: number;
+    total_items?: number;
     processed_frames?: number;
     total_frames?: number;
     timestamp?: number;
@@ -49,14 +51,14 @@ function JobCard({ job, onCancel, onPause, onResume }: { job: Job; onCancel: (id
     const fileName = job.file_path.split(/[/\\]/).pop() || job.file_path;
 
     // Granular Stats
-    const framesText = (job.processed_frames !== undefined && job.total_frames) 
-        ? `Frames: ${job.processed_frames} / ${job.total_frames}` 
+    const framesText = (job.processed_frames !== undefined && job.total_frames)
+        ? `Frames: ${job.processed_frames} / ${job.total_frames}`
         : '';
-        
-    const timeText = (job.timestamp !== undefined && job.duration) 
-        ? `Time: ${new Date(job.timestamp * 1000).toISOString().substr(11, 8)} / ${new Date(job.duration * 1000).toISOString().substr(11, 8)}` 
+
+    const timeText = (job.timestamp !== undefined && job.duration)
+        ? `Time: ${new Date(job.timestamp * 1000).toISOString().substr(11, 8)} / ${new Date(job.duration * 1000).toISOString().substr(11, 8)}`
         : '';
-    
+
     // Calculate accurate percentage if available
     let progress = job.progress;
     if (job.duration && job.timestamp) {
@@ -81,12 +83,12 @@ function JobCard({ job, onCancel, onPause, onResume }: { job: Job; onCancel: (id
                     color={
                         job.status === 'completed' ? 'success' :
                             job.status === 'failed' ? 'error' :
-                                isRunning ? 'primary' : 
-                                isPaused ? 'warning' : 'default'
+                                isRunning ? 'primary' :
+                                    isPaused ? 'warning' : 'default'
                     }
                 />
             </Box>
-            
+
             {(isRunning || isPaused) && (
                 <>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -100,11 +102,11 @@ function JobCard({ job, onCancel, onPause, onResume }: { job: Job; onCancel: (id
                         </Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                         <Box sx={{ display: 'flex', gap: 2 }}>
+                        <Box sx={{ display: 'flex', gap: 2 }}>
                             {framesText && <Typography variant="caption" color="text.secondary">{framesText}</Typography>}
                             {timeText && <Typography variant="caption" color="text.secondary">{timeText}</Typography>}
-                         </Box>
-                         <Box>
+                        </Box>
+                        <Box>
                             {isRunning && (
                                 <Tooltip title="Pause">
                                     <IconButton size="small" onClick={() => onPause(job.job_id)} color="primary">
@@ -124,7 +126,7 @@ function JobCard({ job, onCancel, onPause, onResume }: { job: Job; onCancel: (id
                                     <Stop fontSize="small" />
                                 </IconButton>
                             </Tooltip>
-                         </Box>
+                        </Box>
                     </Box>
                 </>
             )}
@@ -132,7 +134,7 @@ function JobCard({ job, onCancel, onPause, onResume }: { job: Job; onCancel: (id
                 <Typography variant="caption" color="error">{job.error}</Typography>
             )}
             {job.status === 'paused' && !job.message && (
-                 <Typography variant="caption" color="warning.main">Job is paused. Click resume to continue.</Typography>
+                <Typography variant="caption" color="warning.main">Job is paused. Click resume to continue.</Typography>
             )}
         </Paper>
     );
@@ -150,7 +152,7 @@ export default function IngestPage() {
     const jobs = useQuery({
         queryKey: ['jobs'],
         queryFn: getJobs,
-        refetchInterval: 5000,
+        refetchInterval: 2000,
     });
 
     // Parse time string (supports s, m:s, h:m:s formats), returns undefined if invalid
@@ -250,11 +252,11 @@ export default function IngestPage() {
         setPaths(newPaths);
     };
 
-    const activeJobs = jobs.data?.jobs?.filter((j: Job) => 
+    const activeJobs = jobs.data?.jobs?.filter((j: Job) =>
         ['running', 'paused', 'pending'].includes(j.status)
     ) || [];
-    
-    const historyJobs = jobs.data?.jobs?.filter((j: Job) => 
+
+    const historyJobs = jobs.data?.jobs?.filter((j: Job) =>
         !['running', 'paused', 'pending'].includes(j.status)
     ) || [];
 
@@ -385,9 +387,9 @@ export default function IngestPage() {
                         Active Jobs ({activeJobs.length})
                     </Typography>
                     {activeJobs.map((job: Job) => (
-                        <JobCard 
-                            key={job.job_id} 
-                            job={job} 
+                        <JobCard
+                            key={job.job_id}
+                            job={job}
                             onCancel={(id) => cancelMutation.mutate(id)}
                             onPause={(id) => pauseMutation.mutate(id)}
                             onResume={(id) => resumeMutation.mutate(id)}
@@ -403,8 +405,8 @@ export default function IngestPage() {
                     <Paper sx={{ borderRadius: 2 }}>
                         <List dense disablePadding>
                             {historyJobs.map((job: Job, idx: number) => (
-                                <ListItem 
-                                    key={job.job_id} 
+                                <ListItem
+                                    key={job.job_id}
                                     divider={idx < historyJobs.length - 1}
                                     secondaryAction={
                                         <Tooltip title="Delete from Library">

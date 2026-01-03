@@ -10,7 +10,7 @@ taskkill /F /IM node.exe >nul 2>&1
 taskkill /F /IM uvicorn.exe >nul 2>&1
 
 echo [2/5] FORCE stopping Docker containers...
-docker compose down -v --remove-orphans
+docker compose down -v 2>nul
 docker rm -f media_agent_qdrant >nul 2>&1
 docker rm -f media_agent_postgres >nul 2>&1
 docker rm -f media_agent_minio >nul 2>&1

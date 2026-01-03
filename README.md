@@ -1,130 +1,116 @@
 # AI-Media-Indexer
-AI engine for searching and navigating large media libraries using text, visuals, and audio.
 
-## Documentation
+Commercial-grade AI engine for hyper-specific video search using identity, visual semantics, and audio.
 
-- [**Developer Guide**](docs/development.md): Setup instructions, MCP Inspector workflow, and contribution guidelines.
-- [**Dlib Setup Guide**](docs/setup_dlib.md): Detailed instructions for installing CUDA-enabled `dlib` on Windows and Linux.
-- [**Troubleshooting**](docs/troubleshooting.md): Common errors, A2A server testing, and useful snippets.
-- [**Sprint History**](Sprints.md): Detailed changelogs for each sprint.
+## Architecture Overview
 
----
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                           CORE STACK                                │
+├─────────────────────────────────────────────────────────────────────┤
+│  FastAPI (REST API)  │  Qdrant (Vectors)  │  SQLite (Identity Graph)│
+│  Ollama/Gemini (VLM) │  Whisper (ASR)     │  InsightFace (Faces)    │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-## Current Progress & Features
+### Ingestion Pipeline
 
-The project has evolved into a robust Modular Monolith with the following capabilities:
+```
+Video → Extract → Diarize → Track-Cluster → VLM Caption → Index
+        ▼          ▼           ▼              ▼            ▼
+      Frames    Speakers    FaceTracks    Scenes      Qdrant
+      Audio    (Pyannote)   (IoU+Cosine)  (Dense)     Vectors
+```
 
-### 1. Ingestion Engine
-- **Multi-Modal Scanning**: Automatically discovers Video, Audio, and Image files.
-- **Smart Probing**: Extracts metadata (resolution, codecs, duration) using FFmpeg.
-- **Audio Transcription**: Uses `faster-whisper` (CUDA-accelerated) to generate accurate transcripts.
-- **Visual Analysis**: Extracts frames at intervals and analyzes them using Vision LLMs (Gemini/Ollama).
-- **Face Detection**: Identifies faces using `dlib` (CNN/HOG) or MediaPipe, computes 128-d encodings, and clusters identities via DBSCAN.
+| Stage | File | Purpose |
+|-------|------|---------|
+| Extract | `core/processing/extractor.py` | Frame extraction at intervals |
+| Transcribe | `core/processing/transcriber.py` | Whisper ASR with language lock |
+| Diarize | `core/processing/voice.py` | Speaker segmentation + RMS silence filter |
+| Face Track | `core/processing/identity.py` | FaceTrackBuilder (IoU + cosine) |
+| Scene Caption | `core/processing/scene_detector.py` | PySceneDetect + VLM dense captions |
+| Index | `core/storage/db.py` | Qdrant hybrid vectors |
 
-### 2. Search & Retrieval
-- **Vector Database**: Powered by Qdrant (Docker/Local).
-- **Semantic Search**:
-  - **Visual Search**: Find scenes by description (e.g., "red car on a bridge").
-  - **Dialogue Search**: Search within spoken conversations.
-  - **Face Search**: Find appearances of specific people.
-- **Hybrid Indexing**: Combines text embeddings (`sentence-transformers`) and face encodings.
+### Search Pipeline
 
-### 3. Agentic Workflow (Sprint 5)
-- **Model Context Protocol (MCP)**: Implements standard MCP server-client architecture.
-- **Agent CLI**: Interactive command-line agent (`agent_cli.py`) that can:
-  - Understand natural language queries.
-  - Call tools (`search_media`, `ingest_media`) autonomously.
-  - Synthesize complex answers from database results.
+```
+Query → Intent Parse → Graph Filter → Vector Search → VLM Rerank
+        ▼               ▼              ▼               ▼
+    SearchIntent    video_ids     Candidates   SearchResultDetail
+    (LLM)         (IdentityGraph)  (Qdrant)     (Calibrated 0-1.0)
+```
 
-### 4. Tech Stack
-- **Languages**: Python 3.12+ (Type-safe with Pydantic)
-- **AI/ML**:
-  - **LLM**: Ollama (Llama 3, LLaVA), Google Gemini
-  - **ASR**: Faster-Whisper
-  - **Vision**: Dlib, MediaPipe
-- **Infrastructure**:
-  - **Vector Store**: Qdrant
-  - **Orchestration**: Google ADK / MCP
-  - **Backend**: FastAPI (Server) & Typer (CLI)
-  - **Frontend**: React 19 + MUI 7 + Vite
+| Component | File | Purpose |
+|-----------|------|---------|
+| Text LLM Factory | `core/llm/text_factory.py` | Strategy: Ollama/Gemini |
+| Query Parser | `core/retrieval/query_parser.py` | NL → SearchIntent |
+| Identity Graph | `core/storage/identity_graph.py` | SQLite pre-filtering |
+| VLM Reranker | `core/retrieval/reranker.py` | Keyframe verification |
+| Score Calibration | `core/retrieval/calibration.py` | Normalize to 0-1.0 |
+
+### Key APIs
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/search/advanced` | POST | Agentic search with reranking |
+| `/identities` | GET | List all identities |
+| `/identities/{id}/merge` | POST | Merge two identities |
+| `/jobs/{id}/pause` | POST | Pause job (SQLite-backed) |
+| `/tools/redact` | POST | Smart blur identity |
+| `/api/media/thumbnail` | GET | Dynamic frame extraction |
 
 ---
 
 ## Quick Start
 
-### 0. Prerequisites
-- Python 3.12+
-- `uv` package manager
-
-### 1. Installation
-
-<!-- carousel -->
-#### PowerShell
-```powershell
+```bash
+# Install
 git clone https://github.com/gnanaprakash2918/AI-Media-Indexer.git
 cd AI-Media-Indexer
 uv sync
-```
-<!-- slide -->
-#### CMD
-```cmd
-git clone https://github.com/gnanaprakash2918/AI-Media-Indexer.git
-cd AI-Media-Indexer
-uv sync
-```
-<!-- slide -->
-#### Bash
-```bash
-git clone https://github.com/gnanaprakash2918/AI-Media-Indexer.git
-cd AI-Media-Indexer
-uv sync
-```
-<!-- /carousel -->
 
-### 2. Run Backend
-```bash
-uv run uvicorn api.server:app --port 8000
+# Run
+./start.ps1  # or ./start.sh
+
+# Web UI
+cd web && npm install && npm run dev
 ```
 
-### 3. Run Web UI
-```bash
-cd web
-npm install
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open http://localhost:3000
 
 ---
 
 ## Configuration
 
-### Environment Variables
+Copy `.env.example` to `.env`:
 
-Copy `.env.example` to `.env` and configure:
-
-```bash
-cp .env.example .env
-```
-
-**Required for full functionality:**
-
-| Variable | Description |
-|----------|-------------|
-| `OLLAMA_MODEL` | Vision model (e.g., `llava`, `llama3.2-vision`) |
-| `HF_TOKEN` | Hugging Face token for voice analysis |
-| `QDRANT_HOST` | Vector database host (default: `localhost`) |
-
-See [Configuration Guide](docs/configuration.md) for complete documentation.
-
-### Docker Services
-
-Start required services:
-
-```bash
-docker compose up qdrant -d
-```
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OLLAMA_MODEL` | `llava:7b` | Vision model |
+| `AI_PROVIDER_VISION` | `ollama` | VLM provider (ollama/gemini) |
+| `AI_PROVIDER_TEXT` | `ollama` | Text LLM provider |
+| `HF_TOKEN` | - | Voice analysis |
+| `QDRANT_HOST` | `localhost` | Vector DB |
 
 ---
 
-For detailed development workflows, see the [Developer Guide](docs/development.md).
+## Response Schema
+
+```json
+{
+  "video_id": "abc123",
+  "file_path": "/path/to/video.mp4",
+  "start_time": 10.0,
+  "end_time": 15.0,
+  "score": 0.87,
+  "match_reasons": ["identity_face", "semantic_visual", "vlm_verified"],
+  "explanation": "Man in blue shirt bowling shown clearly",
+  "thumbnail_url": "/api/media/thumbnail?path=...&time=10.0"
+}
+```
+
+Score is normalized 0.0-1.0 (80% VLM weight when reranking enabled).
+
+---
+
+For detailed docs: `docs/development.md`

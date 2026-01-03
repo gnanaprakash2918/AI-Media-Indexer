@@ -109,8 +109,12 @@ if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS" = false ]; then
     echo -e "${WHITE}  [5] Custom (use command line flags)${NC}"
     echo -e "${GRAY}      - Run: ./start.sh --help for options${NC}"
     echo ""
+    echo -e "${RED}  [6] NUCLEAR (Reset + Dev Mode)${NC}"
+    echo -e "${GRAY}      - Wipe ALL data + recreate venv + pull images${NC}"
+    echo -e "${GRAY}      - Complete fresh start from scratch${NC}"
+    echo ""
     
-    read -p "Enter choice [1-5] or press Enter for Quick Start: " choice
+    read -p "Enter choice [1-6] or press Enter for Quick Start: " choice
     
     case $choice in
         1)
@@ -155,6 +159,13 @@ if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS" = false ]; then
             echo -e "${GRAY}    python -m tools.convert \"/path/to/video.webm\" --preset ultrafast${NC}"
             echo ""
             exit 0
+            ;;
+        6)
+            SKIP_CLEAN=false
+            NUKE_QDRANT=true
+            RECREATE_VENV=true
+            PULL_IMAGES=true
+            echo -e "\n${RED}  >> NUCLEAR selected (wiping everything + fresh venv + pulling images)${NC}"
             ;;
         "")
             SKIP_CLEAN=true

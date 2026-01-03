@@ -1,12 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any
+import hashlib
 
-from pydantic import BaseModel
-
-from config import settings
 from core.retrieval.query_parser import QueryParser, SearchIntent
 from core.retrieval.reranker import VLMReranker, RankedResult
+from core.retrieval.calibration import normalize_vector_score, combine_scores, generate_thumbnail_url
+from core.schemas import MatchReason, SearchResultDetail
 from core.storage.identity_graph import identity_graph
 from core.utils.logger import log
 
@@ -18,17 +17,6 @@ class SearchCandidate:
     end_time: float
     score: float
     payload: dict = field(default_factory=dict)
-
-
-class EnhancedSearchResult(BaseModel):
-    video_path: str
-    start_time: float
-    end_time: float
-    confidence: float
-    modalities: list[str] = []
-    matched_identities: list[str] = []
-    dense_context: str = ""
-    vlm_reason: str = ""
 
 
 class SearchEngine:
@@ -49,21 +37,22 @@ class SearchEngine:
         query: str,
         use_rerank: bool = False,
         limit: int = 20,
-    ) -> list[EnhancedSearchResult]:
+    ) -> list[SearchResultDetail]:
         intent = self._parser.parse(query)
         log(f"Parsed intent: {intent}")
         
+        identity_matched = bool(intent.identity_names)
         video_filter = self._get_identity_filter(intent.identity_names)
         candidates = await self._vector_search(intent, video_filter, limit)
         
         if not candidates:
             return []
         
-        if use_rerank and candidates:
+        if use_rerank:
             ranked = self._reranker.rerank(query, candidates, max_candidates=5)
-            return self._ranked_to_results(ranked, intent)
+            return self._ranked_to_results(ranked, intent, identity_matched)
         
-        return self._candidates_to_results(candidates, intent)
+        return self._candidates_to_results(candidates, intent, identity_matched)
     
     def _get_identity_filter(self, names: list[str]) -> list[str] | None:
         if not names:
@@ -129,25 +118,36 @@ class SearchEngine:
         
         return candidates
     
+    def _generate_video_id(self, path: str) -> str:
+        return hashlib.md5(path.encode()).hexdigest()[:12]
+    
     def _candidates_to_results(
         self,
         candidates: list[SearchCandidate],
         intent: SearchIntent,
-    ) -> list[EnhancedSearchResult]:
+        identity_matched: bool,
+    ) -> list[SearchResultDetail]:
         results = []
         for c in candidates:
-            modalities = ["visual"]
+            reasons = []
+            if identity_matched:
+                reasons.append(MatchReason.IDENTITY_FACE)
+            reasons.append(MatchReason.SEMANTIC_VISUAL)
             if intent.has_dialogue:
-                modalities.append("speech")
+                reasons.append(MatchReason.SEMANTIC_AUDIO)
             
-            results.append(EnhancedSearchResult(
-                video_path=c.video_path,
+            normalized_score = normalize_vector_score(c.score)
+            
+            results.append(SearchResultDetail(
+                video_id=self._generate_video_id(c.video_path),
+                file_path=c.video_path,
                 start_time=c.start_time,
                 end_time=c.end_time,
-                confidence=c.score * 100,
-                modalities=modalities,
-                matched_identities=intent.identity_names,
+                score=normalized_score,
+                match_reasons=reasons,
+                thumbnail_url=generate_thumbnail_url(c.video_path, c.start_time),
                 dense_context=c.payload.get("action", ""),
+                matched_identities=intent.identity_names,
             ))
         
         return results
@@ -156,22 +156,31 @@ class SearchEngine:
         self,
         ranked: list[RankedResult],
         intent: SearchIntent,
-    ) -> list[EnhancedSearchResult]:
+        identity_matched: bool,
+    ) -> list[SearchResultDetail]:
         results = []
         for r in ranked:
-            modalities = ["visual", "vlm_verified"]
+            reasons = []
+            if identity_matched:
+                reasons.append(MatchReason.IDENTITY_FACE)
+            reasons.append(MatchReason.SEMANTIC_VISUAL)
+            reasons.append(MatchReason.VLM_VERIFIED)
             if intent.has_dialogue:
-                modalities.append("speech")
+                reasons.append(MatchReason.SEMANTIC_AUDIO)
             
-            results.append(EnhancedSearchResult(
-                video_path=r.candidate.video_path,
+            combined_score = combine_scores(r.candidate.score, r.vlm_confidence)
+            
+            results.append(SearchResultDetail(
+                video_id=self._generate_video_id(r.candidate.video_path),
+                file_path=r.candidate.video_path,
                 start_time=r.candidate.start_time,
                 end_time=r.candidate.end_time,
-                confidence=float(r.vlm_confidence),
-                modalities=modalities,
-                matched_identities=intent.identity_names,
+                score=combined_score,
+                match_reasons=reasons,
+                explanation=r.vlm_reason,
+                thumbnail_url=generate_thumbnail_url(r.candidate.video_path, r.candidate.start_time),
                 dense_context=r.candidate.payload.get("action", ""),
-                vlm_reason=r.vlm_reason,
+                matched_identities=intent.identity_names,
             ))
         
         return results

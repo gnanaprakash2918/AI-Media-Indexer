@@ -95,8 +95,12 @@ if (-not $NoInteractive -and -not $anyFlagsSet) {
     Write-Host "  [5] Custom (use command line flags)" -ForegroundColor White
     Write-Host "      - Run: ./start.ps1 -help for options" -ForegroundColor Gray
     Write-Host ""
+    Write-Host "  [6] NUCLEAR (Reset + Dev Mode)" -ForegroundColor DarkRed
+    Write-Host "      - Wipe ALL data + recreate venv + pull images" -ForegroundColor Gray
+    Write-Host "      - Complete fresh start from scratch" -ForegroundColor Gray
+    Write-Host ""
     
-    $choice = Read-Host "Enter choice [1-5] or press Enter for Quick Start"
+    $choice = Read-Host "Enter choice [1-6] or press Enter for Quick Start"
     
     switch ($choice) {
         "1" { 
@@ -141,6 +145,13 @@ if (-not $NoInteractive -and -not $anyFlagsSet) {
             Write-Host "    python -m tools.convert `"C:\path\to\video.webm`" --preset ultrafast" -ForegroundColor Gray
             Write-Host ""
             exit 0
+        }
+        "6" {
+            $SkipClean = $false
+            $NukeQdrant = $true
+            $RecreateVenv = $true
+            $PullImages = $true
+            Write-Host "`n  >> NUCLEAR selected (wiping everything + fresh venv + pulling images)" -ForegroundColor DarkRed
         }
         "" { 
             $SkipClean = $true
