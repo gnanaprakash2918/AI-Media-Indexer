@@ -5,7 +5,9 @@ for storing and retrieving media segments, frames, faces, and voice embeddings.
 """
 from __future__ import annotations
 
+import time
 import uuid
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,27 @@ from config import settings
 from core.utils.hardware import select_embedding_model
 from core.utils.logger import log
 from core.utils.observe import observe
+
+
+def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
+    """Decorator to retry Qdrant operations on connection errors (WinError 10053, etc.)."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (OSError, ConnectionError, ConnectionResetError) as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        log(f"Qdrant connection error (attempt {attempt + 1}): {e}, retrying...")
+                        time.sleep(delay * (attempt + 1))
+                    else:
+                        log(f"Qdrant connection failed after {max_retries} attempts: {e}")
+            raise last_error
+        return wrapper
+    return decorator
 
 
 # Auto-select embedding model based on available VRAM

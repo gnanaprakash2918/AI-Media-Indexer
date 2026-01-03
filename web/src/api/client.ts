@@ -93,6 +93,11 @@ export const resumeJob = async (jobId: string) => {
     return res.data;
 };
 
+export const deleteJob = async (jobId: string) => {
+    const res = await apiClient.delete(`/jobs/${jobId}`);
+    return res.data;
+};
+
 // Faces (HITL)
 export const getUnresolvedFaces = async (limit = 50) => {
     const res = await apiClient.get('/faces/unresolved', { params: { limit } });

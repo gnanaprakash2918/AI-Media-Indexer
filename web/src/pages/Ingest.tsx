@@ -21,7 +21,7 @@ import {
 } from '@mui/material';
 import { CloudUpload, Stop, FolderOpen, Add, Delete, Pause, PlayArrow } from '@mui/icons-material';
 
-import { ingestMedia, getJobs, cancelJob, pauseJob, resumeJob, deleteLibraryItem } from '../api/client';
+import { ingestMedia, getJobs, cancelJob, pauseJob, resumeJob, deleteJob } from '../api/client';
 
 type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused';
 
@@ -190,7 +190,7 @@ export default function IngestPage() {
     });
 
     const deleteMutation = useMutation({
-        mutationFn: deleteLibraryItem,
+        mutationFn: deleteJob,
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
     });
 
@@ -409,10 +409,10 @@ export default function IngestPage() {
                                     key={job.job_id}
                                     divider={idx < historyJobs.length - 1}
                                     secondaryAction={
-                                        <Tooltip title="Delete from Library">
+                                        <Tooltip title="Delete Job">
                                             <IconButton edge="end" aria-label="delete" onClick={() => {
-                                                if (window.confirm('Delete this media from the library? This will remove all index data and thumbnails.')) {
-                                                    deleteMutation.mutate(job.file_path);
+                                                if (window.confirm('Delete this job from history?')) {
+                                                    deleteMutation.mutate(job.job_id);
                                                 }
                                             }}>
                                                 <Delete fontSize="small" />

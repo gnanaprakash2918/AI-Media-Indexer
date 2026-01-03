@@ -14,18 +14,33 @@ postgres_data/
 clickhouse_data/
 minio_data/
 thumbnails/
-get_files.py
-analyze_branch.py
-logs/
 .face_cache/
+.cache/
+
+# SQLite Databases (generated at runtime)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+jobs.db
+identity.db
+identity_graph.db
+
+# Logs
+logs/
+*.log
+debug.log
+debug_flow.log
+test_run.log
+app.log
+
+# Test artifacts
 tests/assets/
 tests/temp_frames/
 test_output.txt
-.cache/
+
+# Environment
 .env
-*.log
-debug_flow.log
-identity.db
 
 # Frontend (Web)
 web/node_modules/

@@ -316,7 +316,7 @@ if [ "$NUKE_QDRANT" = true ]; then
     done
 
     # 3. Wipe local bind-mount directories
-    DATA_DIRS=("qdrant_data" "qdrant_data_embedded" "thumbnails" "logs" ".cache")
+    DATA_DIRS=("qdrant_data" "qdrant_data_embedded" "thumbnails" "logs" ".cache" "jobs.db" "identity.db" "identity_graph.db")
     
     echo ""
     read -p "  [?] Also wipe Langfuse/Postgres data (Resets API keys)? (y/N): " wipe_langfuse

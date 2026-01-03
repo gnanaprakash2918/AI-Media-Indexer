@@ -357,7 +357,7 @@ if ($NukeQdrant) {
     }
 
     # 3. Wipe local bind-mount directories
-    $dataDirs = @("qdrant_data", "qdrant_data_embedded", "thumbnails", "logs", ".cache")
+    $dataDirs = @("qdrant_data", "qdrant_data_embedded", "thumbnails", "logs", ".cache", "jobs.db", "identity.db")
     
     # Optional: Wipe Postgres (Langfuse)
     Write-Host ""
