@@ -38,6 +38,18 @@ MAX_SEGMENT_DURATION: Final = 30.0
 EMBEDDING_VERSION: Final = "wespeaker_resnet34_v1_l2"
 
 
+def is_audio_silent(audio_data: np.ndarray, threshold_db: float | None = None) -> bool:
+    if threshold_db is None:
+        threshold_db = settings.audio_rms_silence_db
+    if audio_data.size == 0:
+        return True
+    rms = np.sqrt(np.mean(audio_data.astype(np.float64) ** 2))
+    if rms < 1e-10:
+        return True
+    rms_db = 20 * np.log10(rms + 1e-10)
+    return rms_db < threshold_db
+
+
 class VoiceProcessor:
     """Handles speaker diarization and voice embedding extraction."""
 

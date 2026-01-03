@@ -19,9 +19,11 @@ from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
+from core.processing.scene_detector import detect_scenes, extract_scene_frame
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph, FaceTrack
+from core.llm.vlm_factory import get_vlm_client
 from core.utils.frame_sampling import FrameSampler
 from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
@@ -159,10 +161,14 @@ class IngestionPipeline:
             await retry(lambda: self._process_frames(path, job_id, total_duration=duration))
             
             with open("debug_flow.log", "a") as f: f.write(f"Frames complete cleanup...\n")
-            self._cleanup_memory("frames_complete")  # Unload Vision + Faces
+            self._cleanup_memory("frames_complete")
             
             if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
                 return job_id
+
+            # Dense Scene Captioning (VLM on detected scene boundaries)
+            progress_tracker.update(job_id, 90.0, stage="scene_captions", message="Generating scene captions")
+            await self._process_scene_captions(path, job_id)
 
             progress_tracker.complete(job_id, message=f"Completed: {path.name}")
 
@@ -495,6 +501,48 @@ class IngestionPipeline:
         if hasattr(self, '_face_track_builder'):
             del self._face_track_builder
         self._cleanup_memory()
+
+    @observe("scene_captioning")
+    async def _process_scene_captions(self, path: Path, job_id: str | None = None) -> None:
+        scenes = detect_scenes(path)
+        if not scenes:
+            logger.info(f"No scene boundaries detected in {path.name}")
+            return
+        
+        vlm = get_vlm_client()
+        prompt = (
+            "Describe this scene in detail: actions, objects, colors, expressions, "
+            "and atmosphere. Be specific about what people are doing."
+        )
+        
+        scene_captions: list[dict] = []
+        for idx, scene in enumerate(scenes):
+            if job_id and progress_tracker.is_cancelled(job_id):
+                break
+            
+            frame_bytes = extract_scene_frame(path, scene.mid_time)
+            if not frame_bytes:
+                continue
+            
+            try:
+                caption = vlm.generate_caption_from_bytes(frame_bytes, prompt)
+                if caption:
+                    scene_captions.append({
+                        "start": scene.start_time,
+                        "end": scene.end_time,
+                        "mid_time": scene.mid_time,
+                        "dense_context": caption,
+                    })
+            except Exception as e:
+                logger.warning(f"VLM caption failed for scene {idx}: {e}")
+        
+        if scene_captions and self.db:
+            try:
+                self.db.store_scene_metadata(str(path), scene_captions)
+            except AttributeError:
+                logger.debug("store_scene_metadata not implemented in VectorDB")
+        
+        logger.info(f"Generated {len(scene_captions)} scene captions for {path.name}")
 
     @observe("frame")
     async def _process_single_frame(

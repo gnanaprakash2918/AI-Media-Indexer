@@ -155,6 +155,35 @@ class Settings(BaseSettings):
         default=0.45,
         description="Voice clustering cosine distance (lower=stricter, 0.45=55% similarity required)"
     )
+    
+    # Audio Processing
+    audio_rms_silence_db: float = Field(
+        default=-40.0,
+        description="RMS threshold in dB below which audio is considered silent"
+    )
+    whisper_language_lock: bool = Field(
+        default=True,
+        description="Lock Whisper to detected language after first 30s"
+    )
+    
+    # Face Track Builder
+    face_track_iou_threshold: float = Field(default=0.3, description="Min IoU for face track continuity")
+    face_track_cosine_threshold: float = Field(default=0.5, description="Min cosine sim for face track")
+    face_track_max_missing_frames: int = Field(default=5, description="Frames before track finalization")
+    
+    # Scene Detection
+    scene_detect_threshold: float = Field(default=27.0, description="PySceneDetect threshold (lower=more scenes)")
+    scene_detect_min_length: float = Field(default=1.0, description="Min scene length in seconds")
+    
+    # AI Provider Strategy (runtime switchable)
+    ai_provider_vision: str = Field(
+        default="ollama",
+        description="VLM provider for dense captioning (ollama/gemini)"
+    )
+    ai_provider_text: str = Field(
+        default="ollama",
+        description="LLM provider for query parsing (ollama/gemini)"
+    )
 
     # Resource
     enable_resource_monitoring: bool = True

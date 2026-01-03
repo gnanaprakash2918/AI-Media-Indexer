@@ -68,16 +68,13 @@ class AudioTranscriber:
     ]
 
     def __init__(self) -> None:
-        """Initialize the AudioTranscriber instance.
-
-        Initializes internal pipeline references and prints device information.
-        """
         self._model: WhisperModel | None = None
         self._batched_model: BatchedInferencePipeline | None = None
         self._current_model_size: str | None = None
         self.device = settings.device
         self.compute_type: str = "int8_float16" if self.device == "cuda" else "int8"
         self._fallback_attempted = False
+        self._locked_language: str | None = None  # Language lock for current file
 
     def __enter__(self):
         """Called when entering the 'with' block."""
@@ -547,10 +544,18 @@ class AudioTranscriber:
 
             log(f"[INFO] Running Inference on {proc_path} with {model_to_use}.")
 
+            # Language locking: detect once, force for all chunks
+            effective_lang = lang
+            if settings.whisper_language_lock:
+                if self._locked_language:
+                    effective_lang = self._locked_language
+                else:
+                    effective_lang = None  # Auto-detect on first run
+
             segments, info = self._batched_model.transcribe(
                 str(proc_path),
                 batch_size=settings.batch_size,
-                language=lang,
+                language=effective_lang,
                 task="transcribe",
                 beam_size=3,
                 condition_on_previous_text=False,
@@ -567,6 +572,11 @@ class AudioTranscriber:
                 no_speech_threshold=0.6,
                 log_prob_threshold=-1.0,
             )
+
+            # Lock detected language for subsequent chunks
+            if settings.whisper_language_lock and not self._locked_language and info.language:
+                self._locked_language = info.language
+                log(f"[INFO] Language locked to: {self._locked_language}")
 
             for segment in segments:
                 if segment.words:
