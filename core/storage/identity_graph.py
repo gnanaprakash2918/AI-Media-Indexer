@@ -166,7 +166,24 @@ class IdentityGraphManager:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_identities_name ON identities(name)")
             
             conn.commit()
+            conn.commit()
             log("Identity Graph database initialized", db_path=self.db_path)
+
+    def get_stats(self) -> dict[str, int]:
+        """Get graph statistics."""
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("""
+                SELECT 
+                    (SELECT COUNT(*) FROM identities) as identities,
+                    (SELECT COUNT(*) FROM face_tracks) as face_tracks,
+                    (SELECT COUNT(*) FROM voice_tracks) as voice_tracks
+            """).fetchone()
+            return {
+                "identities": row[0],
+                "tracks": row[1] + row[2],
+                "face_tracks": row[1],
+                "voice_tracks": row[2],
+            }
     
     # =========================================================================
     # IDENTITY OPERATIONS

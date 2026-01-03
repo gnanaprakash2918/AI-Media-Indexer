@@ -91,14 +91,19 @@ class VisualEmbedder:
         try:
             image = Image.open(image_path).convert("RGB")
             
-            inputs = self._processor(
+            processor = self._processor
+            model = self._model
+            if processor is None or model is None:
+                return [0.0] * self.dimension
+                
+            inputs = processor(
                 images=image,
                 return_tensors="pt",
             )
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             with torch.no_grad():
-                features = self._model.get_image_features(**inputs)
+                features = model.get_image_features(**inputs)
                 # L2 normalize for cosine similarity
                 features = features / features.norm(dim=-1, keepdim=True)
             
@@ -124,7 +129,12 @@ class VisualEmbedder:
         self._load_model()
         
         try:
-            inputs = self._processor(
+            processor = self._processor
+            model = self._model
+            if processor is None or model is None:
+                return [0.0] * self.dimension
+
+            inputs = processor(
                 text=[text],
                 return_tensors="pt",
                 padding=True,
@@ -134,7 +144,7 @@ class VisualEmbedder:
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             with torch.no_grad():
-                features = self._model.get_text_features(**inputs)
+                features = model.get_text_features(**inputs)
                 # L2 normalize for cosine similarity
                 features = features / features.norm(dim=-1, keepdim=True)
             
@@ -170,14 +180,19 @@ class VisualEmbedder:
                     log(f"[VisualEmbedder] Failed to load {path}: {e}")
                     images.append(Image.new("RGB", (384, 384)))  # Placeholder
             
-            inputs = self._processor(
+            processor = self._processor
+            model = self._model
+            if processor is None or model is None:
+                return []
+
+            inputs = processor(
                 images=images,
                 return_tensors="pt",
             )
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             with torch.no_grad():
-                features = self._model.get_image_features(**inputs)
+                features = model.get_image_features(**inputs)
                 features = features / features.norm(dim=-1, keepdim=True)
             
             for j in range(len(images)):

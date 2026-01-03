@@ -61,6 +61,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import numpy as np
+from qdrant_client.http import models
 
 from config import settings
 from core.ingestion.pipeline import IngestionPipeline
@@ -717,34 +718,7 @@ def create_app() -> FastAPI:
             )
         return {"status": "cancelled", "job_id": job_id}
 
-    @app.post("/jobs/{job_id}/pause")
-    async def pause_job(job_id: str):
-        """Pause a running job."""
-        success = progress_tracker.pause(job_id)
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail="Job not found or not running",
-            )
-        return {"status": "paused", "job_id": job_id}
 
-    @app.post("/jobs/{job_id}/resume")
-    async def resume_job(job_id: str, background_tasks: BackgroundTasks):
-        """Resume a paused job."""
-        # 1. Check if job exists
-        job = job_manager.get_job(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
-        
-        if job.status != JobStatus.PAUSED:
-             # Allow resuming failed/cancelled jobs too if user wants to retry? 
-             # For now strict adherence to "Resume" implies Paused.
-             # But let's allow "FAILED" or "CANCELLED" to restart as well (retry).
-             if job.status not in (JobStatus.PAUSED, JobStatus.FAILED, JobStatus.CANCELLED):
-                raise HTTPException(status_code=400, detail=f"Job is {job.status}, cannot resume")
-
-        # 2. Update status
-        progress_tracker.resume(job_id)
         
         # 3. Determine resume point
         start_time = 0.0
@@ -860,10 +834,10 @@ def create_app() -> FastAPI:
     @app.get("/identities")
     async def list_identities():
         from core.storage.identity_graph import identity_graph
-        identities = identity_graph.list_identities()
+        identities = identity_graph.get_all_identities()
         result = []
         for ident in identities:
-            tracks = identity_graph.get_tracks_for_identity(ident.id)
+            tracks = identity_graph.get_face_tracks_for_identity(ident.id)
             result.append({
                 "id": ident.id,
                 "name": ident.name,
@@ -1148,6 +1122,23 @@ def create_app() -> FastAPI:
             duration = time.perf_counter() - start_time_search
             logger.info(f"  Search complete: {len(final_results)} results | Score={min(scores):.4f}-{max(scores):.4f} | Duration={duration:.3f}s")
         
+        if not final_results:
+             logger.warning(f"No results found for query: '{q}'. Using fallback.")
+             # Fallback: return most recent indexed frames
+             fallback_results = pipeline.db.get_recent_frames(limit=10)
+             # Enrich fallback results like normal results
+             for hit in fallback_results:
+                 video = hit.get("video_path")
+                 ts = hit.get("timestamp", 0)
+                 if video:
+                     safe_path = quote(str(video))
+                     hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
+                     hit["playback_url"] = f"/media?path={safe_path}#t={ max(0, ts-3) }"
+             
+             final_results = fallback_results
+             stats["fallback"] = True
+             stats["message"] = "No exact matches found. Showing recent indexed content."
+
         return {
             "results": final_results,
             "stats": stats,
@@ -1233,7 +1224,7 @@ def create_app() -> FastAPI:
         try:
             results = pipeline.db.search_frames_hybrid(
                 query=q,
-                video_path=video_path,
+                video_paths=video_path,
                 limit=limit,
             )
             
@@ -1537,6 +1528,9 @@ def create_app() -> FastAPI:
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         
+        # 0. Get old name (for removal from frame embeddings)
+        old_name = pipeline.db.get_speaker_name_by_cluster(cluster_id)
+
         # 1. Update speaker name in DB
         updated_count = pipeline.db.set_speaker_name(cluster_id, name_request.name)
         
@@ -1610,6 +1604,21 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning(f"Failed to auto-map face: {e}")
 
+        # 3. TRIGGER RE-EMBEDDING for accuracy!
+        # Voice naming changes "Speaking: Name" parts of Identity Text
+        # We must find frames where this speaker is active and update them.
+        try:
+             # Fully implemented re-embedding logic
+             re_embedded_count = pipeline.db.re_embed_voice_cluster_frames(
+                 cluster_id=cluster_id,
+                 new_name=name_request.name,
+                 old_name=old_name
+             )
+             logger.info(f"Re-embedded {re_embedded_count} frames for voice cluster {cluster_id}")
+        except Exception as e:
+             logger.error(f"Failed to re-embed frames for voice cluster {cluster_id}: {e}")
+             re_embedded_count = 0
+
         return {"success": True, "cluster_id": cluster_id, "name": name_request.name, "updated": updated_count}
 
     @app.delete("/voices/{segment_id}")
@@ -1632,6 +1641,14 @@ def create_app() -> FastAPI:
         active_jobs = len([j for j in jobs if j.status == JobStatus.RUNNING])
         completed_jobs = len([j for j in jobs if j.status == JobStatus.COMPLETED])
         failed_jobs = len([j for j in jobs if j.status == JobStatus.FAILED])
+        
+        # Add identity graph stats
+        from core.storage.identity_graph import identity_graph
+        try:
+             identity_stats = identity_graph.get_stats()
+        except Exception:
+             identity_stats = {"identities": 0, "tracks": 0}
+
         return {
             "collections": stats,
             "jobs": {
@@ -1640,6 +1657,7 @@ def create_app() -> FastAPI:
                 "failed": failed_jobs,
                 "total": len(jobs),
             },
+            "identity_graph": identity_stats,
         }
 
     # Face Clustering Endpoints

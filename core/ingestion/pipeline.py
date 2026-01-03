@@ -42,7 +42,7 @@ class IngestionPipeline:
         qdrant_backend: str = settings.qdrant_backend,
         qdrant_host: str = settings.qdrant_host,
         qdrant_port: int = settings.qdrant_port,
-        frame_interval_seconds: int = settings.frame_interval,
+        frame_interval_seconds: float = settings.frame_interval,
         tmdb_api_key: str | None = settings.tmdb_api_key,
     ) -> None:
         """Initialize the pipeline and its sub-components."""
@@ -104,7 +104,7 @@ class IngestionPipeline:
         progress_tracker.start(
             job_id,
             file_path=str(path),
-            media_type=media_type_hint,
+            media_type=media_type_hint or "unknown",
             resume=resume,
         )
 
@@ -424,8 +424,11 @@ class IngestionPipeline:
                     # Use provided duration for 100% accuracy, fallback to metadata
                     video_duration = total_duration
                     if not video_duration:
-                        meta = self.metadata_engine.get_metadata(video_path)
-                        video_duration = meta.duration if meta and meta.duration else 0.0
+                        try:
+                            probe_data = self.prober.probe(path)
+                            video_duration = float(probe_data.get("format", {}).get("duration", 0.0))
+                        except Exception:
+                            video_duration = 0.0
                     
                     interval = float(self.frame_interval_seconds)
                     

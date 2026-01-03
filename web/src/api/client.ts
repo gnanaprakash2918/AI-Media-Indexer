@@ -171,6 +171,11 @@ export const getVoiceClusters = async () => {
     return res.data;
 };
 
+export const nameVoiceCluster = async (clusterId: number, name: string) => {
+    const res = await apiClient.post(`/voices/${clusterId}/name`, { name });
+    return res.data;
+};
+
 export const renameVoiceSpeaker = async (segmentId: string, name: string) => {
     const res = await apiClient.put(`/voices/${segmentId}/name`, { name });
     return res.data;

@@ -35,7 +35,7 @@ class Sam3Tracker:
         self._initialized = True
         
         try:
-            from sam2.build_sam import build_sam2_video_predictor
+            from sam2.build_sam import build_sam2_video_predictor # type: ignore
             
             checkpoint = settings.model_cache_dir / "sam2" / "sam2_hiera_large.pt"
             config = "sam2_hiera_l.yaml"
@@ -63,7 +63,10 @@ class Sam3Tracker:
             return False
             
         try:
-            self.inference_state = self.predictor.init_state(str(video_path))
+            if self.predictor:
+                self.inference_state = self.predictor.init_state(str(video_path))
+            else:
+                return False
             log(f"[SAM3] Initialized video: {video_path.name}")
             return True
         except Exception as e:

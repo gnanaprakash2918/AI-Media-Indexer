@@ -65,8 +65,8 @@ class GeminiVLM(VLMClient):
                 import google.generativeai as genai
                 if not self.api_key:
                     raise ValueError("GOOGLE_API_KEY not set")
-                genai.configure(api_key=self.api_key)
-                self._client = genai.GenerativeModel(self.model)
+                genai.configure(api_key=self.api_key) # type: ignore
+                self._client = genai.GenerativeModel(self.model) # type: ignore
             except ImportError:
                 raise ImportError("google-generativeai not installed")
         return self._client

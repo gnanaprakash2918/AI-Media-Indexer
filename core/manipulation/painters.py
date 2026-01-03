@@ -4,6 +4,9 @@ import shutil
 from pathlib import Path
 from abc import ABC, abstractmethod
 
+import cv2
+import numpy as np
+
 from core.utils.logger import log
 
 

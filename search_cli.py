@@ -26,17 +26,17 @@ async def run_search(query: str, use_rerank: bool, limit: int, as_json: bool) ->
         print(f"{'='*60}\n")
         
         for i, r in enumerate(results, 1):
-            print(f"[{i}] {r.video_path}")
+            print(f"[{i}] {r.file_path}")
             print(f"    Time: {r.start_time:.1f}s - {r.end_time:.1f}s")
-            print(f"    Confidence: {r.confidence:.0f}%")
-            print(f"    Modalities: {', '.join(r.modalities)}")
+            print(f"    Score: {r.score * 100:.0f}%")
+            print(f"    Reasons: {', '.join(r.match_reasons)}")
             if r.matched_identities:
                 print(f"    Identities: {', '.join(r.matched_identities)}")
             if r.dense_context:
                 ctx = r.dense_context[:100] + "..." if len(r.dense_context) > 100 else r.dense_context
                 print(f"    Context: {ctx}")
-            if r.vlm_reason:
-                print(f"    VLM: {r.vlm_reason}")
+            if r.explanation:
+                print(f"    Explanation: {r.explanation}")
             print()
     finally:
         db.close()

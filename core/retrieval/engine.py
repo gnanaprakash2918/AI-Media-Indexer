@@ -62,7 +62,7 @@ class SearchEngine:
         for name in names:
             identity = identity_graph.get_identity_by_name(name)
             if identity:
-                tracks = identity_graph.get_tracks_for_identity(identity.id)
+                tracks = identity_graph.get_face_tracks_for_identity(identity.id)
                 for track in tracks:
                     video_ids.add(track.media_id)
         
@@ -89,10 +89,11 @@ class SearchEngine:
             search_text = "video scene"
         
         try:
-            results = self.db.search_media_frames(
+            # results = self.db.search_media_frames(  # Old invalid method
+            results = self.db.search_frames_hybrid(
                 query=search_text,
                 limit=limit,
-                video_path_filter=video_filter,
+                video_paths=video_filter,
             )
         except Exception as e:
             log(f"Vector search error: {e}")
@@ -100,13 +101,15 @@ class SearchEngine:
         
         candidates = []
         for r in results:
-            payload = r.payload if hasattr(r, "payload") else {}
             if isinstance(r, dict):
                 payload = r
+                score = r.get("score", 0.5)
+            else:
+                payload = getattr(r, "payload", {})
+                score = getattr(r, "score", 0.5)
             
             video_path = payload.get("video_path", payload.get("media_path", ""))
             timestamp = payload.get("timestamp", 0.0)
-            score = r.score if hasattr(r, "score") else payload.get("score", 0.5)
             
             candidates.append(SearchCandidate(
                 video_path=video_path,

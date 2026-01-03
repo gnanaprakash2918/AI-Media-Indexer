@@ -38,7 +38,9 @@ def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
                         time.sleep(delay * (attempt + 1))
                     else:
                         log(f"Qdrant connection failed after {max_retries} attempts: {e}")
-            raise last_error
+            if last_error:
+                raise last_error
+            raise RuntimeError("Qdrant retry failed")
         return wrapper
     return decorator
 
@@ -500,6 +502,35 @@ class VectorDB:
 
         return results
 
+    def get_recent_frames(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Get most recently indexed frames as fallback for empty search results.
+        
+        Args:
+            limit: Maximum number of results.
+            
+        Returns:
+            List of recent frames with payload data.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                results.append({
+                    "id": str(point.id),
+                    "score": 0.5,  # Default score for fallback results
+                    "fallback": True,
+                    **payload,
+                })
+            return results
+        except Exception:
+            return []
+
     def get_cluster_id_by_name(self, name: str) -> int | None:
         """Resolve a person's name to their cluster ID.
 
@@ -512,14 +543,14 @@ class VectorDB:
             The cluster_id if found, None otherwise.
         """
         try:
-            # Case-insensitive search for name
+            # Exact match search for name (case-sensitive)
             resp = self.client.scroll(
                 collection_name=self.FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
                             key="name",
-                            match=models.MatchText(text=name),
+                            match=models.MatchValue(value=name),
                         )
                     ]
                 ),
@@ -1712,7 +1743,7 @@ class VectorDB:
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
-                            key="cluster_id",
+                            key="voice_cluster_id",
                             match=models.MatchValue(value=cluster_id),
                         )
                     ]
@@ -1737,14 +1768,14 @@ class VectorDB:
             Number of updated segments.
         """
         try:
-            # Update all segments with this cluster_id
+            # Update all segments with this voice_cluster_id
             self.client.set_payload(
                 collection_name=self.VOICE_COLLECTION,
                 payload={"speaker_name": name},
                 points=models.Filter(
                     must=[
                         models.FieldCondition(
-                            key="cluster_id",
+                            key="voice_cluster_id",
                             match=models.MatchValue(value=cluster_id),
                         )
                     ]
@@ -1795,7 +1826,7 @@ class VectorDB:
     def search_frames_hybrid(
         self,
         query: str,
-        video_path: str | None = None,
+        video_paths: str | list[str] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """SOTA hybrid search combining vector + keyword + identity.
@@ -1808,7 +1839,7 @@ class VectorDB:
         
         Args:
             query: Natural language search query.
-            video_path: Optional filter to specific video.
+            video_paths: Optional filter to specific video(s).
             limit: Maximum results to return.
             
         Returns:
@@ -1843,10 +1874,12 @@ class VectorDB:
         
         # 2. Build video path filter
         video_filter = None
-        if video_path:
+        if video_paths:
+            if isinstance(video_paths, str):
+                video_paths = [video_paths]
             video_filter = models.FieldCondition(
                 key="video_path",
-                match=models.MatchValue(value=video_path),
+                match=models.MatchAny(any=video_paths),
             )
         
         # Combine filters
@@ -2004,9 +2037,92 @@ class VectorDB:
             log(f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}")
             return True
             
+            log(f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}")
+            return True
+            
         except Exception as e:
             log(f"Failed to update frame identity: {e}")
             return False
+
+    def re_embed_voice_cluster_frames(self, cluster_id: int, new_name: str, old_name: str | None = None) -> int:
+        """Update and re-embed all frames associated with a voice cluster.
+        
+        Args:
+            cluster_id: The voice cluster ID being renamed.
+            new_name: The new speaker name.
+            old_name: The previous speaker name (to remove from lists).
+            
+        Returns:
+            Number of frames updated.
+        """
+        try:
+            # 1. Get all voice segments for this cluster
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="voice_cluster_id", match=models.MatchValue(value=cluster_id))
+                ]),
+                limit=10000, # Assume reasonable limit for single cluster
+                with_payload=True,
+            )
+            segments = resp[0]
+            
+            if not segments:
+                return 0
+                
+            updated_count = 0
+            processed_frames = set() # Avoid double processing same frame
+            
+            # 2. Iterate segments and find frames
+            for seg in segments:
+                payload = seg.payload or {}
+                media_path = payload.get("media_path") or payload.get("audio_path")
+                start = payload.get("start", 0)
+                end = payload.get("end", 0)
+                
+                if not media_path:
+                    continue
+                    
+                # Find frames in this time range for this video
+                frames_resp = self.client.scroll(
+                    collection_name=self.MEDIA_COLLECTION,
+                    scroll_filter=models.Filter(must=[
+                         models.FieldCondition(key="media_path", match=models.MatchValue(value=media_path)),
+                         models.FieldCondition(key="timestamp", range=models.Range(gte=start, lte=end))
+                    ]),
+                    with_payload=True,
+                    limit=100 # usually a few frames per segment
+                )
+                frames = frames_resp[0]
+                
+                for frame in frames:
+                    if frame.id in processed_frames:
+                        continue
+                        
+                    current_payload = frame.payload or {}
+                    face_names = current_payload.get("face_names", [])
+                    speaker_names = current_payload.get("speaker_names", [])
+                    
+                    # Update speaker names list
+                    # Remove old name if it exists
+                    if old_name and old_name in speaker_names:
+                        speaker_names = [n for n in speaker_names if n != old_name]
+                        
+                    # Add new name if not present
+                    if new_name not in speaker_names:
+                        speaker_names.append(new_name)
+                    
+                    # 3. Call update_frame_identity_text to re-embed
+                    if self.update_frame_identity_text(str(frame.id), face_names, speaker_names):
+                        updated_count += 1
+                        
+                    processed_frames.add(frame.id)
+                    
+            return updated_count
+
+        except Exception as e:
+            log(f"Error re-embedding voice cluster frames: {e}")
+            return 0
 
     @observe("db_delete_media")
     def delete_media_by_path(self, media_path: str) -> None:
@@ -2048,3 +2164,14 @@ class VectorDB:
                 )
             except Exception as e:
                 log(f"Failed to delete from {collection}: {e}")
+
+    def store_scene_metadata(self, media_path: str, scenes: list[dict]) -> None:
+        """Store scene captions (Placeholder).
+        
+        Args:
+            media_path: Path to the media file.
+            scenes: List of scene dictionaries with context.
+        """
+        # TODO: Implement scene storage if needed. 
+        # Currently just a stub to satisfy Pylance/Pipeline.
+        log(f"Received {len(scenes)} scenes for {media_path} (Storage not implemented)")

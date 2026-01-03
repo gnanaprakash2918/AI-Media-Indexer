@@ -62,7 +62,7 @@ class VideoRedactor:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v') # type: ignore
         temp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
         writer = cv2.VideoWriter(temp_video.name, fourcc, fps, (width, height))
         
@@ -110,7 +110,7 @@ class VideoRedactor:
         if not identity:
             return None
         
-        tracks = identity_graph.get_tracks_for_identity(identity_id)
+        tracks = identity_graph.get_face_tracks_for_identity(identity_id)
         if not tracks:
             return None
         

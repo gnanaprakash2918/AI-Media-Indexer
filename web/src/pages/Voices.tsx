@@ -39,6 +39,7 @@ import {
     getVoiceClusters,
     moveVoiceToCluster,
     createNewVoiceCluster,
+    nameVoiceCluster,
 } from '../api/client';
 
 interface VoiceSegment {
@@ -68,6 +69,8 @@ export const Voices: React.FC = () => {
     const [tab, setTab] = useState(0);
     const [renameDialogOpen, setRenameDialogOpen] = useState(false);
     const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+    const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null);
+    const [isClusterRename, setIsClusterRename] = useState(false);
     const [newName, setNewName] = useState('');
     const [isRenaming, setIsRenaming] = useState(false);
     const [moveDialogOpen, setMoveDialogOpen] = useState(false);
@@ -95,20 +98,37 @@ export const Voices: React.FC = () => {
     };
 
     const handleRename = async () => {
-        if (!selectedSegmentId || !newName.trim()) return;
+        if (!newName.trim()) return;
+
         setIsRenaming(true);
         try {
-            await renameVoiceSpeaker(selectedSegmentId, newName.trim());
+            if (isClusterRename && selectedClusterId !== null) {
+                await nameVoiceCluster(selectedClusterId, newName.trim());
+            } else if (selectedSegmentId) {
+                await renameVoiceSpeaker(selectedSegmentId, newName.trim());
+            }
+
             await loadData();
             setRenameDialogOpen(false);
             setSelectedSegmentId(null);
+            setSelectedClusterId(null);
             setNewName('');
-        } catch (err) { console.error(err); setError('Failed to rename speaker'); }
+        } catch (err) { console.error(err); setError('Failed to rename'); }
         finally { setIsRenaming(false); }
     };
 
     const openRenameDialog = (segmentId: string, currentName?: string) => {
         setSelectedSegmentId(segmentId);
+        setSelectedClusterId(null);
+        setIsClusterRename(false);
+        setNewName(currentName || '');
+        setRenameDialogOpen(true);
+    };
+
+    const openClusterRenameDialog = (clusterId: number, currentName?: string) => {
+        setSelectedClusterId(clusterId);
+        setSelectedSegmentId(null);
+        setIsClusterRename(true);
         setNewName(currentName || '');
         setRenameDialogOpen(true);
     };
@@ -209,9 +229,18 @@ export const Voices: React.FC = () => {
                             <Paper key={cluster.cluster_id} sx={{ mb: 2, overflow: 'hidden' }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', p: 2, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }} onClick={() => toggleClusterExpand(cluster.cluster_id)}>
                                     <Badge badgeContent={cluster.segment_count} color="primary" sx={{ mr: 2 }}><RecordVoiceOver /></Badge>
-                                    <Box sx={{ flex: 1 }}>
-                                        {cluster.speaker_name ? <Chip label={cluster.speaker_name} color="success" size="small" /> : <Typography variant="body1" fontWeight={600}>Voice Cluster #{cluster.cluster_id}</Typography>}
-                                        <Typography variant="caption" color="text.secondary" display="block">{cluster.segment_count} segment{cluster.segment_count !== 1 ? 's' : ''}</Typography>
+                                    <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        <Box>
+                                            {cluster.speaker_name ? <Chip label={cluster.speaker_name} color="success" size="small" /> : <Typography variant="body1" fontWeight={600}>Voice Cluster #{cluster.cluster_id}</Typography>}
+                                            <Typography variant="caption" color="text.secondary" display="block">{cluster.segment_count} segment{cluster.segment_count !== 1 ? 's' : ''}</Typography>
+                                        </Box>
+                                        <Button
+                                            size="small"
+                                            startIcon={<Edit />}
+                                            onClick={(e) => { e.stopPropagation(); openClusterRenameDialog(cluster.cluster_id, cluster.speaker_name || ''); }}
+                                        >
+                                            Rename Cluster
+                                        </Button>
                                     </Box>
                                     {cluster.representative?.audio_path && <audio controls src={`http://localhost:8000${cluster.representative.audio_path}`} style={{ height: 28, width: 140, marginRight: 16 }} onClick={(e) => e.stopPropagation()} />}
                                     {expandedClusters.has(cluster.cluster_id) ? <ExpandLess /> : <ExpandMore />}
@@ -232,9 +261,13 @@ export const Voices: React.FC = () => {
             )}
 
             <Dialog open={renameDialogOpen} onClose={() => setRenameDialogOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Rename Speaker</DialogTitle>
+                <DialogTitle>{isClusterRename ? 'Rename Voice Cluster' : 'Rename Speaker'}</DialogTitle>
                 <DialogContent>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Enter a name for this speaker.</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        {isClusterRename
+                            ? 'Enter a name for this entire voice cluster. This will update all segments in this cluster.'
+                            : 'Enter a name for this speaker segment.'}
+                    </Typography>
                     <TextField fullWidth autoFocus label="Speaker Name" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleRename()} />
                 </DialogContent>
                 <DialogActions>

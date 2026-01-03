@@ -3,7 +3,7 @@
 import numpy as np
 import cv2
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 try:
     import onnxruntime as ort
@@ -23,7 +23,7 @@ class BiometricArbitrator:
         from config import settings
         self.model_path = model_path or settings.arcface_model_path
         self.threshold = settings.biometric_threshold
-        self.session: "ort.InferenceSession | None" = None
+        self.session: Any | None = None
         self._initialized = False
         
     def _lazy_load(self) -> bool:

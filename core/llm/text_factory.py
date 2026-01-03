@@ -75,8 +75,8 @@ class GeminiText(TextLLMClient):
                 import google.generativeai as genai
                 if not self.api_key:
                     raise ValueError("GOOGLE_API_KEY not set")
-                genai.configure(api_key=self.api_key)
-                self._client = genai.GenerativeModel(
+                genai.configure(api_key=self.api_key) # type: ignore
+                self._client = genai.GenerativeModel( # type: ignore
                     self.model,
                     generation_config={"response_mime_type": "application/json"},
                 )

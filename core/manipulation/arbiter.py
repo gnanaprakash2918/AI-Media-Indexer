@@ -48,7 +48,7 @@ class InpaintingArbiter:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             
             flow = cv2.calcOpticalFlowFarneback(
-                prev_gray, gray, None, 
+                prev_gray, gray, None,  # type: ignore
                 0.5, 3, 15, 3, 5, 1.2, 0
             )
             mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])

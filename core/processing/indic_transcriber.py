@@ -7,7 +7,7 @@ from typing import Any
 import torch
 
 try:
-    import nemo.collections.asr as nemo_asr
+    import nemo.collections.asr as nemo_asr # type: ignore
 except ImportError:
     nemo_asr = None
 
@@ -88,9 +88,12 @@ class IndicASRPipeline:
         
         try:
             with torch.no_grad():
-                transcriptions = self.model.transcribe(
-                    paths2audio_files=[str(audio_path)]
-                )
+                if self.model:
+                    transcriptions = self.model.transcribe(
+                        paths2audio_files=[str(audio_path)]
+                    )
+                else:
+                    return []
                 
             text = transcriptions[0] if transcriptions else ""
             
