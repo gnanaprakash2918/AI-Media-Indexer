@@ -12,7 +12,7 @@ import torch
 
 from config import settings
 from core.processing.extractor import FrameExtractor
-from core.processing.identity import FaceManager
+from core.processing.identity import FaceManager, FaceTrackBuilder
 from core.processing.metadata import MetadataEngine
 from core.processing.prober import MediaProbeError, MediaProber
 from core.processing.text_utils import parse_srt
@@ -21,12 +21,14 @@ from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
 from core.schemas import MediaType
 from core.storage.db import VectorDB
+from core.storage.identity_graph import identity_graph, FaceTrack
 from core.utils.frame_sampling import FrameSampler
 from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.retry import retry
+from core.ingestion.jobs import PipelineStage
 
 
 class IngestionPipeline:
@@ -351,6 +353,14 @@ class IngestionPipeline:
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)
         self.faces = FaceManager(use_gpu=settings.device == "cuda")
+        
+        # Initialize FaceTrackBuilder for temporal face grouping
+        # This creates stable per-video tracks before global identity linking
+        self._face_track_builder = FaceTrackBuilder(
+            frame_interval=float(self.frame_interval_seconds)
+        )
+        # Store video path for Identity Graph
+        self._current_media_id = str(path)
 
         # Pass time range to extractor for partial processing
         frame_generator = self.extractor.extract(
@@ -451,11 +461,39 @@ class IngestionPipeline:
             if frame_count % CLEANUP_INTERVAL == 0:
                 self._cleanup_memory()
 
+        # Finalize face tracks and store in Identity Graph
+        # This is the key step: convert frame-by-frame detections into stable tracks
+        if hasattr(self, '_face_track_builder') and self._face_track_builder:
+            try:
+                finalized_tracks = self._face_track_builder.finalize_all()
+                logger.info(f"Finalized {len(finalized_tracks)} face tracks for {path.name}")
+                
+                # Store each track in the Identity Graph
+                media_id = getattr(self, '_current_media_id', str(path))
+                for track_id, avg_embedding, metadata in self._face_track_builder.get_track_embeddings():
+                    try:
+                        identity_graph.create_face_track(
+                            media_id=media_id,
+                            start_frame=metadata["start_frame"],
+                            end_frame=metadata["end_frame"],
+                            start_time=metadata["start_time"],
+                            end_time=metadata["end_time"],
+                            avg_embedding=avg_embedding,
+                            avg_confidence=metadata.get("avg_confidence", 0.0),
+                            frame_count=metadata.get("frame_count", 1),
+                        )
+                    except Exception as track_err:
+                        logger.warning(f"Failed to store face track: {track_err}")
+            except Exception as e:
+                logger.warning(f"Track finalization failed: {e}")
+        
         # Final cleanup
         del self.vision
         del self.faces
         self.vision = None
         self.faces = None
+        if hasattr(self, '_face_track_builder'):
+            del self._face_track_builder
         self._cleanup_memory()
 
     @observe("frame")
@@ -488,6 +526,15 @@ class IngestionPipeline:
             detected_faces = await self.faces.detect_faces(frame_path)
         except Exception:
             pass
+        
+        # Feed detected faces into FaceTrackBuilder for temporal grouping
+        # This creates stable per-video tracks before global identity linking
+        if hasattr(self, '_face_track_builder') and detected_faces:
+            self._face_track_builder.process_frame(
+                faces=detected_faces,
+                frame_index=index,
+                timestamp=timestamp,
+            )
 
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"

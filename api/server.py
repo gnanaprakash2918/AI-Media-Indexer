@@ -87,15 +87,11 @@ async def lifespan(app: FastAPI):
         pipeline = IngestionPipeline()
         logger.info("Pipeline initialized")
         
-        # Restart Safety Check
-        # Mark any 'RUNNING' jobs as 'PAUSED' so user can resume them
-        active_jobs = job_manager.get_all_jobs()
-        for job in active_jobs:
-            if job.status == JobStatus.RUNNING:
-                logger.warning(f"Marking interrupted job {job.job_id} as PAUSED")
-                # Use progress_tracker to keep cache in sync
-                # Explicitly force status update in case tracker logic checks running state strictness
-                job_manager.update_job(job.job_id, status=JobStatus.PAUSED, message="Interrupted by server restart")
+        # Crash Recovery: Auto-detect stuck jobs from previous crashes
+        # Uses heartbeat timeout (60s) to detect jobs that died mid-processing
+        recovery_stats = job_manager.recover_on_startup(timeout_seconds=60.0)
+        if recovery_stats["paused"] > 0:
+            logger.warning(f"Crash recovery: Marked {recovery_stats['paused']} interrupted jobs as PAUSED (resumable)")
                 
     except Exception as exc:
         pipeline = None
@@ -635,7 +631,7 @@ def create_app() -> FastAPI:
 
     @app.get("/jobs")
     async def list_jobs():
-        """List all processing jobs."""
+        """List all processing jobs with granular progress details."""
         jobs = progress_tracker.get_all()
         return {
             "jobs": [
@@ -646,14 +642,19 @@ def create_app() -> FastAPI:
                     "file_path": j.file_path,
                     "media_type": j.media_type,
                     "current_stage": j.current_stage,
+                    "pipeline_stage": getattr(j, 'pipeline_stage', 'init'),
                     "message": j.message,
                     "started_at": j.started_at,
                     "completed_at": j.completed_at,
                     "error": j.error,
+                    # Granular stats
                     "total_frames": j.total_frames,
                     "processed_frames": j.processed_frames,
+                    "current_item_index": getattr(j, 'current_item_index', 0),
+                    "total_items": getattr(j, 'total_items', 0),
                     "timestamp": j.current_frame_timestamp,
                     "duration": j.total_duration,
+                    "last_heartbeat": getattr(j, 'last_heartbeat', 0.0),
                 }
                 for j in jobs
             ]
@@ -672,6 +673,7 @@ def create_app() -> FastAPI:
             "file_path": job.file_path,
             "media_type": job.media_type,
             "current_stage": job.current_stage,
+            "pipeline_stage": getattr(job, 'pipeline_stage', 'init'),
             "message": job.message,
             "started_at": job.started_at,
             "completed_at": job.completed_at,
@@ -679,8 +681,12 @@ def create_app() -> FastAPI:
             # Granular stats
             "total_frames": job.total_frames,
             "processed_frames": job.processed_frames,
+            "current_item_index": getattr(job, 'current_item_index', 0),
+            "total_items": getattr(job, 'total_items', 0),
             "timestamp": job.current_frame_timestamp,
             "duration": job.total_duration,
+            "last_heartbeat": getattr(job, 'last_heartbeat', 0.0),
+            "checkpoint_data": job.checkpoint_data,
         }
 
     @app.post("/jobs/{job_id}/cancel")

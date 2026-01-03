@@ -7,7 +7,7 @@ import time
 from threading import Lock
 from typing import Any, AsyncGenerator
 
-from core.ingestion.jobs import JobInfo, JobStatus, job_manager
+from core.ingestion.jobs import JobInfo, JobStatus, PipelineStage, job_manager
 
 
 class ProgressTracker:
@@ -149,7 +149,8 @@ class ProgressTracker:
 
     def _persist_throttled(self, job: JobInfo) -> None:
         """Persist job state to DB if enough time has passed."""
-        now = time.time()
+        import time as time_module
+        now = time_module.time()
         last = self._last_db_update.get(job.job_id, 0)
         
         # Update DB every 2 seconds max for progress to reduce I/O
@@ -160,15 +161,72 @@ class ProgressTracker:
                     progress=job.progress,
                     message=job.message,
                     current_stage=job.current_stage,
+                    pipeline_stage=job.pipeline_stage,
                     processed_frames=job.processed_frames,
                     total_frames=job.total_frames,
+                    current_item_index=job.current_item_index,
+                    total_items=job.total_items,
                     current_frame_timestamp=job.current_frame_timestamp,
                     total_duration=job.total_duration,
+                    last_heartbeat=now,  # Update heartbeat on every persist
                     checkpoint_data=job.checkpoint_data
                 )
                 self._last_db_update[job.job_id] = now
             except Exception:
                 pass
+    
+    def update_pipeline_stage(
+        self,
+        job_id: str,
+        stage: PipelineStage | str,
+        current_item: int = 0,
+        total_items: int = 0,
+        message: str = "",
+    ) -> None:
+        """Update the pipeline stage for granular progress tracking.
+        
+        Args:
+            job_id: Job ID to update.
+            stage: Current pipeline stage.
+            current_item: Current item index in this stage.
+            total_items: Total items to process in this stage.
+            message: Optional status message.
+        """
+        stage_value = stage.value if isinstance(stage, PipelineStage) else stage
+        
+        with self._lock:
+            if job_id not in self._cache:
+                return
+            job = self._cache[job_id]
+            job.pipeline_stage = stage_value
+            job.current_item_index = current_item
+            job.total_items = total_items
+            if message:
+                job.message = message
+            job.last_heartbeat = time.time()
+        
+        # Broadcast stage update
+        self._broadcast({
+            "event": "pipeline_stage_update",
+            "job_id": job_id,
+            "pipeline_stage": stage_value,
+            "current_item": current_item,
+            "total_items": total_items,
+            "message": message,
+        })
+        
+        # Always persist stage changes immediately (important for crash recovery)
+        try:
+            job_manager.update_job(
+                job_id,
+                pipeline_stage=stage_value,
+                current_item_index=current_item,
+                total_items=total_items,
+                last_heartbeat=time.time(),
+                message=message if message else None,
+            )
+        except Exception:
+            pass
 
     def complete(self, job_id: str, message: str = "Processing complete") -> None:
         """Mark job as complete."""
