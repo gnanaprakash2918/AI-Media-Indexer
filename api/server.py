@@ -147,6 +147,11 @@ class NameFaceRequest(BaseModel):
     """Request body for naming a face cluster."""
     name: str
 
+class AdvancedSearchRequest(BaseModel):
+    query: str
+    use_rerank: bool = False
+    limit: int = 20
+
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -792,6 +797,25 @@ def create_app() -> FastAPI:
             logger.warning(f"Thumbnail cleanup failed: {e}")
             
         return {"status": "deleted", "path": path}
+
+    @app.post("/search/advanced")
+    async def advanced_search(req: AdvancedSearchRequest):
+        from core.retrieval.engine import get_search_engine
+        if not pipeline or not pipeline.db:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        engine = get_search_engine(db=pipeline.db)
+        results = await engine.search(
+            query=req.query,
+            use_rerank=req.use_rerank,
+            limit=req.limit,
+        )
+        
+        return {
+            "query": req.query,
+            "total": len(results),
+            "results": [r.model_dump() for r in results],
+        }
 
     @app.post("/media/regenerate-thumbnails")
     async def regenerate_thumbnails(path: str = Query(...)):
