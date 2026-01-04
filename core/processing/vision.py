@@ -98,7 +98,8 @@ class VisionAnalyzer:
             log(f"[Vision] Structured analysis: {analysis.action[:50] if analysis.action else 'no action'}...")
             return analysis
         except Exception as e:
-            log(f"[Vision] Structured analysis failed: {e}, will fallback to describe()")
+            log(f"[Vision] Structured analysis failed for {image_path}: {e}")
+            log(f"[Vision] Falling back to unstructured description for {image_path.name}")
             return None
 
     @observe("vision_describe")

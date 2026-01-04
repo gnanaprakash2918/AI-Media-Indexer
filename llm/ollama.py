@@ -27,10 +27,12 @@ class OllamaLLM(LLMInterface):
     _cooldown_until: float = 0
     
     # Configuration
-    MAX_CONCURRENT_CALLS = 2  # Max parallel Ollama requests
+    MAX_CONCURRENT_CALLS = 1  # Reduced from 2 to prevent VRAM spikes
     MIN_CALL_INTERVAL = 0.5  # Seconds between calls
     MAX_CONSECUTIVE_ERRORS = 3  # Errors before cooldown
-    COOLDOWN_DURATION = 10.0  # Seconds to wait after errors
+    COOLDOWN_DURATION = 15.0  # Seconds to wait after errors
+    MAX_RETRIES = 3  # Internal retries for transient errors
+    RUNNER_CRASH_COOLDOWN = 30.0  # Wait longer for model runner to restart
 
     def __init__(
         self,
@@ -85,10 +87,18 @@ class OllamaLLM(LLMInterface):
         """Reset error counter on successful call."""
         OllamaLLM._consecutive_errors = 0
 
-    def _record_error(self) -> None:
+    def _record_error(self, error: Any = None) -> None:
         """Track errors and trigger cooldown if needed."""
         OllamaLLM._consecutive_errors += 1
-        if OllamaLLM._consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
+        
+        # Check for model runner crash
+        is_runner_crash = error and "model runner has unexpectedly stopped" in str(error).lower()
+        
+        if is_runner_crash:
+            OllamaLLM._cooldown_until = time.time() + self.RUNNER_CRASH_COOLDOWN
+            print(f"[Ollama] Model runner crash detected! Entering {self.RUNNER_CRASH_COOLDOWN}s recovery cooldown...")
+            OllamaLLM._consecutive_errors = 0 # Reset count since we take immediate long cooldown
+        elif OllamaLLM._consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
             OllamaLLM._cooldown_until = time.time() + self.COOLDOWN_DURATION
             print(f"[Ollama] Too many errors, entering {self.COOLDOWN_DURATION}s cooldown")
             OllamaLLM._consecutive_errors = 0
@@ -104,19 +114,27 @@ class OllamaLLM(LLMInterface):
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             
-            try:
-                resp = await self.client.chat(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    options={"temperature": kwargs.get("temperature", 0.0)},
-                )
-                content = resp.get("message", {}).get("content")
-                self._record_success()
-                return str(content) if content else ""
-            except Exception as e:
-                self._record_error()
-                print(f"Ollama generation failed: {e}")
-                raise RuntimeError(f"Ollama generation failed: {e}") from e
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    resp = await self.client.chat(
+                        model=self.model,
+                        messages=[{"role": "user", "content": prompt}],
+                        options={"temperature": kwargs.get("temperature", 0.0)},
+                    )
+                    content = resp.get("message", {}).get("content")
+                    self._record_success()
+                    return str(content) if content else ""
+                except Exception as e:
+                    if attempt < self.MAX_RETRIES - 1:
+                        backoff = 2 ** (attempt + 1)
+                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        await asyncio.sleep(backoff)
+                        continue
+                    
+                    self._record_error(e)
+                    print(f"Ollama generation failed after {self.MAX_RETRIES} attempts: {e}")
+                    raise RuntimeError(f"Ollama generation failed: {e}") from e
+            return "" # Should not reach here
 
     @observe("llm_generate_structured")
     async def generate_structured(
@@ -158,26 +176,34 @@ Now respond with JSON:"""
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             
-            try:
-                # Use format='json' to force JSON mode in Ollama
-                resp = await self.client.chat(
-                    model=self.model,
-                    messages=[{"role": "user", "content": full_prompt}],
-                    options={"temperature": kwargs.get("temperature", 0.0)},
-                    format="json",
-                )
-                response_text = resp.get("message", {}).get("content", "")
-                
-                if not response_text:
-                    raise RuntimeError("Empty response from Ollama")
-                
-                result = self.parse_json_response(response_text, schema)
-                self._record_success()
-                return result
-            except Exception as e:
-                self._record_error()
-                print(f"Ollama structured generation failed: {e}")
-                raise RuntimeError(f"Ollama structured generation failed: {e}") from e
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    # Use format='json' to force JSON mode in Ollama
+                    resp = await self.client.chat(
+                        model=self.model,
+                        messages=[{"role": "user", "content": full_prompt}],
+                        options={"temperature": kwargs.get("temperature", 0.0)},
+                        format="json",
+                    )
+                    response_text = resp.get("message", {}).get("content", "")
+                    
+                    if not response_text:
+                        raise RuntimeError("Empty response from Ollama")
+                    
+                    result = self.parse_json_response(response_text, schema)
+                    self._record_success()
+                    return result
+                except Exception as e:
+                    if attempt < self.MAX_RETRIES - 1:
+                        backoff = 2 ** (attempt + 1)
+                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        await asyncio.sleep(backoff)
+                        continue
+                        
+                    self._record_error(e)
+                    print(f"Ollama structured generation failed after {self.MAX_RETRIES} attempts: {e}")
+                    raise RuntimeError(f"Ollama structured generation failed: {e}") from e
+            raise RuntimeError("Exhausted retries")
 
     def _build_schema_example(self, schema: type) -> str:
         """Build a JSON example from a Pydantic schema, recursively handling nested models."""
@@ -267,19 +293,27 @@ Now respond with JSON:"""
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             
-            try:
-                resp = await self.client.chat(
-                    model=self.model,
-                    messages=messages,
-                )
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    resp = await self.client.chat(
+                        model=self.model,
+                        messages=messages,
+                    )
 
-                content = resp.get("message", {}).get("content")
-                self._record_success()
-                return str(content) if content else ""
-            except Exception as e:
-                self._record_error()
-                print(f"Ollama image description failed: {e}")
-                raise RuntimeError(f"Ollama image description failed: {e}") from e
+                    content = resp.get("message", {}).get("content")
+                    self._record_success()
+                    return str(content) if content else ""
+                except Exception as e:
+                    if attempt < self.MAX_RETRIES - 1:
+                        backoff = 2 ** (attempt + 1)
+                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        await asyncio.sleep(backoff)
+                        continue
+                        
+                    self._record_error(e)
+                    print(f"Ollama image description failed after {self.MAX_RETRIES} attempts: {e}")
+                    raise RuntimeError(f"Ollama image description failed: {e}") from e
+            return ""
 
     @observe("llm_describe_image_structured")
     async def describe_image_structured(
@@ -334,22 +368,30 @@ Return JSON:"""
         async with OllamaLLM._semaphore:
             await self._rate_limit()
             
-            try:
-                resp = await self.client.chat(
-                    model=self.model,
-                    messages=messages,
-                    format="json",  # Force JSON output
-                )
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    resp = await self.client.chat(
+                        model=self.model,
+                        messages=messages,
+                        format="json",  # Force JSON output
+                    )
 
-                content = resp.get("message", {}).get("content", "")
-                if not content:
-                    raise RuntimeError("Empty response from Ollama vision")
-                
-                result = self.parse_json_response(content, schema)
-                self._record_success()
-                return result
-                
-            except Exception as e:
-                self._record_error()
-                print(f"Ollama structured image description failed: {e}")
-                raise RuntimeError(f"Ollama structured image description failed: {e}") from e
+                    content = resp.get("message", {}).get("content", "")
+                    if not content:
+                        raise RuntimeError("Empty response from Ollama vision")
+                    
+                    result = self.parse_json_response(content, schema)
+                    self._record_success()
+                    return result
+                    
+                except Exception as e:
+                    if attempt < self.MAX_RETRIES - 1:
+                        backoff = 2 ** (attempt + 1)
+                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        await asyncio.sleep(backoff)
+                        continue
+                        
+                    self._record_error(e)
+                    print(f"Ollama structured image description failed after {self.MAX_RETRIES} attempts: {e}")
+                    raise RuntimeError(f"Ollama structured image description failed: {e}") from e
+            raise RuntimeError("Exhausted retries")
