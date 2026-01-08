@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     agent_model: str = Field(default="llama3.1", description="Model for Agent CLI")
     llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
     ollama_base_url: str = Field(default="http://localhost:11434")
-    ollama_vision_model: str = Field(default="llava:7b")
+    ollama_vision_model: str = Field(default="moondream:latest")
 
     gemini_api_key: SecretStr | None = Field(
         default=None, validation_alias="GOOGLE_API_KEY"

@@ -532,6 +532,17 @@ class FaceManager:
         caps = get_system_capabilities()
         is_high_end = caps['is_high_end']
         
+        # CRITICAL: Clean VRAM before loading InsightFace to prevent OOM
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print(f"[FaceManager] Cleaned VRAM before InsightFace init")
+        except ImportError:
+            pass
+        
         try:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._use_gpu else ["CPUExecutionProvider"]
             

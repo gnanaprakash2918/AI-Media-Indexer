@@ -402,11 +402,9 @@ class IngestionPipeline:
 
         frame_count = 0
 
-        # Sliding window context for narrative continuity (FAANG-level)
-        # 5-frame window captures motion, actions, and temporal relationships
-        # This is critical for video-aware search (not treating frames as isolated images)
-        from collections import deque
-        context_window: deque[tuple[float, str]] = deque(maxlen=5)  # (timestamp, description)
+        # XMem-style temporal context for video coherence
+        from core.processing.temporal_context import TemporalContextManager, TemporalContext
+        temporal_ctx = TemporalContextManager(sensory_size=5)
 
         async for frame_path in frame_generator:
             if job_id:
@@ -417,12 +415,9 @@ class IngestionPipeline:
             timestamp = time_offset + (frame_count * float(self.frame_interval_seconds))
             try:
                 if self.frame_sampler.should_sample(frame_count):
-                    # Build narrative context from sliding window for temporal awareness
-                    narrative_parts = [f"[{ts:.1f}s] {desc[:150]}" for ts, desc in context_window]
-                    narrative_context = " -> ".join(narrative_parts) if narrative_parts else "Start of video"
-
-                    # Pass neighbor timestamps for temporal embedding
-                    neighbor_timestamps = [ts for ts, _ in context_window]
+                    # Get temporal context from XMem-style memory
+                    narrative_context = temporal_ctx.get_context_for_vlm()
+                    neighbor_timestamps = [c.timestamp for c in temporal_ctx.sensory]
 
                     new_desc = await self._process_single_frame(
                         video_path=path,
@@ -433,8 +428,12 @@ class IngestionPipeline:
                         neighbor_timestamps=neighbor_timestamps,
                     )
                     if new_desc:
-                        # Store timestamp with description for temporal relationships
-                        context_window.append((timestamp, new_desc[:200]))
+                        # Add to temporal context memory
+                        temporal_ctx.add_frame(TemporalContext(
+                            timestamp=timestamp,
+                            description=new_desc[:200],
+                            faces=list(self._face_clusters.keys()) if hasattr(self, '_face_clusters') else [],
+                        ))
 
                 if job_id:
                     # Check for PAUSE functionality
@@ -834,17 +833,38 @@ class IngestionPipeline:
         analysis = None
 
         # CRITICAL: Unload face models to free VRAM for Ollama
-        # This releases the ~1GB held by InsightFace/ArcFace so llava:7b can fit
         if self.faces:
             self.faces.unload_gpu()
 
+        # Build identity context from HITL names for VLM
+        identity_parts = []
+        for idx, cid in enumerate(face_cluster_ids):
+            name = self.db.get_face_name_by_cluster(cid)
+            if name:
+                identity_parts.append(f"Person {idx+1}: {name}")
+            else:
+                identity_parts.append(f"Person {idx+1}: Unknown (cluster {cid})")
+        
+        # Get speaker name at this timestamp
         try:
-            # Use structured analysis that outputs FrameAnalysis
-            analysis = await self.vision.analyze_frame(frame_path)
+            speaker_clusters = self._get_speaker_clusters_at_time(str(video_path), timestamp)
+            for scid in speaker_clusters:
+                sname = self.db.get_speaker_name_by_cluster(scid)
+                if sname:
+                    identity_parts.append(f"Speaking: {sname}")
+        except Exception:
+            pass
+        
+        identity_context = "\n".join(identity_parts) if identity_parts else None
+
+        try:
+            analysis = await self.vision.analyze_frame(
+                frame_path,
+                identity_context=identity_context,
+                temporal_context=context,
+            )
             if analysis:
-                # Generate searchable text with specific terms (Idly not food)
                 description = analysis.to_search_content()
-                # Inject face cluster IDs into analysis
                 analysis.face_ids = [str(cid) for cid in face_cluster_ids]
         except Exception as e:
             logger.warning(f"Structured analysis failed: {e}, falling back to describe")

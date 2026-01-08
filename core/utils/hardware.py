@@ -65,15 +65,23 @@ def select_embedding_model() -> tuple[str, int]:
 
 
 def select_vision_model() -> str:
-    """Select vision model based on available VRAM."""
+    """Select vision model based on available VRAM.
+    
+    Moondream 3.0 uses MoE architecture with 200M active params,
+    achieving 51.2 COCO, 61.2 OCRBench with ~1GB VRAM.
+    """
     vram = get_available_vram()
     
     if vram >= 12:
         model = "llava:34b"
-    elif vram >= 8:
+    elif vram >= 10:
         model = "llava:13b"
+    elif vram >= 6:
+        # Moondream is more efficient than llava:7b for 6-10GB VRAM
+        model = "moondream:latest"
     else:
-        model = "llava:7b"
+        # For low VRAM (<6GB), moondream is essential
+        model = "moondream:latest"
     
     log(f"Selected vision model: {model} for {vram:.1f}GB VRAM")
     return model
