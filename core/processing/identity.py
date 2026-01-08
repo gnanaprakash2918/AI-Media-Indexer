@@ -30,6 +30,82 @@ from core.utils.observe import observe
 
 
 # =========================================================================
+# SYSTEM CAPABILITY DETECTION
+# =========================================================================
+
+def _detect_system_capabilities() -> dict:
+    """Detect system RAM and VRAM to determine loading strategy.
+    
+    Returns:
+        Dict with 'ram_gb', 'vram_gb', 'is_high_end' keys.
+    """
+    import gc
+    
+    capabilities = {
+        'ram_gb': 8.0,  # Default conservative
+        'vram_gb': 0.0,
+        'is_high_end': False,
+    }
+    
+    # Detect RAM
+    try:
+        import psutil
+        capabilities['ram_gb'] = psutil.virtual_memory().total / (1024 ** 3)
+    except ImportError:
+        # Fallback: try os-specific methods
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            c_ulong = ctypes.c_ulong
+            class MEMORYSTATUS(ctypes.Structure):
+                _fields_ = [
+                    ('dwLength', c_ulong),
+                    ('dwMemoryLoad', c_ulong),
+                    ('dwTotalPhys', c_ulong),
+                    ('dwAvailPhys', c_ulong),
+                    ('dwTotalPageFile', c_ulong),
+                    ('dwAvailPageFile', c_ulong),
+                    ('dwTotalVirtual', c_ulong),
+                    ('dwAvailVirtual', c_ulong),
+                ]
+            mem_status = MEMORYSTATUS()
+            mem_status.dwLength = ctypes.sizeof(MEMORYSTATUS)
+            kernel32.GlobalMemoryStatus(ctypes.byref(mem_status))
+            capabilities['ram_gb'] = mem_status.dwTotalPhys / (1024 ** 3)
+        except Exception:
+            pass
+    
+    # Detect VRAM
+    try:
+        import torch
+        if torch.cuda.is_available():
+            # Get total VRAM of first GPU
+            capabilities['vram_gb'] = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    except ImportError:
+        pass
+    
+    # High-end: 32GB+ RAM or 8GB+ VRAM
+    capabilities['is_high_end'] = (
+        capabilities['ram_gb'] >= 32.0 or capabilities['vram_gb'] >= 8.0
+    )
+    
+    gc.collect()
+    return capabilities
+
+
+# Cache system capabilities
+_SYSTEM_CAPS: dict | None = None
+
+def get_system_capabilities() -> dict:
+    """Get cached system capabilities."""
+    global _SYSTEM_CAPS
+    if _SYSTEM_CAPS is None:
+        _SYSTEM_CAPS = _detect_system_capabilities()
+        print(f"[System] Detected: RAM={_SYSTEM_CAPS['ram_gb']:.1f}GB, VRAM={_SYSTEM_CAPS['vram_gb']:.1f}GB, High-end={_SYSTEM_CAPS['is_high_end']}")
+    return _SYSTEM_CAPS
+
+
+# =========================================================================
 # FACE TRACK BUILDER - Temporal Face Grouping for Accurate Clustering
 # =========================================================================
 
@@ -370,6 +446,39 @@ class FaceManager:
         
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+    def unload_gpu(self) -> None:
+        """Unload models from GPU to free VRAM for other processes (like Ollama).
+        
+        Call this after face detection but before vision/LLM analysis.
+        The models will be reloaded on next detect_faces() call.
+        """
+        import gc
+        import torch
+        
+        # Clear InsightFace
+        if self._insightface_app is not None:
+            del self._insightface_app
+            self._insightface_app = None
+        
+        # Clear OpenCV models (less important but be thorough)
+        if self._opencv_detector is not None:
+            del self._opencv_detector
+            self._opencv_detector = None
+        if self._opencv_recognizer is not None:
+            del self._opencv_recognizer
+            self._opencv_recognizer = None
+        
+        # Reset init flag so models reload on next use
+        self._initialized = False
+        
+        # Force garbage collection and GPU memory release
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        print("[FaceManager] GPU models unloaded - VRAM freed for Ollama")
+
     @property
     def embedding_version(self) -> str:
         """Return embedding version string for cache invalidation."""
@@ -407,26 +516,98 @@ class FaceManager:
             self._initialized = True
 
     async def _try_init_insightface(self) -> bool:
-        """Try to initialize InsightFace. Returns True on success."""
+        """Try to initialize InsightFace. Returns True on success.
+        
+        On low-resource systems, loads models sequentially with allowed_modules
+        to prevent memory allocation failures.
+        """
+        import gc
+        
         FaceAnalysis = _try_import_insightface()
         if FaceAnalysis is None:
             print("[FaceManager] InsightFace library not found. Falling back.")
             return False
         
+        # Check system capabilities
+        caps = get_system_capabilities()
+        is_high_end = caps['is_high_end']
+        
         try:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._use_gpu else ["CPUExecutionProvider"]
-            # Buffalo_l is the 512-dim model with highest accuracy
-            app = FaceAnalysis(
-                name="buffalo_l",
-                root=str(MODELS_DIR),
-                providers=providers,
-            )
-            app.prepare(ctx_id=0 if self._use_gpu else -1, det_size=(640, 640))
+            
+            if is_high_end:
+                # High-end system: load all models at once (faster)
+                print("[FaceManager] High-end system detected, loading all InsightFace models...")
+                app = FaceAnalysis(
+                    name="buffalo_l",
+                    root=str(MODELS_DIR),
+                    providers=providers,
+                )
+                app.prepare(ctx_id=0 if self._use_gpu else -1, det_size=(640, 640))
+            else:
+                # Low-resource system: load only essential models (detection + recognition)
+                # Skip genderage and 3d landmark models to reduce memory usage
+                print("[FaceManager] Low-resource system detected, loading InsightFace models sequentially...")
+                gc.collect()
+                
+                # Force garbage collection before loading
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                except ImportError:
+                    pass
+                
+                # Only load detection and recognition models
+                # This skips: genderage.onnx, 1k3d68.onnx, 2d106det.onnx
+                app = FaceAnalysis(
+                    name="buffalo_l",
+                    root=str(MODELS_DIR),
+                    providers=providers,
+                    allowed_modules=['detection', 'recognition'],  # Skip age/gender/3d landmarks
+                )
+                
+                # Use smaller detection size to reduce memory
+                det_size = (480, 480) if caps['ram_gb'] < 16 else (640, 640)
+                app.prepare(ctx_id=0 if self._use_gpu else -1, det_size=det_size)
+                
+                # Clean up after model load
+                gc.collect()
+            
             self._insightface_app = app
             print(f"[FaceManager] SUCCESS: Using InsightFace ArcFace (512-dim). Providers: {providers}")
             return True
         except Exception as e:
-            print(f"[FaceManager] CRITICAL: InsightFace init failed despite library presence: {e}")
+            error_msg = str(e).lower()
+            if "bad allocation" in error_msg or "out of memory" in error_msg or "oom" in error_msg:
+                print(f"[FaceManager] InsightFace OOM error, trying minimal config...")
+                gc.collect()
+                
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
+                
+                # Last resort: CPU only with minimal modules and smallest detection size
+                try:
+                    app = FaceAnalysis(
+                        name="buffalo_l",
+                        root=str(MODELS_DIR),
+                        providers=["CPUExecutionProvider"],  # Force CPU
+                        allowed_modules=['detection', 'recognition'],
+                    )
+                    app.prepare(ctx_id=-1, det_size=(320, 320))  # Smallest size
+                    self._insightface_app = app
+                    print("[FaceManager] SUCCESS: InsightFace loaded with minimal config (CPU, 320x320)")
+                    return True
+                except Exception as e2:
+                    print(f"[FaceManager] InsightFace minimal config also failed: {e2}")
+                    return False
+            
+            print(f"[FaceManager] CRITICAL: InsightFace init failed: {e}")
             import traceback
             traceback.print_exc()
             return False

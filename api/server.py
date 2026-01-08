@@ -1093,6 +1093,8 @@ def create_app() -> FastAPI:
                     safe_path = quote(str(video))
                     hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
                     hit["playback_url"] = f"/media?path={safe_path}#t={start_context}"
+                    # NEW: Segment URL with proper audio extraction (more reliable than #t= fragment)
+                    hit["segment_url"] = f"/media/segment?path={safe_path}&start={start_context:.2f}&end={end_context:.2f}"
                 
                 unique_frames.append(hit)
                 if len(unique_frames) >= limit:
@@ -1184,6 +1186,79 @@ def create_app() -> FastAPI:
                 "error": str(e),
                 "fallback": True,
                 "results": regular_results,
+            }
+
+    @app.get("/search/scenes")
+    async def scene_search(
+        q: str,
+        limit: int = 20,
+        use_expansion: bool = True,
+        video_path: str | None = Query(None, description="Filter to specific video"),
+    ):
+        """Production-grade scene-level search for complex queries.
+
+        This is the advanced search endpoint that:
+        1. Uses LLM to parse complex queries (clothing, accessories, location, actions)
+        2. Searches scene-level embeddings (visual, motion, dialogue vectors)
+        3. Filters by identity, clothing color/type, accessories, location
+        4. Returns scenes with start/end timestamps for precise playback
+
+        Example queries:
+        - "Prakash wearing blue t-shirt with spectacles bowling at Brunswick hitting a strike"
+        - "Someone eating idli at a South Indian restaurant in the morning"
+
+        Args:
+            q: Natural language query (can be paragraph-length)
+            limit: Maximum results
+            use_expansion: Whether to use LLM for query expansion
+            video_path: Optional filter to specific video
+
+        Returns:
+            Dict with scene results, timestamps, and parsed query
+        """
+        if not pipeline:
+            return {"error": "Pipeline not initialized", "results": []}
+
+        from urllib.parse import quote
+
+        start_time_search = time.perf_counter()
+        logger.info(f"[SceneSearch] Query: '{q[:100]}...' | video_filter: {video_path}")
+
+        try:
+            from core.retrieval.agentic_search import SearchAgent
+            agent = SearchAgent(db=pipeline.db)
+            result = await agent.search_scenes(
+                query=q,
+                limit=limit,
+                use_expansion=use_expansion,
+                video_path=video_path,
+            )
+
+            # Enrich results with thumbnail and playback URLs
+            for hit in result.get("results", []):
+                video = hit.get("media_path")
+                start = hit.get("start_time", 0)
+                if video:
+                    safe_path = quote(str(video))
+                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={start}"
+                    hit["playback_url"] = f"/media?path={safe_path}#t={start}"
+
+            duration = time.perf_counter() - start_time_search
+            result["stats"] = {
+                "duration_seconds": duration,
+                "search_mode": "scene",
+            }
+            logger.info(f"[SceneSearch] Returned {len(result.get('results', []))} scenes in {duration:.3f}s")
+            return result
+
+        except Exception as e:
+            logger.error(f"[SceneSearch] Error: {e}")
+            # Fallback to frame search
+            return {
+                "query": q,
+                "error": str(e),
+                "fallback": True,
+                "results": pipeline.db.search_frames(query=q, limit=limit),
             }
 
     @app.get("/search/hybrid")
@@ -1425,15 +1500,28 @@ def create_app() -> FastAPI:
         """Assign a name to a face cluster and update all related embeddings.
         
         HITL naming triggers:
-        1. Update all faces in cluster with the name
-        2. Update all frames containing this face with identity text
-        3. Propagate name to linked speaker clusters (if mapped)
+        1. Check if another cluster already has this name → AUTO-MERGE
+        2. Update all faces in cluster with the name
+        3. Update all frames containing this face with identity text
+        4. Propagate name to linked speaker clusters (if mapped)
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         
+        name = name_request.name.strip()
+        merged_from = None
+        
+        # 0. Check if another face cluster already has this name → AUTO-MERGE
+        existing_cluster = pipeline.db.get_face_cluster_by_name(name)
+        if existing_cluster and existing_cluster != cluster_id:
+            # Merge target cluster into the existing named cluster
+            logger.info(f"[AUTO-MERGE] Cluster {cluster_id} → Cluster {existing_cluster} (same name: '{name}')")
+            pipeline.db.merge_face_clusters(cluster_id, existing_cluster)
+            merged_from = cluster_id
+            cluster_id = existing_cluster  # Continue with merged cluster
+        
         # 1. Update face name in DB
-        updated = pipeline.db.update_face_name(cluster_id, name_request.name)
+        updated = pipeline.db.update_face_name(cluster_id, name)
         
         # 2. Update frames containing this face with identity text
         frames = pipeline.db.get_frames_by_face_cluster(cluster_id)
@@ -1456,34 +1544,40 @@ def create_app() -> FastAPI:
                 frames_updated += 1
             
             # 3. Propagate Name to Overlapping Speakers
-            # If this frame has a speaker cluster, map it!
-            # Heuristic: If there is exactly ONE speaker cluster at this time, capture it.
             try:
-                # We need to get speaker clusters for this frame's timestamp
-                # The frame object from search_frames doesn't have speaker info by default unless we query for it
-                # So we query db for speakers at this timestamp
-                speaker_cluster_ids = pipeline._get_speaker_clusters_at_time(
-                    frame["video_path"], 
-                    frame["timestamp"]
-                )
-                if len(speaker_cluster_ids) == 1:
-                    spk_cid = speaker_cluster_ids[0]
-                    # Check if already named? (Optional: overwrite or skip. Let's overwrite/ensure)
-                    existing_spk_name = pipeline.db.get_speaker_name_by_cluster(spk_cid)
-                    if not existing_spk_name:
-                        logger.info(f"Auto-mapping Face Cluster {cluster_id} ('{name_request.name}') -> Speaker Cluster {spk_cid}")
-                        pipeline.db.set_speaker_name(spk_cid, name_request.name)
+                # Access payload correctly - data is nested under "payload" key
+                payload = frame.get("payload") or {}
+                video_path = payload.get("video_path")
+                timestamp = payload.get("timestamp", 0)
+                
+                if video_path:
+                    speaker_cluster_ids = pipeline._get_speaker_clusters_at_time(
+                        video_path, 
+                        timestamp
+                    )
+                    if len(speaker_cluster_ids) == 1:
+                        spk_cid = speaker_cluster_ids[0]
+                        existing_spk_name = pipeline.db.get_speaker_name_by_cluster(spk_cid)
+                        if not existing_spk_name:
+                            logger.info(f"Auto-mapping Face Cluster {cluster_id} ('{name}') -> Speaker Cluster {spk_cid}")
+                            pipeline.db.set_speaker_name(spk_cid, name)
             except Exception as e:
                 logger.warning(f"Failed to auto-map speaker: {e}")
         
-        logger.info(f"[HITL] Named cluster {cluster_id} as '{name_request.name}', updated {frames_updated} frames")
+        logger.info(f"[HITL] Named cluster {cluster_id} as '{name}', updated {frames_updated} frames")
         
-        return {
+        result = {
             "updated": updated, 
             "cluster_id": cluster_id, 
-            "name": name_request.name,
+            "name": name,
             "frames_updated": frames_updated,
         }
+        
+        if merged_from:
+            result["merged_from"] = merged_from
+            result["message"] = f"Auto-merged with existing cluster named '{name}'"
+        
+        return result
 
     @app.put("/faces/{face_id}/name")
     async def name_single_face(face_id: str, name_request: NameFaceRequest):

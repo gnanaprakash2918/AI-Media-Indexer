@@ -448,11 +448,28 @@ if (-not $SkipDocker) {
         Write-Host "  Docker Daemon is already running" -ForegroundColor Green
     }
 
+    # Detect valid Docker Compose command
+    $dockerComposeCmd = "docker compose"
+    try {
+        $dockerComposeVersion = docker compose version 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "docker compose not found"
+        }
+    } catch {
+        if (Get-Command "docker-compose" -ErrorAction SilentlyContinue) {
+            $dockerComposeCmd = "docker-compose"
+            Write-Host "  Using standalone 'docker-compose'..." -ForegroundColor Gray
+        } else {
+            Write-Host "  WARNING: Neither 'docker compose' nor 'docker-compose' found. Docker operations may fail." -ForegroundColor Red
+        }
+    }
+
     Write-Host ""
     Write-Host "[5.5/8] Stopping Docker containers..." -ForegroundColor Yellow
     
-    # Stop all containers (redirect stderr to null to avoid PowerShell treating progress as error)
-    $null = docker compose down --remove-orphans 2>&1
+    # Stop all containers
+    # Use Invoke-Expression to handle the command string with arguments correctly
+    Invoke-Expression "$dockerComposeCmd down --remove-orphans" 2>&1 | Out-Null
     
     Write-Host "  Docker containers stopped and orphans removed" -ForegroundColor Green
     
@@ -460,14 +477,14 @@ if (-not $SkipDocker) {
     if ($PullImages) {
         Write-Host ""
         Write-Host "[6/8] Pulling latest Docker images..." -ForegroundColor Yellow
-        docker compose pull
+        Invoke-Expression "$dockerComposeCmd pull"
         Write-Host "  Docker images updated!" -ForegroundColor Green
     } else {
         # Check if Langfuse images exist, pull only if missing
         $langfuseImage = docker images "langfuse/langfuse" --format "{{.Repository}}" 2>$null
         if (-not $langfuseImage) {
             Write-Host "[6/8] Langfuse images not found, pulling..." -ForegroundColor Yellow
-            docker compose pull langfuse langfuse-worker
+            Invoke-Expression "$dockerComposeCmd pull langfuse langfuse-worker"
             Write-Host "  Langfuse images pulled!" -ForegroundColor Green
         } else {
             Write-Host "[6/8] Langfuse images already present (use -PullImages to update)" -ForegroundColor Gray
@@ -477,17 +494,13 @@ if (-not $SkipDocker) {
     Write-Host ""
     Write-Host "[7/8] Starting Docker services..." -ForegroundColor Yellow
     
-    # Start containers (using direct invocation which is most reliable in this context)
-    Write-Host "  Starting containers..." -ForegroundColor Gray
+    # Start containers
+    Write-Host "  Starting containers with $dockerComposeCmd..." -ForegroundColor Gray
     
-    # Try using 'docker-compose' (standalone) first, as 'docker compose' (plugin) is flaky here
-    if (Get-Command "docker-compose" -ErrorAction SilentlyContinue) {
-        Write-Host "  Using docker-compose standalone binary..." -ForegroundColor Gray
-        docker-compose up -d
+    if ($dockerComposeCmd -eq "docker-compose") {
+         Invoke-Expression "$dockerComposeCmd up -d"
     } else {
-        Write-Host "  Using docker compose plugin..." -ForegroundColor Gray
-        # Attempt standard plugin command
-        docker compose up -d --wait
+         Invoke-Expression "$dockerComposeCmd up -d --wait"
     }
 
     if ($LASTEXITCODE -ne 0) {

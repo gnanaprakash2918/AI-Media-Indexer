@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import asyncio
 import os
 from pathlib import Path
 from typing import Final, cast
@@ -23,6 +22,7 @@ torch.load = safe_load
 
 from pyannote.audio import Inference, Model, Pipeline
 from pyannote.core import Segment
+from huggingface_hub import snapshot_download
 
 from config import settings
 from core.schemas import SpeakerSegment
@@ -89,16 +89,49 @@ class VoiceProcessor:
                         f"device={self.device}"
                     )
 
-                    self.pipeline = Pipeline.from_pretrained(
-                        settings.pyannote_model,
-                        use_auth_token=self.hf_token,
-                    )
+                    try:
+                        self.pipeline = Pipeline.from_pretrained(
+                            settings.pyannote_model,
+                            use_auth_token=self.hf_token,
+                        )
+                    except Exception as pipe_err:
+                        log.warning(f"Pyannote Pipeline load failed: {pipe_err}. Attempting snapshot_download...")
+                        try:
+                            snapshot_download(
+                                repo_id=settings.pyannote_model,
+                                token=self.hf_token,
+                                ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
+                            )
+                            self.pipeline = Pipeline.from_pretrained(
+                                settings.pyannote_model,
+                                use_auth_token=self.hf_token,
+                            )
+                        except Exception as dl_err:
+                            log.error(f"Failed to download/reload Pyannote pipeline: {dl_err}")
+                            raise pipe_err
+
                     self.pipeline.to(self.device)
 
-                    self.embedding_model = Model.from_pretrained(
-                        settings.voice_embedding_model,
-                        use_auth_token=self.hf_token,
-                    )
+                    try:
+                        self.embedding_model = Model.from_pretrained(
+                            settings.voice_embedding_model,
+                            use_auth_token=self.hf_token,
+                        )
+                    except Exception as model_err:
+                        log.warning(f"Voice embedding model load failed: {model_err}. Attempting snapshot_download...")
+                        try:
+                            snapshot_download(
+                                repo_id=settings.voice_embedding_model,
+                                token=self.hf_token,
+                                ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
+                            )
+                            self.embedding_model = Model.from_pretrained(
+                                settings.voice_embedding_model,
+                                use_auth_token=self.hf_token,
+                            )
+                        except Exception as dl_err:
+                            log.error(f"Failed to download/reload embedding model: {dl_err}")
+                            raise model_err
 
                     self.inference = Inference(
                         self.embedding_model,
@@ -136,8 +169,13 @@ class VoiceProcessor:
 
         try:
             # Always convert to WAV to ensure compatibility with all video/audio formats
+            # CRITICAL: Create fresh temp file per video to avoid batch processing issues
+            log.info(f"[Voice] Processing: {audio_path.name}")
             temp_wav = await self._convert_to_wav(audio_path)
-            processing_path = temp_wav if temp_wav else audio_path
+            if temp_wav is None:
+                log.warning(f"[Voice] Skipped - WAV conversion failed for {audio_path.name}")
+                return []
+            processing_path = temp_wav
 
             async with GPU_SEMAPHORE:
                 diarization = self.pipeline(

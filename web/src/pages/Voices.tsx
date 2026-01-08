@@ -30,7 +30,7 @@ import {
     ListItemText,
     Divider,
 } from '@mui/material';
-import { RecordVoiceOver, Delete, Edit, AutoAwesome, Groups, ExpandMore, ExpandLess, MoveUp } from '@mui/icons-material';
+import { RecordVoiceOver, Delete, Edit, AutoAwesome, Groups, ExpandMore, ExpandLess, MoveUp, MergeType } from '@mui/icons-material';
 import {
     getVoiceSegments,
     deleteVoiceSegment,
@@ -40,6 +40,7 @@ import {
     moveVoiceToCluster,
     createNewVoiceCluster,
     nameVoiceCluster,
+    mergeVoiceClusters,
 } from '../api/client';
 
 interface VoiceSegment {
@@ -76,6 +77,8 @@ export const Voices: React.FC = () => {
     const [moveDialogOpen, setMoveDialogOpen] = useState(false);
     const [moveSegmentId, setMoveSegmentId] = useState<string | null>(null);
     const [expandedClusters, setExpandedClusters] = useState<Set<number>>(new Set());
+    const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
+    const [isMerging, setIsMerging] = useState(false);
 
     useEffect(() => { loadData(); }, []);
 
@@ -150,6 +153,21 @@ export const Voices: React.FC = () => {
         if (!moveSegmentId) return;
         try { await createNewVoiceCluster([moveSegmentId]); await loadData(); setMoveDialogOpen(false); setMoveSegmentId(null); }
         catch (err) { console.error(err); setError('Failed to create new cluster'); }
+    };
+
+    const handleMergeClusters = async (toClusterId: number) => {
+        if (!mergeSourceId || isMerging) return;
+        setIsMerging(true);
+        try {
+            await mergeVoiceClusters(mergeSourceId, toClusterId);
+            await loadData();
+            setMergeSourceId(null);
+        } catch (err) {
+            console.error(err);
+            setError('Failed to merge clusters');
+        } finally {
+            setIsMerging(false);
+        }
     };
 
     const toggleClusterExpand = (clusterId: number) => {
@@ -238,8 +256,18 @@ export const Voices: React.FC = () => {
                                             size="small"
                                             startIcon={<Edit />}
                                             onClick={(e) => { e.stopPropagation(); openClusterRenameDialog(cluster.cluster_id, cluster.speaker_name || ''); }}
+                                            sx={{ mr: 1 }}
                                         >
-                                            Rename Cluster
+                                            Rename
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            variant="outlined"
+                                            color="warning"
+                                            startIcon={<MergeType />}
+                                            onClick={(e) => { e.stopPropagation(); setMergeSourceId(cluster.cluster_id); }}
+                                        >
+                                            Merge
                                         </Button>
                                     </Box>
                                     {cluster.representative?.audio_path && <audio controls src={`http://localhost:8000${cluster.representative.audio_path}`} style={{ height: 28, width: 140, marginRight: 16 }} onClick={(e) => e.stopPropagation()} />}
@@ -290,6 +318,58 @@ export const Voices: React.FC = () => {
                     </List>
                 </DialogContent>
                 <DialogActions><Button onClick={() => setMoveDialogOpen(false)}>Cancel</Button></DialogActions>
+            </Dialog>
+
+            {/* Merge Clusters Dialog */}
+            <Dialog open={mergeSourceId !== null} onClose={() => setMergeSourceId(null)} maxWidth="sm" fullWidth>
+                <DialogTitle>Merge Voice Cluster</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                        Select a target cluster to merge into. Named clusters are shown first.
+                    </Typography>
+                    {isMerging ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                            <CircularProgress />
+                        </Box>
+                    ) : (
+                        <List>
+                            {clusters
+                                .filter(c => c.cluster_id !== mergeSourceId)
+                                .sort((a, b) => {
+                                    // Named clusters first, then by segment count
+                                    if (a.speaker_name && !b.speaker_name) return -1;
+                                    if (!a.speaker_name && b.speaker_name) return 1;
+                                    return (b.segment_count || 0) - (a.segment_count || 0);
+                                })
+                                .map((c) => (
+                                    <ListItemButton
+                                        key={c.cluster_id}
+                                        onClick={() => handleMergeClusters(c.cluster_id)}
+                                        sx={{
+                                            border: c.speaker_name ? '2px solid' : 'none',
+                                            borderColor: c.speaker_name ? 'primary.main' : 'transparent',
+                                            borderRadius: 1,
+                                            mb: 0.5,
+                                            bgcolor: c.speaker_name ? 'action.selected' : 'transparent',
+                                        }}
+                                    >
+                                        <ListItemText
+                                            primary={
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    {c.speaker_name || `Voice Cluster #${c.cluster_id}`}
+                                                    {c.speaker_name && <Chip size="small" label="Named" color="primary" variant="outlined" />}
+                                                </Box>
+                                            }
+                                            secondary={`${c.segment_count} segments`}
+                                        />
+                                    </ListItemButton>
+                                ))}
+                        </List>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setMergeSourceId(null)}>Cancel</Button>
+                </DialogActions>
             </Dialog>
         </Container>
     );

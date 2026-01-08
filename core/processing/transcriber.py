@@ -635,6 +635,69 @@ class AudioTranscriber:
         return None
 
 
+    @observe("language_detection")
+    def detect_language(self, audio_path: Path) -> str:
+        """Detect language using robust model loading.
+        
+        Uses the base model (`openai/whisper-base`) to detect language.
+        Leverages _load_model() to ensure model is downloaded if missing.
+        """
+        model_id = "openai/whisper-base"
+        wav_path = None
+        
+        try:
+            # Ensure model is loaded (handles download/conversion)
+            if self._current_model_size != model_id:
+                self._load_model(model_id)
+
+            # Use the underlying model directly for detection (no batching needed)
+            if not self._model:
+                raise RuntimeError("Model not initialized")
+
+            # Extract first 30s as WAV to avoid container/codec issues (Opus, etc)
+            try:
+                # Use _slice_audio which uses ffmpeg to generate a clean 16kHz WAV
+                wav_path = self._slice_audio(audio_path, start=0.0, end=30.0)
+            except Exception as e:
+                log(f"[WARN] Slicing for detection failed: {e}. Trying raw file.")
+                wav_path = audio_path
+
+            # Detect on the WAV (or raw if slice failed)
+            # NOTE: 'detect_language' task is sometimes rejected by CTranslate2 models.
+            # The robust way with faster-whisper is to run 'transcribe' on a short segment
+            # and check info.language.
+            _, info = self._model.transcribe(
+                str(wav_path),
+                task="transcribe", # Changed from 'detect_language'
+                beam_size=5,
+            )
+            
+            log(f"[Audio] Language detected: {info.language} ({info.language_probability:.1%})")
+            
+            # Lower threshold to ensure we catch Indic languages even with background noise
+            if info.language_probability > 0.4:
+                return info.language
+            
+            # Special check: if detected is 'ta' but confidence is low (0.2-0.4), still return 'ta'
+            # because Whisper often has low confidence for Tamil but correctly identifies it vs English
+            if info.language in ["ta", "hi", "ml", "te", "kn"] and info.language_probability > 0.2:
+                 log(f"[Audio] Low confidence Indic language detected: {info.language}. accepting.")
+                 return info.language
+
+            return "en"
+
+        except Exception as e:
+            log(f"[WARN] Language detection failed: {e}. Defaulting to 'en'.")
+            return "en"
+        finally:
+            # Cleanup temp wav (only if we created it)
+            if wav_path and wav_path != audio_path and wav_path.exists():
+                try:
+                    wav_path.unlink()
+                except Exception:
+                    pass
+
+
 def main() -> None:
     """CLI entry point to run the AudioTranscriber via command-line args.
 

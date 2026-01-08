@@ -121,28 +121,28 @@ class Settings(BaseSettings):
         description="Process every Nth extracted frame (1=all for max accuracy)"
     )
     
-    # Face Detection Settings
+    # Face Detection Settings (tuned for side-facing and partial faces)
     face_detection_threshold: float = Field(
-        default=0.4,
-        description="Face detection confidence threshold (0.3-0.9, lower=more faces)"
+        default=0.3,
+        description="Face detection confidence threshold (0.3=more faces including side-facing, 0.5=balanced)"
     )
     face_detection_resolution: int = Field(
         default=960,
         description="Face detection input resolution (320=fast, 640=balanced, 960=accurate)"
     )
     
-    # Face Clustering Settings
+    # Face Clustering Settings (tuned for wild videos with angle/lighting variations)
     face_clustering_threshold: float = Field(
-        default=0.45,
-        description="Face clustering cosine distance (lower=stricter, 0.45=55% similarity required - balanced for wild videos)"
+        default=0.5,
+        description="Face clustering cosine distance (0.5=50% similarity for same person across angles)"
     )
     face_min_bbox_size: int = Field(
-        default=48,
-        description="Minimum face bounding box size in pixels for clustering"
+        default=32,
+        description="Minimum face bounding box size in pixels (32=include smaller/distant faces)"
     )
     face_min_det_score: float = Field(
-        default=0.65,
-        description="Minimum face detection confidence for clustering (0.5-0.8)"
+        default=0.5,
+        description="Minimum face detection confidence for clustering (0.5=include side-facing faces)"
     )
 
     # Voice Intelligence
@@ -152,8 +152,8 @@ class Settings(BaseSettings):
     min_speakers: int | None = None
     max_speakers: int | None = None
     voice_clustering_threshold: float = Field(
-        default=0.45,
-        description="Voice clustering cosine distance (lower=stricter, 0.45=55% similarity required)"
+        default=0.3,
+        description="Voice clustering cosine distance (lower=stricter, 0.3=70% similarity required for tighter clusters)"
     )
     
     # Audio Processing

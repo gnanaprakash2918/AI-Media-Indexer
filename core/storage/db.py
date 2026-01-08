@@ -15,6 +15,7 @@ import torch
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
+from huggingface_hub import snapshot_download
 
 from config import settings
 from core.utils.hardware import select_embedding_model
@@ -69,6 +70,7 @@ class VectorDB:
     MEDIA_COLLECTION = "media_frames"
     FACES_COLLECTION = "faces"
     VOICE_COLLECTION = "voice_segments"
+    SCENES_COLLECTION = "scenes"  # Scene-level storage (production approach)
 
     MEDIA_VECTOR_SIZE = _SELECTED_DIM
     FACE_VECTOR_SIZE = 512  # InsightFace ArcFace (fallback SFace uses 128 but vectors are padded)
@@ -149,22 +151,31 @@ class VectorDB:
                     return _create(str(local_model_dir), device="cpu")
                 except Exception as exc_cpu:
                     log(f"CPU Fallback Failed: {exc_cpu}", level="error")
-                    # If local corrupted, proceed to redownload logic
+                    # Local likely corrupt, fall through to re-download
                     pass
 
         log("Local model missing/corrupt, downloading from Hub", model=self.MODEL_NAME)
+        
+        # Use snapshot_download to ensure ALL files (tokenizer, config, weights) are present
         try:
-            model = _create(self.MODEL_NAME, device=target_device)
-        except Exception as exc:
-            log(f"Hub Load (GPU) Failed: {exc}. Retrying on CPU...", level="warning")
-            model = _create(self.MODEL_NAME, device="cpu")
+            snapshot_download(
+                repo_id=self.MODEL_NAME,
+                local_dir=str(local_model_dir),
+                token=settings.hf_token,
+                ignore_patterns=["*.msgpack", "*.h5", "*.ot"], 
+            )
+        except Exception as dl_exc:
+            log(f"Snapshot Download Failed: {dl_exc}", level="error")
+            # If download fails, we try loading directly from Hub as last resort
+            return _create(self.MODEL_NAME, device=target_device)
 
+        # Retry loading from local after download
         try:
-            model.save(str(local_model_dir))
-        except Exception as exc:
-            log("Warning: failed to save model cache", error=str(exc))
-
-        return model
+            return _create(str(local_model_dir), device=target_device)
+        except Exception as final_exc:
+            log(f"Final Load Failed: {final_exc}", level="error")
+            # Last resort: try Hub direct load
+            return _create(self.MODEL_NAME, device=target_device)
 
     @observe("db_encode_texts")
     def encode_texts(
@@ -243,6 +254,28 @@ class VectorDB:
                     distance=models.Distance.COSINE,
                 ),
             )
+
+        # SCENES collection with MULTI-VECTOR support (Twelve Labs architecture)
+        # Each scene has 3 vectors: visual (what's seen), motion (actions), dialogue (audio)
+        if not self.client.collection_exists(self.SCENES_COLLECTION):
+            self.client.create_collection(
+                collection_name=self.SCENES_COLLECTION,
+                vectors_config={
+                    "visual": models.VectorParams(
+                        size=self.MEDIA_VECTOR_SIZE,
+                        distance=models.Distance.COSINE,
+                    ),
+                    "motion": models.VectorParams(
+                        size=self.MEDIA_VECTOR_SIZE,
+                        distance=models.Distance.COSINE,
+                    ),
+                    "dialogue": models.VectorParams(
+                        size=self.MEDIA_VECTOR_SIZE,
+                        distance=models.Distance.COSINE,
+                    ),
+                },
+            )
+            log("Created scenes collection with multi-vector support")
 
         log("Qdrant collections ensured")
 
@@ -456,31 +489,45 @@ class VectorDB:
         face_cluster_ids: list[int] | None = None,
         limit: int = 20,
         score_threshold: float | None = None,
+        video_path: str | None = None,  # CRITICAL: Prevent cross-video identity leakage
     ) -> list[dict[str, Any]]:
-        """Search frames with optional identity filtering.
+        """Search frames with optional identity and video filtering.
 
         Used by agentic search to filter by face_cluster_ids.
+        IMPORTANT: Always pass video_path to prevent cross-video identity leakage.
 
         Args:
             query_vector: The query embedding vector.
             face_cluster_ids: Face cluster IDs to filter by (identity filter).
             limit: Maximum number of results.
             score_threshold: Minimum similarity score.
+            video_path: Filter results to this video only (prevents cross-video leakage).
 
         Returns:
             A list of matching frames with full payload.
         """
-        # Build filter for face cluster IDs
-        query_filter = None
-        if face_cluster_ids:
-            query_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="face_cluster_ids",
-                        match=models.MatchAny(any=face_cluster_ids),
-                    )
-                ]
+        # Build filter conditions
+        conditions: list[models.Condition] = []
+        
+        # CRITICAL: Add video_path filter to prevent cross-video identity leakage
+        if video_path:
+            conditions.append(
+                models.FieldCondition(
+                    key="video_path",
+                    match=models.MatchValue(value=video_path),
+                )
             )
+        
+        # Face identity filter
+        if face_cluster_ids:
+            conditions.append(
+                models.FieldCondition(
+                    key="face_cluster_ids",
+                    match=models.MatchAny(any=face_cluster_ids),
+                )
+            )
+        
+        query_filter = models.Filter(must=conditions) if conditions else None
 
         resp = self.client.query_points(
             collection_name=self.MEDIA_COLLECTION,
@@ -560,6 +607,79 @@ class VectorDB:
             if resp[0] and resp[0][0].payload:
                 return resp[0][0].payload.get("cluster_id")
             return None
+        except Exception:
+            return None
+    
+    def fuzzy_get_cluster_id_by_name(self, name: str, threshold: float = 0.7) -> int | None:
+        """Resolve a person's name to cluster ID using fuzzy matching.
+        
+        Handles:
+        - Case-insensitive matching ("John" == "john")
+        - Partial names ("Prakash" matches "Gnana Prakash")
+        - Common variations ("Bob" might match "Robert")
+        
+        Args:
+            name: The search name (can be partial or different case).
+            threshold: Minimum similarity ratio (0.0-1.0) for a match.
+            
+        Returns:
+            Best matching cluster_id, or None if no good match.
+        """
+        if not name or len(name) < 2:
+            return None
+            
+        try:
+            # Get all named faces
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must_not=[
+                        models.IsNullCondition(
+                            is_null=models.PayloadField(key="name"),
+                        )
+                    ]
+                ),
+                limit=500,
+                with_payload=True,
+            )
+            
+            if not resp[0]:
+                return None
+            
+            search_lower = name.lower().strip()
+            best_match = None
+            best_score = 0.0
+            
+            for point in resp[0]:
+                if not point.payload:
+                    continue
+                stored_name = point.payload.get("name")
+                if not stored_name:
+                    continue
+                    
+                stored_lower = stored_name.lower().strip()
+                
+                # Exact case-insensitive match
+                if search_lower == stored_lower:
+                    return point.payload.get("cluster_id")
+                
+                # Substring match (partial name)
+                if search_lower in stored_lower or stored_lower in search_lower:
+                    score = len(search_lower) / max(len(stored_lower), 1)
+                    if score > best_score:
+                        best_score = score
+                        best_match = point.payload.get("cluster_id")
+                        continue
+                
+                # Simple character overlap ratio (poor man's fuzzy)
+                common = sum(1 for c in search_lower if c in stored_lower)
+                ratio = common / max(len(search_lower), len(stored_lower), 1)
+                if ratio > best_score and ratio >= threshold:
+                    best_score = ratio
+                    best_match = point.payload.get("cluster_id")
+            
+            return best_match if best_score >= threshold else None
+            
         except Exception:
             return None
 
@@ -737,6 +857,502 @@ class VectorDB:
                 )
             ],
         )
+
+    # =========================================================================
+    # SCENE-LEVEL STORAGE (Production architecture like Twelve Labs)
+    # =========================================================================
+
+    @observe("db_store_scene")
+    def store_scene(
+        self,
+        *,
+        media_path: str,
+        start_time: float,
+        end_time: float,
+        visual_text: str,
+        motion_text: str,
+        dialogue_text: str,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        """Store a scene with multi-vector embeddings (visual, motion, dialogue).
+
+        This is the production-grade approach used by Twelve Labs Marengo.
+        Each scene gets 3 vectors for different search modalities.
+
+        Args:
+            media_path: Path to the source video.
+            start_time: Scene start timestamp in seconds.
+            end_time: Scene end timestamp in seconds.
+            visual_text: Text describing visual content (entities, clothing, people).
+            motion_text: Text describing actions and movement.
+            dialogue_text: Transcript/dialogue for this scene.
+            payload: Additional structured data (SceneData.to_payload()).
+
+        Returns:
+            The generated scene ID.
+        """
+        # Generate multi-vector embeddings
+        visual_vec = self.encode_texts(visual_text or "scene")[0]
+        motion_vec = self.encode_texts(motion_text or "activity")[0]
+        dialogue_vec = self.encode_texts(dialogue_text or "silence")[0]
+
+        # Normalize empty texts
+        visual_vec = visual_vec if visual_text else [0.0] * self.MEDIA_VECTOR_SIZE
+        motion_vec = motion_vec if motion_text else [0.0] * self.MEDIA_VECTOR_SIZE
+        dialogue_vec = dialogue_vec if dialogue_text else [0.0] * self.MEDIA_VECTOR_SIZE
+
+        # Generate unique scene ID
+        scene_key = f"{media_path}_{start_time:.3f}_{end_time:.3f}"
+        scene_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scene_key))
+
+        # Build full payload
+        full_payload = {
+            "media_path": media_path,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration": end_time - start_time,
+            "visual_text": visual_text,
+            "motion_text": motion_text,
+            "dialogue_text": dialogue_text,
+        }
+        if payload:
+            full_payload.update(payload)
+
+        self.client.upsert(
+            collection_name=self.SCENES_COLLECTION,
+            points=[
+                models.PointStruct(
+                    id=scene_id,
+                    vector={
+                        "visual": visual_vec,
+                        "motion": motion_vec,
+                        "dialogue": dialogue_vec,
+                    },
+                    payload=full_payload,
+                )
+            ],
+        )
+
+        log(f"Stored scene {start_time:.1f}-{end_time:.1f}s for {Path(media_path).name}")
+        return scene_id
+
+    @observe("db_search_scenes")
+    def search_scenes(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        score_threshold: float | None = None,
+        # Identity filters
+        person_name: str | None = None,
+        face_cluster_ids: list[int] | None = None,
+        # Clothing/appearance filters (for complex queries)
+        clothing_color: str | None = None,
+        clothing_type: str | None = None,
+        accessories: list[str] | None = None,
+        # Content filters
+        location: str | None = None,
+        visible_text: list[str] | None = None,
+        # Action filters
+        action_keywords: list[str] | None = None,
+        # Time filters
+        video_path: str | None = None,
+        # Search mode
+        search_mode: str = "hybrid",  # "visual", "motion", "dialogue", "hybrid"
+    ) -> list[dict[str, Any]]:
+        """Search scenes with comprehensive filtering for complex queries.
+
+        Supports queries like:
+        - "Prakash wearing blue shirt bowling at Brunswick hitting a strike"
+
+        Args:
+            query: Natural language search query.
+            limit: Maximum results.
+            score_threshold: Minimum similarity score.
+            person_name: Filter by person name.
+            face_cluster_ids: Filter by face clusters.
+            clothing_color: Filter by clothing color (e.g., "blue").
+            clothing_type: Filter by clothing type (e.g., "shirt").
+            accessories: Filter by accessories (e.g., ["spectacles"]).
+            location: Filter by location (e.g., "Brunswick").
+            visible_text: Filter by visible text/brands.
+            action_keywords: Filter by actions.
+            video_path: Filter by specific video.
+            search_mode: Which vector(s) to search.
+
+        Returns:
+            List of matching scenes with timestamps and metadata.
+        """
+        # Build query vector based on mode
+        query_vec = self.encode_texts(query, is_query=True)[0]
+
+        # Build filter conditions
+        conditions: list[models.Condition] = []
+
+        # Video filter
+        if video_path:
+            conditions.append(
+                models.FieldCondition(
+                    key="media_path",
+                    match=models.MatchValue(value=video_path),
+                )
+            )
+
+        # Identity filter
+        if person_name:
+            conditions.append(
+                models.FieldCondition(
+                    key="person_names",
+                    match=models.MatchAny(any=[person_name]),
+                )
+            )
+
+        if face_cluster_ids:
+            conditions.append(
+                models.FieldCondition(
+                    key="face_cluster_ids",
+                    match=models.MatchAny(any=face_cluster_ids),
+                )
+            )
+
+        # Clothing/appearance filters (critical for complex queries)
+        if clothing_color:
+            conditions.append(
+                models.FieldCondition(
+                    key="clothing_colors",
+                    match=models.MatchAny(any=[clothing_color.lower()]),
+                )
+            )
+
+        if clothing_type:
+            conditions.append(
+                models.FieldCondition(
+                    key="clothing_types",
+                    match=models.MatchAny(any=[clothing_type.lower()]),
+                )
+            )
+
+        if accessories:
+            conditions.append(
+                models.FieldCondition(
+                    key="accessories",
+                    match=models.MatchAny(any=accessories),
+                )
+            )
+
+        # Location filter
+        if location:
+            conditions.append(
+                models.FieldCondition(
+                    key="location",
+                    match=models.MatchText(text=location),
+                )
+            )
+
+        # Visible text/brand filter
+        if visible_text:
+            conditions.append(
+                models.FieldCondition(
+                    key="visible_text",
+                    match=models.MatchAny(any=visible_text),
+                )
+            )
+
+        # Action filter
+        if action_keywords:
+            conditions.append(
+                models.FieldCondition(
+                    key="actions",
+                    match=models.MatchAny(any=action_keywords),
+                )
+            )
+
+        # Build final filter
+        query_filter = models.Filter(must=conditions) if conditions else None
+
+        # Execute search based on mode
+        results = []
+
+        if search_mode == "hybrid":
+            # Search all 3 vectors and combine results
+            for vector_name in ["visual", "motion", "dialogue"]:
+                try:
+                    resp = self.client.query_points(
+                        collection_name=self.SCENES_COLLECTION,
+                        query=query_vec,
+                        using=vector_name,
+                        limit=limit,
+                        score_threshold=score_threshold,
+                        query_filter=query_filter,
+                    )
+                    for hit in resp.points:
+                        results.append({
+                            "score": hit.score,
+                            "id": str(hit.id),
+                            "vector_type": vector_name,
+                            **(hit.payload or {}),
+                        })
+                except Exception as e:
+                    log(f"Scene search ({vector_name}) error: {e}")
+
+            # Dedupe and sort by highest score
+            seen_ids = set()
+            unique_results = []
+            for r in sorted(results, key=lambda x: x["score"], reverse=True):
+                if r["id"] not in seen_ids:
+                    seen_ids.add(r["id"])
+                    unique_results.append(r)
+            results = unique_results[:limit]
+
+        else:
+            # Single vector search
+            try:
+                resp = self.client.query_points(
+                    collection_name=self.SCENES_COLLECTION,
+                    query=query_vec,
+                    using=search_mode,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    query_filter=query_filter,
+                )
+                for hit in resp.points:
+                    results.append({
+                        "score": hit.score,
+                        "id": str(hit.id),
+                        "vector_type": search_mode,
+                        **(hit.payload or {}),
+                    })
+            except Exception as e:
+                log(f"Scene search ({search_mode}) error: {e}")
+
+        # HITL Name Confidence Boosting
+        # Boost scores for results containing HITL-named identities that match the query
+        if person_name:
+            query_name_lower = person_name.lower()
+            for result in results:
+                # Check if result has face_names or person_names that match
+                face_names = result.get("face_names", []) or result.get("person_names", [])
+                if face_names:
+                    for name in face_names:
+                        if name and query_name_lower in name.lower():
+                            # 50% boost for exact HITL name match
+                            result["score"] = result.get("score", 0) * 1.5
+                            result["hitl_boost"] = True
+                            break
+
+        # Re-sort after boosting
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        return results
+
+    @observe("db_explainable_search")
+    def explainable_search(
+        self,
+        query_text: str,
+        parsed_query: Any = None,
+        limit: int = 10,
+        score_threshold: float = 0.3,
+    ) -> list[dict[str, Any]]:
+        """Search with explainable results - returns reasoning for each match.
+        
+        This is the SOTA search method that provides:
+        - Matched entities with individual confidence scores
+        - Reasoning for why the result was selected
+        - Face/voice identification with names
+        - Timestamp accuracy justification
+        
+        Args:
+            query_text: The search query text.
+            parsed_query: Optional DynamicParsedQuery with extracted entities.
+            limit: Maximum results to return.
+            score_threshold: Minimum similarity score.
+        
+        Returns:
+            List of results with explainable metadata:
+            [
+                {
+                    "id": "...",
+                    "score": 0.85,
+                    "timestamp": 45.2,
+                    "segment_url": "/media/segment?...",
+                    "matched_entities": {
+                        "person": {"name": "Prakash", "confidence": 0.98, "source": "face"},
+                        "clothing": [{"item": "blue t-shirt", "confidence": 0.87}],
+                        "action": {"name": "bowling", "confidence": 0.92}
+                    },
+                    "reasoning": "Frame shows Prakash (face ID #3) in blue upper garment...",
+                    "evidence": ["face_match", "color_match", "action_match"]
+                }
+            ]
+        """
+        # 1. Generate embedding for query
+        query_vec = self.get_embedding(query_text)
+        
+        # 2. Perform multi-vector search
+        raw_results = self.search_scenes(
+            query_vec=query_vec,
+            limit=limit * 2,  # Get more candidates for re-ranking
+            score_threshold=score_threshold,
+            search_mode="hybrid",
+        )
+        
+        # 3. Enrich each result with explainable metadata
+        explainable_results = []
+        
+        for result in raw_results[:limit]:
+            # Extract entities from the result payload
+            matched_entities = {}
+            evidence = []
+            reasoning_parts = []
+            
+            # Check for person/face matches
+            face_names = result.get("face_names", []) or result.get("person_names", [])
+            face_ids = result.get("face_ids", [])
+            if face_names:
+                for i, name in enumerate(face_names):
+                    if name:
+                        matched_entities["person"] = {
+                            "name": name,
+                            "confidence": 0.95,  # Face recognition typically high confidence
+                            "source": "face_recognition",
+                            "face_id": face_ids[i] if i < len(face_ids) else None,
+                        }
+                        evidence.append("face_match")
+                        reasoning_parts.append(f"Identified {name} via face recognition")
+                        break
+            
+            # Check for voice matches
+            voice_names = result.get("voice_names", []) or result.get("speaker_names", [])
+            voice_ids = result.get("voice_ids", [])
+            if voice_names:
+                for i, name in enumerate(voice_names):
+                    if name:
+                        matched_entities["voice"] = {
+                            "name": name,
+                            "confidence": 0.85,
+                            "source": "voice_diarization",
+                            "voice_id": voice_ids[i] if i < len(voice_ids) else None,
+                        }
+                        evidence.append("voice_match")
+                        reasoning_parts.append(f"Voice identified as {name}")
+                        break
+            
+            # Check for text/OCR matches
+            visible_text = result.get("visible_text", []) or result.get("ocr_text", [])
+            if visible_text:
+                matched_entities["text"] = {
+                    "items": visible_text[:5],  # Top 5 text items
+                    "confidence": 0.90,
+                    "source": "ocr",
+                }
+                evidence.append("text_match")
+                reasoning_parts.append(f"Visible text: {', '.join(visible_text[:3])}")
+            
+            # Check for location
+            location = result.get("location", "") or result.get("scene_location", "")
+            if location:
+                matched_entities["location"] = {
+                    "name": location,
+                    "confidence": 0.80,
+                    "source": "scene_analysis",
+                }
+                evidence.append("location_match")
+                reasoning_parts.append(f"Location: {location}")
+            
+            # Check for actions
+            actions = result.get("actions", []) or result.get("action_keywords", [])
+            if actions:
+                matched_entities["actions"] = {
+                    "items": actions[:5],
+                    "confidence": 0.75,
+                    "source": "visual_analysis",
+                }
+                evidence.append("action_match")
+                reasoning_parts.append(f"Actions: {', '.join(actions[:3])}")
+            
+            # Get description for additional context
+            description = result.get("description", "") or result.get("dense_caption", "")
+            
+            # Build reasoning string
+            reasoning = "; ".join(reasoning_parts) if reasoning_parts else description[:200]
+            
+            # Build explainable result
+            explainable_results.append({
+                "id": result.get("id"),
+                "score": result.get("score", 0),
+                "timestamp": result.get("start_time") or result.get("timestamp", 0),
+                "end_time": result.get("end_time"),
+                "media_path": result.get("media_path"),
+                "matched_entities": matched_entities,
+                "reasoning": reasoning,
+                "evidence": evidence,
+                "hitl_boost": result.get("hitl_boost", False),
+                # Include raw data for debugging
+                "raw_description": description[:500] if description else None,
+            })
+        
+        return explainable_results
+
+    def get_scene_by_id(self, scene_id: str) -> dict[str, Any] | None:
+        """Get a scene by its ID.
+
+        Args:
+            scene_id: The scene ID.
+
+        Returns:
+            Scene data or None if not found.
+        """
+        try:
+            points = self.client.retrieve(
+                collection_name=self.SCENES_COLLECTION,
+                ids=[scene_id],
+                with_payload=True,
+            )
+            if points:
+                return {"id": scene_id, **(points[0].payload or {})}
+            return None
+        except Exception:
+            return None
+
+    def get_scenes_for_video(
+        self,
+        video_path: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Get all scenes for a video, ordered by start time.
+
+        Args:
+            video_path: Path to the video.
+            limit: Maximum results.
+
+        Returns:
+            List of scenes ordered by start_time.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.SCENES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="media_path",
+                            match=models.MatchValue(value=video_path),
+                        )
+                    ]
+                ),
+                limit=limit,
+                with_payload=True,
+            )
+            scenes = []
+            for point in resp[0]:
+                scenes.append({
+                    "id": str(point.id),
+                    **(point.payload or {}),
+                })
+            # Sort by start_time
+            scenes.sort(key=lambda x: x.get("start_time", 0))
+            return scenes
+        except Exception:
+            return []
 
     def close(self) -> None:
         """Close the database client connection."""
@@ -1069,33 +1685,49 @@ class VectorDB:
             return False
 
     @observe("db_get_indexed_media")
-    def get_indexed_media(self, limit: int = 100) -> list[dict[str, Any]]:
-        """Get list of all indexed media files.
+    def get_indexed_media(self, limit: int = 1000) -> list[dict[str, Any]]:
+        """Get list of ALL indexed media files.
+
+        NOTE: This now properly paginates through the entire collection
+        to ensure all videos are returned (not just those in first 100 records).
 
         Args:
-            limit: Maximum number of results.
+            limit: Maximum segments to scan per page (higher = more complete).
 
         Returns:
-            List of indexed media files with metadata.
+            List of all unique indexed media files with segment counts.
         """
         try:
-            resp = self.client.scroll(
-                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
-                limit=limit,
-                with_payload=True,
-                with_vectors=False,
-            )
             seen_paths: dict[str, dict[str, Any]] = {}
-            for point in resp[0]:
-                payload = point.payload or {}
-                video_path = payload.get("video_path")
-                if video_path and video_path not in seen_paths:
-                    seen_paths[video_path] = {
-                        "video_path": video_path,
-                        "segment_count": 1,
-                    }
-                elif video_path:
-                    seen_paths[video_path]["segment_count"] += 1
+            offset = None
+            
+            # Paginate through ALL segments to build complete video list
+            while True:
+                resp = self.client.scroll(
+                    collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                    limit=limit,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                points, next_offset = resp
+                
+                for point in points:
+                    payload = point.payload or {}
+                    video_path = payload.get("video_path")
+                    if video_path and video_path not in seen_paths:
+                        seen_paths[video_path] = {
+                            "video_path": video_path,
+                            "segment_count": 1,
+                        }
+                    elif video_path:
+                        seen_paths[video_path]["segment_count"] += 1
+                
+                # No more pages
+                if next_offset is None or not points:
+                    break
+                offset = next_offset
+            
             return list(seen_paths.values())
         except Exception:
             return []
@@ -1697,6 +2329,37 @@ class VectorDB:
             )
             if resp[0]:
                 return (resp[0][0].payload or {}).get("name")
+            return None
+        except Exception:
+            return None
+
+    def get_face_cluster_by_name(self, name: str) -> int | None:
+        """Find face cluster ID by HITL-assigned name.
+        
+        Used for auto-merging when naming a new cluster with an existing name.
+        
+        Args:
+            name: The HITL-assigned name to search for.
+            
+        Returns:
+            Cluster ID if found, None otherwise.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="name",
+                            match=models.MatchValue(value=name),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=["cluster_id"],
+            )
+            if resp[0]:
+                return (resp[0][0].payload or {}).get("cluster_id")
             return None
         except Exception:
             return None

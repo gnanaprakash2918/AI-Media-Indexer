@@ -91,13 +91,20 @@ class OllamaLLM(LLMInterface):
         """Track errors and trigger cooldown if needed."""
         OllamaLLM._consecutive_errors += 1
         
-        # Check for model runner crash
-        is_runner_crash = error and "model runner has unexpectedly stopped" in str(error).lower()
+        error_str = str(error).lower() if error else ""
+        
+        # Check for model runner crash or 500 errors (VRAM exhaustion)
+        is_runner_crash = (
+            "model runner has unexpectedly stopped" in error_str
+            or "500" in error_str
+            or "internal server error" in error_str
+            or "unexpected" in error_str and "stop" in error_str
+        )
         
         if is_runner_crash:
             OllamaLLM._cooldown_until = time.time() + self.RUNNER_CRASH_COOLDOWN
-            print(f"[Ollama] Model runner crash detected! Entering {self.RUNNER_CRASH_COOLDOWN}s recovery cooldown...")
-            OllamaLLM._consecutive_errors = 0 # Reset count since we take immediate long cooldown
+            print(f"[Ollama] Model crash/500 detected! Waiting {self.RUNNER_CRASH_COOLDOWN}s for recovery...")
+            OllamaLLM._consecutive_errors = 0  # Reset count since we take immediate long cooldown
         elif OllamaLLM._consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
             OllamaLLM._cooldown_until = time.time() + self.COOLDOWN_DURATION
             print(f"[Ollama] Too many errors, entering {self.COOLDOWN_DURATION}s cooldown")
