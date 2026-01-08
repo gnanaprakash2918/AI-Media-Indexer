@@ -2391,6 +2391,24 @@ class VectorDB:
         except Exception:
             return 0
 
+    def re_embed_face_cluster_frames(self, cluster_id: int, new_name: str) -> int:
+        """Update and re-embed all frames containing a face cluster after HITL naming."""
+        try:
+            updated = 0
+            frames = self.get_frames_by_face_cluster(cluster_id)
+            for frame in frames:
+                frame_id = frame.get("id")
+                payload = frame.get("payload", {})
+                face_names = list(set(payload.get("face_names", []) + [new_name]))
+                speaker_names = payload.get("speaker_names", [])
+                if self.update_frame_identity_text(frame_id, face_names, speaker_names):
+                    updated += 1
+            log(f"Re-embedded {updated} frames for face cluster {cluster_id} -> {new_name}")
+            return updated
+        except Exception as e:
+            log(f"re_embed_face_cluster_frames error: {e}")
+            return 0
+
     def get_speaker_name_by_cluster(self, cluster_id: int) -> str | None:
         """Get HITL-assigned name for a speaker cluster.
         
