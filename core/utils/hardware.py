@@ -129,3 +129,72 @@ def log_vram_status(context: str = "") -> None:
             vram_used=used,
             vram_total=total,
         )
+
+
+class VRAMManager:
+    """Manages GPU model lifecycle - unloads unused models before loading new ones."""
+    
+    _instance = None
+    _models: dict[str, object] = {}
+    _current_model: str | None = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._models = {}
+            cls._instance._current_model = None
+        return cls._instance
+    
+    def register(self, name: str, model: object) -> None:
+        """Register a model for lifecycle management."""
+        self._models[name] = model
+        self._current_model = name
+        log(f"VRAMManager: Registered model '{name}'")
+    
+    def unload(self, name: str) -> None:
+        """Unload a specific model and free its VRAM."""
+        if name in self._models:
+            model = self._models.pop(name)
+            # Move to CPU and delete
+            if hasattr(model, 'to'):
+                try:
+                    model.to('cpu')
+                except Exception:
+                    pass
+            if hasattr(model, 'unload'):
+                try:
+                    model.unload()
+                except Exception:
+                    pass
+            del model
+            cleanup_vram()
+            log(f"VRAMManager: Unloaded model '{name}'")
+            if self._current_model == name:
+                self._current_model = None
+    
+    def unload_all_except(self, keep: str | None = None) -> None:
+        """Unload all models except the specified one."""
+        to_unload = [n for n in list(self._models.keys()) if n != keep]
+        for name in to_unload:
+            self.unload(name)
+    
+    def prepare_for_model(self, name: str, estimated_vram_gb: float = 2.0) -> None:
+        """Prepare VRAM for loading a new model - unload others if needed."""
+        # Check if we have enough VRAM
+        if not can_load_model(estimated_vram_gb):
+            log(f"VRAMManager: Low VRAM, unloading all models before loading '{name}'")
+            self.unload_all_except(None)
+        cleanup_vram()
+        log_vram_status(f"before_{name}")
+    
+    def cleanup_before_ollama(self) -> None:
+        """Special cleanup before Ollama vision calls - Ollama manages its own models."""
+        # Unload PyTorch models that might be holding VRAM
+        self.unload_all_except(None)
+        cleanup_vram()
+        log_vram_status("before_ollama")
+
+
+# Global singleton
+vram_manager = VRAMManager()
+

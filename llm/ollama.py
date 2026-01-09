@@ -93,6 +93,12 @@ class OllamaLLM(LLMInterface):
         
         error_str = str(error).lower() if error else ""
         
+        # Check for CUDA OOM (VRAM exhaustion)
+        is_cuda_oom = (
+            "cuda" in error_str and ("out of memory" in error_str or "unable to allocate" in error_str)
+            or "cudamalloc failed" in error_str
+        )
+        
         # Check for model runner crash or 500 errors (VRAM exhaustion)
         is_runner_crash = (
             "model runner has unexpectedly stopped" in error_str
@@ -101,7 +107,19 @@ class OllamaLLM(LLMInterface):
             or "unexpected" in error_str and "stop" in error_str
         )
         
-        if is_runner_crash:
+        if is_cuda_oom:
+            print(f"[Ollama] CUDA OOM detected! Moving encoder to CPU as fallback...")
+            try:
+                # Try to free VRAM by moving encoder to CPU
+                from core.ingestion.pipeline import IngestionPipeline
+                if hasattr(IngestionPipeline, '_instance') and IngestionPipeline._instance:
+                    IngestionPipeline._instance.db.encoder_to_cpu()
+            except Exception as e:
+                print(f"[Ollama] Could not move encoder to CPU: {e}")
+            
+            OllamaLLM._cooldown_until = time.time() + self.RUNNER_CRASH_COOLDOWN
+            OllamaLLM._consecutive_errors = 0
+        elif is_runner_crash:
             OllamaLLM._cooldown_until = time.time() + self.RUNNER_CRASH_COOLDOWN
             print(f"[Ollama] Model crash/500 detected! Waiting {self.RUNNER_CRASH_COOLDOWN}s for recovery...")
             OllamaLLM._consecutive_errors = 0  # Reset count since we take immediate long cooldown

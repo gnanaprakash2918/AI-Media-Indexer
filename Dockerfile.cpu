@@ -1,0 +1,38 @@
+# ==============================================================================
+# AI-Media-Indexer CPU-Only Dockerfile (~1.5GB vs ~8GB GPU)
+# For deployment without GPU or for testing
+# ==============================================================================
+
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# Runtime deps only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libsndfile1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Install Python deps with CPU-only PyTorch
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Non-root user
+RUN useradd -m -u 1000 appuser
+USER appuser
+
+COPY --chown=appuser:appuser . .
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV DEVICE=cpu
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+ENTRYPOINT ["python", "main.py"]

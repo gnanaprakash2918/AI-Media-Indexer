@@ -1,8 +1,8 @@
 """Wrappers for video inpainting engines."""
 
 import shutil
-from pathlib import Path
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -12,12 +12,12 @@ from core.utils.logger import log
 
 class ManipulationEngine(ABC):
     """Base class for video manipulation engines."""
-    
+
     @abstractmethod
     def inpaint(
-        self, 
-        video_path: Path, 
-        mask_data: dict, 
+        self,
+        video_path: Path,
+        mask_data: dict,
         output_path: Path
     ) -> bool:
         """Perform inpainting on video.
@@ -35,10 +35,10 @@ class ManipulationEngine(ABC):
 
 class ProPainterEngine(ManipulationEngine):
     """Propagation-based inpainting using ProPainter."""
-    
+
     def __init__(self):
         self.model = None
-        
+
     def load_model(self) -> bool:
         try:
             log("[ProPainter] Loading model...")
@@ -49,18 +49,18 @@ class ProPainterEngine(ManipulationEngine):
         except ImportError:
             log("[ProPainter] Not installed. Run: pip install propainter")
             return False
-    
+
     def inpaint(
-        self, 
-        video_path: Path, 
-        mask_data: dict, 
+        self,
+        video_path: Path,
+        mask_data: dict,
         output_path: Path
     ) -> bool:
         if not self.load_model():
             return False
-            
+
         log(f"[ProPainter] Processing {video_path.name}...")
-        
+
         try:
             # Placeholder - actual implementation would call ProPainter inference
             shutil.copy(video_path, output_path)
@@ -73,10 +73,10 @@ class ProPainterEngine(ManipulationEngine):
 
 class WanVideoEngine(ManipulationEngine):
     """Generative inpainting using Wan 2.1/2.2."""
-    
+
     def __init__(self):
         self.model = None
-        
+
     def load_model(self) -> bool:
         try:
             log("[Wan] Loading model...")
@@ -86,18 +86,18 @@ class WanVideoEngine(ManipulationEngine):
         except ImportError:
             log("[Wan] Not installed")
             return False
-    
+
     def inpaint(
-        self, 
-        video_path: Path, 
-        mask_data: dict, 
+        self,
+        video_path: Path,
+        mask_data: dict,
         output_path: Path
     ) -> bool:
         if not self.load_model():
             return False
-            
+
         log(f"[Wan] Processing {video_path.name}...")
-        
+
         try:
             # Placeholder - actual implementation would call Wan inference
             # with FlowEdit guidance and negative prompts
@@ -111,11 +111,11 @@ class WanVideoEngine(ManipulationEngine):
 
 class PrivacyBlur:
     """Lightweight GPU-accelerated blurring for privacy redaction."""
-    
+
     def __init__(self, blur_type: str = "gaussian", kernel_size: int = 51):
         self.blur_type = blur_type
         self.kernel_size = kernel_size
-        
+
     def apply(
         self,
         frame: "np.ndarray",
@@ -130,9 +130,8 @@ class PrivacyBlur:
         Returns:
             Frame with blurred region.
         """
-        import cv2
         import numpy as np
-        
+
         if self.blur_type == "gaussian":
             blurred = cv2.GaussianBlur(frame, (self.kernel_size, self.kernel_size), 0)
         elif self.blur_type == "pixelate":
@@ -141,8 +140,8 @@ class PrivacyBlur:
             blurred = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
         else:
             blurred = cv2.blur(frame, (self.kernel_size, self.kernel_size))
-            
+
         mask_3ch = np.stack([mask] * 3, axis=-1) if mask.ndim == 2 else mask
         result = np.where(mask_3ch > 0, blurred, frame)
-        
+
         return result.astype(np.uint8)

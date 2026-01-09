@@ -7,9 +7,10 @@ and resolves person names to face cluster IDs for identity filtering.
 import json
 from typing import Any
 
+from core.utils.observe import observe
+
 from core.storage.db import VectorDB
 from core.utils.logger import log
-from core.utils.observe import observe
 from llm.factory import LLMFactory
 
 

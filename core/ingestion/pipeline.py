@@ -858,6 +858,14 @@ class IngestionPipeline:
         identity_context = "\n".join(identity_parts) if identity_parts else None
 
         try:
+            # GPU-first: Unload all GPU models before Ollama vision call
+            # Models will auto-reload on next use
+            from core.utils.hardware import cleanup_vram, log_vram_status
+            if self.face_manager:
+                self.face_manager.unload_gpu()
+            cleanup_vram()
+            log_vram_status("before_ollama")
+            
             analysis = await self.vision.analyze_frame(
                 frame_path,
                 identity_context=identity_context,

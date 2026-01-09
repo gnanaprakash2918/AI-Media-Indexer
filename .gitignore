@@ -6,6 +6,15 @@ __pycache__/
 *.pyc
 logs/
 
+# Debug files
+debug_*.py
+debug_*.log
+test_debug.py
+verify_fixes.py
+
+# Langfuse local data
+langfuse_data/
+
 # Custom - AI Media Indexer Data
 models/
 qdrant_data/

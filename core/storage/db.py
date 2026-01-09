@@ -177,6 +177,28 @@ class VectorDB:
             # Last resort: try Hub direct load
             return _create(self.MODEL_NAME, device=target_device)
 
+    def encoder_to_cpu(self) -> None:
+        """Move encoder to CPU to free GPU VRAM for Ollama."""
+        if hasattr(self, 'encoder') and self.encoder is not None:
+            try:
+                self.encoder = self.encoder.to('cpu')
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                log("Encoder moved to CPU, VRAM freed for Ollama")
+            except Exception as e:
+                log(f"Failed to move encoder to CPU: {e}", level="WARNING")
+
+    def encoder_to_gpu(self) -> None:
+        """Move encoder back to GPU for fast embedding."""
+        device = settings.device or "cuda"
+        if device != "cpu" and hasattr(self, 'encoder') and self.encoder is not None:
+            try:
+                self.encoder = self.encoder.to(device)
+                log(f"Encoder moved back to {device}")
+            except Exception as e:
+                log(f"Failed to move encoder to GPU: {e}", level="WARNING")
+
     @observe("db_encode_texts")
     def encode_texts(
         self,
@@ -218,6 +240,17 @@ class VectorDB:
                 ),
             )
 
+        # Check media_frames collection dimension
+        if self.client.collection_exists(self.MEDIA_COLLECTION):
+            try:
+                info = self.client.get_collection(self.MEDIA_COLLECTION)
+                existing_size = info.config.params.vectors.size
+                if existing_size != self.MEDIA_VECTOR_SIZE:
+                    log(f"media_frames dimension mismatch: {existing_size} vs {self.MEDIA_VECTOR_SIZE}. Recreating.", level="WARNING")
+                    self.client.delete_collection(self.MEDIA_COLLECTION)
+            except Exception as e:
+                log(f"Failed to check media_frames dimension: {e}")
+        
         if not self.client.collection_exists(self.MEDIA_COLLECTION):
             self.client.create_collection(
                 collection_name=self.MEDIA_COLLECTION,
@@ -226,6 +259,7 @@ class VectorDB:
                     distance=models.Distance.COSINE,
                 ),
             )
+            log(f"Created media_frames collection with dim={self.MEDIA_VECTOR_SIZE}")
 
         if not self.client.collection_exists(self.FACES_COLLECTION):
             self.client.create_collection(
@@ -430,16 +464,25 @@ class VectorDB:
         if payload:
             final_payload.update(payload)
 
-        self.client.upsert(
-            collection_name=self.MEDIA_COLLECTION,
-            points=[
-                models.PointStruct(
-                    id=safe_point_id,
-                    vector=vector,
-                    payload=final_payload,
-                )
-            ],
-        )
+        try:
+            # Check dimension match
+            if len(vector) != self.MEDIA_VECTOR_SIZE:
+                log(f"Vector dim mismatch: {len(vector)} vs {self.MEDIA_VECTOR_SIZE}", level="ERROR")
+                return
+            
+            self.client.upsert(
+                collection_name=self.MEDIA_COLLECTION,
+                points=[
+                    models.PointStruct(
+                        id=safe_point_id,
+                        vector=vector,
+                        payload=final_payload,
+                    )
+                ],
+            )
+            log(f"Upserted frame: {timestamp:.1f}s", level="DEBUG")
+        except Exception as e:
+            log(f"Upsert failed for {point_id}: {e}", level="ERROR")
 
     @observe("db_search_frames")
     def search_frames(
