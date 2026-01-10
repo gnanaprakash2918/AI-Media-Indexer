@@ -1,7 +1,8 @@
 import { useState, memo } from 'react';
-import { PlayArrow, AccessTime, Videocam, GraphicEq, TextFields, Face, Mic, LocalOffer, Room, Visibility } from '@mui/icons-material';
-import { Card, CardMedia, CardContent, Typography, Box, Chip, IconButton, alpha, useTheme, Tooltip, Collapse } from '@mui/material';
+import { PlayArrow, AccessTime, Videocam, GraphicEq, TextFields, Face, Mic, LocalOffer, Room, Visibility, Edit } from '@mui/icons-material';
+import { Card, CardMedia, CardContent, Typography, Box, Chip, IconButton, alpha, useTheme, Tooltip, Collapse, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, CircularProgress } from '@mui/material';
 import { VideoPlayer } from './VideoPlayer';
+import { updateFrameDescription } from '../../api/client';
 
 interface MediaResult {
     score: number;
@@ -16,6 +17,7 @@ interface MediaResult {
     action?: string;
     description?: string;
     thumbnail_url?: string;
+    id?: string;
     // HITL Identity Fields
     face_names?: string[];
     speaker_names?: string[];
@@ -25,12 +27,19 @@ interface MediaResult {
     visible_text?: string[];
     scene_location?: string;
     identity_text?: string;
+    // Agentic Search Explainability
+    match_reason?: string;
+    agent_thought?: string;
+    matched_constraints?: string[];
 }
 
 export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }) {
     const theme = useTheme();
     const [playerOpen, setPlayerOpen] = useState(false);
     const [expanded, setExpanded] = useState(false);
+    const [editOpen, setEditOpen] = useState(false);
+    const [editDescription, setEditDescription] = useState(item.action || item.description || '');
+    const [saving, setSaving] = useState(false);
 
     // Extract filename for thumbnail
     const filename = item.video_path.split(/[/\\]/).pop();
@@ -56,6 +65,21 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
     };
 
     const handlePlay = () => setPlayerOpen(true);
+
+    const handleSaveDescription = async () => {
+        if (!item.id || !editDescription.trim()) return;
+        setSaving(true);
+        try {
+            await updateFrameDescription(item.id, editDescription.trim());
+            item.action = editDescription.trim();
+            item.description = editDescription.trim();
+            setEditOpen(false);
+        } catch (err) {
+            console.error('Failed to update description', err);
+        } finally {
+            setSaving(false);
+        }
+    };
 
     // Check if we have HITL data
     const hasFaces = item.face_names && item.face_names.length > 0;
@@ -188,6 +212,21 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                         >
                             <PlayArrow sx={{ color: 'white', fontSize: 32 }} />
                         </IconButton>
+                        {item.id && (
+                            <Tooltip title="Edit Description (HITL)">
+                                <IconButton
+                                    onClick={(e) => { e.stopPropagation(); setEditOpen(true); }}
+                                    sx={{
+                                        bgcolor: 'rgba(255,255,255,0.2)',
+                                        backdropFilter: 'blur(8px)',
+                                        '&:hover': { bgcolor: 'rgba(255,200,100,0.4)' },
+                                        ml: 1,
+                                    }}
+                                >
+                                    <Edit sx={{ color: 'white' }} />
+                                </IconButton>
+                            </Tooltip>
+                        )}
                     </Box>
                 </Box>
 
@@ -260,7 +299,46 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                         </Typography>
                     )}
 
-                    {/* Expandable Details */}
+                    {/* Search Explainability - Match Reason */}
+                    {(item.match_reason || item.agent_thought) && (
+                        <Box sx={{
+                            mt: 1,
+                            p: 1,
+                            bgcolor: alpha(theme.palette.success.main, 0.08),
+                            borderRadius: 1,
+                            border: `1px solid ${alpha(theme.palette.success.main, 0.2)}`,
+                        }}>
+                            <Typography variant="caption" sx={{
+                                fontWeight: 600,
+                                color: 'success.main',
+                                display: 'block',
+                                mb: 0.5
+                            }}>
+                                🎯 Match Reasoning
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
+                                {item.match_reason || item.agent_thought}
+                            </Typography>
+                            {item.matched_constraints && item.matched_constraints.length > 0 && (
+                                <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                                    {item.matched_constraints.map((c, i) => (
+                                        <Chip
+                                            key={i}
+                                            label={c}
+                                            size="small"
+                                            sx={{
+                                                height: 18,
+                                                fontSize: '0.6rem',
+                                                bgcolor: alpha(theme.palette.success.main, 0.15),
+                                                color: 'success.dark'
+                                            }}
+                                        />
+                                    ))}
+                                </Box>
+                            )}
+                        </Box>
+                    )}
+
                     <Collapse in={expanded}>
                         <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
                             {/* Entities */}
@@ -328,6 +406,27 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                 open={playerOpen}
                 onClose={() => setPlayerOpen(false)}
             />
+            <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="sm" fullWidth>
+                <DialogTitle>Edit Description (HITL Correction)</DialogTitle>
+                <DialogContent>
+                    <TextField
+                        autoFocus
+                        fullWidth
+                        multiline
+                        rows={4}
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        placeholder="Describe what's actually in this frame..."
+                        sx={{ mt: 1 }}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setEditOpen(false)}>Cancel</Button>
+                    <Button variant="contained" onClick={handleSaveDescription} disabled={saving || !editDescription.trim()}>
+                        {saving ? <CircularProgress size={20} /> : 'Save & Re-embed'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </>
     );
 });

@@ -54,6 +54,11 @@ except ImportError:
 from config import settings
 from core.utils.logger import log
 
+# Log NeMo availability at module load
+if not HAS_NEMO:
+    log("[IndicASR] NVIDIA NeMo not installed. For SOTA Indic ASR, run: pip install nemo_toolkit[asr]")
+    log("[IndicASR] Falling back to HuggingFace Whisper for transcription.")
+
 
 class IndicASRPipeline:
     """IndicConformer ASR with two backend options.

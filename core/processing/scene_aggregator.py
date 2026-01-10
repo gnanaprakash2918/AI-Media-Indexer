@@ -1,42 +1,103 @@
-"""Scene Aggregator for production-grade video search.
+"""Scene Aggregator with Global Context Vector.
 
-Aggregates frame-by-frame analysis into coherent scene-level data.
-This is critical for enabling complex queries like:
-"Prakash wearing blue shirt bowling at Brunswick hitting a strike"
-
-The aggregator:
-1. Groups frames by scene boundaries
-2. Deduplicates entities and actions
-3. Tracks person attributes across frames
-4. Generates scene summaries
+Aggregates frame-level analysis into scene-level data AND generates
+video-level global context for long-term understanding (18-hour problem).
 """
-
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from core.utils.logger import log
 
 if TYPE_CHECKING:
-    from core.knowledge.schemas import (
-        EntityDetail,
-        FrameAnalysis,
-        PersonAttribute,
-        SceneData,
-    )
+    from core.knowledge.schemas import EntityDetail, FrameAnalysis, PersonAttribute, SceneData
+
+
+class GlobalContextManager:
+    """Manages global video-level context for long-term understanding."""
+    
+    def __init__(self):
+        self.scene_summaries: list[str] = []
+        self.key_entities: dict[str, int] = defaultdict(int)
+        self.key_people: dict[str, int] = defaultdict(int)
+        self.key_locations: dict[str, int] = defaultdict(int)
+        self.total_duration: float = 0.0
+    
+    def add_scene(self, scene: dict) -> None:
+        summary = scene.get("visual_summary", "")
+        if summary:
+            self.scene_summaries.append(summary)
+        
+        for name in scene.get("person_names", []):
+            self.key_people[name] += 1
+        
+        location = scene.get("location", "")
+        if location:
+            self.key_locations[location] += 1
+        
+        for entity in scene.get("entities", []):
+            name = entity.get("name", "") if isinstance(entity, dict) else str(entity)
+            if name:
+                self.key_entities[name] += 1
+        
+        self.total_duration = max(self.total_duration, scene.get("end_time", 0))
+    
+    def generate_global_summary(self, llm=None) -> str:
+        """Generate video-level summary using LLM or rule-based fallback."""
+        if llm and len(self.scene_summaries) > 3:
+            return self._llm_summarize(llm)
+        return self._rule_based_summary()
+    
+    def _rule_based_summary(self) -> str:
+        parts = []
+        
+        top_people = sorted(self.key_people.items(), key=lambda x: -x[1])[:5]
+        if top_people:
+            names = ", ".join(n for n, _ in top_people)
+            parts.append(f"Featuring: {names}")
+        
+        top_locations = sorted(self.key_locations.items(), key=lambda x: -x[1])[:3]
+        if top_locations:
+            locs = ", ".join(l for l, _ in top_locations)
+            parts.append(f"Locations: {locs}")
+        
+        top_entities = sorted(self.key_entities.items(), key=lambda x: -x[1])[:5]
+        if top_entities:
+            ents = ", ".join(e for e, _ in top_entities)
+            parts.append(f"Key objects: {ents}")
+        
+        if self.scene_summaries:
+            parts.append(f"Total scenes: {len(self.scene_summaries)}")
+        
+        return ". ".join(parts) if parts else "Video content summary"
+    
+    def _llm_summarize(self, llm) -> str:
+        combined = " | ".join(self.scene_summaries[:20])
+        prompt = f"Summarize this video in 2-3 sentences:\n{combined}"
+        try:
+            return llm.generate_sync(prompt, max_tokens=150)
+        except Exception as e:
+            log(f"LLM summarization failed: {e}")
+            return self._rule_based_summary()
+    
+    def to_payload(self) -> dict:
+        return {
+            "global_summary": self._rule_based_summary(),
+            "scene_count": len(self.scene_summaries),
+            "duration_seconds": self.total_duration,
+            "top_people": list(self.key_people.keys())[:10],
+            "top_locations": list(self.key_locations.keys())[:5],
+            "top_entities": list(self.key_entities.keys())[:10],
+        }
 
 
 class SceneAggregator:
     """Aggregate frame-level data into scene-level storage units."""
 
     def __init__(self, min_confidence: float = 0.5):
-        """Initialize aggregator.
-
-        Args:
-            min_confidence: Minimum confidence threshold for including entities.
-        """
         self.min_confidence = min_confidence
+        self.global_context = GlobalContextManager()
 
     def aggregate_frames(
         self,
@@ -45,37 +106,21 @@ class SceneAggregator:
         end_time: float,
         dialogue_segments: list[dict] | None = None,
     ) -> dict:
-        """Aggregate a list of frames into a single scene.
-
-        Args:
-            frames: List of frame data dicts (from pipeline processing).
-            start_time: Scene start timestamp.
-            end_time: Scene end timestamp.
-            dialogue_segments: ASR segments overlapping this scene.
-
-        Returns:
-            Dict ready for SceneData creation.
-        """
-        # Collect all data across frames
         all_actions: list[str] = []
-        all_entities: dict[str, dict] = {}  # name -> entity_detail
+        all_entities: dict[str, dict] = {}
         all_face_ids: set[int] = set()
         all_person_names: set[str] = set()
         all_visible_text: set[str] = set()
-        all_clothing: dict[int, dict] = {}  # face_id -> clothing info
+        all_clothing: dict[int, dict] = {}
         all_accessories: dict[int, set[str]] = defaultdict(set)
-
-        # Location voting (most common wins)
         location_votes: dict[str, int] = defaultdict(int)
         cultural_votes: dict[str, int] = defaultdict(int)
 
         for frame in frames:
-            # Extract actions
             action = frame.get("action") or frame.get("description", "")
             if action:
                 all_actions.append(action)
 
-            # Extract entities
             entities = frame.get("entities") or []
             for entity in entities:
                 if isinstance(entity, dict):
@@ -83,35 +128,29 @@ class SceneAggregator:
                     if name and name not in all_entities:
                         all_entities[name] = entity
 
-            # Extract face clusters
             face_ids = frame.get("face_cluster_ids") or []
             for fid in face_ids:
                 if isinstance(fid, int):
                     all_face_ids.add(fid)
 
-            # Extract person names
             names = frame.get("face_names") or frame.get("person_names") or []
             for name in names:
                 if name:
                     all_person_names.add(name)
 
-            # Extract visible text
             texts = frame.get("visible_text") or []
             for text in texts:
                 if text:
                     all_visible_text.add(text)
 
-            # Extract structured data for clothing
             structured = frame.get("structured_data") or {}
             if structured:
-                # Parse clothing from entities
                 for entity in structured.get("entities", []):
                     if isinstance(entity, dict):
                         category = entity.get("category", "").lower()
                         if category in ("clothing", "apparel", "wear"):
                             name = entity.get("name", "")
                             details = entity.get("visual_details", "")
-                            # Try to associate with face
                             for fid in face_ids:
                                 if fid not in all_clothing:
                                     all_clothing[fid] = {
@@ -123,7 +162,6 @@ class SceneAggregator:
                             for fid in face_ids:
                                 all_accessories[fid].add(name)
 
-            # Vote for location
             location = frame.get("scene_location") or structured.get("scene", {}).get("location", "")
             if location:
                 location_votes[location] += 1
@@ -132,17 +170,15 @@ class SceneAggregator:
             if cultural:
                 cultural_votes[cultural] += 1
 
-        # Determine winning location/cultural context
         best_location = max(location_votes, key=location_votes.get, default="")
         best_cultural = max(cultural_votes, key=cultural_votes.get, default="")
 
-        # Build person attributes
         person_attributes = []
         for face_id in all_face_ids:
             clothing = all_clothing.get(face_id, {})
             attr = {
                 "face_id": str(face_id),
-                "name": None,  # Will be filled from HITL
+                "name": None,
                 "clothing_color": clothing.get("color", ""),
                 "clothing_type": clothing.get("type", ""),
                 "accessories": list(all_accessories.get(face_id, [])),
@@ -150,13 +186,9 @@ class SceneAggregator:
             }
             person_attributes.append(attr)
 
-        # Deduplicate actions (keep unique, preserve order)
         unique_actions = self._dedupe_actions(all_actions)
-
-        # Build action sequence narrative
         action_sequence = self._build_action_sequence(unique_actions)
 
-        # Get dialogue transcript for this scene
         dialogue = ""
         speaker_ids: set[int] = set()
         speaker_names: set[str] = set()
@@ -164,23 +196,18 @@ class SceneAggregator:
             for seg in dialogue_segments:
                 seg_start = seg.get("start", 0)
                 seg_end = seg.get("end", 0)
-                # Check overlap with scene
                 if seg_end > start_time and seg_start < end_time:
                     text = seg.get("text", "")
                     if text:
                         dialogue += text + " "
-                    # Collect speaker info
                     if seg.get("speaker_cluster_id"):
                         speaker_ids.add(seg["speaker_cluster_id"])
                     if seg.get("speaker_name"):
                         speaker_names.add(seg["speaker_name"])
 
-        # Build visual summary
-        visual_summary = self._build_visual_summary(
-            unique_actions, all_entities, all_person_names
-        )
+        visual_summary = self._build_visual_summary(unique_actions, all_entities, all_person_names)
 
-        return {
+        scene_data = {
             "start_time": start_time,
             "end_time": end_time,
             "duration": end_time - start_time,
@@ -200,8 +227,13 @@ class SceneAggregator:
             "frame_count": len(frames),
         }
 
+        self.global_context.add_scene(scene_data)
+        return scene_data
+
+    def get_global_context(self) -> dict:
+        return self.global_context.to_payload()
+
     def _extract_color(self, text: str) -> str:
-        """Extract color from visual details text."""
         colors = [
             "red", "blue", "green", "yellow", "orange", "purple", "pink",
             "black", "white", "gray", "grey", "brown", "navy", "azure",
@@ -214,38 +246,30 @@ class SceneAggregator:
         return ""
 
     def _dedupe_actions(self, actions: list[str]) -> list[str]:
-        """Deduplicate similar actions."""
         if not actions:
             return []
-
         unique = []
         seen = set()
         for action in actions:
-            # Normalize for comparison
             key = action.lower().strip()[:50]
             if key not in seen:
                 seen.add(key)
                 unique.append(action)
-
-        return unique[:10]  # Limit to 10 unique actions per scene
+        return unique[:10]
 
     def _build_action_sequence(self, actions: list[str]) -> str:
-        """Build a narrative sequence from actions."""
         if not actions:
             return ""
         if len(actions) == 1:
             return actions[0]
-
-        # Build "First X, then Y, finally Z" narrative
         parts = []
-        for i, action in enumerate(actions[:5]):  # Limit to 5 for brevity
+        for i, action in enumerate(actions[:5]):
             if i == 0:
                 parts.append(f"First, {action.lower()}")
             elif i == len(actions) - 1 or i == 4:
                 parts.append(f"finally {action.lower()}")
             else:
                 parts.append(f"then {action.lower()}")
-
         return ", ".join(parts)
 
     def _build_visual_summary(
@@ -254,22 +278,14 @@ class SceneAggregator:
         entities: dict[str, dict],
         person_names: set[str],
     ) -> str:
-        """Build a visual summary for embedding."""
         parts = []
-
-        # People
         if person_names:
             parts.append(f"People: {', '.join(person_names)}")
-
-        # Key actions
         if actions:
             parts.append(f"Actions: {'; '.join(actions[:3])}")
-
-        # Key entities
         entity_names = [e.get("name", "") for e in entities.values()][:5]
         if entity_names:
             parts.append(f"Objects: {', '.join(entity_names)}")
-
         return ". ".join(parts) if parts else "Scene"
 
 
@@ -279,16 +295,5 @@ def aggregate_frames_to_scene(
     end_time: float,
     dialogue_segments: list[dict] | None = None,
 ) -> dict:
-    """Convenience function to aggregate frames into scene data.
-
-    Args:
-        frames: List of frame data dicts.
-        start_time: Scene start timestamp.
-        end_time: Scene end timestamp.
-        dialogue_segments: ASR segments for the scene.
-
-    Returns:
-        Dict ready for SceneData creation.
-    """
     aggregator = SceneAggregator()
     return aggregator.aggregate_frames(frames, start_time, end_time, dialogue_segments)

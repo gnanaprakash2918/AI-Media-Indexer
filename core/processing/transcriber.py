@@ -128,46 +128,44 @@ class AudioTranscriber:
         user_sub_path: Path | None,
         language: str,
     ) -> bool:
-        """Searches for subtitles: user-provided, sidecar files, or embedded streams.
+        """Searches for subtitles with STRICT priority: Sidecar > Embedded > (AI later).
 
-        Args:
-            input_path (Path): Video/audio input file.
-            output_path (Path): Target subtitle output path.
-            user_sub_path (Path | None): Optional user override subtitle file.
-            language (str): Language specifier (e.g., "en", "ta").
-
-        Returns:
-            bool: True if subtitles were found/extracted; False otherwise.
+        Priority Order:
+        1. User-provided subtitle file (explicit override)
+        2. Sidecar .srt files (same directory as video)
+        3. Embedded subtitle streams (FFmpeg extraction)
+        
+        Returns True if subtitles found, False if AI transcription needed.
         """
-        log("[INFO] Probing for existing subtitles...")
+        log("[Subtitle] Checking for existing subtitles (Sidecar > Embedded > AI)...")
 
-        # 1. Check for explicit user provided subtitle path
+        # Priority 1: Explicit user-provided subtitle
         if user_sub_path and user_sub_path.exists():
-            log(f"[SUCCESS] Using provided subtitle: {user_sub_path}")
+            log(f"[Subtitle] ✓ Using USER-PROVIDED subtitle: {user_sub_path}")
             shutil.copy(user_sub_path, output_path)
             return True
 
-        # 2. Check for sidecar files (video.srt, video.lang.srt)
-        # We check input_path directory for files with same stem
-        for sidecar in [
+        # Priority 2: Sidecar .srt files
+        sidecar_candidates = [
             input_path.with_suffix(f".{language}.srt"),
             input_path.with_suffix(".srt"),
-        ]:
+            input_path.parent / f"{input_path.stem}.{language}.srt",
+            input_path.parent / f"{input_path.stem}.srt",
+        ]
+        for sidecar in sidecar_candidates:
             if sidecar.exists() and sidecar != output_path:
-                log(f"[SUCCESS] Found sidecar: {sidecar}")
+                log(f"[Subtitle] ✓ Using SIDECAR subtitle: {sidecar}")
                 shutil.copy(sidecar, output_path)
                 return True
 
-        # 3. Check for embedded subtitles using ffmpeg
+        # Priority 3: Embedded subtitle stream
+        log("[Subtitle] No sidecar found. Probing for EMBEDDED subtitles...")
         cmd = [
             self._get_ffmpeg_cmd(),
             "-y",
-            "-v",
-            "error",
-            "-i",
-            str(input_path),
-            "-map",
-            "0:s:0",  # Map first subtitle stream
+            "-v", "error",
+            "-i", str(input_path),
+            "-map", "0:s:0",
             str(output_path),
         ]
         try:
@@ -175,12 +173,12 @@ class AudioTranscriber:
                 cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             if output_path.exists() and output_path.stat().st_size > 0:
-                log("[SUCCESS] Extracted embedded subtitles.")
+                log("[Subtitle] ✓ Using EMBEDDED subtitle stream")
                 return True
         except subprocess.CalledProcessError:
             pass
 
-        log("[INFO] No existing subtitles found. Proceeding to ASR.")
+        log("[Subtitle] ✗ No existing subtitles found. Starting AI TRANSCRIPTION...")
         return False
 
     @observe("transcriber_slice_audio")

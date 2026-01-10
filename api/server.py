@@ -165,6 +165,8 @@ class RedactRequest(BaseModel):
     identity_id: str
     output_path: str | None = None
 
+class FrameDescriptionRequest(BaseModel):
+    description: str
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -182,6 +184,42 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # System Configuration Endpoints
+    @app.get("/config/system")
+    async def get_system_config():
+        """Get detected hardware profile and current settings."""
+        from core.utils.hardware import get_cached_profile, get_available_vram, get_used_vram
+        profile = get_cached_profile()
+        return {
+            "profile": profile.to_dict(),
+            "vram_used_gb": round(get_used_vram(), 2),
+            "vram_free_gb": round(get_available_vram() - get_used_vram(), 2),
+            "settings": {
+                "embedding_model": settings.embedding_model_override,
+                "vision_model": settings.ollama_vision_model,
+                "batch_size": settings.batch_size,
+                "max_concurrent_jobs": settings.max_concurrent_jobs,
+                "lazy_unload": settings.lazy_unload,
+                "high_performance_mode": settings.high_performance_mode,
+            }
+        }
+
+    @app.post("/config/system")
+    async def update_system_config(updates: dict):
+        """Runtime override of system settings."""
+        allowed_keys = {"batch_size", "max_concurrent_jobs", "lazy_unload", "high_performance_mode"}
+        applied = {}
+        for key, value in updates.items():
+            if key in allowed_keys:
+                setattr(settings, key, value)
+                applied[key] = value
+        
+        # Refresh hardware profile
+        from core.utils.hardware import refresh_profile
+        new_profile = refresh_profile()
+        
+        return {"applied": applied, "new_profile": new_profile.to_dict()}
+
     # Mount static files for pre-generated thumbnails
     thumb_dir = settings.cache_dir / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
@@ -189,6 +227,7 @@ def create_app() -> FastAPI:
     # Create subdirectories
     (thumb_dir / "faces").mkdir(exist_ok=True)
     (thumb_dir / "voices").mkdir(exist_ok=True)
+
 
     # Dynamic face thumbnail endpoint - generates on-demand if file doesn't exist
     @app.get("/thumbnails/faces/{filename}")
@@ -620,10 +659,13 @@ def create_app() -> FastAPI:
                 detail=f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_MEDIA_EXTENSIONS))}"
             )
 
+        # Generate Job ID upfront so we can return it
+        job_id = str(uuid4())
+
         async def run_pipeline():
             # Start a new trace for the background task
             trace_name = f"ingest_{file_path.name}"
-            start_trace(name="background_ingest", metadata={"file": str(file_path)})
+            start_trace(name="background_ingest", metadata={"file": str(file_path), "job_id": job_id})
             try:
                 assert pipeline is not None
                 await pipeline.process_video(
@@ -631,6 +673,7 @@ def create_app() -> FastAPI:
                     ingest_request.media_type_hint,
                     start_time=ingest_request.start_time,
                     end_time=ingest_request.end_time,
+                    job_id=job_id,
                 )
                 end_trace("success")
             except Exception as e:
@@ -641,6 +684,7 @@ def create_app() -> FastAPI:
 
         return {
             "status": "queued",
+            "job_id": job_id,
             "file": str(file_path),
             "start_time": ingest_request.start_time,
             "end_time": ingest_request.end_time,
@@ -924,6 +968,19 @@ def create_app() -> FastAPI:
             "video": req.video_path,
             "identity_id": req.identity_id,
         }
+
+    @app.put("/frames/{frame_id}/description")
+    async def update_frame_description(frame_id: str, req: FrameDescriptionRequest):
+        """Manually correct a frame's description and re-index it."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        description = req.description.strip()
+        if not description:
+            raise HTTPException(status_code=400, detail="Description cannot be empty")
+        success = pipeline.db.update_frame_description(frame_id, description)
+        if not success:
+            raise HTTPException(status_code=404, detail="Frame not found or update failed")
+        return {"status": "updated", "id": frame_id, "new_description": description, "re_embedded": True}
 
     @app.post("/media/regenerate-thumbnails")
     async def regenerate_thumbnails(path: str = Query(...)):
@@ -2065,6 +2122,49 @@ def create_app() -> FastAPI:
         # Sort by is_main (desc) -> face_count (desc)
         result.sort(key=lambda x: (x["is_main"], x["face_count"]), reverse=True)
         return {"clusters": result}
+
+    @app.get("/identity/suggestions")
+    async def get_identity_suggestions():
+        """Get AI-powered identity linking suggestions (Face-Voice, TMDB, Merge)."""
+        if not pipeline:
+            return {"suggestions": [], "error": "Pipeline not initialized"}
+        
+        from core.processing.identity_linker import get_identity_linker
+        
+        try:
+            face_clusters_raw = pipeline.db.get_faces_grouped_by_cluster()
+            face_clusters = []
+            for cluster_id, faces in face_clusters_raw.items():
+                face_clusters.append({
+                    "cluster_id": cluster_id,
+                    "name": faces[0].get("name") if faces else None,
+                    "timestamps": [f.get("timestamp", 0) for f in faces],
+                })
+            
+            voice_clusters = []
+            try:
+                voices = pipeline.db.get_all_voice_segments()
+                cluster_map: dict[int, list[dict]] = {}
+                for v in voices:
+                    cid = v.get("speaker_cluster_id", -1)
+                    if cid not in cluster_map:
+                        cluster_map[cid] = []
+                    cluster_map[cid].append({"start": v.get("start", 0), "end": v.get("end", 0)})
+                for cid, segments in cluster_map.items():
+                    voice_clusters.append({
+                        "cluster_id": cid,
+                        "name": segments[0].get("speaker_name") if segments else None,
+                        "timestamps": segments,
+                    })
+            except Exception:
+                pass
+            
+            linker = get_identity_linker()
+            suggestions = linker.get_all_suggestions(face_clusters, voice_clusters)
+            
+            return {"suggestions": suggestions}
+        except Exception as e:
+            return {"suggestions": [], "error": str(e)}
 
     @app.post("/faces/merge")
     async def merge_face_clusters(from_cluster: int, to_cluster: int):

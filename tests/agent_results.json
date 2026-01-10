@@ -1,0 +1,35 @@
+{
+  "scenarios": [
+    {
+      "name": "parse_person_action",
+      "passed": true
+    },
+    {
+      "name": "parse_clothing",
+      "passed": true
+    },
+    {
+      "name": "visual_routing",
+      "passed": true
+    },
+    {
+      "name": "audio_routing",
+      "passed": true
+    },
+    {
+      "name": "name_lookup",
+      "passed": true
+    },
+    {
+      "name": "unknown_name",
+      "passed": true
+    },
+    {
+      "name": "constraint_checking",
+      "passed": true
+    }
+  ],
+  "timestamp": "2026-01-10T19:13:41.664411",
+  "passed": 7,
+  "failed": 0
+}

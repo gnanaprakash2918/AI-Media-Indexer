@@ -1,0 +1,27 @@
+{
+  "scenarios": [
+    {
+      "name": "temporal_context",
+      "passed": true
+    },
+    {
+      "name": "description_difference",
+      "passed": true
+    },
+    {
+      "name": "hitl_name_parsing",
+      "passed": true
+    },
+    {
+      "name": "complex_query_parsing",
+      "passed": true
+    },
+    {
+      "name": "vlm_prompt",
+      "passed": true
+    }
+  ],
+  "timestamp": "2026-01-10T19:13:41.665417",
+  "passed": 5,
+  "failed": 0
+}

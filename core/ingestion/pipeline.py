@@ -118,7 +118,7 @@ class IngestionPipeline:
             else MediaType.UNKNOWN
         )
 
-        _ = self.metadata_engine.identify(path, user_hint=hint_enum)
+        _ = await self.metadata_engine.identify(path, user_hint=hint_enum)
 
         try:
             probed = self.prober.probe(path)
@@ -143,24 +143,21 @@ class IngestionPipeline:
             self._cleanup_memory("voice_complete")  # Unload Pyannote
             progress_tracker.update(job_id, 50.0, stage="voice", message="Voice complete")
 
-            with open("debug_flow.log", "a") as f: f.write("Voice complete. Checking cancelled...\n")
+            logger.debug("Voice complete - checking job status")
 
             if progress_tracker.is_cancelled(job_id):
-                with open("debug_flow.log", "a") as f: f.write("Cancelled.\n")
+                logger.info(f"Job {job_id} cancelled")
                 return job_id
 
-            with open("debug_flow.log", "a") as f: f.write("Checking paused...\n")
             if progress_tracker.is_paused(job_id):
-                with open("debug_flow.log", "a") as f: f.write("Paused.\n")
+                logger.info(f"Job {job_id} paused")
                 return job_id
 
-            with open("debug_flow.log", "a") as f: f.write("Starting frames...\n")
             progress_tracker.update(job_id, 55.0, stage="frames", message="Processing frames")
-
-            with open("debug_flow.log", "a") as f: f.write("Calling _process_frames...\n")
+            logger.debug("Starting frame processing")
             await retry(lambda: self._process_frames(path, job_id, total_duration=duration))
 
-            with open("debug_flow.log", "a") as f: f.write("Frames complete cleanup...\n")
+            logger.debug("Frame processing complete - cleaning memory")
             self._cleanup_memory("frames_complete")
 
             if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
@@ -169,6 +166,10 @@ class IngestionPipeline:
             # Dense Scene Captioning (VLM on detected scene boundaries)
             progress_tracker.update(job_id, 90.0, stage="scene_captions", message="Generating scene captions")
             await self._process_scene_captions(path, job_id)
+
+            # Post-Processing Phase
+            progress_tracker.update(job_id, 95.0, stage="post_processing", message="Enriching metadata")
+            await self._post_process_video(path, job_id)
 
             progress_tracker.complete(job_id, message=f"Completed: {path.name}")
 
@@ -861,8 +862,8 @@ class IngestionPipeline:
             # GPU-first: Unload all GPU models before Ollama vision call
             # Models will auto-reload on next use
             from core.utils.hardware import cleanup_vram, log_vram_status
-            if self.face_manager:
-                self.face_manager.unload_gpu()
+            if self.faces:
+                self.faces.unload_gpu()
             cleanup_vram()
             log_vram_status("before_ollama")
             
@@ -1132,3 +1133,65 @@ class IngestionPipeline:
                 }
             )
         return prepared
+
+    async def _post_process_video(self, path: Path, job_id: str) -> None:
+        """Run post-processing: global context, metadata enrichment, identity linking."""
+        media_path = str(path)
+        
+        try:
+            from core.processing.scene_aggregator import GlobalContextManager
+            from core.processing.identity_linker import get_identity_linker
+            
+            global_ctx = GlobalContextManager()
+            frames = self._get_frames_for_video(media_path)
+            audio_segments = self._get_audio_segments_for_video(media_path)
+            
+            if frames:
+                scene_data = {
+                    "start_time": 0,
+                    "end_time": frames[-1].get("timestamp", 0) + 1,
+                    "visual_summary": " ".join(f.get("action", "") for f in frames[:20]),
+                    "person_names": list(set(n for f in frames for n in f.get("face_names", []))),
+                    "location": frames[0].get("scene_location", "") if frames else "",
+                    "entities": [e for f in frames for e in f.get("entities", [])],
+                }
+                global_ctx.add_scene(scene_data)
+                
+                global_summary = global_ctx.to_payload()
+                logger.info(f"[PostProcess] Global context: {global_summary.get('scene_count', 0)} scenes, top people: {global_summary.get('top_people', [])[:3]}")
+                
+                try:
+                    self.db.update_video_metadata(media_path, global_context=global_summary)
+                except Exception as e:
+                    logger.warning(f"[PostProcess] Failed to update global context: {e}")
+            
+            try:
+                linker = get_identity_linker()
+                face_clusters = self.db.get_faces_grouped_by_cluster()
+                face_data = []
+                for cluster_id, faces in face_clusters.items():
+                    face_data.append({
+                        "cluster_id": cluster_id,
+                        "name": faces[0].get("name") if faces else None,
+                        "timestamps": [f.get("timestamp", 0) for f in faces],
+                    })
+                
+                voice_data = []
+                try:
+                    for seg in audio_segments:
+                        cid = seg.get("speaker_cluster_id", -1)
+                        voice_data.append({
+                            "cluster_id": cid,
+                            "timestamps": [{"start": seg.get("start", 0), "end": seg.get("end", 0)}],
+                        })
+                except Exception:
+                    pass
+                
+                suggestions = linker.get_all_suggestions(face_data, voice_data)
+                if suggestions:
+                    logger.info(f"[PostProcess] Generated {len(suggestions)} identity suggestions")
+            except Exception as e:
+                logger.warning(f"[PostProcess] Identity linking failed: {e}")
+            
+        except Exception as e:
+            logger.warning(f"[PostProcess] Post-processing failed (non-fatal): {e}")

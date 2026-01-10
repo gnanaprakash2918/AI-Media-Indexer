@@ -1,17 +1,55 @@
-"""Hardware detection utilities for VRAM-aware model selection.
+"""Hardware detection and system profiling for VRAM-aware resource management.
 
-Provides automatic detection of available GPU VRAM and selects
-appropriate models to prevent OOM on laptops with limited resources.
+STRATEGY: SOTA Quality Always - Never downgrade models, only throttle resources.
+- Batch sizes reduce on low VRAM
+- Concurrency reduces on low VRAM  
+- Lazy unload enables on low VRAM
+- Model selection stays SOTA unless user explicitly overrides
 """
-
 from __future__ import annotations
 
 import gc
-from typing import Literal
+import os
+import subprocess
+from dataclasses import dataclass, field
+from typing import Literal, Optional
 
 import torch
 
 from core.utils.logger import log
+
+
+@dataclass
+class SystemProfile:
+    """Dynamic resource profile based on hardware detection."""
+    vram_gb: float
+    ram_gb: float
+    tier: Literal["low", "medium", "high"]
+    
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dim: int = 1024
+    vision_model: str = "moondream:latest"
+    
+    batch_size: int = 1
+    max_concurrent_jobs: int = 1
+    frame_batch_size: int = 4
+    lazy_unload: bool = True
+    aggressive_cleanup: bool = True
+    
+    def to_dict(self) -> dict:
+        return {
+            "vram_gb": self.vram_gb,
+            "ram_gb": self.ram_gb,
+            "tier": self.tier,
+            "embedding_model": self.embedding_model,
+            "embedding_dim": self.embedding_dim,
+            "vision_model": self.vision_model,
+            "batch_size": self.batch_size,
+            "max_concurrent_jobs": self.max_concurrent_jobs,
+            "frame_batch_size": self.frame_batch_size,
+            "lazy_unload": self.lazy_unload,
+            "aggressive_cleanup": self.aggressive_cleanup,
+        }
 
 
 def get_available_vram() -> float:
@@ -27,6 +65,15 @@ def get_used_vram() -> float:
     if torch.cuda.is_available():
         return torch.cuda.memory_allocated() / (1024**3)
     return 0.0
+
+
+def get_available_ram() -> float:
+    """Get total system RAM in GB."""
+    try:
+        import psutil
+        return psutil.virtual_memory().total / (1024**3)
+    except ImportError:
+        return 16.0
 
 
 def get_vram_usage_percent() -> float:
@@ -45,100 +92,152 @@ def cleanup_vram() -> None:
         torch.cuda.synchronize()
 
 
-def select_embedding_model() -> tuple[str, int]:
-    vram = get_available_vram()
-    
-    # User requested "Highest Quality" - defaulting to SOTA model despite VRAM
-    # intfloat/e5-large-v2 is 1024d, excellent for retrieval.
-    # Fallback to smaller only if VRAM is critically low (<2GB)
-    
-    if vram >= 2:
-        model = "intfloat/e5-large-v2"
-        dim = 1024
-    else:
-        # Only for very constrained systems
-        model = "BAAI/bge-small-en-v1.5"
-        dim = 384
-    
-    log(f"Selected embedding model: {model} ({dim}d) for {vram:.1f}GB VRAM")
-    return model, dim
-
-
-def select_vision_model() -> str:
-    """Select vision model based on available VRAM.
-    
-    Moondream 3.0 uses MoE architecture with 200M active params,
-    achieving 51.2 COCO, 61.2 OCRBench with ~1GB VRAM.
-    """
-    vram = get_available_vram()
-    
-    if vram >= 12:
-        model = "llava:34b"
-    elif vram >= 10:
-        model = "llava:13b"
-    elif vram >= 6:
-        # Moondream is more efficient than llava:7b for 6-10GB VRAM
-        model = "moondream:latest"
-    else:
-        # For low VRAM (<6GB), moondream is essential
-        model = "moondream:latest"
-    
-    log(f"Selected vision model: {model} for {vram:.1f}GB VRAM")
-    return model
-
-
 VramTier = Literal["low", "medium", "high"]
 
 
-def get_vram_tier() -> VramTier:
-    """Categorize VRAM availability for pipeline decisions."""
-    vram = get_available_vram()
-    if vram >= 10:
+def get_vram_tier(vram_gb: Optional[float] = None) -> VramTier:
+    """Categorize VRAM availability."""
+    vram = vram_gb if vram_gb is not None else get_available_vram()
+    if vram >= 12:
         return "high"
     elif vram >= 6:
         return "medium"
     return "low"
 
 
-def can_load_model(estimated_vram_gb: float, safety_margin: float = 0.75) -> bool:
-    """Check if we can safely load a model of given size.
+def get_system_profile(
+    embedding_override: Optional[str] = None,
+    vision_override: Optional[str] = None,
+) -> SystemProfile:
+    """Create dynamic resource profile based on hardware.
     
-    Args:
-        estimated_vram_gb: Estimated VRAM needed for the model.
-        safety_margin: Leave this fraction of VRAM free (default 75%).
-    
-    Returns:
-        True if safe to load, False if would risk OOM.
+    STRATEGY: SOTA models always, throttle resources for low VRAM.
     """
+    vram = get_available_vram()
+    ram = get_available_ram()
+    tier = get_vram_tier(vram)
+    
+    embedding_model = embedding_override or os.getenv("EMBEDDING_MODEL_OVERRIDE") or "BAAI/bge-m3"
+    vision_model = vision_override or os.getenv("OLLAMA_VISION_MODEL") or "moondream:latest"
+    
+    if "bge-m3" in embedding_model or "large" in embedding_model:
+        embedding_dim = 1024
+    elif "base" in embedding_model:
+        embedding_dim = 768
+    else:
+        embedding_dim = 384
+    
+    if tier == "high":
+        profile = SystemProfile(
+            vram_gb=vram,
+            ram_gb=ram,
+            tier=tier,
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+            vision_model=vision_model,
+            batch_size=32,
+            max_concurrent_jobs=4,
+            frame_batch_size=16,
+            lazy_unload=False,
+            aggressive_cleanup=False,
+        )
+    elif tier == "medium":
+        profile = SystemProfile(
+            vram_gb=vram,
+            ram_gb=ram,
+            tier=tier,
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+            vision_model=vision_model,
+            batch_size=8,
+            max_concurrent_jobs=2,
+            frame_batch_size=8,
+            lazy_unload=True,
+            aggressive_cleanup=False,
+        )
+    else:
+        profile = SystemProfile(
+            vram_gb=vram,
+            ram_gb=ram,
+            tier=tier,
+            embedding_model=embedding_model,
+            embedding_dim=embedding_dim,
+            vision_model=vision_model,
+            batch_size=1,
+            max_concurrent_jobs=1,
+            frame_batch_size=4,
+            lazy_unload=True,
+            aggressive_cleanup=True,
+        )
+    
+    log(f"SystemProfile: {tier} tier | VRAM={vram:.1f}GB | Batch={profile.batch_size} | Concurrency={profile.max_concurrent_jobs}")
+    return profile
+
+
+def select_embedding_model() -> tuple[str, int]:
+    """Select embedding model - ALWAYS SOTA unless overridden."""
+    override = os.getenv("EMBEDDING_MODEL_OVERRIDE")
+    if override:
+        if "large" in override or "m3" in override:
+            dim = 1024
+        elif "base" in override:
+            dim = 768
+        else:
+            dim = 384
+        log(f"Embedding model (override): {override} ({dim}d)")
+        return override, dim
+    
+    model = "BAAI/bge-m3"
+    dim = 1024
+    log(f"Embedding model (SOTA): {model} ({dim}d)")
+    return model, dim
+
+
+def select_vision_model() -> str:
+    """Select vision model based on VRAM."""
+    vram = get_available_vram()
+    override = os.getenv("OLLAMA_VISION_MODEL")
+    if override:
+        log(f"Vision model (override): {override}")
+        return override
+    
+    if vram >= 12:
+        model = "llava:13b"
+    elif vram >= 8:
+        model = "llava:7b"
+    else:
+        model = "moondream:latest"
+    
+    log(f"Vision model: {model} for {vram:.1f}GB VRAM")
+    return model
+
+
+def can_load_model(estimated_vram_gb: float, safety_margin: float = 0.75) -> bool:
+    """Check if we can safely load a model of given size."""
     total = get_available_vram()
     used = get_used_vram()
     available = total - used
     threshold = estimated_vram_gb / safety_margin
-    
     return available >= threshold
 
 
 def log_vram_status(context: str = "") -> None:
-    """Log current VRAM usage for debugging."""
+    """Log current VRAM usage."""
     if torch.cuda.is_available():
         total = get_available_vram()
         used = get_used_vram()
         percent = get_vram_usage_percent()
-        log(
-            f"VRAM [{context}]: {used:.2f}/{total:.2f}GB ({percent:.1f}%)",
-            vram_used=used,
-            vram_total=total,
-        )
+        log(f"VRAM [{context}]: {used:.2f}/{total:.2f}GB ({percent:.1f}%)")
 
 
 class VRAMManager:
-    """Manages GPU model lifecycle - unloads unused models before loading new ones."""
+    """Manages GPU model lifecycle."""
     
-    _instance = None
-    _models: dict[str, object] = {}
-    _current_model: str | None = None
+    _instance: Optional["VRAMManager"] = None
+    _models: dict[str, object]
+    _current_model: Optional[str]
     
-    def __new__(cls):
+    def __new__(cls) -> "VRAMManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._models = {}
@@ -146,16 +245,13 @@ class VRAMManager:
         return cls._instance
     
     def register(self, name: str, model: object) -> None:
-        """Register a model for lifecycle management."""
         self._models[name] = model
         self._current_model = name
-        log(f"VRAMManager: Registered model '{name}'")
+        log(f"VRAMManager: Registered '{name}'")
     
     def unload(self, name: str) -> None:
-        """Unload a specific model and free its VRAM."""
         if name in self._models:
             model = self._models.pop(name)
-            # Move to CPU and delete
             if hasattr(model, 'to'):
                 try:
                     model.to('cpu')
@@ -168,33 +264,42 @@ class VRAMManager:
                     pass
             del model
             cleanup_vram()
-            log(f"VRAMManager: Unloaded model '{name}'")
+            log(f"VRAMManager: Unloaded '{name}'")
             if self._current_model == name:
                 self._current_model = None
     
-    def unload_all_except(self, keep: str | None = None) -> None:
-        """Unload all models except the specified one."""
+    def unload_all_except(self, keep: Optional[str] = None) -> None:
         to_unload = [n for n in list(self._models.keys()) if n != keep]
         for name in to_unload:
             self.unload(name)
     
     def prepare_for_model(self, name: str, estimated_vram_gb: float = 2.0) -> None:
-        """Prepare VRAM for loading a new model - unload others if needed."""
-        # Check if we have enough VRAM
         if not can_load_model(estimated_vram_gb):
-            log(f"VRAMManager: Low VRAM, unloading all models before loading '{name}'")
+            log(f"VRAMManager: Low VRAM, unloading all for '{name}'")
             self.unload_all_except(None)
         cleanup_vram()
         log_vram_status(f"before_{name}")
     
     def cleanup_before_ollama(self) -> None:
-        """Special cleanup before Ollama vision calls - Ollama manages its own models."""
-        # Unload PyTorch models that might be holding VRAM
         self.unload_all_except(None)
         cleanup_vram()
         log_vram_status("before_ollama")
 
 
-# Global singleton
 vram_manager = VRAMManager()
+_cached_profile: Optional[SystemProfile] = None
 
+
+def get_cached_profile() -> SystemProfile:
+    """Get cached system profile (singleton)."""
+    global _cached_profile
+    if _cached_profile is None:
+        _cached_profile = get_system_profile()
+    return _cached_profile
+
+
+def refresh_profile() -> SystemProfile:
+    """Force refresh the cached profile."""
+    global _cached_profile
+    _cached_profile = get_system_profile()
+    return _cached_profile

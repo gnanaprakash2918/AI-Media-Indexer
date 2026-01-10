@@ -1,0 +1,12 @@
+{
+  "scenarios": [
+    {
+      "name": "dialogue_query_routing",
+      "passed": true,
+      "expected_tool": "search_media"
+    }
+  ],
+  "timestamp": "2026-01-10T18:37:55.597131",
+  "passed": 1,
+  "failed": 0
+}

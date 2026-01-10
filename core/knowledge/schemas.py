@@ -184,10 +184,13 @@ class EntityDetail(BaseModel):
     @field_validator('visual_details', mode='before')
     @classmethod
     def convert_dict_to_string(cls, v):
-        """Convert dict visual_details to string (Ollama sometimes returns dict)."""
+        """Convert dict/list visual_details to string (Ollama sometimes returns structured data)."""
         if isinstance(v, dict):
             # Convert {'color': 'Blue', 'pattern': 'Checkered'} to "Blue, Checkered"
             return ", ".join(str(val) for val in v.values() if val)
+        if isinstance(v, list):
+            # Convert ['Blue', 'Checkered'] to "Blue, Checkered"
+            return ", ".join(str(val) for val in v if val)
         return v or ""
 
 

@@ -188,7 +188,7 @@ class Settings(BaseSettings):
     # Resource
     enable_resource_monitoring: bool = True
     max_cpu_percent: float = 90.0
-    max_ram_percent: float = 85.0
+    max_ram_percent: float = 95.0
     max_temp_celsius: float = 85.0  # Pause if CPU hits 85°C
 
     # Pause duration when overheated (seconds)
@@ -259,6 +259,30 @@ class Settings(BaseSettings):
         default=True,
         description="Use hybrid search (vector + keyword + identity)"
     )
+    
+    # Memory Management - STRATEGY: SOTA Always, Throttle Resources
+    high_performance_mode: bool = Field(
+        default=True,
+        description="Enable parallel processing. If False, sequential processing with aggressive cleanup."
+    )
+    
+    max_concurrent_jobs: int = Field(
+        default=1,
+        description="Max parallel ingestion jobs. Auto-set by SystemProfile if not overridden."
+    )
+    
+    lazy_unload: bool = Field(
+        default=True,
+        description="Unload models after use to free VRAM."
+    )
+    
+    @computed_field
+    @property
+    def effective_embedding_model(self) -> str:
+        """ALWAYS use SOTA embedding model. Never downgrade for quality."""
+        return self.embedding_model_override  # BAAI/bge-m3 (1024d) always
+
+
 
     @computed_field
     @property

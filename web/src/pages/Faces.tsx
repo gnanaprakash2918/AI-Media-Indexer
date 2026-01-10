@@ -28,10 +28,12 @@ import {
     ListItemAvatar,
     ListItemText,
     Divider,
+    Card,
+    CardContent,
 } from '@mui/material';
 import {
     Face, Search, Check, Edit, Delete, ZoomIn, AutoAwesome, Groups,
-    ExpandMore, ExpandLess, MoveUp, Star, StarBorder
+    ExpandMore, ExpandLess, MoveUp, Star, StarBorder, Lightbulb, Close
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 
@@ -46,6 +48,7 @@ import {
     moveFaceToCluster,
     createNewFaceCluster,
     setFaceMain,
+    apiClient,
 } from '../api/client';
 
 interface FaceData {
@@ -65,6 +68,17 @@ interface FaceClusterData {
     faces: FaceData[];
     is_main?: boolean;
 }
+
+interface IdentitySuggestion {
+    type: string;
+    source: string;
+    target: string;
+    reason: string;
+    confidence: number;
+    source_id?: number;
+    target_id?: number;
+}
+
 
 function FaceCard({
     face,
@@ -290,11 +304,21 @@ export default function FacesPage() {
     const [moveFaceId, setMoveFaceId] = useState<string | null>(null);
     const [zoomFace, setZoomFace] = useState<FaceData | null>(null);
     const [isClustering, setIsClustering] = useState(false);
+    const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
     const queryClient = useQueryClient();
 
     const clustersQuery = useQuery({ queryKey: ['faces', 'clusters'], queryFn: () => getFaceClusters() });
     const unresolvedQuery = useQuery({ queryKey: ['faces', 'unresolved'], queryFn: () => getUnresolvedFaces(500) });
     const namedQuery = useQuery({ queryKey: ['faces', 'named'], queryFn: () => getNamedFaces() });
+
+    const suggestionsQuery = useQuery({
+        queryKey: ['identity', 'suggestions'],
+        queryFn: async () => {
+            const res = await apiClient.get<{ suggestions: IdentitySuggestion[] }>('/identity/suggestions');
+            return res.data.suggestions || [];
+        },
+        refetchInterval: 60000,
+    });
 
     const labelClusterMutation = useMutation({
         mutationFn: ({ clusterId, name }: { clusterId: number; name: string }) => nameFaceCluster(clusterId, name),
@@ -366,8 +390,60 @@ export default function FacesPage() {
                     </Button>
                 </Tooltip>
             </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>View all face occurrences or grouped clusters.</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>View all face occurrences or grouped clusters.</Typography>
 
+            {/* Smart Suggestions Panel */}
+            {suggestionsQuery.data && suggestionsQuery.data.filter(s => !dismissedSuggestions.has(`${s.type}-${s.source}-${s.target}`)).length > 0 && (
+                <Paper sx={{ p: 2, mb: 3, bgcolor: 'warning.main', color: 'warning.contrastText', borderRadius: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                        <Lightbulb />
+                        <Typography variant="subtitle1" fontWeight={600}>Smart Suggestions</Typography>
+                        <Chip label={suggestionsQuery.data.filter(s => !dismissedSuggestions.has(`${s.type}-${s.source}-${s.target}`)).length} size="small" sx={{ bgcolor: 'warning.dark', color: 'white' }} />
+                    </Box>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                        {suggestionsQuery.data
+                            .filter(s => !dismissedSuggestions.has(`${s.type}-${s.source}-${s.target}`))
+                            .slice(0, 5)
+                            .map((s, i) => (
+                                <Card key={i} sx={{ minWidth: 250, bgcolor: 'background.paper' }}>
+                                    <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                            {s.type === 'merge_face_voice' ? '🎤 Face-Voice Link' : s.type === 'tmdb_match' ? '🎬 TMDB Match' : '👥 Merge Faces'}
+                                        </Typography>
+                                        <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+                                            {s.source} → {s.target}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {s.reason} ({Math.round(s.confidence * 100)}%)
+                                        </Typography>
+                                        <Box sx={{ mt: 1, display: 'flex', gap: 0.5 }}>
+                                            <Button
+                                                size="small"
+                                                variant="contained"
+                                                color="success"
+                                                onClick={() => {
+                                                    if (s.type === 'merge_face_face' && s.source_id && s.target_id) {
+                                                        mergeClustersMutation.mutate({ from: s.source_id, to: s.target_id });
+                                                    }
+                                                    setDismissedSuggestions(prev => new Set([...prev, `${s.type}-${s.source}-${s.target}`]));
+                                                }}
+                                            >
+                                                <Check fontSize="small" /> Accept
+                                            </Button>
+                                            <Button
+                                                size="small"
+                                                variant="outlined"
+                                                onClick={() => setDismissedSuggestions(prev => new Set([...prev, `${s.type}-${s.source}-${s.target}`]))}
+                                            >
+                                                <Close fontSize="small" />
+                                            </Button>
+                                        </Box>
+                                    </CardContent>
+                                </Card>
+                            ))}
+                    </Box>
+                </Paper>
+            )}
             <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
                 <Tabs value={tab} onChange={(_, v) => setTab(v)}>
                     <Tab label={`All (${allFaces.length})`} />
@@ -433,31 +509,31 @@ export default function FacesPage() {
                                 return (b.face_count || 0) - (a.face_count || 0);
                             })
                             .map((c) => (
-                            <ListItemButton 
-                                key={c.cluster_id} 
-                                onClick={() => mergeClustersMutation.mutate({ from: mergeSourceId!, to: c.cluster_id })}
-                                sx={{
-                                    border: c.name ? '2px solid' : 'none',
-                                    borderColor: c.name ? 'primary.main' : 'transparent',
-                                    borderRadius: 1,
-                                    mb: 0.5,
-                                    bgcolor: c.name ? 'action.selected' : 'transparent',
-                                }}
-                            >
-                                <ListItemAvatar>
-                                    <Avatar src={c.representative?.thumbnail_path ? `http://localhost:8000${c.representative.thumbnail_path}` : undefined}><Face /></Avatar>
-                                </ListItemAvatar>
-                                <ListItemText 
-                                    primary={
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            {c.name || `Cluster #${c.cluster_id}`}
-                                            {c.name && <Chip size="small" label="Named" color="primary" variant="outlined" />}
-                                        </Box>
-                                    } 
-                                    secondary={`${c.face_count} faces`} 
-                                />
-                            </ListItemButton>
-                        ))}
+                                <ListItemButton
+                                    key={c.cluster_id}
+                                    onClick={() => mergeClustersMutation.mutate({ from: mergeSourceId!, to: c.cluster_id })}
+                                    sx={{
+                                        border: c.name ? '2px solid' : 'none',
+                                        borderColor: c.name ? 'primary.main' : 'transparent',
+                                        borderRadius: 1,
+                                        mb: 0.5,
+                                        bgcolor: c.name ? 'action.selected' : 'transparent',
+                                    }}
+                                >
+                                    <ListItemAvatar>
+                                        <Avatar src={c.representative?.thumbnail_path ? `http://localhost:8000${c.representative.thumbnail_path}` : undefined}><Face /></Avatar>
+                                    </ListItemAvatar>
+                                    <ListItemText
+                                        primary={
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                {c.name || `Cluster #${c.cluster_id}`}
+                                                {c.name && <Chip size="small" label="Named" color="primary" variant="outlined" />}
+                                            </Box>
+                                        }
+                                        secondary={`${c.face_count} faces`}
+                                    />
+                                </ListItemButton>
+                            ))}
                     </List>
                 </DialogContent>
                 <DialogActions><Button onClick={() => setMergeSourceId(null)}>Cancel</Button></DialogActions>

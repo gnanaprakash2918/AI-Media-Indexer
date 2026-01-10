@@ -20,6 +20,8 @@ import {
     InputLabel,
     Switch,
     FormControlLabel,
+    Slider,
+    LinearProgress,
 } from '@mui/material';
 import {
     Memory,
@@ -30,6 +32,8 @@ import {
     Warning,
     Save,
     Key,
+    Speed,
+    Bolt,
 } from '@mui/icons-material';
 
 import { getConfig, healthCheck, apiClient } from '../api/client';
@@ -54,6 +58,34 @@ interface ConfigData {
     ollama_base_url?: string;
     ollama_model?: string;
     hf_token?: string;
+}
+
+interface SystemProfile {
+    vram_gb: number;
+    ram_gb: number;
+    tier: 'low' | 'medium' | 'high';
+    embedding_model: string;
+    embedding_dim: number;
+    vision_model: string;
+    batch_size: number;
+    max_concurrent_jobs: number;
+    frame_batch_size: number;
+    lazy_unload: boolean;
+    aggressive_cleanup: boolean;
+}
+
+interface SystemConfigResponse {
+    profile: SystemProfile;
+    vram_used_gb: number;
+    vram_free_gb: number;
+    settings: {
+        embedding_model: string;
+        vision_model: string;
+        batch_size: number;
+        max_concurrent_jobs: number;
+        lazy_unload: boolean;
+        high_performance_mode: boolean;
+    };
 }
 
 function ConfigSection({
@@ -85,6 +117,15 @@ export default function SettingsPage() {
     const [formData, setFormData] = useState<Partial<ConfigData>>({});
     const [saved, setSaved] = useState(false);
 
+    // System config for Hardware & Performance
+    const [systemConfig, setSystemConfig] = useState<SystemConfigResponse | null>(null);
+    const [perfSettings, setPerfSettings] = useState({
+        batch_size: 1,
+        max_concurrent_jobs: 1,
+        lazy_unload: true,
+        high_performance_mode: false,
+    });
+
     const config = useQuery({
         queryKey: ['config'],
         queryFn: getConfig,
@@ -95,11 +136,31 @@ export default function SettingsPage() {
         queryFn: healthCheck,
     });
 
+    const systemConfigQuery = useQuery({
+        queryKey: ['systemConfig'],
+        queryFn: async () => {
+            const res = await apiClient.get<SystemConfigResponse>('/config/system');
+            return res.data;
+        },
+    });
+
     useEffect(() => {
         if (config.data) {
             setFormData(config.data);
         }
     }, [config.data]);
+
+    useEffect(() => {
+        if (systemConfigQuery.data) {
+            setSystemConfig(systemConfigQuery.data);
+            setPerfSettings({
+                batch_size: systemConfigQuery.data.settings.batch_size,
+                max_concurrent_jobs: systemConfigQuery.data.settings.max_concurrent_jobs,
+                lazy_unload: systemConfigQuery.data.settings.lazy_unload,
+                high_performance_mode: systemConfigQuery.data.settings.high_performance_mode,
+            });
+        }
+    }, [systemConfigQuery.data]);
 
     const saveMutation = useMutation({
         mutationFn: async (data: Partial<ConfigData>) => {
@@ -113,13 +174,35 @@ export default function SettingsPage() {
         },
     });
 
-    const handleChange = (key: keyof ConfigData, value: any) => {
+    const saveSystemMutation = useMutation({
+        mutationFn: async (data: typeof perfSettings) => {
+            const res = await apiClient.post('/config/system', data);
+            return res.data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['systemConfig'] });
+            setSaved(true);
+            setTimeout(() => setSaved(false), 3000);
+        },
+    });
+
+    const handleChange = (key: keyof ConfigData, value: unknown) => {
         setFormData(prev => ({ ...prev, [key]: value }));
+        setEditMode(true);
+    };
+
+    const handlePerfChange = (key: keyof typeof perfSettings, value: unknown) => {
+        setPerfSettings(prev => ({ ...prev, [key]: value }));
         setEditMode(true);
     };
 
     const handleSave = () => {
         saveMutation.mutate(formData);
+        setEditMode(false);
+    };
+
+    const handleSavePerf = () => {
+        saveSystemMutation.mutate(perfSettings);
         setEditMode(false);
     };
 
@@ -139,24 +222,38 @@ export default function SettingsPage() {
         );
     }
 
+    const vramPercent = systemConfig
+        ? (systemConfig.vram_used_gb / (systemConfig.vram_used_gb + systemConfig.vram_free_gb)) * 100
+        : 0;
+
     return (
         <Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Box>
                     <Typography variant="h5" fontWeight={700}>Settings</Typography>
                     <Typography variant="body2" color="text.secondary">
-                        Configure API keys and runtime settings
+                        Configure API keys, hardware, and runtime settings
                     </Typography>
                 </Box>
                 {editMode && (
-                    <Button
-                        variant="contained"
-                        startIcon={<Save />}
-                        onClick={handleSave}
-                        disabled={saveMutation.isPending}
-                    >
-                        {saveMutation.isPending ? 'Saving...' : 'Save Changes'}
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button
+                            variant="contained"
+                            startIcon={<Save />}
+                            onClick={handleSave}
+                            disabled={saveMutation.isPending}
+                        >
+                            Save Config
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            startIcon={<Speed />}
+                            onClick={handleSavePerf}
+                            disabled={saveSystemMutation.isPending}
+                        >
+                            Save Performance
+                        </Button>
+                    </Box>
                 )}
             </Box>
 
@@ -167,6 +264,117 @@ export default function SettingsPage() {
             )}
 
             <Grid container spacing={2}>
+                {/* Hardware & Performance (NEW) */}
+                <Grid size={{ xs: 12 }}>
+                    <ConfigSection title="Hardware & Performance" icon={<Bolt color="warning" fontSize="small" />}>
+                        {systemConfig ? (
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                {/* VRAM Status */}
+                                <Box>
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                                        <Typography variant="body2" fontWeight={600}>
+                                            VRAM: {systemConfig.vram_used_gb.toFixed(1)} / {(systemConfig.vram_used_gb + systemConfig.vram_free_gb).toFixed(1)} GB
+                                        </Typography>
+                                        <Chip
+                                            label={systemConfig.profile.tier.toUpperCase()}
+                                            size="small"
+                                            color={systemConfig.profile.tier === 'high' ? 'success' : systemConfig.profile.tier === 'medium' ? 'warning' : 'error'}
+                                        />
+                                    </Box>
+                                    <LinearProgress
+                                        variant="determinate"
+                                        value={vramPercent}
+                                        color={vramPercent > 80 ? 'error' : vramPercent > 50 ? 'warning' : 'primary'}
+                                        sx={{ height: 8, borderRadius: 1 }}
+                                    />
+                                </Box>
+
+                                <Grid container spacing={2}>
+                                    {/* Embedding Model (Read-only) */}
+                                    <Grid size={{ xs: 12, md: 6 }}>
+                                        <TextField
+                                            fullWidth
+                                            size="small"
+                                            label="Embedding Model (SOTA - Locked)"
+                                            value={systemConfig.profile.embedding_model}
+                                            disabled
+                                            helperText={`${systemConfig.profile.embedding_dim}d vectors - Never downgraded`}
+                                            InputProps={{
+                                                sx: { bgcolor: 'action.disabledBackground' }
+                                            }}
+                                        />
+                                    </Grid>
+
+                                    {/* Vision Model (Read-only) */}
+                                    <Grid size={{ xs: 12, md: 6 }}>
+                                        <TextField
+                                            fullWidth
+                                            size="small"
+                                            label="Vision Model"
+                                            value={systemConfig.profile.vision_model}
+                                            disabled
+                                            helperText="Auto-selected based on VRAM"
+                                            InputProps={{
+                                                sx: { bgcolor: 'action.disabledBackground' }
+                                            }}
+                                        />
+                                    </Grid>
+
+                                    {/* Batch Size (Editable) */}
+                                    <Grid size={{ xs: 12, md: 4 }}>
+                                        <TextField
+                                            fullWidth
+                                            size="small"
+                                            label="Batch Size"
+                                            type="number"
+                                            inputProps={{ min: 1, max: 64 }}
+                                            value={perfSettings.batch_size}
+                                            onChange={(e) => handlePerfChange('batch_size', parseInt(e.target.value) || 1)}
+                                            helperText="Higher = faster, more VRAM"
+                                        />
+                                    </Grid>
+
+                                    {/* Max Concurrent Jobs (Slider) */}
+                                    <Grid size={{ xs: 12, md: 4 }}>
+                                        <Typography variant="body2" gutterBottom>
+                                            Max Concurrent Jobs: {perfSettings.max_concurrent_jobs}
+                                        </Typography>
+                                        <Slider
+                                            value={perfSettings.max_concurrent_jobs}
+                                            onChange={(_, val) => handlePerfChange('max_concurrent_jobs', val as number)}
+                                            min={1}
+                                            max={4}
+                                            step={1}
+                                            marks
+                                            valueLabelDisplay="auto"
+                                        />
+                                    </Grid>
+
+                                    {/* Lazy Unload (Toggle) */}
+                                    <Grid size={{ xs: 12, md: 4 }}>
+                                        <FormControlLabel
+                                            control={
+                                                <Switch
+                                                    checked={perfSettings.lazy_unload}
+                                                    onChange={(e) => handlePerfChange('lazy_unload', e.target.checked)}
+                                                />
+                                            }
+                                            label="Lazy Unload Models"
+                                        />
+                                        <Typography variant="caption" color="text.secondary" display="block">
+                                            Free VRAM after each operation
+                                        </Typography>
+                                    </Grid>
+                                </Grid>
+                            </Box>
+                        ) : (
+                            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                                <CircularProgress size={24} />
+                            </Box>
+                        )}
+                    </ConfigSection>
+                </Grid>
+
                 {/* Connection Status */}
                 <Grid size={{ xs: 12, md: 6 }}>
                     <ConfigSection title="Status" icon={<CloudQueue color="primary" fontSize="small" />}>
@@ -253,7 +461,7 @@ export default function SettingsPage() {
 
                 {/* Hardware */}
                 <Grid size={{ xs: 12, md: 6 }}>
-                    <ConfigSection title="Hardware" icon={<Memory color="primary" fontSize="small" />}>
+                    <ConfigSection title="Device" icon={<Memory color="primary" fontSize="small" />}>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                             <FormControl size="small" fullWidth>
                                 <InputLabel>Device</InputLabel>
@@ -293,32 +501,8 @@ export default function SettingsPage() {
                                 type="number"
                                 inputProps={{ step: 0.1, min: 0 }}
                                 value={formData.frame_interval ?? 1}
-                                onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    handleChange('frame_interval', isNaN(val) ? 0 : val);
-                                }}
-                                error={formData.frame_interval === 0}
-                                helperText={
-                                    formData.frame_interval === 0
-                                        ? "⚠️ EXTREME LOAD: Extracting every frame (24-60 FPS)"
-                                        : (formData.frame_interval || 1) < 0.5
-                                            ? "High Load: >2 FPS"
-                                            : "Recommended: 0.5s - 2.0s"
-                                }
-                                sx={{
-                                    '& .MuiFormHelperText-root': {
-                                        color: formData.frame_interval === 0 ? 'error.main' : 'text.secondary',
-                                        fontWeight: formData.frame_interval === 0 ? 700 : 400
-                                    }
-                                }}
-                            />
-                            <TextField
-                                size="small"
-                                label="Frame Sample Ratio"
-                                type="number"
-                                value={formData.frame_sample_ratio || 2}
-                                onChange={(e) => handleChange('frame_sample_ratio', parseInt(e.target.value) || 2)}
-                                helperText="Process every Nth frame (1=all, 2=half, lower = more processing)"
+                                onChange={(e) => handleChange('frame_interval', parseFloat(e.target.value) || 0)}
+                                helperText="Recommended: 0.5s - 2.0s"
                             />
                             <TextField
                                 size="small"
@@ -327,27 +511,15 @@ export default function SettingsPage() {
                                 inputProps={{ step: 0.1, min: 0.3, max: 0.9 }}
                                 value={formData.face_detection_threshold || 0.5}
                                 onChange={(e) => handleChange('face_detection_threshold', parseFloat(e.target.value) || 0.5)}
-                                helperText="Confidence threshold (0.3-0.9, lower = more faces)"
+                                helperText="0.3-0.9, lower = more faces"
                             />
-                            <FormControl size="small" fullWidth>
-                                <InputLabel>Face Detection Resolution</InputLabel>
-                                <Select
-                                    value={formData.face_detection_resolution || 640}
-                                    label="Face Detection Resolution"
-                                    onChange={(e) => handleChange('face_detection_resolution', e.target.value)}
-                                >
-                                    <MenuItem value={320}>320px (Fast)</MenuItem>
-                                    <MenuItem value={640}>640px (Balanced)</MenuItem>
-                                    <MenuItem value={960}>960px (Accurate)</MenuItem>
-                                </Select>
-                            </FormControl>
                             <TextField
                                 size="small"
                                 label="Language"
                                 value={formData.language || ''}
                                 onChange={(e) => handleChange('language', e.target.value)}
                                 placeholder="auto, en, ta, etc."
-                                helperText="Language for transcription (auto, en, ta, etc.)"
+                                helperText="Language for transcription"
                             />
                         </Box>
                     </ConfigSection>

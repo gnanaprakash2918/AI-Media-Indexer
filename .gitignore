@@ -23,6 +23,7 @@ postgres_data/
 clickhouse_data/
 minio_data/
 thumbnails/
+.uv_cache/
 .face_cache/
 .cache/
 

@@ -227,6 +227,12 @@ export const deleteLibraryItem = async (path: string) => {
 // Alias for backward compatibility if needed
 export const deleteFromLibrary = deleteLibraryItem;
 
+// HITL: Manual Description Correction
+export const updateFrameDescription = async (frameId: string, description: string) => {
+    const res = await apiClient.put(`/frames/${frameId}/description`, { description });
+    return res.data;
+};
+
 // SSE Event Source helper
 export function createEventSource(onMessage: (event: any) => void, onError?: () => void): EventSource {
     const es = new EventSource(`${API_BASE}/events`);

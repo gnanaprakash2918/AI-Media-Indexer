@@ -90,6 +90,10 @@ convention = "google"
 [tool.ruff.format]
 line-ending = "lf"
 
+[tool.uv]
+cache-dir = ".uv_cache"
+concurrent-downloads = 5
+
 [[tool.uv.index]]
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu124"

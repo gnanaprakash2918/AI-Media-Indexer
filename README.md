@@ -80,6 +80,34 @@ Open http://localhost:3000
 
 ---
 
+## SOTA Features
+
+| Feature | Component | Description |
+|---------|-----------|-------------|
+| **BGE-M3 Embedding** | `core/storage/db.py` | 1024d SOTA multilingual embeddings |
+| **SAM-3 Segmentation** | `core/processing/segmentation.py` | Interactive/automatic segmentation |
+| **ProPainter Inpainting** | `core/manipulation/inpainting.py` | Video object removal |
+| **InsightFace 512D** | `core/processing/identity.py` | High-accuracy face recognition |
+| **AI4Bharat ASR** | `core/processing/indic_transcriber.py` | SOTA Indic language transcription |
+| **Global Context** | `core/processing/scene_aggregator.py` | Video-level summarization |
+| **Identity Linker** | `core/processing/identity_linker.py` | Face-Voice temporal matching |
+| **TMDB Metadata** | `core/processing/metadata.py` | Movie cast auto-lookup |
+
+### Installation Notes
+
+```bash
+# Using uv (recommended)
+uv sync
+
+# For SOTA Indic ASR (optional)
+pip install nemo_toolkit[asr]
+
+# Windows: Increase pagefile if OOM errors occur
+# Settings > System > About > Advanced > Performance > Virtual Memory > Custom Size
+```
+
+---
+
 ## Configuration
 
 Copy `.env.example` to `.env`:

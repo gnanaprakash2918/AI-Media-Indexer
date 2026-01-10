@@ -134,6 +134,8 @@ class VisionAnalyzer:
     Supports two modes:
     1. describe() - Unstructured text description (legacy)
     2. analyze_frame() - Structured FrameAnalysis for search (preferred)
+    
+    LAZY LOADING: LLM is only loaded on first analyze call to prevent OOM.
     """
 
     def __init__(
@@ -141,19 +143,35 @@ class VisionAnalyzer:
         llm: LLMInterface | None = None,
         prompt_filename: str = "vision_prompt.txt",
     ):
-        """Initialize the analyzer and load the prompt template.
-
-        If the prompt template does not exist, a default template is used.
-        """
-        self.llm = llm or LLMFactory.create_llm(provider="ollama")
+        # LAZY LOADING: Store llm reference but don't create if not provided
+        self._llm = llm
+        self._llm_loaded = llm is not None
         self.prompt_filename = prompt_filename
+        self.prompt: str | None = None
+        log("[Vision] Initialized (lazy mode). LLM will load on first analyze call.")
 
-        try:
-            self.prompt = self.llm.construct_user_prompt(self.prompt_filename)
-            log(f"[Vision] Loaded prompt from {self.prompt_filename}")
-        except FileNotFoundError:
-            log(f"[ERROR] Prompt file '{self.prompt_filename}' not found in prompts/.")
-            raise
+    def _ensure_llm_loaded(self) -> None:
+        """Lazy load LLM on first use."""
+        if not self._llm_loaded:
+            log("[Vision] Lazy loading LLM...")
+            self._llm = LLMFactory.create_llm(provider="ollama")
+            self._llm_loaded = True
+            
+        if self.prompt is None and self._llm is not None:
+            try:
+                self.prompt = self._llm.construct_user_prompt(self.prompt_filename)
+                log(f"[Vision] Loaded prompt from {self.prompt_filename}")
+            except FileNotFoundError:
+                log(f"[Vision] Prompt file not found, using DENSE_MULTIMODAL_PROMPT")
+                self.prompt = DENSE_MULTIMODAL_PROMPT
+
+    @property
+    def llm(self) -> LLMInterface:
+        """Access LLM with lazy loading."""
+        self._ensure_llm_loaded()
+        assert self._llm is not None
+        return self._llm
+
 
     @observe("vision_analyze_frame")
     async def analyze_frame(
@@ -233,6 +251,7 @@ class VisionAnalyzer:
         if not image_path.exists() or not image_path.is_file():
             return f"Error: Image not found at {image_path}"
 
+        self._ensure_llm_loaded()
         final_prompt = self.prompt
         if context:
             # Append context to help the model understand continuity

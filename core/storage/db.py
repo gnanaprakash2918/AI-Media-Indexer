@@ -112,13 +112,13 @@ class VectorDB:
         else:
             raise ValueError(f"Unknown backend: {backend!r} (use 'memory' or 'docker')")
 
-        log(
-            "Loading SentenceTransformer model...",
-            model_name=self.MODEL_NAME,
-            device=settings.device,
-        )
-
-        self.encoder = self._load_encoder()
+        # LAZY LOADING: Do NOT load encoder at startup to prevent OOM
+        # Encoder will be loaded on first encode_texts() call
+        self.encoder: SentenceTransformer | None = None
+        self._encoder_last_used: float = 0.0
+        self._idle_unload_seconds = 300  # Unload after 5 min idle
+        
+        log(f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use.")
         self._ensure_collections()
 
     def _load_encoder(self) -> SentenceTransformer:
@@ -199,6 +199,28 @@ class VectorDB:
             except Exception as e:
                 log(f"Failed to move encoder to GPU: {e}", level="WARNING")
 
+    def _ensure_encoder_loaded(self) -> None:
+        """Lazy load encoder on first use."""
+        if self.encoder is None:
+            log(f"Lazy loading encoder: {self.MODEL_NAME}...")
+            self.encoder = self._load_encoder()
+        self._encoder_last_used = time.time()
+    
+    def unload_encoder_if_idle(self) -> bool:
+        """Unload encoder if idle for too long. Call periodically."""
+        if self.encoder is None:
+            return False
+        idle_time = time.time() - self._encoder_last_used
+        if idle_time > self._idle_unload_seconds:
+            log(f"Unloading encoder after {idle_time:.0f}s idle")
+            self.encoder = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+            return True
+        return False
+
     @observe("db_encode_texts")
     def encode_texts(
         self,
@@ -207,6 +229,9 @@ class VectorDB:
         show_progress_bar: bool = False,
         is_query: bool = False,
     ) -> list[list[float]]:
+        # LAZY LOAD on first use
+        self._ensure_encoder_loaded()
+        
         if isinstance(texts, str):
             texts_list = [texts]
         else:
@@ -1577,6 +1602,60 @@ class VectorDB:
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
                 payload=payload,
+                points=ids,
+            )
+            return len(ids)
+        except Exception:
+            return 0
+
+    @observe("db_update_video_metadata")
+    def update_video_metadata(self, video_path: str, metadata: dict[str, Any]) -> int:
+        """Update metadata for all frames belonging to a video.
+
+        Args:
+            video_path: The video path to match.
+            metadata: Dictionary of metadata to update/add.
+
+        Returns:
+            Number of frames updated.
+        """
+        try:
+            # 1. Find all frames for this video
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchValue(value=video_path),
+                        )
+                    ]
+                ),
+                limit=10000, # Assume reasonable max frames per video for update
+                with_payload=False,
+                with_vectors=False,
+            )
+            points = resp[0]
+            if not points:
+                return 0
+
+            # 2. Update payload for all found points
+            point_ids = [p.id for p in points]
+            self.client.set_payload(
+                collection_name=self.MEDIA_COLLECTION,
+                payload=metadata,
+                points=point_ids,
+            )
+            return len(point_ids)
+        except Exception as e:
+            from core.utils.logger import get_logger
+            log = get_logger(__name__)
+            log.error(f"Failed to update video metadata: {e}")
+            return 0
+            
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload=payload,
                 points=models.PointIdsList(points=ids),
             )
             
@@ -2685,6 +2764,40 @@ class VectorDB:
         log(f"[HybridSearch] Query: '{query}' | Identity filter: {bool(identity_filter)} | Results: {len(results)}")
         
         return results[:limit]
+
+    @observe("db_update_frame_description")
+    def update_frame_description(self, frame_id: str, description: str) -> bool:
+        """Update frame description manually and re-embed. HITL correction for VLM errors."""
+        try:
+            resp = self.client.retrieve(
+                collection_name=self.MEDIA_COLLECTION,
+                ids=[frame_id],
+                with_payload=True,
+                with_vectors=False
+            )
+            if not resp:
+                log(f"Frame {frame_id} not found")
+                return False
+            
+            payload = resp[0].payload or {}
+            payload["action"] = description
+            payload["description"] = description
+            payload["is_hitl_corrected"] = True
+            
+            identity_text = payload.get("identity_text", "")
+            full_text = f"{description}. {identity_text}" if identity_text else description
+            
+            new_vector = self.encode_texts(full_text, is_query=False)[0]
+            
+            self.client.upsert(
+                collection_name=self.MEDIA_COLLECTION,
+                points=[models.PointStruct(id=frame_id, vector=new_vector, payload=payload)],
+            )
+            log(f"HITL: Re-embedded frame {frame_id} with: '{description[:50]}...'")
+            return True
+        except Exception as e:
+            log(f"Failed to update frame description: {e}")
+            return False
 
     def update_frame_identity_text(
         self,
