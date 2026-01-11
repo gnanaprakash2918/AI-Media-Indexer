@@ -62,6 +62,8 @@ dependencies = [
     "easyocr>=1.7.1",
     "instructor>=1.13.0",
     "pytest>=9.0.2",
+    "brave-search>=0.1.0",
+    "pynvml>=11.5.0",
 ]
 
 [project.optional-dependencies]

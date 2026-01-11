@@ -48,19 +48,13 @@ def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
 
 # Auto-select embedding model based on available VRAM
 # Allow override from config
+# Auto-select embedding model based on available VRAM
+# Allow override from config
 if settings.embedding_model_override:
     _SELECTED_MODEL = settings.embedding_model_override
-    # We'd ideally infer dim, but for custom overrides, we might default to 1024 or 768?
-    # For now, let's assume if they stick to the e5/bge family:
-    if "large" in _SELECTED_MODEL or "m3" in _SELECTED_MODEL:
-        _SELECTED_DIM = 1024
-    elif "base" in _SELECTED_MODEL:
-        _SELECTED_DIM = 768
-    else:
-        _SELECTED_DIM = 384
-    log(f"Overriding embedding model from config: {_SELECTED_MODEL} ({_SELECTED_DIM}d)")
+    log(f"Overriding embedding model from config: {_SELECTED_MODEL}")
 else:
-    _SELECTED_MODEL, _SELECTED_DIM = select_embedding_model()
+    _SELECTED_MODEL, _ = select_embedding_model()
 
 
 class VectorDB:
@@ -74,9 +68,9 @@ class VectorDB:
     SCENES_COLLECTION = "scenes"  # Scene-level storage (production approach)
     SUMMARIES_COLLECTION = "global_summaries"  # Hierarchical summaries (L1/L2)
 
-    MEDIA_VECTOR_SIZE = _SELECTED_DIM
-    FACE_VECTOR_SIZE = 512  # InsightFace ArcFace (fallback SFace uses 128 but vectors are padded)
-    TEXT_DIM = _SELECTED_DIM
+    MEDIA_VECTOR_SIZE = settings.visual_embedding_dim
+    FACE_VECTOR_SIZE = 512  # InsightFace ArcFace
+    TEXT_DIM = settings.text_embedding_dim
     VOICE_VECTOR_SIZE = 256
 
     MODEL_NAME = _SELECTED_MODEL

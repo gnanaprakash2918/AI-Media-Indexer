@@ -270,6 +270,14 @@ class Settings(BaseSettings):
         default="BAAI/bge-m3",
         description="Text embedding model (BGE-M3 = 1024d, SOTA multilingual)"
     )
+    text_embedding_dim: int = Field(
+        default=1024,
+        description="Dimension of text embeddings (must match model)"
+    )
+    visual_embedding_dim: int = Field(
+        default=1024,
+        description="Dimension of visual embeddings (SigLIP=768, BGE-Visual=1024)"
+    )
     
     siglip_model: str = Field(
         default="google/siglip-so400m-patch14-384",

@@ -119,10 +119,37 @@ Copy `.env.example` to `.env`:
 | `AI_PROVIDER_TEXT` | `ollama` | Text LLM provider |
 | `HF_TOKEN` | - | Voice analysis |
 | `QDRANT_HOST` | `localhost` | Vector DB |
+| `TEXT_EMBEDDING_DIM` | `1024` | Dimension of text embeddings |
+| `VISUAL_EMBEDDING_DIM` | `1024` | Dimension of visual embeddings |
+
+---
+
+## Agents & MCP
+
+The system exposes an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for AI agents.
+
+```bash
+# Start MCP Server
+uv run python core/agent/server.py
+```
+
+### Protocol Usage (A2A)
+
+The Orchestrator dispatches tasks to `SearchAgent` via the MCP tools:
+
+- `query_video_rag`: High-IQ cognitive search with query decomposition.
+- `get_video_summary`: Hierarchical L1/L2 summaries.
+- `enrich_identity`: External knowledge (Brave Search) for unknown faces.
+
+To verify agents:
+```bash
+uv run python tests/verifymcp.py
+```
 
 ---
 
 ## Response Schema
+...
 
 ```json
 {

@@ -28,10 +28,9 @@ from config import settings
 from core.schemas import SpeakerSegment
 from core.utils.logger import get_logger
 from core.utils.observe import observe
+from core.utils.locks import GPU_SEMAPHORE
 
 log = get_logger(__name__)
-
-GPU_SEMAPHORE = asyncio.Semaphore(1)
 
 MIN_SEGMENT_DURATION: Final = 0.8
 MAX_SEGMENT_DURATION: Final = 30.0

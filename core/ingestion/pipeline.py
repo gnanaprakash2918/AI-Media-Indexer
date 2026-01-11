@@ -31,6 +31,7 @@ from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.retry import retry
+from core.utils.locks import GPU_SEMAPHORE
 
 
 class IngestionPipeline:
@@ -253,7 +254,8 @@ class IngestionPipeline:
                     
                     # Generate SRT sidecar file alongside the video
                     srt_path = path.with_suffix(".srt")
-                    audio_segments = indic_transcriber.transcribe(path, output_srt=srt_path) or []
+                    async with GPU_SEMAPHORE:
+                        audio_segments = indic_transcriber.transcribe(path, output_srt=srt_path) or []
                     
                     if audio_segments:
                         log(f"[Audio] AI4Bharat SUCCESS: {len(audio_segments)} segments")
@@ -266,7 +268,8 @@ class IngestionPipeline:
                     log(f"[Audio] Falling back to Whisper for '{detected_lang}'")
                     try:
                         with AudioTranscriber() as transcriber:
-                            audio_segments = transcriber.transcribe(path, language=detected_lang) or []
+                            async with GPU_SEMAPHORE:
+                                audio_segments = transcriber.transcribe(path, language=detected_lang) or []
                     except Exception as e2:
                         log(f"[Audio] Whisper fallback also failed: {e2}")
                 finally:
@@ -278,7 +281,8 @@ class IngestionPipeline:
                 log(f"[Audio] Using Whisper turbo for '{detected_lang}'")
                 try:
                     with AudioTranscriber() as transcriber:
-                        audio_segments = transcriber.transcribe(path, language=detected_lang) or []
+                        async with GPU_SEMAPHORE:
+                            audio_segments = transcriber.transcribe(path, language=detected_lang) or []
                 except Exception as e:
                     log(f"[Audio] Whisper failed: {e}")
 
