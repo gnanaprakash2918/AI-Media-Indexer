@@ -15,16 +15,16 @@ Write-Host "🔍 Checking code functionality..." -ForegroundColor Yellow
 ruff check . --fix
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✅ Lint check passed!" -ForegroundColor Green
+    Write-Host "OK - Lint check passed!" -ForegroundColor Green
 } else {
-    Write-Host "⚠️  Lint issues found (some fixes applied)." -ForegroundColor Yellow
+    Write-Host "WARN - Lint issues found (some fixes applied)." -ForegroundColor Yellow
 }
 
-Write-Host "✨ Formatting code style..." -ForegroundColor Yellow
+Write-Host "INFO - Formatting code style..." -ForegroundColor Yellow
 ruff format .
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✅ Code formatted!" -ForegroundColor Green
+    Write-Host "OK - Code formatted!" -ForegroundColor Green
 } else {
-    Write-Host "❌ Formatting failed." -ForegroundColor Red
+    Write-Host "FAIL - Formatting failed." -ForegroundColor Red
 }

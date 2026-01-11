@@ -13,11 +13,20 @@
 #>
 param (
     [switch]$DockerASR,
-    [switch]$Reset
+    [switch]$Reset,
+    [switch]$Lint
 )
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
+
+if ($Lint) {
+    if (Test-Path "$Root\scripts\lint.ps1") {
+        & "$Root\scripts\lint.ps1"
+    } else {
+        Write-Warning "Lint script not found."
+    }
+}
 
 Write-Host "`n🚀 AI Media Indexer: Production Start" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor DarkCyan
