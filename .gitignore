@@ -26,6 +26,8 @@ thumbnails/
 .uv_cache/
 .face_cache/
 .cache/
+test_videos/
+uploads/
 
 # SQLite Databases (generated at runtime)
 *.db

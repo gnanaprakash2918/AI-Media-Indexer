@@ -85,7 +85,7 @@ def setup_logger() -> None:
     logger.add(
         str(log_file),
         level="DEBUG",
-        rotation="10 MB",
+        rotation="00:00", # Daily rotation at midnight
         retention="7 days",
         compression="zip",
         serialize=True,

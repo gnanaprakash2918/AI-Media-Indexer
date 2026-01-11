@@ -1220,12 +1220,60 @@ class IngestionPipeline:
                 global_ctx.add_scene(scene_data)
                 
                 global_summary = global_ctx.to_payload()
+                
+                # Generate and attach Main Video Thumbnail
+                try:
+                    main_thumb = self._generate_main_thumbnail(path)
+                    if main_thumb:
+                        global_summary["thumbnail_path"] = main_thumb
+                except Exception as e:
+                    logger.warning(f"Thumbnail attachment failed: {e}")
+
                 logger.info(f"[PostProcess] Global context: {global_summary.get('scene_count', 0)} scenes, top people: {global_summary.get('top_people', [])[:3]}")
                 
                 try:
                     self.db.update_video_metadata(media_path, global_context=global_summary)
                 except Exception as e:
                     logger.warning(f"[PostProcess] Failed to update global context: {e}")
+
+    def _generate_main_thumbnail(self, path: Path) -> str | None:
+        """Generate a main thumbnail for the video (at 5.0s)."""
+        import hashlib
+        import subprocess
+        
+        try:
+            thumb_dir = settings.cache_dir / "thumbnails" / "videos"
+            thumb_dir.mkdir(parents=True, exist_ok=True)
+            
+            safe_stem = hashlib.md5(path.stem.encode()).hexdigest()
+            thumb_name = f"{safe_stem}_main.jpg"
+            thumb_file = thumb_dir / thumb_name
+            
+            # Return relative path for frontend
+            rel_path = f"/thumbnails/videos/{thumb_name}"
+
+            if thumb_file.exists():
+                return rel_path
+            
+            # Extract at 5 seconds
+            cmd = [
+                "ffmpeg", 
+                "-y",
+                "-ss", "5.0",
+                "-i", str(path),
+                "-vframes", "1",
+                "-q:v", "5", # Good quality
+                "-vf", "scale=480:-1", # Resize width 480px, maintain AR
+                str(thumb_file)
+            ]
+            
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            
+            if thumb_file.exists():
+                return rel_path
+        except Exception as e:
+            logger.warning(f"Video thumbnail generation failed: {e}")
+        return None
             
             try:
                 linker = get_identity_linker()
