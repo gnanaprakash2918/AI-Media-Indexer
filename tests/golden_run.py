@@ -6,37 +6,38 @@ Verifies the integration of Antigravity features:
 2. VideoRAG (Search Response Structure)
 3. Agent System (Connectivity)
 """
-import unittest
-import sys
 import os
+import sys
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.processing.indic_transcriber import IndicASRPipeline
 from config import settings
+from core.processing.indic_transcriber import IndicASRPipeline
+
 
 class TestOperationalIntegration(unittest.TestCase):
-    
+
     def test_01_hybrid_asr_switching(self):
         """Verify ASR backend switches based on configuration."""
         print("\nTesting Hybrid ASR Switch logic...")
-        
+
         # Mock dependencies to avoid real loading
         with patch("core.processing.indic_transcriber.IndicASRPipeline.load_model") as mock_load:
              with patch("core.processing.indic_transcriber.HAS_NEMO", True):
                 # Case 1: Native Enabled
                 settings.use_native_nemo = True
                 settings.ai4bharat_url = ""
-                
+
                 pipeline = IndicASRPipeline(lang="ta")
                 # Trigger transcribe logic verify it sets backend (simulated)
                 # We can't easily call transcribe with file input in unit test without file.
                 # But we can check internal logic if we refactored it nicely.
                 # Given current logic is in `transcribe()`, we test that.
-                
+
                 # Create dummy file
                 dummy = Path("test.wav")
                 dummy.touch()
@@ -51,7 +52,7 @@ class TestOperationalIntegration(unittest.TestCase):
     def test_02_videorag_response_structure(self):
         """Verify VideoRAG returns expected fields (match_reasons)."""
         print("Testing VideoRAG structure...")
-        
+
         # We Mock the DB search
         mock_db = MagicMock()
         mock_db.search_frames_hybrid.return_value = [
@@ -64,11 +65,11 @@ class TestOperationalIntegration(unittest.TestCase):
                 "timestamp": 10.0
             }
         ]
-        
-        from core.retrieval.rag import VideoRAGOrchestrator, SearchResultItem
-        
+
+        from core.retrieval.rag import SearchResultItem, VideoRAGOrchestrator
+
         orchestrator = VideoRAGOrchestrator(db=mock_db)
-        
+
         # Run search (Async requires sync wrapper or IsolatedAsyncioTestCase)
         import asyncio
         results = asyncio.run(orchestrator._search_multimodal(
@@ -76,7 +77,7 @@ class TestOperationalIntegration(unittest.TestCase):
              limit=1,
              video_path=None
         ))
-        
+
         self.assertTrue(len(results) > 0)
         item = results[0]
         self.assertIsInstance(item, SearchResultItem)

@@ -20,15 +20,14 @@ def safe_load(*args, **kwargs):
 
 torch.load = safe_load
 
+from huggingface_hub import snapshot_download
 from pyannote.audio import Inference, Model, Pipeline
 from pyannote.core import Segment
-from huggingface_hub import snapshot_download
 
 from config import settings
 from core.schemas import SpeakerSegment
-from core.utils.logger import get_logger
-from core.utils.observe import observe
 from core.utils.locks import GPU_SEMAPHORE
+from core.utils.logger import get_logger
 
 log = get_logger(__name__)
 
@@ -52,8 +51,9 @@ def is_audio_silent(audio_data: np.ndarray, threshold_db: float | None = None) -
 class VoiceProcessor:
     """Handles speaker diarization and voice embedding extraction."""
 
-    def __init__(self) -> None:
+    def __init__(self, db: Any = None) -> None:
         """Initialize the voice processor with settings from config."""
+        self.db = db
         self.enabled = bool(settings.enable_voice_analysis)
         self.device = torch.device(settings.device)
         self.hf_token = settings.hf_token if settings.hf_token else None
@@ -148,7 +148,7 @@ class VoiceProcessor:
                 self.inference = None
 
                 self.inference = None
-    
+
     def cleanup(self) -> None:
         """Release GPU resources."""
         if self.pipeline:
@@ -160,11 +160,11 @@ class VoiceProcessor:
         if self.inference:
             del self.inference
             self.inference = None
-        
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        
+
         self._initialized = False
         log.info("Voice processor resources released")
 
@@ -233,7 +233,7 @@ class VoiceProcessor:
         except Exception as e:
             log.error(f"Voice processing failed for {audio_path.name}: {e}")
             return []
-        
+
         finally:
             if temp_wav and temp_wav.exists():
                 try:
@@ -244,7 +244,6 @@ class VoiceProcessor:
     async def _convert_to_wav(self, path: Path) -> Path | None:
         """Convert any audio/video to a temporary 16kHz mono WAV file."""
         import tempfile
-        import subprocess
 
         fd, temp_path_str = tempfile.mkstemp(suffix=".wav", prefix="voice_temp_")
         os.close(fd)
@@ -268,13 +267,13 @@ class VoiceProcessor:
                 stderr=asyncio.subprocess.PIPE
             )
             _, stderr = await process.communicate()
-            
+
             if process.returncode != 0:
                 log.warning(f"FFmpeg conversion failed: {stderr.decode()}")
                 if temp_path.exists():
                     temp_path.unlink()
                 return None
-                
+
             return temp_path
         except Exception as e:
             log.warning(f"Failed to convert {path} to wav: {e}")

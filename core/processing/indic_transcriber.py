@@ -16,7 +16,6 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
-from huggingface_hub import snapshot_download
 import torch
 
 # Backend 1: HuggingFace Transformers (lightweight, cross-platform)
@@ -131,16 +130,11 @@ class IndicASRPipeline:
     def _load_hf_model(self) -> None:
         """Load HuggingFace Transformers pipeline for speech recognition.
         
-        Note: ai4bharat/indic-conformer uses custom ONNX loading which is incompatible
-        with the standard HF pipeline. We use Whisper with explicit language instead,
-        which provides decent Indic language support.
-        
-        Memory-conscious: Uses whisper-base (~144MB) by default to avoid OOM errors
-        on systems with limited RAM/VRAM. whisper-large requires 3GB+ RAM.
+        Uses whisper-large-v3-turbo for best quality Indic transcription.
+        Falls back to smaller models if OOM occurs.
         """
-        # Use Whisper base for memory efficiency - still good for Indic languages
-        # whisper-large-v3-turbo requires 3GB+ which causes OOM on many systems
-        model_id = "openai/whisper-base"
+        # Use Whisper large-v3-turbo for best quality Indic transcription
+        model_id = "openai/whisper-large-v3-turbo"
         log(f"[IndicASR] Loading HF pipeline: {model_id} (language: {self.lang})")
 
         try:
@@ -154,23 +148,23 @@ class IndicASRPipeline:
             self.model = True
             log(f"[IndicASR] HF Whisper pipeline loaded on {self.device}")
         except Exception as e:
-            log(f"[IndicASR] Whisper base failed: {e}. Trying tiny model...")
-            
+            log(f"[IndicASR] Whisper large-v3-turbo failed: {e}. Trying smaller model...")
+
             # Cleanup before fallback
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             gc.collect()
-            
-            # Fallback to tiny Whisper (~77MB)
+
+            # Fallback to whisper-small (~250MB) - still good for Tamil
             try:
                 self.pipe = hf_pipeline(
                     "automatic-speech-recognition",
-                    model="openai/whisper-tiny",
+                    model="openai/whisper-small",
                     device=0 if self.device.type == "cuda" else -1,
                     torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
                 )
                 self.model = True
-                log("[IndicASR] Whisper-tiny fallback loaded")
+                log("[IndicASR] Whisper-small fallback loaded (Tamil supported)")
             except Exception as e2:
                 log(f"[IndicASR] All HF models failed: {e2}")
                 raise
@@ -185,6 +179,7 @@ class IndicASRPipeline:
                 repo_id=model_info["repo_id"],
                 filename=model_info["filename"],
                 cache_dir=str(settings.model_cache_dir / "nemo_models"),
+                token=settings.hf_token,
             )
             self.model = nemo_asr.models.ASRModel.restore_from(
                 restore_path=nemo_ckpt_path,
@@ -250,9 +245,9 @@ class IndicASRPipeline:
             List of dicts with text and timestamp info.
         """
         import httpx
-        
+
         # Hybrid Strategy: Native -> Docker -> Whisper
-        
+
         # 1. Attempt Native NeMo (If configured and installed)
         native_success = False
         if settings.use_native_nemo and HAS_NEMO:
@@ -264,21 +259,21 @@ class IndicASRPipeline:
             except Exception as e:
                 log(f"[IndicASR] Native NeMo failed ({e}). Falling back to next option.")
                 native_success = False
-        
+
         # 2. Attempt Remote Docker (If Native failed or disabled)
         if not native_success and settings.ai4bharat_url:
             try:
                 url = f"{settings.ai4bharat_url}/transcribe"
                 log(f"[IndicASR] Attempting Remote Docker at {url}")
-                
+
                 with open(audio_path, "rb") as f:
                     response = httpx.post(
                         url,
                         files={"file": f},
-                        data={"language": target_lang},
+                        data={"language": language or self.lang},
                         timeout=300.0
                     )
-                
+
                 if response.status_code == 200:
                     data = response.json()
                     segments = data.get("segments", [])
@@ -288,16 +283,16 @@ class IndicASRPipeline:
                     return segments
             except Exception as e:
                 log(f"[IndicASR] Remote Docker failed ({e}). Falling back to Local Whisper.")
-        
+
         # 3. Final Fallback: Local Whisper (via HF)
-        # If we are here, either Native execution is set up (native_success=True) 
+        # If we are here, either Native execution is set up (native_success=True)
         # OR both Native and Remote failed, so we force HF Whisper.
-        
+
         if not native_success:
-            self._backend = "hf" 
+            self._backend = "hf"
             # Reset model to ensure we load HF, not broken NeMo
-            self.model = None 
-            
+            self.model = None
+
         self.load_model()
 
         audio_path = Path(audio_path)

@@ -47,7 +47,7 @@ def setup_logger() -> None:
     - Full interception of stdlib logging
     """
     logger.remove()
-    
+
     def _patcher(record):
         # actively fetch from context if not already present in extra
         if record["extra"].get("trace_id") is None:
@@ -178,24 +178,25 @@ configure_logger = setup_logger
 
 class LokiSink:
     """Loguru sink for Grafana Loki."""
-    
+
     def __init__(self, url: str) -> None:
         self.url = url
         self.session = None
-    
+
     def write(self, message: str) -> None:
         """Send log record to Loki."""
-        import time
-        import httpx
         import json
-        
+        import time
+
+        import httpx
+
         # message is a serialized JSON string from loguru
         try:
             record = json.loads(message)
             text = record["text"]
             record_level = record["record"]["level"]["name"]
             timestamp_ns = str(int(time.time() * 1e9))
-            
+
             payload = {
                 "streams": [
                     {
@@ -210,17 +211,17 @@ class LokiSink:
                     }
                 ]
             }
-            
+
             # Use sync client (since this runs in a thread via enqueue=True)
             # We create a new client per request or use a session?
             # Ideally session, but thread safety...
             # requests/httpx clients are thread safe?
             # Just use one-off for simplicity or a module-level client.
             # For 2-3 logs/sec it's fine.
-            
+
             httpx.post(
-                self.url, 
-                json=payload, 
+                self.url,
+                json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=2.0
             )

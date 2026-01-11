@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import gc
 import os
-import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Optional
 
 import torch
@@ -25,17 +24,17 @@ class SystemProfile:
     vram_gb: float
     ram_gb: float
     tier: Literal["low", "medium", "high"]
-    
+
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024
     vision_model: str = "moondream:latest"
-    
+
     batch_size: int = 1
     max_concurrent_jobs: int = 1
     frame_batch_size: int = 4
     lazy_unload: bool = True
     aggressive_cleanup: bool = True
-    
+
     def to_dict(self) -> dict:
         return {
             "vram_gb": self.vram_gb,
@@ -116,17 +115,17 @@ def get_system_profile(
     vram = get_available_vram()
     ram = get_available_ram()
     tier = get_vram_tier(vram)
-    
+
     embedding_model = embedding_override or os.getenv("EMBEDDING_MODEL_OVERRIDE") or "BAAI/bge-m3"
     vision_model = vision_override or os.getenv("OLLAMA_VISION_MODEL") or "moondream:latest"
-    
+
     if "bge-m3" in embedding_model or "large" in embedding_model:
         embedding_dim = 1024
     elif "base" in embedding_model:
         embedding_dim = 768
     else:
         embedding_dim = 384
-    
+
     if tier == "high":
         profile = SystemProfile(
             vram_gb=vram,
@@ -169,7 +168,7 @@ def get_system_profile(
             lazy_unload=True,
             aggressive_cleanup=True,
         )
-    
+
     log(f"SystemProfile: {tier} tier | VRAM={vram:.1f}GB | Batch={profile.batch_size} | Concurrency={profile.max_concurrent_jobs}")
     return profile
 
@@ -186,7 +185,7 @@ def select_embedding_model() -> tuple[str, int]:
             dim = 384
         log(f"Embedding model (override): {override} ({dim}d)")
         return override, dim
-    
+
     model = "BAAI/bge-m3"
     dim = 1024
     log(f"Embedding model (SOTA): {model} ({dim}d)")
@@ -200,14 +199,14 @@ def select_vision_model() -> str:
     if override:
         log(f"Vision model (override): {override}")
         return override
-    
+
     if vram >= 12:
         model = "llava:13b"
     elif vram >= 8:
         model = "llava:7b"
     else:
         model = "moondream:latest"
-    
+
     log(f"Vision model: {model} for {vram:.1f}GB VRAM")
     return model
 
@@ -232,23 +231,23 @@ def log_vram_status(context: str = "") -> None:
 
 class VRAMManager:
     """Manages GPU model lifecycle."""
-    
+
     _instance: Optional["VRAMManager"] = None
     _models: dict[str, object]
     _current_model: Optional[str]
-    
+
     def __new__(cls) -> "VRAMManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._models = {}
             cls._instance._current_model = None
         return cls._instance
-    
+
     def register(self, name: str, model: object) -> None:
         self._models[name] = model
         self._current_model = name
         log(f"VRAMManager: Registered '{name}'")
-    
+
     def unload(self, name: str) -> None:
         if name in self._models:
             model = self._models.pop(name)
@@ -267,19 +266,19 @@ class VRAMManager:
             log(f"VRAMManager: Unloaded '{name}'")
             if self._current_model == name:
                 self._current_model = None
-    
+
     def unload_all_except(self, keep: Optional[str] = None) -> None:
         to_unload = [n for n in list(self._models.keys()) if n != keep]
         for name in to_unload:
             self.unload(name)
-    
+
     def prepare_for_model(self, name: str, estimated_vram_gb: float = 2.0) -> None:
         if not can_load_model(estimated_vram_gb):
             log(f"VRAMManager: Low VRAM, unloading all for '{name}'")
             self.unload_all_except(None)
         cleanup_vram()
         log_vram_status(f"before_{name}")
-    
+
     def cleanup_before_ollama(self) -> None:
         self.unload_all_except(None)
         cleanup_vram()

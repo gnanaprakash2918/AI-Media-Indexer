@@ -11,7 +11,7 @@ mock_torch.__version__ = "2.0.0"
 # Apply the mock to sys.modules BEFORE any other imports happen
 sys.modules["torch"] = mock_torch
 
-import pytest
 # sys.path hack for relative imports if needed
 import os
+
 sys.path.append(os.getcwd())

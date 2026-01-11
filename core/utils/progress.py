@@ -23,7 +23,7 @@ class ProgressTracker:
 
         # Load active jobs from DB on startup
         self._sync_cache()
-    
+
     def _sync_cache(self):
         """Load all jobs from DB to cache."""
         try:
@@ -57,10 +57,10 @@ class ProgressTracker:
         else:
             # Create in DB
             job = job_manager.create_job(job_id, file_path, media_type)
-        
+
         with self._lock:
             self._cache[job_id] = job
-        
+
         self._broadcast({
             "event": "job_started" if not resume else "job_resumed",
             "job_id": job_id,
@@ -91,7 +91,7 @@ class ProgressTracker:
                 job.current_stage = stage
             if message:
                 job.message = message
-        
+
             # Broadcast immediately
             self._broadcast({
                 "event": "job_progress",
@@ -100,7 +100,7 @@ class ProgressTracker:
                 "stage": job.current_stage,
                 "message": job.message,
             })
-            
+
             # Persist to DB (throttled)
             self._persist_throttled(job)
 
@@ -117,7 +117,7 @@ class ProgressTracker:
             if job_id not in self._cache:
                 return
             job = self._cache[job_id]
-            
+
             if processed_frames is not None:
                 job.processed_frames = processed_frames
             if total_frames is not None:
@@ -126,7 +126,7 @@ class ProgressTracker:
                 job.current_frame_timestamp = current_timestamp
             if total_duration is not None:
                 job.total_duration = total_duration
-            
+
             # Create checkpoint data for resuming
             if current_timestamp is not None:
                 job.checkpoint_data = {
@@ -152,7 +152,7 @@ class ProgressTracker:
         import time as time_module
         now = time_module.time()
         last = self._last_db_update.get(job.job_id, 0)
-        
+
         # Update DB every 2 seconds max for progress to reduce I/O
         if now - last > 2.0:
             try:
@@ -174,7 +174,7 @@ class ProgressTracker:
                 self._last_db_update[job.job_id] = now
             except Exception:
                 pass
-    
+
     def update_pipeline_stage(
         self,
         job_id: str,
@@ -193,7 +193,7 @@ class ProgressTracker:
             message: Optional status message.
         """
         stage_value = stage.value if isinstance(stage, PipelineStage) else stage
-        
+
         with self._lock:
             if job_id not in self._cache:
                 return
@@ -204,7 +204,7 @@ class ProgressTracker:
             if message:
                 job.message = message
             job.last_heartbeat = time.time()
-        
+
         # Broadcast stage update
         self._broadcast({
             "event": "pipeline_stage_update",
@@ -214,7 +214,7 @@ class ProgressTracker:
             "total_items": total_items,
             "message": message,
         })
-        
+
         # Always persist stage changes immediately (important for crash recovery)
         try:
             job_manager.update_job(
@@ -237,12 +237,12 @@ class ProgressTracker:
                 job.progress = 100.0
                 job.completed_at = time.time()
                 job.message = message
-                
+
                 # Immediate DB update
                 job_manager.update_job(
-                    job_id, 
-                    status=JobStatus.COMPLETED, 
-                    progress=100.0, 
+                    job_id,
+                    status=JobStatus.COMPLETED,
+                    progress=100.0,
                     completed_at=job.completed_at,
                     message=message
                 )
@@ -262,12 +262,12 @@ class ProgressTracker:
                 job.progress = -1.0
                 job.completed_at = time.time()
                 job.error = error
-                
+
                 # Immediate DB update
                 job_manager.update_job(
-                    job_id, 
-                    status=JobStatus.FAILED, 
-                    progress=-1.0, 
+                    job_id,
+                    status=JobStatus.FAILED,
+                    progress=-1.0,
                     completed_at=job.completed_at,
                     error=error
                 )
@@ -286,14 +286,14 @@ class ProgressTracker:
                 if job.status in (JobStatus.RUNNING, JobStatus.PAUSED):
                     job.status = JobStatus.CANCELLED
                     job.completed_at = time.time()
-                    
+
                     # Immediate DB update
                     job_manager.update_job(
                         job_id,
                         status=JobStatus.CANCELLED,
                         completed_at=job.completed_at
                     )
-                    
+
                     self._broadcast({
                         "event": "job_cancelled",
                         "job_id": job_id,
@@ -308,10 +308,10 @@ class ProgressTracker:
                 job = self._cache[job_id]
                 if job.status == JobStatus.RUNNING:
                     job.status = JobStatus.PAUSED
-                    
+
                     # Immediate DB update
                     job_manager.update_job(job_id, status=JobStatus.PAUSED)
-                    
+
                     self._broadcast({"event": "job_paused", "job_id": job_id})
                     return True
         return False
@@ -335,7 +335,7 @@ class ProgressTracker:
              with self._lock:
                  self._cache[job_id] = job
                  job.status = JobStatus.RUNNING
-             
+
              job_manager.update_job(job_id, status=JobStatus.RUNNING)
              self._broadcast({"event": "job_resumed", "job_id": job_id})
              return True
@@ -372,8 +372,8 @@ class ProgressTracker:
         self._sync_cache()
         with self._lock:
             return sorted(
-                list(self._cache.values()), 
-                key=lambda x: x.started_at, 
+                list(self._cache.values()),
+                key=lambda x: x.started_at,
                 reverse=True
             )
 

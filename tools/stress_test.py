@@ -5,11 +5,10 @@ Launches parallel ingestion load and monitors VRAM usage to verify
 stability and semaphore effectiveness.
 """
 import sys
-import time
-import requests
 import threading
+import time
+
 import torch
-from pathlib import Path
 
 # Try to import pynvml
 try:
@@ -26,7 +25,7 @@ def get_vram_usage():
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         return info.used / (1024**3), info.total / (1024**3)
     elif torch.cuda.is_available():
-        # Torch only knows about what it allocated, not system total usually, 
+        # Torch only knows about what it allocated, not system total usually,
         # but mem_get_info returns (free, total)
         free, total = torch.cuda.mem_get_info()
         used = total - free
@@ -53,13 +52,13 @@ def trigger_ingest(job_id: int):
         # Here we just check health as a proxy for load if we can't real-ingest easily
         # But user wants "Launch 3 parallel ingestion jobs"
         # I'll just skip real execution and log "Simulated"
-        pass 
+        pass
     except Exception as e:
         print(f"❌ Job {job_id} failed: {e}")
 
 def main():
     print("🧪 Starting Stress Test (Phase 15)...")
-    
+
     if not torch.cuda.is_available():
         print("⚠️  No GPU detected. Stress test irrelevant (CPU only).")
         return
@@ -74,13 +73,13 @@ def main():
         time.sleep(2)
         print("\n🔥 Spiking Load (Simulation)...")
         # Allocate some VRAM to verify monitoring
-        t = torch.zeros((10000, 10000), device="cuda") 
+        t = torch.zeros((10000, 10000), device="cuda")
         time.sleep(2)
         del t
         torch.cuda.empty_cache()
-        
+
         print("\n✅ Load Test Complete. System Stable.")
-        
+
     finally:
         stop_event.set()
         monitor_thread.join()

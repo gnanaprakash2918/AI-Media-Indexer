@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from huggingface_hub import snapshot_download
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
-from huggingface_hub import snapshot_download
 
 from config import settings
 from core.utils.hardware import select_embedding_model
@@ -113,7 +113,7 @@ class VectorDB:
         self.encoder: SentenceTransformer | None = None
         self._encoder_last_used: float = 0.0
         self._idle_unload_seconds = 300  # Unload after 5 min idle
-        
+
         log(f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use.")
         self._ensure_collections()
 
@@ -129,10 +129,10 @@ class VectorDB:
                 path_or_name=path_or_name,
                 device=device,
             )
-            
+
             # Use trust_remote_code for BGE models, allow Hub download if needed
             return SentenceTransformer(
-                path_or_name, 
+                path_or_name,
                 device=device,
                 trust_remote_code=True,
             )
@@ -151,14 +151,14 @@ class VectorDB:
                     pass
 
         log("Local model missing/corrupt, downloading from Hub", model=self.MODEL_NAME)
-        
+
         # Use snapshot_download to ensure ALL files (tokenizer, config, weights) are present
         try:
             snapshot_download(
                 repo_id=self.MODEL_NAME,
                 local_dir=str(local_model_dir),
                 token=settings.hf_token,
-                ignore_patterns=["*.msgpack", "*.h5", "*.ot"], 
+                ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
             )
         except Exception as dl_exc:
             log(f"Snapshot Download Failed: {dl_exc}", level="error")
@@ -201,7 +201,7 @@ class VectorDB:
             log(f"Lazy loading encoder: {self.MODEL_NAME}...")
             self.encoder = self._load_encoder()
         self._encoder_last_used = time.time()
-    
+
     def unload_encoder_if_idle(self) -> bool:
         """Unload encoder if idle for too long. Call periodically."""
         if self.encoder is None:
@@ -227,7 +227,7 @@ class VectorDB:
     ) -> list[list[float]]:
         # LAZY LOAD on first use
         self._ensure_encoder_loaded()
-        
+
         if isinstance(texts, str):
             texts_list = [texts]
         else:
@@ -284,7 +284,7 @@ class VectorDB:
                     self.client.delete_collection(self.MEDIA_COLLECTION)
             except Exception as e:
                 log(f"Failed to check media_frames dimension: {e}")
-        
+
         if not self.client.collection_exists(self.MEDIA_COLLECTION):
             self.client.create_collection(
                 collection_name=self.MEDIA_COLLECTION,
@@ -493,7 +493,7 @@ class VectorDB:
             "dialogue": dialogue,
             "type": "visual",
         }
-        
+
         # Merge structured data (face_cluster_ids, ocr_text, structured_data)
         if payload:
             final_payload.update(payload)
@@ -503,7 +503,7 @@ class VectorDB:
             if len(vector) != self.MEDIA_VECTOR_SIZE:
                 log(f"Vector dim mismatch: {len(vector)} vs {self.MEDIA_VECTOR_SIZE}", level="ERROR")
                 return
-            
+
             self.client.upsert(
                 collection_name=self.MEDIA_COLLECTION,
                 points=[
@@ -531,7 +531,7 @@ class VectorDB:
         """Insert a masklet (video segment tracking a specific concept)."""
         unique_str = f"{video_path}_{concept}_{start_time}_{end_time}"
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
-        
+
         final_payload = {
             "video_path": video_path,
             "concept": concept,
@@ -542,7 +542,7 @@ class VectorDB:
         }
         if payload:
             final_payload.update(payload)
-            
+
         try:
              self.client.upsert(
                 collection_name="masklets",
@@ -616,7 +616,7 @@ class VectorDB:
         # Using a specialized collection for speaker *centroids* or samples?
         # Ideally we store one point per unique speaker ID (centroid) or multiple samples.
         # Let's assume we store multiple samples in VOICE_COLLECTION and do KNN.
-        
+
         try:
             resp = self.client.search(
                 collection_name=self.VOICE_COLLECTION,
@@ -644,7 +644,7 @@ class VectorDB:
         """Store a voice segment embedding linked to a global speaker ID."""
         import uuid
         point_id = str(uuid.uuid4())
-        
+
         self.client.upsert(
             collection_name=self.VOICE_COLLECTION,
             points=[
@@ -661,7 +661,7 @@ class VectorDB:
                 )
             ]
         )
-    
+
     def get_voice_by_audio_path(self, path: str) -> dict[str, Any] | None:
         """Retrieve voice segment by 'audio_path' suffix (used for thumbnails)."""
         # path format: /thumbnails/voices/{hash}_{start}_{end}.mp3
@@ -670,11 +670,11 @@ class VectorDB:
         # Actually logic in server.py parses filename to get start/end/media.
         # But server.py calls this method.
         # Wait, server.py tries to find segment by EXACT thumbnail path match?
-        # NO, server.py extracts start/end from filename if this fails? 
+        # NO, server.py extracts start/end from filename if this fails?
         # Actually server.py line 318 calls get_voice_by_audio_path.
         # We'll implement a simple scroll search if needed or just return None and let helper logic work.
         # But server.py relies on this to confirm media_path.
-        
+
         # Actually, let's implement searching by ID since filename contains hash?
         # No, filename is {filename}_{start}_{end}.
         # Let's rely on server.py parsing logic mostly, but if we need DB look up:
@@ -706,7 +706,7 @@ class VectorDB:
         """
         # Build filter conditions
         conditions: list[models.Condition] = []
-        
+
         # CRITICAL: Add video_path filter to prevent cross-video identity leakage
         if video_path:
             conditions.append(
@@ -715,7 +715,7 @@ class VectorDB:
                     match=models.MatchValue(value=video_path),
                 )
             )
-        
+
         # Face identity filter
         if face_cluster_ids:
             conditions.append(
@@ -724,7 +724,7 @@ class VectorDB:
                     match=models.MatchAny(any=face_cluster_ids),
                 )
             )
-        
+
         query_filter = models.Filter(must=conditions) if conditions else None
 
         resp = self.client.query_points(
@@ -797,21 +797,20 @@ class VectorDB:
         
         Returns explainable results with match_reasons.
         """
-        import numpy as np
         from collections import defaultdict
-        
+
         results_by_id: dict[str, dict] = {}
         rank_lists: dict[str, dict[str, int]] = defaultdict(dict)
-        
+
         # Normalize video_paths to list
         if isinstance(video_paths, str):
             video_paths = [video_paths]
-        
+
         # === 1. VECTOR SEARCH (Semantic Understanding) ===
         try:
             self._ensure_encoder_loaded()
             query_vector = self.encode_texts(query, is_query=True)[0]
-            
+
             conditions = []
             if video_paths:
                 conditions.append(
@@ -827,16 +826,16 @@ class VectorDB:
                         match=models.MatchAny(any=face_cluster_ids),
                     )
                 )
-            
+
             qfilter = models.Filter(must=conditions) if conditions else None
-            
+
             vec_resp = self.client.query_points(
                 collection_name=self.MEDIA_COLLECTION,
                 query=query_vector,
                 limit=limit * 2,
                 query_filter=qfilter,
             )
-            
+
             for rank, hit in enumerate(vec_resp.points):
                 point_id = str(hit.id)
                 rank_lists["vector"][point_id] = rank + 1
@@ -854,12 +853,12 @@ class VectorDB:
                 )
         except Exception as e:
             log(f"Vector search failed: {e}")
-        
+
         # === 2. KEYWORD SEARCH (Text Fields) ===
         try:
             query_lower = query.lower()
             query_words = set(query_lower.split())
-            
+
             conditions = []
             if video_paths:
                 conditions.append(
@@ -868,9 +867,9 @@ class VectorDB:
                         match=models.MatchAny(any=video_paths),
                     )
                 )
-            
+
             qfilter = models.Filter(must=conditions) if conditions else None
-            
+
             scroll_resp = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
                 scroll_filter=qfilter,
@@ -878,12 +877,12 @@ class VectorDB:
                 with_payload=True,
                 with_vectors=False,
             )
-            
+
             keyword_matches: list[tuple[str, float, dict]] = []
             for point in scroll_resp[0]:
                 payload = point.payload or {}
                 point_id = str(point.id)
-                
+
                 text_fields = [
                     str(payload.get("action", "")),
                     str(payload.get("dialogue", "")),
@@ -893,12 +892,12 @@ class VectorDB:
                     " ".join(payload.get("face_names", [])) if isinstance(payload.get("face_names", []), list) else "",
                 ]
                 combined_text = " ".join(text_fields).lower()
-                
+
                 word_hits = sum(1 for w in query_words if w in combined_text)
                 if word_hits > 0:
                     score = word_hits / len(query_words) if query_words else 0
                     keyword_matches.append((point_id, score, payload))
-            
+
             # === 2b. MASKLET SEARCH (Deep Video Understanding) ===
             # Search for SAM3-tracked concepts overlap with query
             try:
@@ -920,29 +919,29 @@ class VectorDB:
                                 match=models.MatchValue(value=word)
                             )
                         )
-                
+
                 if concept_matches:
                     masklet_filter = models.Filter(
                         must=masklet_conditions,
                         should=concept_matches, # Match ANY concept word
                     )
-                    
+
                     mask_resp = self.client.scroll(
                         collection_name="masklets",
                         scroll_filter=masklet_filter,
                         limit=50,
                         with_payload=True,
                     )
-                    
+
                     for point in mask_resp[0]:
                         payload = point.payload or {}
                         point_id = str(point.id) # Use unique ID
-                        
+
                         # Create a synthetic result from masklet
                         # Masklet has start/end. We map to start time.
-                        
+
                         rank_lists["keyword"][point_id] = 1 # High rank
-                        
+
                         if point_id not in results_by_id:
                             results_by_id[point_id] = {
                                 "id": point_id,
@@ -986,7 +985,7 @@ class VectorDB:
                     )
         except Exception as e:
             log(f"Keyword search failed: {e}")
-        
+
         # === 3. IDENTITY SEARCH (Face/Speaker Names) ===
         try:
             identity_names = self._extract_identity_names(query)
@@ -1007,14 +1006,14 @@ class VectorDB:
                                     match=models.MatchAny(any=video_paths),
                                 )
                             )
-                        
+
                         identity_resp = self.client.scroll(
                             collection_name=self.MEDIA_COLLECTION,
                             scroll_filter=models.Filter(must=conditions),
                             limit=limit * 2,
                             with_payload=True,
                         )
-                        
+
                         for rank, point in enumerate(identity_resp[0]):
                             point_id = str(point.id)
                             rank_lists["identity"][point_id] = rank + 1
@@ -1033,7 +1032,7 @@ class VectorDB:
                             results_by_id[point_id]["matched_identity"] = name
         except Exception as e:
             log(f"Identity search failed: {e}")
-        
+
         # === 4. RRF FUSION ===
         for point_id, result in results_by_id.items():
             rrf_score = 0.0
@@ -1042,13 +1041,13 @@ class VectorDB:
                     rrf_score += 1.0 / (rrf_k + ranks[point_id])
             result["score"] = rrf_score
             result["rrf_score"] = rrf_score
-        
+
         final_results = sorted(
             results_by_id.values(),
             key=lambda x: x["score"],
             reverse=True,
         )[:limit]
-        
+
         return final_results
 
     def _extract_identity_names(self, query: str) -> list[str]:
@@ -1067,13 +1066,13 @@ class VectorDB:
                     known_names.add(name.lower())
         except Exception:
             pass
-        
+
         query_lower = query.lower()
         found_names = []
         for name in known_names:
             if name in query_lower:
                 found_names.append(name)
-        
+
         return found_names
 
     def get_cluster_id_by_name(self, name: str) -> int | None:
@@ -1107,7 +1106,7 @@ class VectorDB:
             return None
         except Exception:
             return None
-    
+
     def fuzzy_get_cluster_id_by_name(self, name: str, threshold: float = 0.7) -> int | None:
         """Resolve a person's name to cluster ID using fuzzy matching.
         
@@ -1125,7 +1124,7 @@ class VectorDB:
         """
         if not name or len(name) < 2:
             return None
-            
+
         try:
             # Get all named faces
             resp = self.client.scroll(
@@ -1140,27 +1139,27 @@ class VectorDB:
                 limit=500,
                 with_payload=True,
             )
-            
+
             if not resp[0]:
                 return None
-            
+
             search_lower = name.lower().strip()
             best_match = None
             best_score = 0.0
-            
+
             for point in resp[0]:
                 if not point.payload:
                     continue
                 stored_name = point.payload.get("name")
                 if not stored_name:
                     continue
-                    
+
                 stored_lower = stored_name.lower().strip()
-                
+
                 # Exact case-insensitive match
                 if search_lower == stored_lower:
                     return point.payload.get("cluster_id")
-                
+
                 # Substring match (partial name)
                 if search_lower in stored_lower or stored_lower in search_lower:
                     score = len(search_lower) / max(len(stored_lower), 1)
@@ -1168,16 +1167,16 @@ class VectorDB:
                         best_score = score
                         best_match = point.payload.get("cluster_id")
                         continue
-                
+
                 # Simple character overlap ratio (poor man's fuzzy)
                 common = sum(1 for c in search_lower if c in stored_lower)
                 ratio = common / max(len(search_lower), len(stored_lower), 1)
                 if ratio > best_score and ratio >= threshold:
                     best_score = ratio
                     best_match = point.payload.get("cluster_id")
-            
+
             return best_match if best_score >= threshold else None
-            
+
         except Exception:
             return None
 
@@ -1685,7 +1684,7 @@ class VectorDB:
         """
         # 1. Generate embedding for query
         query_vec = self.get_embedding(query_text)
-        
+
         # 2. Perform multi-vector search
         raw_results = self.search_scenes(
             query_vec=query_vec,
@@ -1693,16 +1692,16 @@ class VectorDB:
             score_threshold=score_threshold,
             search_mode="hybrid",
         )
-        
+
         # 3. Enrich each result with explainable metadata
         explainable_results = []
-        
+
         for result in raw_results[:limit]:
             # Extract entities from the result payload
             matched_entities = {}
             evidence = []
             reasoning_parts = []
-            
+
             # Check for person/face matches
             face_names = result.get("face_names", []) or result.get("person_names", [])
             face_ids = result.get("face_ids", [])
@@ -1718,7 +1717,7 @@ class VectorDB:
                         evidence.append("face_match")
                         reasoning_parts.append(f"Identified {name} via face recognition")
                         break
-            
+
             # Check for voice matches
             voice_names = result.get("voice_names", []) or result.get("speaker_names", [])
             voice_ids = result.get("voice_ids", [])
@@ -1734,7 +1733,7 @@ class VectorDB:
                         evidence.append("voice_match")
                         reasoning_parts.append(f"Voice identified as {name}")
                         break
-            
+
             # Check for text/OCR matches
             visible_text = result.get("visible_text", []) or result.get("ocr_text", [])
             if visible_text:
@@ -1745,7 +1744,7 @@ class VectorDB:
                 }
                 evidence.append("text_match")
                 reasoning_parts.append(f"Visible text: {', '.join(visible_text[:3])}")
-            
+
             # Check for location
             location = result.get("location", "") or result.get("scene_location", "")
             if location:
@@ -1756,7 +1755,7 @@ class VectorDB:
                 }
                 evidence.append("location_match")
                 reasoning_parts.append(f"Location: {location}")
-            
+
             # Check for actions
             actions = result.get("actions", []) or result.get("action_keywords", [])
             if actions:
@@ -1767,13 +1766,13 @@ class VectorDB:
                 }
                 evidence.append("action_match")
                 reasoning_parts.append(f"Actions: {', '.join(actions[:3])}")
-            
+
             # Get description for additional context
             description = result.get("description", "") or result.get("dense_caption", "")
-            
+
             # Build reasoning string
             reasoning = "; ".join(reasoning_parts) if reasoning_parts else description[:200]
-            
+
             # Build explainable result
             explainable_results.append({
                 "id": result.get("id"),
@@ -1788,7 +1787,7 @@ class VectorDB:
                 # Include raw data for debugging
                 "raw_description": description[:500] if description else None,
             })
-        
+
         return explainable_results
 
     def get_scene_by_id(self, scene_id: str) -> dict[str, Any] | None:
@@ -2014,21 +2013,21 @@ class VectorDB:
                 ),
                 limit=1000,
             )
-            
+
             points = resp[0]
             if not points:
                 return 0
-                
+
             ids = [p.id for p in points]
-            
+
             # Update cluster_id for all
             payload = {"cluster_id": to_cluster}
-            # If target has a name, propagate it to the merged faces 
-            # (or if source had a name and target didn't, we might want to keep source name? 
+            # If target has a name, propagate it to the merged faces
+            # (or if source had a name and target didn't, we might want to keep source name?
             # For now, let's assume target supersedes or we clear if ambiguous, but keeping target name is safer for HITL)
             if target_name:
                 payload["name"] = target_name
-            
+
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
                 payload=payload,
@@ -2082,13 +2081,13 @@ class VectorDB:
             log = get_logger(__name__)
             log.error(f"Failed to update video metadata: {e}")
             return 0
-            
+
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
                 payload=payload,
                 points=models.PointIdsList(points=ids),
             )
-            
+
             return len(ids)
         except Exception as e:
             log("Failed to merge clusters", error=str(e))
@@ -2252,7 +2251,7 @@ class VectorDB:
         try:
             seen_paths: dict[str, dict[str, Any]] = {}
             offset = None
-            
+
             # Paginate through ALL segments to build complete video list
             while True:
                 resp = self.client.scroll(
@@ -2263,7 +2262,7 @@ class VectorDB:
                     with_vectors=False,
                 )
                 points, next_offset = resp
-                
+
                 for point in points:
                     payload = point.payload or {}
                     video_path = payload.get("video_path")
@@ -2274,12 +2273,12 @@ class VectorDB:
                         }
                     elif video_path:
                         seen_paths[video_path]["segment_count"] += 1
-                
+
                 # No more pages
                 if next_offset is None or not points:
                     break
                 offset = next_offset
-            
+
             return list(seen_paths.values())
         except Exception:
             return []
@@ -2366,7 +2365,7 @@ class VectorDB:
             Total number of points deleted.
         """
         deleted = 0
-        
+
         # Cleanup Faces
         try:
             # 1. Get Faces to delete files
@@ -2385,7 +2384,7 @@ class VectorDB:
                         pass
         except Exception:
             pass
-            
+
         # Cleanup Voice Segments
         try:
             voice_filter = models.Filter(must=[models.FieldCondition(key="media_path", match=models.MatchValue(value=video_path))])
@@ -2413,7 +2412,7 @@ class VectorDB:
             try:
                 # For faces and voices, we need to match media_path
                 key = "video_path" if collection in [self.MEDIA_SEGMENTS_COLLECTION, self.MEDIA_COLLECTION] else "media_path"
-                
+
                 self.client.delete(
                     collection_name=collection,
                     points_selector=models.FilterSelector(
@@ -2449,7 +2448,7 @@ class VectorDB:
                 ids=[segment_id],
                 with_payload=True,
             )
-            
+
             if points:
                 payload = points[0].payload or {}
                 audio = payload.get("audio_path")
@@ -2548,30 +2547,30 @@ class VectorDB:
                 with_payload=True,
                 with_vectors=True,
             )
-            
+
             cluster_embeddings: dict[int, list[list[float]]] = {}
             cluster_names: dict[int, str | None] = {}
-            
+
             for point in resp[0]:
                 payload = point.payload or {}
                 cluster_id = payload.get("cluster_id")
                 name = payload.get("name")
-                
+
                 if cluster_id is None or point.vector is None:
                     continue
-                
+
                 if cluster_id not in cluster_embeddings:
                     cluster_embeddings[cluster_id] = []
                     cluster_names[cluster_id] = name
-                
+
                 if name and not cluster_names[cluster_id]:
                     cluster_names[cluster_id] = name
-                
+
                 if isinstance(point.vector, list):
                     cluster_embeddings[cluster_id].append(point.vector)
                 elif hasattr(point.vector, 'tolist'):
                     cluster_embeddings[cluster_id].append(point.vector.tolist())
-            
+
             centroids: dict[int, list[float]] = {}
             for cluster_id, embeddings in cluster_embeddings.items():
                 if embeddings:
@@ -2580,18 +2579,18 @@ class VectorDB:
                     centroid = np.mean(arr, axis=0)
                     centroid = centroid / (np.linalg.norm(centroid) + 1e-9)
                     centroids[cluster_id] = centroid.tolist()
-            
+
             log(f"Loaded {len(centroids)} cluster centroids for global matching")
             return centroids
-            
+
         except Exception as e:
             log(f"Failed to get cluster centroids: {e}")
             return {}
 
     @observe("db_update_cluster_centroid")
     def update_cluster_centroid(
-        self, 
-        cluster_id: int, 
+        self,
+        cluster_id: int,
         new_embedding: list[float],
         alpha: float = 0.3
     ) -> bool:
@@ -2882,7 +2881,7 @@ class VectorDB:
             List of unique names from face clusters and speaker clusters.
         """
         names = set()
-        
+
         # Face names
         try:
             face_resp = self.client.scroll(
@@ -2903,7 +2902,7 @@ class VectorDB:
                     names.add(name)
         except Exception:
             pass
-        
+
         # Speaker names
         try:
             voice_resp = self.client.scroll(
@@ -2924,7 +2923,7 @@ class VectorDB:
                     names.add(name)
         except Exception:
             pass
-        
+
         return list(names)
 
     def get_face_name_by_cluster(self, cluster_id: int) -> str | None:
@@ -3145,8 +3144,6 @@ class VectorDB:
         Returns:
             Ranked list of matching frames with scores.
         """
-        from collections import Counter
-        
         # Default Weights (Tuned for balanced precision/recall)
         w = {
             "face_match": 0.20,
@@ -3158,12 +3155,12 @@ class VectorDB:
         }
         if weights:
             w.update(weights)
-        
+
         # 1. Check for HITL names in query
         known_names = self.get_all_hitl_names()
         query_lower = query.lower()
         matched_names = [n for n in known_names if n.lower() in query_lower]
-        
+
         identity_filter = None
         if matched_names:
             # Get cluster IDs for matched names
@@ -3172,7 +3169,7 @@ class VectorDB:
                 cid = self.get_cluster_id_by_name(name)
                 if cid is not None:
                     cluster_ids.append(cid)
-            
+
             if cluster_ids:
                 identity_filter = models.Filter(
                     must=[
@@ -3183,7 +3180,7 @@ class VectorDB:
                     ]
                 )
                 log(f"[HybridSearch] Identity filter: {matched_names} → clusters {cluster_ids}")
-        
+
         # 2. Build video path filter
         video_filter = None
         if video_paths:
@@ -3193,7 +3190,7 @@ class VectorDB:
                 key="video_path",
                 match=models.MatchAny(any=video_paths),
             )
-        
+
         # Combine filters
         combined_filter = None
         conditions = []
@@ -3203,62 +3200,62 @@ class VectorDB:
             conditions.append(video_filter)
         if conditions:
             combined_filter = models.Filter(must=conditions)
-        
+
         # 3. Vector search
         query_vector = self.encode_texts(query, is_query=True)[0]
-        
+
         vector_results = self.client.query_points(
             collection_name=self.MEDIA_COLLECTION,
             query=query_vector,
             limit=limit * 3,
             query_filter=combined_filter,
         )
-        
+
         # 4. Extract keywords for boosting
         query_words = set(w.lower() for w in query.split() if len(w) > 2)
         # Remove common words
         stopwords = {"the", "and", "for", "with", "that", "this", "from", "are", "was", "were"}
         query_words -= stopwords
-        
+
         # 5. Score and boost results
         results = []
         for hit in vector_results.points:
             payload = hit.payload or {}
             score = float(hit.score or 0)
-            
+
             # Keyword boost on structured fields
             boost = 0.0
-            
+
             # Check face_names
             for name in payload.get("face_names", []):
                 if name and name.lower() in query_lower:
                     boost += w["face_match"]
-            
+
             # Check speaker_names
             for name in payload.get("speaker_names", []):
                 if name and name.lower() in query_lower:
                     boost += w["speaker_match"]
-            
+
             # Check entities
             for entity in payload.get("entities", []):
                 if entity and any(w in entity.lower() for w in query_words):
                     boost += w["entity_match"]
-            
+
             # Check visible_text
             for text in payload.get("visible_text", []):
                 if text and any(w in text.lower() for w in query_words):
                     boost += w["text_match"]
-            
+
             # Check scene_location
             location = payload.get("scene_location", "") or ""
             if any(w in location.lower() for w in query_words):
                 boost += w["scene_match"]
-            
+
             # Check action/description
             action = payload.get("action", "") or payload.get("description", "") or ""
             if any(w in action.lower() for w in query_words):
                 boost += w["action_match"]
-            
+
             results.append({
                 "id": str(hit.id),
                 "score": score + boost,
@@ -3266,12 +3263,12 @@ class VectorDB:
                 "keyword_boost": boost,
                 **payload,
             })
-        
+
         # 6. Sort by final score
         results.sort(key=lambda x: x["score"], reverse=True)
-        
+
         log(f"[HybridSearch] Query: '{query}' | Identity filter: {bool(identity_filter)} | Results: {len(results)}")
-        
+
         return results[:limit]
 
     @observe("db_update_frame_description")
@@ -3287,17 +3284,17 @@ class VectorDB:
             if not resp:
                 log(f"Frame {frame_id} not found")
                 return False
-            
+
             payload = resp[0].payload or {}
             payload["action"] = description
             payload["description"] = description
             payload["is_hitl_corrected"] = True
-            
+
             identity_text = payload.get("identity_text", "")
             full_text = f"{description}. {identity_text}" if identity_text else description
-            
+
             new_vector = self.encode_texts(full_text, is_query=False)[0]
-            
+
             self.client.upsert(
                 collection_name=self.MEDIA_COLLECTION,
                 points=[models.PointStruct(id=frame_id, vector=new_vector, payload=payload)],
@@ -3338,37 +3335,37 @@ class VectorDB:
             )
             if not resp:
                 return False
-                
+
             point = resp[0]
             payload = point.payload or {}
-            
+
             # Get original visual description
             description = payload.get("description") or payload.get("action") or ""
-            
+
             # 2. Build new Identity Text
             identity_parts = []
             if face_names:
                 identity_parts.append(f"Visible: {', '.join(face_names)}")
             if speaker_names:
                 identity_parts.append(f"Speaking: {', '.join(speaker_names)}")
-                
+
             identity_text = ". ".join(identity_parts)
-            
+
             # 3. Create NEW combined text for embedding
             # "A man walking. Visible: John. Speaking: John"
             full_text = f"{description}. {identity_text}" if identity_text else description
-            
+
             if not full_text.strip():
                 return False
-                
+
             # 4. Re-encode
             new_vector = self.encode_texts(full_text, is_query=False)[0]
-            
+
             # 5. Update payload
             payload["face_names"] = face_names
             payload["speaker_names"] = speaker_names
             payload["identity_text"] = identity_text
-            
+
             # 6. Upsert with NEW vector
             self.client.upsert(
                 collection_name=self.MEDIA_COLLECTION,
@@ -3382,10 +3379,10 @@ class VectorDB:
             )
             log(f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}")
             return True
-            
+
             log(f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}")
             return True
-            
+
         except Exception as e:
             log(f"Failed to update frame identity: {e}")
             return False
@@ -3412,23 +3409,23 @@ class VectorDB:
                 with_payload=True,
             )
             segments = resp[0]
-            
+
             if not segments:
                 return 0
-                
+
             updated_count = 0
             processed_frames = set() # Avoid double processing same frame
-            
+
             # 2. Iterate segments and find frames
             for seg in segments:
                 payload = seg.payload or {}
                 media_path = payload.get("media_path") or payload.get("audio_path")
                 start = payload.get("start", 0)
                 end = payload.get("end", 0)
-                
+
                 if not media_path:
                     continue
-                    
+
                 # Find frames in this time range for this video
                 frames_resp = self.client.scroll(
                     collection_name=self.MEDIA_COLLECTION,
@@ -3440,30 +3437,30 @@ class VectorDB:
                     limit=100 # usually a few frames per segment
                 )
                 frames = frames_resp[0]
-                
+
                 for frame in frames:
                     if frame.id in processed_frames:
                         continue
-                        
+
                     current_payload = frame.payload or {}
                     face_names = current_payload.get("face_names", [])
                     speaker_names = current_payload.get("speaker_names", [])
-                    
+
                     # Update speaker names list
                     # Remove old name if it exists
                     if old_name and old_name in speaker_names:
                         speaker_names = [n for n in speaker_names if n != old_name]
-                        
+
                     # Add new name if not present
                     if new_name not in speaker_names:
                         speaker_names.append(new_name)
-                    
+
                     # 3. Call update_frame_identity_text to re-embed
                     if self.update_frame_identity_text(str(frame.id), face_names, speaker_names):
                         updated_count += 1
-                        
+
                     processed_frames.add(frame.id)
-                    
+
             return updated_count
 
         except Exception as e:
@@ -3474,9 +3471,9 @@ class VectorDB:
     def delete_media_by_path(self, media_path: str) -> None:
         """Delete all data associated with a media file."""
         for collection in [
-            self.MEDIA_SEGMENTS_COLLECTION, 
-            self.MEDIA_COLLECTION, 
-            self.FACES_COLLECTION, 
+            self.MEDIA_SEGMENTS_COLLECTION,
+            self.MEDIA_COLLECTION,
+            self.FACES_COLLECTION,
             self.VOICE_COLLECTION
         ]:
             try:
@@ -3518,6 +3515,6 @@ class VectorDB:
             media_path: Path to the media file.
             scenes: List of scene dictionaries with context.
         """
-        # TODO: Implement scene storage if needed. 
+        # TODO: Implement scene storage if needed.
         # Currently just a stub to satisfy Pylance/Pipeline.
         log(f"Received {len(scenes)} scenes for {media_path} (Storage not implemented)")

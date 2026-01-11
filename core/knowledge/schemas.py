@@ -10,7 +10,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # =============================================================================
 # DYNAMIC ENTITY SYSTEM (NO HARDCODING - UNLIMITED COMPLEXITY)
 # =============================================================================
@@ -30,7 +29,7 @@ class DynamicEntity(BaseModel):
     - {entity_type: "action", name: "bowling", attributes: {result: "strike"}}
     - {entity_type: "emotion", name: "excitement", attributes: {intensity: "high"}}
     """
-    
+
     entity_type: str = Field(
         ...,
         description="LLM-determined type: person/vehicle/clothing/accessory/brand/"
@@ -90,41 +89,41 @@ class DynamicParsedQuery(BaseModel):
     
     NO PREDEFINED CATEGORIES - the LLM determines entity types dynamically.
     """
-    
+
     # All entities extracted from the query
     entities: list[DynamicEntity] = Field(
         default_factory=list,
         description="ALL entities from query - unlimited types and attributes"
     )
-    
+
     # Entity relationships as graph edges
     relationships: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Entity-entity relationships: "
                     "[{source: 'Prakash', relation: 'wearing', target: 'blue shirt'}]"
     )
-    
+
     # LLM-generated dense search text
     scene_description: str = Field(
         default="",
         description="LLM-generated comprehensive scene description for semantic search"
     )
-    
+
     # Temporal constraints
     temporal_constraints: list[str] = Field(
         default_factory=list,
         description="Time constraints: ['at the end', 'takes a moment', 'slowly']"
     )
-    
+
     # Audio/dialogue constraints
     audio_constraints: list[str] = Field(
         default_factory=list,
         description="Audio requirements: ['says I love you', 'sad music', 'engine sound']"
     )
-    
+
     # The original query
     raw_query: str = Field(default="")
-    
+
     # Search modality hints
     modalities: list[str] = Field(
         default_factory=list,
@@ -134,27 +133,27 @@ class DynamicParsedQuery(BaseModel):
     def to_search_text(self) -> str:
         """Generate dense search text from all query components."""
         parts = []
-        
+
         # All entity search texts
         for entity in self.entities:
             parts.append(entity.to_search_text())
-        
+
         # Scene description
         if self.scene_description:
             parts.append(self.scene_description)
-        
+
         # Temporal hints
         parts.extend(self.temporal_constraints)
-        
+
         # Audio hints
         parts.extend(self.audio_constraints)
-        
+
         return " ".join(filter(None, parts))
-    
+
     def get_entities_by_type(self, entity_type: str) -> list[DynamicEntity]:
         """Get all entities of a specific type."""
         return [e for e in self.entities if e.entity_type.lower() == entity_type.lower()]
-    
+
     def get_person_names(self) -> list[str]:
         """Get all person names for identity search."""
         return [e.name for e in self.entities if e.entity_type.lower() == "person"]
@@ -180,7 +179,7 @@ class EntityDetail(BaseModel):
         default="",
         description="Color, texture, state (e.g., 'Steaming hot', 'Worn out', 'Bright red')",
     )
-    
+
     @field_validator('visual_details', mode='before')
     @classmethod
     def convert_dict_to_string(cls, v):
@@ -514,7 +513,7 @@ class SceneData(BaseModel):
 
 class ClothingItem(BaseModel):
     """A specific clothing item with location and brand details."""
-    
+
     body_part: str = Field(
         default="",
         description="Body location (e.g., 'upper body', 'left foot', 'right foot', 'head')"
@@ -539,7 +538,7 @@ class ClothingItem(BaseModel):
 
 class PersonInQuery(BaseModel):
     """A person mentioned in the query with all their attributes."""
-    
+
     name: str | None = Field(
         default=None,
         description="Person name if known (e.g., 'Prakash', 'a guy', 'everyone')"
@@ -560,7 +559,7 @@ class PersonInQuery(BaseModel):
 
 class VehicleInQuery(BaseModel):
     """A vehicle mentioned in the query."""
-    
+
     vehicle_type: str = Field(
         default="",
         description="Type (e.g., 'car', 'ferrari', 'lamborghini')"
@@ -606,7 +605,7 @@ class ParsedQuery(BaseModel):
         default_factory=list,
         description="All people mentioned with their clothing and actions"
     )
-    
+
     # Legacy single-person fields (for backwards compatibility)
     person_name: str | None = Field(
         default=None,
@@ -659,7 +658,7 @@ class ParsedQuery(BaseModel):
         default=None,
         description="Location (e.g., 'Brunswick sports', 'red signal intersection')"
     )
-    
+
     # Scene description for very complex queries
     scene_description: str = Field(
         default="",
@@ -673,7 +672,7 @@ class ParsedQuery(BaseModel):
         for vector similarity search.
         """
         parts = []
-        
+
         # 1. PEOPLE (with all their attributes)
         for person in self.people:
             if person.name:
@@ -691,7 +690,7 @@ class ParsedQuery(BaseModel):
                     parts.append(f"{item.color} {item.body_part}" if item.color else item.body_part)
             parts.extend(person.actions)
             parts.extend(person.action_results)
-        
+
         # 2. VEHICLES (brand, model, color, actions)
         for vehicle in self.vehicles:
             if vehicle.brand:
@@ -703,7 +702,7 @@ class ParsedQuery(BaseModel):
             elif vehicle.vehicle_type:
                 parts.append(vehicle.vehicle_type)
             parts.extend(vehicle.actions)
-        
+
         # 3. Legacy/fallback fields
         if self.person_name:
             parts.append(self.person_name)
@@ -712,29 +711,29 @@ class ParsedQuery(BaseModel):
         if self.clothing_type:
             parts.append(self.clothing_type)
         parts.extend(self.accessories)
-        
+
         # 4. Visual keywords
         parts.extend(self.visual_keywords)
-        
+
         # 5. Actions
         parts.extend(self.action_keywords)
         if self.action_result:
             parts.append(self.action_result)
-        
+
         # 6. Brands and objects
         parts.extend(self.text_to_find)
         parts.extend(self.objects)
-        
+
         # 7. Location
         if self.location:
             parts.append(self.location)
-        
+
         # 8. Scene description (fallback for very complex queries)
         if self.scene_description:
             parts.append(self.scene_description)
-        
+
         # 9. Temporal hints (for action sequencing)
         parts.extend(self.temporal_hints)
-        
+
         return " ".join(filter(None, parts))
 

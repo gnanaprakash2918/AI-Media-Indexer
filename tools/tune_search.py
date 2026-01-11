@@ -8,9 +8,9 @@ Usage:
     python tools/tune_search.py
 """
 
-import sys
-import os
 import itertools
+import os
+import sys
 from typing import NamedTuple
 
 # Add project root to path
@@ -61,7 +61,7 @@ def calculate_mrr(results: list, expected_keywords: list[str]) -> float:
 
 def main():
     print("🚀 Starting Search Tuner...")
-    
+
     try:
         db = VectorDB()
     except Exception as e:
@@ -74,7 +74,7 @@ def main():
     face_weights = [0.2, 0.4]
     entity_weights = [0.1, 0.2]
     action_weights = [0.05, 0.1]
-    
+
     # Defaults for others
     base_config = {
         "speaker_match": 0.15,
@@ -95,16 +95,16 @@ def main():
             "entity_match": ew,
             "action_match": aw
         })
-        
+
         total_mrr = 0.0
-        
+
         for case in DATASET:
             query = case["query"]
             expected = case["expected_in_payload"]
-            
+
             try:
                 results = db.search_frames_hybrid(
-                    query=query, 
+                    query=query,
                     limit=case["min_rank"],
                     weights=current_weights
                 )
@@ -112,10 +112,10 @@ def main():
                 total_mrr += mrr
             except Exception as e:
                 log(f"Search failed for '{query}': {e}")
-        
+
         avg_mrr = total_mrr / len(DATASET)
         print(f"  Config (F={fw}, E={ew}, A={aw}) -> MRR: {avg_mrr:.4f}")
-        
+
         if avg_mrr > best_mrr:
             best_mrr = avg_mrr
             best_config = current_weights
@@ -125,7 +125,7 @@ def main():
     print("Best Configuration:")
     for k, v in best_config.items():
         print(f"  {k}: {v}")
-    
+
     # Recommendation
     print("\nRecommended Action:")
     print("Update core/storage/db.py default weights with these values.")

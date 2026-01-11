@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Codebase Cleanup Script
+"""Codebase Cleanup Script
 
 Safely removes deprecated/obsolete files from the AI-Media-Indexer project.
 Run with --dry-run to preview changes before execution.
@@ -11,7 +10,6 @@ Usage:
 """
 
 import argparse
-import os
 import shutil
 from pathlib import Path
 
@@ -19,12 +17,12 @@ from pathlib import Path
 OBSOLETE_FILES = [
     # CLI tools replaced by Web UI and API
     "agent_cli.py",
-    "agent_main.py", 
+    "agent_main.py",
     "search_cli.py",
-    
+
     # Dangerous reset scripts replaced by documented procedures
     "nuke.bat",
-    
+
     # Deprecated test files (if any)
     "test_*.tmp",
 ]
@@ -53,7 +51,7 @@ PROTECTED_DIRS = [
 def find_obsolete_files(root: Path) -> list[Path]:
     """Find all obsolete files to be removed."""
     found = []
-    
+
     for pattern in OBSOLETE_FILES:
         if "*" in pattern:
             found.extend(root.glob(pattern))
@@ -61,21 +59,21 @@ def find_obsolete_files(root: Path) -> list[Path]:
             filepath = root / pattern
             if filepath.exists():
                 found.append(filepath)
-    
+
     return found
 
 
 def find_cache_dirs(root: Path) -> list[Path]:
     """Find all cache directories/files to be removed."""
     found = []
-    
+
     for pattern in CACHE_PATTERNS:
         for match in root.glob(pattern):
             # Skip protected directories
             if any(protected in str(match) for protected in PROTECTED_DIRS):
                 continue
             found.append(match)
-    
+
     return found
 
 
@@ -85,12 +83,12 @@ def remove_path(path: Path, dry_run: bool = True) -> bool:
         if dry_run:
             print(f"  [DRY-RUN] Would delete: {path}")
             return True
-        
+
         if path.is_dir():
             shutil.rmtree(path)
         else:
             path.unlink()
-        
+
         print(f"  [DELETED] {path}")
         return True
     except Exception as e:
@@ -104,44 +102,44 @@ def main():
     group.add_argument("--dry-run", action="store_true", help="Preview changes without deleting")
     group.add_argument("--execute", action="store_true", help="Actually delete files")
     parser.add_argument("--include-cache", action="store_true", help="Also remove __pycache__ directories")
-    
+
     args = parser.parse_args()
     dry_run = args.dry_run
-    
+
     # Find project root (directory containing this script's parent)
     script_dir = Path(__file__).resolve().parent
     root = script_dir.parent
-    
+
     print(f"\n{'='*60}")
-    print(f"AI-Media-Indexer Cleanup Script")
+    print("AI-Media-Indexer Cleanup Script")
     print(f"{'='*60}")
     print(f"Project root: {root}")
     print(f"Mode: {'DRY-RUN (no changes)' if dry_run else 'EXECUTE (will delete files)'}")
     print(f"{'='*60}\n")
-    
+
     # Find obsolete files
     obsolete = find_obsolete_files(root)
     print(f"Obsolete files found: {len(obsolete)}")
-    
+
     deleted_count = 0
     for path in obsolete:
         if remove_path(path, dry_run):
             deleted_count += 1
-    
+
     # Optionally clean cache
     if args.include_cache:
-        print(f"\nCache directories/files:")
+        print("\nCache directories/files:")
         cache_items = find_cache_dirs(root)
         print(f"Cache items found: {len(cache_items)}")
-        
+
         for path in cache_items:
             if remove_path(path, dry_run):
                 deleted_count += 1
-    
+
     print(f"\n{'='*60}")
     if dry_run:
         print(f"DRY-RUN complete. {deleted_count} items would be deleted.")
-        print(f"Run with --execute to actually delete files.")
+        print("Run with --execute to actually delete files.")
     else:
         print(f"Cleanup complete. {deleted_count} items deleted.")
     print(f"{'='*60}\n")

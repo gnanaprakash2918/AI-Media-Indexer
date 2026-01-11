@@ -89,16 +89,16 @@ class LLMInterface(ABC):
         """Attempt to repair common JSON errors from LLMs."""
         # Remove trailing commas before closing braces/brackets
         text = re.sub(r',\s*([}\]])', r'\1', text)
-        
+
         # Count braces and add missing closing braces
         open_braces = text.count('{') - text.count('}')
         open_brackets = text.count('[') - text.count(']')
-        
+
         if open_braces > 0:
             text = text.rstrip() + '}' * open_braces
         if open_brackets > 0:
             text = text.rstrip() + ']' * open_brackets
-            
+
         return text
 
     def parse_json_response(self, response_text: str, schema: type[T]) -> T:
@@ -117,7 +117,7 @@ class LLMInterface(ABC):
             return schema.model_validate(data)
         except json.JSONDecodeError:
             pass
-        
+
         # Try with JSON repair
         repaired = self._repair_json(clean_text)
         try:

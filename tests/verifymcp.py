@@ -11,13 +11,14 @@ if project_root not in sys.path:
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+
 async def verify_mcp_server():
     """Verify MCP server by connecting and listing tools."""
     print("🚀 Starting MCP Verification...")
-    
+
     # Path to server script
     server_script = os.path.join(project_root, "core", "agent", "server.py")
-    
+
     server_params = StdioServerParameters(
         command=sys.executable,
         args=[server_script],
@@ -30,26 +31,26 @@ async def verify_mcp_server():
                 # Initialize
                 await session.initialize()
                 print("✅ MCP Connection Established")
-                
+
                 # List Tools
                 tools = await session.list_tools()
                 print(f"🛠️  Found {len(tools.tools)} tools:")
                 for tool in tools.tools:
                     print(f"  - {tool.name}: {tool.description[:50]}...")
-                
+
                 # Check for required tools
                 required = ["query_video_rag", "get_video_summary", "enrich_identity", "search_media"]
                 missing = [t for t in required if not any(x.name == t for x in tools.tools)]
-                
+
                 if missing:
                     print(f"❌ Missing expected tools: {missing}")
                     sys.exit(1)
                 else:
                     print("✅ All required Phase 10 tools present.")
-                    
+
                 # Done
                 print("✅ Verification Complete!")
-                
+
     except Exception as e:
         print(f"❌ Verification Failed: {e}")
         sys.exit(1)

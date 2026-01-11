@@ -1,11 +1,12 @@
 
-from fastapi import FastAPI, UploadFile, File
-from pydantic import BaseModel
-import shutil
 import os
+import shutil
 from pathlib import Path
+
+from fastapi import FastAPI, File, UploadFile
+from pydantic import BaseModel
+
 from core.processing.indic_transcriber import IndicASRPipeline
-from core.utils.logger import log
 
 app = FastAPI(title="AI4Bharat ASR Service")
 
@@ -30,7 +31,7 @@ async def transcribe_audio(
     temp_file = Path(f"/tmp/{file.filename}")
     with temp_file.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
+
     try:
         segments = asr_pipeline.transcribe(temp_file, language=language)
         full_text = " ".join([s["text"] for s in segments])

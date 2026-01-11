@@ -50,7 +50,7 @@ class StructuredQuery(BaseModel):
     """
     # Raw query for reference
     original_query: str = Field(description="Original user query")
-    
+
     # Decomposed cues by modality
     visual_cues: list[str] = Field(
         default_factory=list,
@@ -64,19 +64,19 @@ class StructuredQuery(BaseModel):
         default_factory=list,
         description="On-screen text or entity names to match"
     )
-    
+
     # Identity Filters (names of people to filter)
     identities: list[str] = Field(
         default_factory=list,
         description="Person names that should appear in results"
     )
-    
+
     # Extracted entities with full structure
     entities: list[QueryEntity] = Field(
         default_factory=list,
         description="Fully extracted entities with relationships"
     )
-    
+
     # Temporal constraints
     temporal_cues: list[str] = Field(
         default_factory=list,
@@ -86,7 +86,7 @@ class StructuredQuery(BaseModel):
         default_factory=list,
         description="Structured temporal constraints"
     )
-    
+
     # Flags for advanced processing
     requires_external_knowledge: bool = Field(
         default=False,
@@ -96,19 +96,19 @@ class StructuredQuery(BaseModel):
         default=False,
         description="True if query is a question requiring an answer"
     )
-    
+
     # Dense scene description for semantic search
     scene_description: str = Field(
         default="",
         description="Combined dense description for vector search"
     )
-    
+
     # Which modalities to search
     modalities: list[QueryModality] = Field(
         default_factory=lambda: [QueryModality.VISUAL],
         description="Modalities to include in search"
     )
-    
+
     # Confidence in decomposition
     decomposition_confidence: float = Field(
         default=1.0,
@@ -124,18 +124,18 @@ class SearchResultItem(BaseModel):
     video_path: str
     timestamp: float
     score: float
-    
+
     # Match explanations
     match_reasons: list[str] = Field(default_factory=list)
     matched_entities: list[str] = Field(default_factory=list)
     matched_constraints: list[str] = Field(default_factory=list)
-    
+
     # Content
     action: str | None = None
     dialogue: str | None = None
     entities: list[str] = Field(default_factory=list)
     face_names: list[str] = Field(default_factory=list)
-    
+
     # Scores by component
     visual_score: float | None = None
     audio_score: float | None = None
@@ -150,19 +150,19 @@ class VideoRAGResponse(BaseModel):
     """
     # The structured query used
     query: StructuredQuery
-    
+
     # Retrieved results
     results: list[SearchResultItem] = Field(default_factory=list)
     total_results: int = 0
-    
+
     # Generated answer (if is_question=True)
     answer: str | None = None
     answer_citations: list[str] = Field(default_factory=list)
     answer_confidence: float = 0.0
-    
+
     # External enrichment (if requires_external_knowledge=True)
     external_context: dict[str, Any] = Field(default_factory=dict)
-    
+
     # Timing
     decomposition_time_ms: float = 0.0
     search_time_ms: float = 0.0

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from config import settings
 from core.utils.logger import log
@@ -34,7 +34,7 @@ class BraveSearchClient:
         if client.is_available:
             results = await client.search("Who is Sundar Pichai?")
     """
-    
+
     def __init__(self, api_key: str | None = None):
         """Initialize Brave Search client.
         
@@ -43,12 +43,12 @@ class BraveSearchClient:
         """
         self.api_key = api_key or getattr(settings, 'brave_api_key', None)
         self._client = None
-        
+
     @property
     def is_available(self) -> bool:
         """Check if Brave Search is configured and available."""
         return bool(self.api_key)
-    
+
     async def search(
         self,
         query: str,
@@ -68,23 +68,23 @@ class BraveSearchClient:
         if not self.is_available:
             log("Brave Search not configured (no API key)", level="DEBUG")
             return []
-        
+
         try:
             # Lazy import to avoid dependency issues
             from brave_search import BraveSearch
-            
+
             client = BraveSearch(api_key=self.api_key)
-            
+
             # Run sync client in thread pool
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: client.search(query, count=min(count, 20))
             )
-            
+
             results = []
             web_results = response.get("web", {}).get("results", [])
-            
+
             for item in web_results[:count]:
                 results.append(BraveSearchResult(
                     title=item.get("title", ""),
@@ -92,9 +92,9 @@ class BraveSearchClient:
                     description=item.get("description", ""),
                     age=item.get("age"),
                 ))
-            
+
             return results
-            
+
         except ImportError:
             log("brave-search package not installed. Run: pip install brave-search", level="WARNING")
             return []
@@ -113,18 +113,18 @@ class EntityEnricher:
     
     PRIVACY: Personal media blocks external search unless HITL approved.
     """
-    
+
     def __init__(self):
         self.brave = BraveSearchClient()
         self._cache: dict[str, Any] = {}
         self._pending_approvals: list[dict[str, Any]] = []  # HITL queue
-    
+
     @property
     def is_available(self) -> bool:
         """Check if external enrichment is available."""
         enabled = getattr(settings, 'enable_external_search', False)
         return enabled and self.brave.is_available
-    
+
     def check_privacy(self, media_type: str | None = None) -> tuple[bool, str]:
         """Check if external search is allowed for this media type.
         
@@ -133,13 +133,13 @@ class EntityEnricher:
         """
         if not self.is_available:
             return False, "External search not configured"
-        
+
         # Personal content requires HITL approval
         if media_type and media_type.lower() == "personal":
             return False, "Personal content - external search blocked (requires HITL approval)"
-        
+
         return True, "External search allowed"
-    
+
     def queue_for_approval(
         self,
         entity_type: str,
@@ -167,11 +167,11 @@ class EntityEnricher:
         self._pending_approvals.append(record)
         log(f"Queued {entity_type} for HITL approval: {context[:50]}...")
         return record
-    
+
     def get_pending_approvals(self) -> list[dict[str, Any]]:
         """Get all entities pending HITL approval for external search."""
         return [p for p in self._pending_approvals if p["status"] == "pending"]
-    
+
     async def process_approved(self, indices: list[int]) -> list[dict[str, Any]]:
         """Process approved entities with external search.
         
@@ -187,7 +187,7 @@ class EntityEnricher:
                 record = self._pending_approvals[idx]
                 record["approved"] = True
                 record["status"] = "processing"
-                
+
                 # Perform enrichment
                 if record["entity_type"] == "face":
                     result = await self.enrich_unknown_face(
@@ -204,13 +204,13 @@ class EntityEnricher:
                         topic=record["context"],
                         skip_privacy_check=True,
                     )
-                
+
                 record["result"] = result
                 record["status"] = "completed"
                 results.append(result)
-        
+
         return results
-    
+
     async def enrich_unknown_face(
         self,
         context: str,
@@ -234,30 +234,30 @@ class EntityEnricher:
             allowed, reason = self.check_privacy(media_type)
             if not allowed:
                 return {"possible_matches": [], "confidence": 0.0, "blocked": True, "reason": reason}
-        
+
         if not self.is_available:
             return {"possible_matches": [], "confidence": 0.0, "source": "unavailable"}
-        
+
         # Build search query from context
         query_parts = []
         if context:
             query_parts.append(context)
         if image_description:
             query_parts.append(image_description)
-        
+
         search_query = f"who is {' '.join(query_parts)}"
-        
+
         # Check cache
         cache_key = search_query.lower().strip()
         if cache_key in self._cache:
             return self._cache[cache_key]
-        
+
         # Search
         results = await self.brave.search(search_query, count=5)
-        
+
         if not results:
             return {"possible_matches": [], "confidence": 0.0}
-        
+
         # Extract potential names from titles and descriptions
         possible_matches = []
         for result in results:
@@ -270,24 +270,24 @@ class EntityEnricher:
                         possible_matches.append(f"{word} {words[i + 1]}")
                     else:
                         possible_matches.append(word)
-        
+
         # Deduplicate and rank by frequency
         from collections import Counter
         name_counts = Counter(possible_matches)
         top_matches = [name for name, _ in name_counts.most_common(3)]
-        
+
         result = {
             "possible_matches": top_matches,
             "confidence": 0.6 if top_matches else 0.0,
             "source": "brave_search",
             "raw_results": [r.model_dump() for r in results[:3]],
         }
-        
+
         # Cache result
         self._cache[cache_key] = result
-        
+
         return result
-    
+
     async def enrich_location(
         self,
         location_hint: str,
@@ -302,22 +302,22 @@ class EntityEnricher:
         """
         if not self.is_available:
             return {"info": None, "confidence": 0.0}
-        
+
         search_query = f"{location_hint} location landmark"
         results = await self.brave.search(search_query, count=3)
-        
+
         if not results:
             return {"info": None, "confidence": 0.0}
-        
+
         # Combine descriptions
         info = " ".join([r.description for r in results[:2]])
-        
+
         return {
             "info": info,
             "confidence": 0.5,
             "source": "brave_search",
         }
-    
+
     async def enrich_topic(
         self,
         topic: str,
@@ -332,27 +332,27 @@ class EntityEnricher:
         """
         if not self.is_available:
             return {"context": "", "related_terms": []}
-        
+
         results = await self.brave.search(topic, count=5)
-        
+
         if not results:
             return {"context": "", "related_terms": []}
-        
+
         # Build context from results
         context_parts = [r.description for r in results[:3] if r.description]
         context = " ".join(context_parts)[:500]  # Limit length
-        
+
         # Extract related terms (simple word extraction)
         all_text = " ".join([r.title + " " + r.description for r in results])
         words = all_text.split()
-        
+
         # Filter to notable terms (capitalized, longer words)
         related = set()
         for word in words:
             clean = word.strip(".,!?()[]")
             if len(clean) > 4 and clean[0].isupper():
                 related.add(clean)
-        
+
         return {
             "context": context,
             "related_terms": list(related)[:10],

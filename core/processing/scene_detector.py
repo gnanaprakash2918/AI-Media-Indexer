@@ -1,6 +1,7 @@
 from __future__ import annotations
-from pathlib import Path
+
 from dataclasses import dataclass
+from pathlib import Path
 
 from config import settings
 from core.utils.logger import log
@@ -18,15 +19,15 @@ class SceneInfo:
 
 def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     try:
-        from scenedetect import detect, AdaptiveDetector, FrameTimecode
+        from scenedetect import AdaptiveDetector, FrameTimecode, detect
     except ImportError:
         log("scenedetect not installed")
         return []
-    
+
     path = Path(video_path)
     if not path.exists():
         return []
-    
+
     try:
         scene_list = detect(
             str(path),
@@ -39,7 +40,7 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     except Exception as e:
         log(f"Scene detection failed: {e}")
         return []
-    
+
     scenes = []
     for start_tc, end_tc in scene_list:
         start_time = start_tc.get_seconds()
@@ -48,7 +49,7 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
         end_frame = end_tc.get_frames()
         mid_frame = (start_frame + end_frame) // 2
         mid_time = (start_time + end_time) / 2.0
-        
+
         scenes.append(SceneInfo(
             start_time=start_time,
             end_time=end_time,
@@ -57,7 +58,7 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
             mid_frame=mid_frame,
             mid_time=mid_time,
         ))
-    
+
     log(f"Detected {len(scenes)} scenes in {path.name}")
     return scenes
 
@@ -67,7 +68,7 @@ def extract_scene_frame(video_path: Path | str, timestamp: float) -> bytes | Non
     path = Path(video_path)
     if not path.exists():
         return None
-    
+
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(timestamp),

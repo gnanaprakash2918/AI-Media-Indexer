@@ -1,10 +1,10 @@
 """Fast batch extraction utilities for thumbnails and audio clips."""
 
 import asyncio
-import subprocess
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from config import settings
 
@@ -36,12 +36,12 @@ def extract_frames_batch(
     """
     if not timestamps:
         return {}
-    
+
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = prefix or _get_safe_stem(video_path)
-    
+
     results: dict[float, Path] = {}
-    
+
     # For small numbers of frames, extract individually (more precise)
     if len(timestamps) <= 5:
         for ts in timestamps:
@@ -49,7 +49,7 @@ def extract_frames_batch(
             if out_path.exists():
                 results[ts] = out_path
                 continue
-            
+
             cmd = [
                 "ffmpeg", "-y",
                 "-ss", str(ts),
@@ -67,7 +67,7 @@ def extract_frames_batch(
             out_path = output_dir / f"{prefix}_{ts:.2f}.jpg"
             if out_path.exists():
                 return ts, out_path
-            
+
             cmd = [
                 "ffmpeg", "-y",
                 "-ss", str(ts),
@@ -78,7 +78,7 @@ def extract_frames_batch(
             ]
             result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return ts, out_path if out_path.exists() else None
-        
+
         # Use 4 parallel workers for frame extraction
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(extract_single, ts) for ts in timestamps]
@@ -86,7 +86,7 @@ def extract_frames_batch(
                 ts, path = future.result()
                 if path:
                     results[ts] = path
-    
+
     return results
 
 
@@ -109,17 +109,17 @@ def extract_audio_clips_batch(
     """
     if not segments:
         return {}
-    
+
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = prefix or _get_safe_stem(video_path)
-    
+
     def extract_single(seg: tuple[float, float]) -> tuple[tuple[float, float], Path | None]:
         start, end = seg
         out_path = output_dir / f"{prefix}_{start:.2f}_{end:.2f}.mp3"
-        
+
         if out_path.exists():
             return seg, out_path
-        
+
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(start),
@@ -131,9 +131,9 @@ def extract_audio_clips_batch(
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return seg, out_path if out_path.exists() else None
-    
+
     results: dict[tuple[float, float], Path] = {}
-    
+
     # Use 4 parallel workers for audio extraction
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(extract_single, seg) for seg in segments]
@@ -141,7 +141,7 @@ def extract_audio_clips_batch(
             seg, path = future.result()
             if path:
                 results[seg] = path
-    
+
     return results
 
 
@@ -162,44 +162,43 @@ async def regenerate_media_thumbnails(
     Returns:
         Dict with counts of generated thumbnails and clips, or error string.
     """
-    from typing import Any
     from pathlib import Path as P
-    
+
     video_path = P(media_path)
     if not video_path.exists():
         return {"faces": 0, "voices": 0, "error": "Video not found"}
-    
+
     face_output_dir = face_output_dir or settings.cache_dir / "thumbnails" / "faces"
     voice_output_dir = voice_output_dir or settings.cache_dir / "thumbnails" / "voices"
-    
+
     prefix = _get_safe_stem(video_path)
-    
+
     # Get all faces for this media
     faces = db.get_faces_by_media(media_path) if hasattr(db, 'get_faces_by_media') else []
     face_timestamps = [f.get("timestamp", 0) for f in faces if f.get("timestamp") is not None]
-    
+
     # Get all voice segments for this media
     voices = db.get_voice_segments(media_path) if hasattr(db, 'get_voice_segments') else []
     voice_segments = [(v.get("start", 0), v.get("end", v.get("start", 0) + 3)) for v in voices]
-    
+
     # Batch extract in parallel
     face_results = {}
     voice_results = {}
-    
+
     if face_timestamps:
         face_results = await asyncio.get_event_loop().run_in_executor(
             None,
             extract_frames_batch,
             video_path, face_timestamps, face_output_dir, prefix
         )
-    
+
     if voice_segments:
         voice_results = await asyncio.get_event_loop().run_in_executor(
             None,
             extract_audio_clips_batch,
             video_path, voice_segments, voice_output_dir, prefix
         )
-    
+
     return {
         "faces": len(face_results),
         "voices": len(voice_results),

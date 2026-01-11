@@ -18,21 +18,21 @@ from core.processing.identity import FaceManager, FaceTrackBuilder
 from core.processing.metadata import MetadataEngine
 from core.processing.prober import MediaProbeError, MediaProber
 from core.processing.scene_detector import detect_scenes, extract_scene_frame
+from core.processing.segmentation import Sam3Tracker
 from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
-from core.processing.segmentation import Sam3Tracker
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
 from core.utils.frame_sampling import FrameSampler
+from core.utils.locks import GPU_SEMAPHORE
 from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.retry import retry
-from core.utils.locks import GPU_SEMAPHORE
 
 
 class IngestionPipeline:
@@ -70,7 +70,7 @@ class IngestionPipeline:
         self.vision: VisionAnalyzer | None = None
         self.faces: FaceManager | None = None
         self.voice: VoiceProcessor | None = None
-        
+
         # Deep Video Understanding (SAM 3)
         self.sam3_tracker = Sam3Tracker() if settings.enable_sam3_tracking else None
         self.frame_sampler = FrameSampler(every_n=5)
@@ -156,7 +156,7 @@ class IngestionPipeline:
                 skip_voice = checkpoint.get("voice_complete", False)
                 resume_from_frame = checkpoint.get("last_frame", 0)
                 logger.info(f"Resuming job {job_id}: skip_audio={skip_audio}, skip_voice={skip_voice}, resume_from={resume_from_frame}")
-        
+
         self._resume_from_frame = resume_from_frame  # Store for _process_frames
 
         try:
@@ -265,12 +265,12 @@ class IngestionPipeline:
                     from core.processing.indic_transcriber import IndicASRPipeline
                     indic_transcriber = IndicASRPipeline(lang=detected_lang)
                     log(f"[Audio] IndicASR backend: {indic_transcriber._backend}")
-                    
+
                     # Generate SRT sidecar file alongside the video
                     srt_path = path.with_suffix(".srt")
                     async with GPU_SEMAPHORE:
                         audio_segments = indic_transcriber.transcribe(path, output_srt=srt_path) or []
-                    
+
                     if audio_segments:
                         log(f"[Audio] AI4Bharat SUCCESS: {len(audio_segments)} segments")
                         log(f"[Audio] SRT saved to: {srt_path}")
@@ -332,10 +332,8 @@ class IngestionPipeline:
         Returns:
             ISO 639-1 language code (e.g., 'en', 'ta', 'hi')
         """
-        from core.processing.transcriber import AudioTranscriber
-        
         await resource_manager.throttle_if_needed("compute")
-        
+
         # Run detection in a thread to not block asyncio loop
         # (Whisper is blocking)
         try:
@@ -372,11 +370,11 @@ class IngestionPipeline:
             # 1. Match against existing speakers
             # 2. Assign Global ID
             # 3. Persist specific samples for future matching
-            
+
             for idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
                 global_speaker_id = f"unknown_{uuid.uuid4().hex[:8]}"
-                
+
                 # Check Global Registry if embedding exists
                 if seg.embedding is not None:
                     match = self.db.match_speaker(seg.embedding, threshold=0.5)
@@ -386,7 +384,7 @@ class IngestionPipeline:
                     else:
                         # New Global Speaker
                         # Use the first segment of this speaker as the "anchor"
-                        # We map local label (SPEAKER_00) to new Global ID? 
+                        # We map local label (SPEAKER_00) to new Global ID?
                         # Ideally we assume SPEAKER_00 in this video is consistent.
                         # But we treat each segment independently for now to allow simple logic.
                         # Better: Upsert this as a valid sample for this new ID
@@ -448,12 +446,12 @@ class IngestionPipeline:
         from llm.factory import LLMFactory
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)
-        
+
         # GLOBAL IDENTITY: Load existing cluster centroids from DB
         # This enables cross-video identity matching (O(1) gallery-probe)
         global_clusters = self.db.get_all_cluster_centroids()
         logger.info(f"[GlobalIdentity] Loaded {len(global_clusters)} cluster centroids for matching")
-        
+
         # InsightFace uses GPU for fast detection, but we unload it before Ollama
         self.faces = FaceManager(
             dbscan_eps=0.55, # HDBSCAN cluster_selection_epsilon
@@ -482,19 +480,22 @@ class IngestionPipeline:
         time_offset = getattr(self, '_start_time', None) or 0.0
 
         frame_count = 0
-        
+
         # Resume support: skip already processed frames
         resume_from_frame = getattr(self, '_resume_from_frame', 0)
 
         # XMem-style temporal context for video coherence
-        from core.processing.temporal_context import TemporalContextManager, TemporalContext
+        from core.processing.temporal_context import (
+            TemporalContext,
+            TemporalContextManager,
+        )
         temporal_ctx = TemporalContextManager(sensory_size=5)
 
         async for frame_path in frame_generator:
             if job_id:
                 if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
                     break
-            
+
             # RESUME: Skip already processed frames
             if frame_count < resume_from_frame:
                 frame_count += 1
@@ -590,10 +591,10 @@ class IngestionPipeline:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
-                
+
                 # Thermal throttling - pause if system overheating
                 await resource_manager.throttle_if_needed("compute")
-            
+
             # CHECKPOINT: Save progress every 50 frames for crash recovery
             CHECKPOINT_INTERVAL = 50
             if job_id and frame_count % CHECKPOINT_INTERVAL == 0:
@@ -955,7 +956,7 @@ class IngestionPipeline:
                 identity_parts.append(f"Person {idx+1}: {name}")
             else:
                 identity_parts.append(f"Person {idx+1}: Unknown (cluster {cid})")
-        
+
         # Get speaker name at this timestamp
         try:
             speaker_clusters = self._get_speaker_clusters_at_time(str(video_path), timestamp)
@@ -965,7 +966,7 @@ class IngestionPipeline:
                     identity_parts.append(f"Speaking: {sname}")
         except Exception:
             pass
-        
+
         identity_context = "\n".join(identity_parts) if identity_parts else None
 
         try:
@@ -976,7 +977,7 @@ class IngestionPipeline:
                 self.faces.unload_gpu()
             cleanup_vram()
             log_vram_status("before_ollama")
-            
+
             analysis = await self.vision.analyze_frame(
                 frame_path,
                 identity_context=identity_context,
@@ -1085,7 +1086,7 @@ class IngestionPipeline:
                     "name": face_name,
                     "confidence": face.det_score if hasattr(face, "det_score") else 1.0
                 })
-            
+
             if faces_metadata:
                 payload["faces"] = faces_metadata
 
@@ -1262,15 +1263,14 @@ class IngestionPipeline:
     async def _post_process_video(self, path: Path, job_id: str) -> None:
         """Run post-processing: global context, metadata enrichment, identity linking."""
         media_path = str(path)
-        
+
         try:
             from core.processing.scene_aggregator import GlobalContextManager
-            from core.processing.identity_linker import get_identity_linker
-            
+
             global_ctx = GlobalContextManager()
             frames = self._get_frames_for_video(media_path)
             audio_segments = self._get_audio_segments_for_video(media_path)
-            
+
             # Deep Video Understanding: SAM 3 Concept Tracking
             # Only run if enabled and frames exist
             if self.sam3_tracker and frames:
@@ -1278,7 +1278,7 @@ class IngestionPipeline:
                     self._process_video_masklets(path, frames)
                 except Exception as e:
                     logger.warning(f"SAM3 Tracking failed: {e}")
-            
+
             if frames:
                 scene_data = {
                     "start_time": 0,
@@ -1289,9 +1289,9 @@ class IngestionPipeline:
                     "entities": [e for f in frames for e in f.get("entities", [])],
                 }
                 global_ctx.add_scene(scene_data)
-                
+
                 global_summary = global_ctx.to_payload()
-                
+
                 # Generate and attach Main Video Thumbnail
                 try:
                     main_thumb = self._generate_main_thumbnail(path)
@@ -1301,35 +1301,60 @@ class IngestionPipeline:
                     logger.warning(f"Thumbnail attachment failed: {e}")
 
                 logger.info(f"[PostProcess] Global context: {global_summary.get('scene_count', 0)} scenes, top people: {global_summary.get('top_people', [])[:3]}")
-                
+
                 try:
                     self.db.update_video_metadata(media_path, global_context=global_summary)
                 except Exception as e:
                     logger.warning(f"[PostProcess] Failed to update global context: {e}")
+        except Exception as e:
+            logger.error(f"Post-processing failed: {e}")
 
     def _generate_main_thumbnail(self, path: Path) -> str | None:
         """Generate a main thumbnail for the video (at 5.0s)."""
         import hashlib
         import subprocess
-        
+
         try:
             thumb_dir = settings.cache_dir / "thumbnails" / "videos"
             thumb_dir.mkdir(parents=True, exist_ok=True)
-            
+
             safe_stem = hashlib.md5(path.stem.encode()).hexdigest()
             thumb_name = f"{safe_stem}_main.jpg"
             thumb_file = thumb_dir / thumb_name
-            
+
             # Return relative path for frontend
             rel_path = f"/thumbnails/videos/{thumb_name}"
 
             if thumb_file.exists():
                 return rel_path
-            
-            
+
             # Extract at 5 seconds
-            
-            
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", "00:00:05.000",
+                "-i", str(path),
+                "-vframes", "1",
+                "-q:v", "2",
+                str(thumb_file)
+            ]
+
+            # Run ffmpeg
+            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # Fallback to 0s if 5s failed (e.g. short video)
+            if not thumb_file.exists():
+                 cmd[3] = "00:00:00.000"
+                 subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            if thumb_file.exists():
+                return rel_path
+            return None
+
+        except Exception as e:
+            logger.warning(f"Failed to generate main thumbnail: {e}")
+            return None
+
+
     def _process_video_masklets(self, path: Path, frames: list[dict]) -> None:
         """Run SAM 3 Tracking on top concepts extracted from video frames."""
         # 1. Extract potential concepts from frame entities/descriptions
@@ -1346,21 +1371,21 @@ class IngestionPipeline:
                     if len(obj) > 2:
                         concept_counts[obj] = concept_counts.get(obj, 0) + 1
                 except: pass
-                
+
         # 2. Select top 5 concepts to track
         top_concepts = sorted(concept_counts.items(), key=lambda x: x[1], reverse=True)[:5]
         prompts = [c[0] for c in top_concepts]
-        
+
         if not prompts:
             logger.info("No concepts found to track with SAM3.")
             return
 
         logger.info(f"SAM3 Tracking Concepts: {prompts}")
-        
+
         # 3. Run Tracker
         # Result aggregation: TrackID -> {start, end, max_conf}
-        tracks = {} 
-        
+        tracks = {}
+
         # SAM3 returns iterator of {frame_idx, object_ids, masks}
         # object_ids maps to the index in 'prompts' list added sequentially?
         # Actually Sam3Tracker.add_concept_prompt adds one text.
@@ -1368,29 +1393,29 @@ class IngestionPipeline:
         # Implementation Detail: Sam3 wrapper doesn't provide easy mapping back yet.
         # We will iterate prompts and run sequentially or concurrently if supported.
         # Sam3Tracker.process_video_concepts runs all prompts.
-        # The object IDs returned correspond to sequential addition. 
+        # The object IDs returned correspond to sequential addition.
         # i.e. Prompt 0 -> obj_id 0, Prompt 1 -> obj_id 1 (usually).
-        
+
         # We assume 1-to-1 for now.
-        
+
         for frame_data in self.sam3_tracker.process_video_concepts(path, prompts):
             frame_idx = frame_data["frame_idx"]
             obj_ids = frame_data["object_ids"]
-            
+
             for obj_id in obj_ids:
                 # Get concept name
                 if obj_id < len(prompts):
                     concept = prompts[obj_id]
                 else:
                     concept = f"object_{obj_id}"
-                
+
                 track_key = f"{concept}_{obj_id}"
-                
+
                 if track_key not in tracks:
                     tracks[track_key] = {"start": frame_idx, "end": frame_idx, "concept": concept}
                 else:
                     tracks[track_key]["end"] = max(tracks[track_key]["end"], frame_idx)
-                    
+
         # 4. Save Masklets to DB
         fps = settings.frame_interval # Ingestion loop uses frame_interval approx?
         # Actually frames have timestamps. We can map frame_idx to timestamp roughly.
@@ -1398,9 +1423,9 @@ class IngestionPipeline:
         # We can map frame_idx to time if we know video FPS.
         # For now, we estimate based on frame_interval setting if available, or just index.
         # Ideally we should use CV2 to get FPS of source to map frame_idx -> time.
-        
+
         # Simpler: Use frame data if we have it? No, SAM3 processes all frames.
-        # We will assume standard 30fps for timestamp estimation if metadata unavailable, 
+        # We will assume standard 30fps for timestamp estimation if metadata unavailable,
         # or fetch it.
         import cv2
         try:
@@ -1409,12 +1434,12 @@ class IngestionPipeline:
             cap.release()
         except:
             fps = 30.0
-            
+
         for key, data in tracks.items():
             start_time = data["start"] / fps
             end_time = data["end"] / fps
             duration = end_time - start_time
-            
+
             if duration > 0.5: # Ignore blips
                 self.db.insert_masklet(
                     video_path=str(path),
@@ -1424,52 +1449,4 @@ class IngestionPipeline:
                     confidence=0.9 # SAM3 is usually confident
                 )
                 logger.info(f"Masklet saved: {data['concept']} ({start_time:.1f}-{end_time:.1f}s)")
-            cmd = [
-                "ffmpeg", 
-                "-y",
-                "-ss", "5.0",
-                "-i", str(path),
-                "-vframes", "1",
-                "-q:v", "5", # Good quality
-                "-vf", "scale=480:-1", # Resize width 480px, maintain AR
-                str(thumb_file)
-            ]
-            
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            
-            if thumb_file.exists():
-                return rel_path
-        except Exception as e:
-            logger.warning(f"Video thumbnail generation failed: {e}")
-        return None
-            
-            try:
-                linker = get_identity_linker()
-                face_clusters = self.db.get_faces_grouped_by_cluster()
-                face_data = []
-                for cluster_id, faces in face_clusters.items():
-                    face_data.append({
-                        "cluster_id": cluster_id,
-                        "name": faces[0].get("name") if faces else None,
-                        "timestamps": [f.get("timestamp", 0) for f in faces],
-                    })
-                
-                voice_data = []
-                try:
-                    for seg in audio_segments:
-                        cid = seg.get("speaker_cluster_id", -1)
-                        voice_data.append({
-                            "cluster_id": cid,
-                            "timestamps": [{"start": seg.get("start", 0), "end": seg.get("end", 0)}],
-                        })
-                except Exception:
-                    pass
-                
-                suggestions = linker.get_all_suggestions(face_data, voice_data)
-                if suggestions:
-                    logger.info(f"[PostProcess] Generated {len(suggestions)} identity suggestions")
-            except Exception as e:
-                logger.warning(f"[PostProcess] Identity linking failed: {e}")
-            
-        except Exception as e:
-            logger.warning(f"[PostProcess] Post-processing failed (non-fatal): {e}")
+

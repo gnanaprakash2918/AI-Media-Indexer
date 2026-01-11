@@ -21,7 +21,7 @@ class TemporalContextManager:
         self.sensory: deque[TemporalContext] = deque(maxlen=sensory_size)
         self.working: dict[str, Any] = {}
         self.long_term: dict[int, str] = {}
-    
+
     def add_frame(self, ctx: TemporalContext) -> None:
         self.sensory.append(ctx)
         for entity in ctx.entities:

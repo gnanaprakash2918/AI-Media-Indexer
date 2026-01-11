@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from core.knowledge.schemas import DynamicEntity, DynamicParsedQuery, ParsedQuery
+from core.knowledge.schemas import ParsedQuery
 from core.utils.logger import log
 from core.utils.observe import observe
 from llm.factory import LLMFactory
@@ -166,7 +166,7 @@ class SearchAgent:
             cluster_id = self.db.get_cluster_id_by_name(person_name)
             if cluster_id is not None:
                 return cluster_id
-            
+
             # 2. Fallback to fuzzy match (handles typos, partial names)
             cluster_id = self.db.fuzzy_get_cluster_id_by_name(person_name)
             if cluster_id:
@@ -483,7 +483,7 @@ class SearchAgent:
         """
         if not candidates:
             return []
-        
+
         # Re-ranking prompt template
         RERANK_PROMPT = """You are verifying if a video segment matches a user query.
 
@@ -518,14 +518,14 @@ Return JSON:
 }}"""
 
         reranked = []
-        
+
         for candidate in candidates[:top_k * 2]:  # Check more candidates than needed
             description = (
-                candidate.get("description", "") or 
+                candidate.get("description", "") or
                 candidate.get("dense_caption", "") or
                 candidate.get("raw_description", "")
             )
-            
+
             prompt = RERANK_PROMPT.format(
                 query=query,
                 description=description[:500],
@@ -534,23 +534,23 @@ Return JSON:
                 actions=candidate.get("actions", []),
                 visible_text=candidate.get("visible_text", []),
             )
-            
+
             try:
                 # Use LLM to score this candidate
                 from pydantic import BaseModel, Field
-                
+
                 class RerankResult(BaseModel):
                     match_score: float = Field(default=0.5)
                     constraints_checked: list[dict] = Field(default_factory=list)
                     reasoning: str = Field(default="")
                     missing: list[str] = Field(default_factory=list)
-                
+
                 result = await self.llm.generate_structured(
                     schema=RerankResult,
                     prompt=prompt,
                     system_prompt="You are a video search result verifier. Return JSON only.",
                 )
-                
+
                 # Merge LLM verification with candidate
                 candidate["llm_score"] = result.match_score
                 candidate["llm_reasoning"] = result.reasoning
@@ -563,13 +563,13 @@ Return JSON:
                     result.match_score * 0.6           # LLM verification
                 )
                 reranked.append(candidate)
-                
+
             except Exception as e:
                 # If LLM fails, keep original score
                 log(f"[Rerank] LLM verification failed: {e}")
                 candidate["combined_score"] = candidate.get("score", 0)
                 reranked.append(candidate)
-        
+
         # Sort by combined score
         reranked.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
         return reranked[:top_k]
@@ -600,16 +600,16 @@ Return JSON:
             Dict with ranked results and full explainability.
         """
         log(f"[SOTA Search] Query: '{query[:100]}...'")
-        
+
         # 1. Parse query with dynamic entity extraction
         parsed = await self.parse_query(query)
         search_text = parsed.to_search_text() or query
         log(f"[SOTA Search] Expanded: '{search_text[:100]}...'")
-        
+
         # 2. Resolve person identities
         person_names = []
         face_ids = []
-        
+
         # Try new dynamic format first
         if hasattr(parsed, 'entities') and parsed.entities:
             for entity in parsed.entities:
@@ -618,14 +618,14 @@ Return JSON:
         # Fallback to legacy format
         elif parsed.person_name:
             person_names.append(parsed.person_name)
-        
+
         for name in person_names:
             cluster_id = self._resolve_identity(name)
             if cluster_id:
                 ids = self._get_face_ids_for_cluster(cluster_id)
                 face_ids.extend(ids)
                 log(f"[SOTA Search] Resolved '{name}' → {len(ids)} faces")
-        
+
         # 3. Retrieve candidates via multi-vector search
         try:
             candidates = self.db.explainable_search(
@@ -638,7 +638,7 @@ Return JSON:
         except Exception as e:
             log(f"[SOTA Search] Search failed: {e}")
             candidates = []
-        
+
         # 4. Re-rank with LLM verification (optional but recommended)
         if use_reranking and candidates:
             try:
@@ -646,7 +646,7 @@ Return JSON:
                 log(f"[SOTA Search] Re-ranked to {len(candidates)} results")
             except Exception as e:
                 log(f"[SOTA Search] Re-ranking failed: {e}, using raw results")
-        
+
         # 5. Build response with full explainability
         return {
             "query": query,

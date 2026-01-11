@@ -6,7 +6,7 @@ Uses LAZY LOADING to prevent OOM on startup.
 import gc
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
 
@@ -15,27 +15,27 @@ logger = logging.getLogger(__name__)
 
 class SegmentationEngine:
     """SAM-based segmentation with lazy loading."""
-    
+
     def __init__(self, model_size: str = "sam_b"):
         self.model = None
         self.model_type = model_size
         self._device: Optional[str] = None
         self._initialized = False
-    
+
     @property
     def device(self) -> str:
         if self._device is None:
             import torch
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
         return self._device
-    
+
     def lazy_load(self) -> bool:
         """Loads SAM model only when needed to save VRAM."""
         if self.model is not None:
             return True
-        
+
         logger.info(f"Loading Segmentation Model ({self.model_type}) on {self.device}...")
-        
+
         try:
             from ultralytics import SAM
             self.model = SAM("sam_b.pt")  # Downloads automatically if missing
@@ -47,10 +47,10 @@ class SegmentationEngine:
         except Exception as e:
             logger.error(f"Failed to load SAM: {e}")
             return False
-    
+
     def segment_frame(
-        self, 
-        frame: np.ndarray, 
+        self,
+        frame: np.ndarray,
         prompt_points: Optional[List[List[int]]] = None
     ) -> List[Dict[str, Any]]:
         """Segments objects in a frame.
@@ -64,14 +64,14 @@ class SegmentationEngine:
         """
         if not self.lazy_load():
             return []
-        
+
         results = []
         try:
             if prompt_points:
                 res = self.model(frame, points=prompt_points, device=self.device)
             else:
                 res = self.model(frame, device=self.device)
-            
+
             for r in res:
                 if hasattr(r, 'masks') and r.masks is not None:
                     masks_data = r.masks.xy
@@ -85,9 +85,9 @@ class SegmentationEngine:
                         })
         except Exception as e:
             logger.error(f"Segmentation error: {e}")
-        
+
         return results
-    
+
     def cleanup(self) -> None:
         """Release resources."""
         self.model = None
@@ -103,13 +103,13 @@ class Sam3Tracker:
     
     This is the full SAM-3 wrapper for video tracking with text prompts.
     """
-    
+
     def __init__(self):
         self.predictor = None
         self.inference_state = None
         self._device: Optional[str] = None
         self._initialized = False
-    
+
     @property
     def device(self) -> str:
         if self._device is None:
@@ -121,26 +121,27 @@ class Sam3Tracker:
         """Load SAM 3 model. Returns True if successful."""
         if self._initialized:
             return self.predictor is not None
-            
+
         self._initialized = True
-        
+
         try:
             from sam2.build_sam import build_sam2_video_predictor
+
             from config import settings
-            
+
             checkpoint = settings.model_cache_dir / "sam2" / "sam2_hiera_large.pt"
             config = "sam2_hiera_l.yaml"
-            
+
             if not checkpoint.exists():
                 logger.warning(f"SAM3 checkpoint not found: {checkpoint}")
                 logger.info("Download from: https://github.com/facebookresearch/segment-anything-2")
                 return False
-                
+
             logger.info("Loading SAM3 video predictor...")
             self.predictor = build_sam2_video_predictor(config, checkpoint)
             logger.info(f"SAM3 loaded on {self.device}")
             return True
-            
+
         except ImportError:
             logger.warning("sam2 package not installed. Run: pip install segment-anything-2")
             return False
@@ -152,7 +153,7 @@ class Sam3Tracker:
         """Initialize video state for tracking."""
         if not self.initialize():
             return False
-            
+
         try:
             if self.predictor:
                 self.inference_state = self.predictor.init_state(str(video_path))
@@ -168,7 +169,7 @@ class Sam3Tracker:
         if self.predictor is None or self.inference_state is None:
             logger.warning("SAM3 not initialized")
             return []
-            
+
         try:
             _, obj_ids, _ = self.predictor.add_new_prompt(
                 self.inference_state,
@@ -185,7 +186,7 @@ class Sam3Tracker:
         """Propagate masks through video frames."""
         if self.predictor is None or self.inference_state is None:
             return
-            
+
         try:
             for frame_idx, obj_ids, mask_logits in self.predictor.propagate_in_video(
                 self.inference_state
@@ -200,17 +201,17 @@ class Sam3Tracker:
             logger.error(f"SAM3 propagation error: {e}")
 
     def process_video_concepts(
-        self, 
-        video_path: Path, 
+        self,
+        video_path: Path,
         prompts: List[str]
     ) -> Iterator[Dict[str, Any]]:
         """Full pipeline: init video, add prompts, propagate."""
         if not self.init_video(video_path):
             return
-            
+
         for prompt in prompts:
             self.add_concept_prompt(prompt)
-            
+
         yield from self.propagate()
         self.cleanup()
 

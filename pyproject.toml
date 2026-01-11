@@ -5,6 +5,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["ai_media_indexer"]
 
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
 [project]
 name = "ai-media-indexer"
 version = "0.1.0"
@@ -32,12 +37,10 @@ dependencies = [
     "python-magic-bin>=0.4.14; sys_platform == 'win32'",
     "ruff>=0.6.0",
     "scikit-learn>=1.5.0",
-
-    "torch>=2.6.0",
-    "torchaudio>=2.6.0",
-    "torchvision>=0.21.0",
-    "torchvision>=0.19.0",
     "transformers>=4.48.0",
+    "torch==2.5.1",
+    "torchaudio==2.5.1",
+    "torchvision==0.20.1",
     "python-dotenv>=1.2.1",
     "pydantic-settings>=2.6.0",
     "qdrant-client>=1.16.2",
@@ -64,10 +67,10 @@ dependencies = [
     "easyocr>=1.7.1",
     "instructor>=1.13.0",
     "pytest>=9.0.2",
-    "brave-search>=0.1.0",
     "pynvml>=11.5.0",
     "celery[redis]>=5.3.6",
     "redis>=5.0.1",
+    # "brave-search>=0.1.0", # Removed due to httpx conflict
 ]
 
 [project.optional-dependencies]
@@ -105,12 +108,9 @@ line-ending = "lf"
 cache-dir = ".uv_cache"
 concurrent-downloads = 5
 
-[[tool.uv.index]]
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true
-
+# Force torch packages to use CUDA 12.4 index
 [tool.uv.sources]
-torch = [{ index = "pytorch" }]
-torchvision = [{ index = "pytorch" }]
-torchaudio = [{ index = "pytorch" }]
+torch = { index = "pytorch-cu124" }
+torchaudio = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+# Note: nemo-toolkit uses PyPI version. AI4Bharat models work with Whisper fallback.

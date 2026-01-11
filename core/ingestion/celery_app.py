@@ -1,5 +1,5 @@
-import os
 from celery import Celery
+
 from config import settings
 
 # Redis URL from environment or settings

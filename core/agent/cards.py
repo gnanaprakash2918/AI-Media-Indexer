@@ -4,9 +4,9 @@ Defines capability cards for VisionAgent, AudioAgent, and SearchAgent.
 The Orchestrator uses these cards for LLM-based tool routing.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
-import json
 
 try:
     from a2a.types import AgentCapabilities, AgentCard, AgentSkill
@@ -29,7 +29,7 @@ class AgentToolCard:
     name: str
     description: str
     parameters: list[ToolParameter] = field(default_factory=list)
-    
+
     def to_json_schema(self) -> dict[str, Any]:
         props = {}
         required = []

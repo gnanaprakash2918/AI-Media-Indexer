@@ -1,7 +1,7 @@
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Type, TypeVar
-import json
 
 from pydantic import BaseModel
 
@@ -15,7 +15,7 @@ class TextLLMClient(ABC):
     @abstractmethod
     def generate(self, prompt: str) -> str:
         pass
-    
+
     def generate_json(self, prompt: str, schema: Type[T]) -> T | None:
         raw = self.generate(prompt)
         if not raw:

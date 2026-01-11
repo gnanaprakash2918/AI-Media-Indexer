@@ -8,8 +8,8 @@ Usage:
 import argparse
 import subprocess
 import sys
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 
 def get_file_size_mb(path: Path) -> float:
@@ -44,9 +44,9 @@ def recommend_preset(file_size_mb: float, duration_seconds: float | None) -> str
     if duration_seconds is None:
         # Rough estimate: assume ~5MB/min for typical video
         duration_seconds = (file_size_mb / 5) * 60
-    
+
     duration_hours = duration_seconds / 3600
-    
+
     if duration_hours >= 2:
         # Long videos (2+ hours) - prioritize speed
         return "ultrafast"
@@ -63,7 +63,7 @@ def format_duration(seconds: float) -> str:
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
-    
+
     if hours > 0:
         return f"{hours}h {minutes}m {secs}s"
     elif minutes > 0:
@@ -91,7 +91,7 @@ def prompt_preset_choice(file_path: Path, recommended: str) -> str:
     file_size_mb = get_file_size_mb(file_path)
     duration = get_video_duration(file_path)
     duration_str = format_duration(duration) if duration else "Unknown"
-    
+
     print(f"\n{'='*60}")
     print(f"  File: {file_path.name}")
     print(f"  Size: {file_size_mb:.1f} MB | Duration: {duration_str}")
@@ -99,9 +99,9 @@ def prompt_preset_choice(file_path: Path, recommended: str) -> str:
     print()
     print("Choose encoding preset:")
     print()
-    
+
     presets = [
-        ("1", "ultrafast", "Fastest encoding, larger file size", 
+        ("1", "ultrafast", "Fastest encoding, larger file size",
          estimate_conversion_time(duration or 600, "ultrafast") if duration else "~30% of video length"),
         ("2", "fast", "Good balance of speed and quality (RECOMMENDED for most)",
          estimate_conversion_time(duration or 600, "fast") if duration else "~50% of video length"),
@@ -110,25 +110,25 @@ def prompt_preset_choice(file_path: Path, recommended: str) -> str:
         ("4", "slow", "Best quality, slowest encoding (not recommended for long videos)",
          estimate_conversion_time(duration or 600, "slow") if duration else "~200% of video length"),
     ]
-    
+
     for num, name, desc, est_time in presets:
         marker = " ★" if name == recommended else ""
         print(f"  [{num}] {name:12}{marker}")
         print(f"      {desc}")
         print(f"      Estimated time: {est_time}")
         print()
-    
+
     print(f"  Recommended for this file: {recommended}")
     print()
-    
+
     try:
         choice = input(f"Enter choice [1-4] or press Enter for '{recommended}': ").strip()
     except (EOFError, KeyboardInterrupt):
         print("\nUsing default preset.")
         return recommended
-    
+
     preset_map = {"1": "ultrafast", "2": "fast", "3": "medium", "4": "slow"}
-    
+
     if not choice:
         return recommended
     elif choice in preset_map:
@@ -151,11 +151,11 @@ def convert_to_mp4(input_path: Path, output_path: Path | None = None, preset: st
     """
     if output_path is None:
         output_path = input_path.with_suffix('.mp4')
-    
+
     if output_path.exists():
         print(f"  ⏭ Skipping {input_path.name} - output already exists")
         return True
-    
+
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
@@ -168,13 +168,13 @@ def convert_to_mp4(input_path: Path, output_path: Path | None = None, preset: st
         "-progress", "pipe:1",
         str(output_path)
     ]
-    
+
     print(f"  🔄 Converting: {input_path.name}")
     print(f"     Preset: {preset}")
-    
+
     try:
         result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=7200)  # 2hr timeout
-        
+
         if result.returncode == 0 and output_path.exists():
             out_size = get_file_size_mb(output_path)
             print(f"  ✓ Done: {output_path.name} ({out_size:.1f} MB)")
@@ -191,7 +191,7 @@ def convert_to_mp4(input_path: Path, output_path: Path | None = None, preset: st
         return False
 
 
-def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".avi"], 
+def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".avi"],
                   workers: int = 2, preset: str = "fast", interactive: bool = True) -> tuple[int, int]:
     """Convert all videos in directory to MP4.
     
@@ -209,20 +209,20 @@ def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".a
     for ext in extensions:
         files.extend(directory.glob(f"*{ext}"))
         files.extend(directory.glob(f"*{ext.upper()}"))
-    
+
     if not files:
         print(f"No files found with extensions {extensions}")
         return 0, 0
-    
+
     # Calculate total size
     total_size_mb = sum(get_file_size_mb(f) for f in files)
-    
+
     print(f"\n{'='*60}")
     print(f"  Found {len(files)} files to convert")
     print(f"  Total size: {total_size_mb:.1f} MB")
     print(f"  Workers: {workers}")
     print(f"{'='*60}\n")
-    
+
     if interactive and len(files) > 0:
         # Recommend based on largest file
         largest = max(files, key=lambda f: f.stat().st_size)
@@ -230,10 +230,10 @@ def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".a
         recommended = recommend_preset(get_file_size_mb(largest), duration)
         preset = prompt_preset_choice(largest, recommended)
         print(f"\nUsing preset '{preset}' for all files.\n")
-    
+
     success = 0
     failed = 0
-    
+
     if workers == 1:
         for f in files:
             if convert_to_mp4(f, None, preset):
@@ -243,13 +243,13 @@ def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".a
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(convert_to_mp4, f, None, preset): f for f in files}
-            
+
             for future in as_completed(futures):
                 if future.result():
                     success += 1
                 else:
                     failed += 1
-    
+
     return success, failed
 
 
@@ -292,28 +292,28 @@ WHY CONVERT?
     parser.add_argument("path", help="File or directory to convert")
     parser.add_argument("--preset", choices=["ultrafast", "fast", "medium", "slow"],
                         help="Encoding preset: ultrafast|fast|medium|slow (skips menu)")
-    parser.add_argument("--workers", "-w", type=int, default=2, 
+    parser.add_argument("--workers", "-w", type=int, default=2,
                         help="Parallel workers for batch conversion (default: 2)")
     parser.add_argument("--extensions", "-e", nargs="+", default=[".webm", ".mkv", ".avi"],
                         help="File extensions to convert (default: .webm .mkv .avi)")
     parser.add_argument("--no-interactive", "-y", action="store_true",
                         help="Skip interactive prompts, use smart defaults")
-    
+
     args = parser.parse_args()
     path = Path(args.path)
-    
+
     if not path.exists():
         print(f"Error: {path} does not exist")
         sys.exit(1)
-    
+
     interactive = not args.no_interactive and args.preset is None
-    
+
     if path.is_file():
         # Single file conversion
         if path.suffix.lower() == '.mp4':
             print(f"File is already MP4: {path.name}")
             sys.exit(0)
-        
+
         if interactive:
             duration = get_video_duration(path)
             recommended = recommend_preset(get_file_size_mb(path), duration)
@@ -325,7 +325,7 @@ WHY CONVERT?
                 duration = get_video_duration(path)
                 preset = recommend_preset(get_file_size_mb(path), duration)
                 print(f"Auto-selected preset: {preset}")
-        
+
         print()
         success = convert_to_mp4(path, preset=preset)
         print()

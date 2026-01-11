@@ -2,6 +2,7 @@
 
 from typing import BinaryIO, Generator
 
+
 def range_generator(
     file_obj: BinaryIO,
     start: int,
@@ -21,13 +22,13 @@ def range_generator(
     """
     file_obj.seek(start)
     bytes_to_read = end - start + 1
-    
+
     while bytes_to_read > 0:
         read_size = min(chunk_size, bytes_to_read)
         data = file_obj.read(read_size)
-        
+
         if not data:
             break
-            
+
         yield data
         bytes_to_read -= len(data)

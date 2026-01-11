@@ -48,7 +48,6 @@ from .gemini import GeminiLLM
 from .interface import LLMInterface
 from .ollama import OllamaLLM
 
-
 # Supported providers - easily add new ones here
 SUPPORTED_PROVIDERS = ("gemini", "ollama", "openai", "anthropic")
 
@@ -108,25 +107,25 @@ class LLMFactory:
             # COST: ~$0.00025/image (cheap)
             # SPEED: Fast (~1-2s for vision)
             return GeminiLLM(prompt_dir=prompt_dir, **kwargs)
-        
+
         elif provider == "ollama":
             # BEST FOR: Development, testing, cost-sensitive production
             # COST: FREE (local GPU only)
             # SPEED: Depends on hardware (~2-5s for vision)
             # MODELS: llava (vision), llama3 (text), mistral (structured)
             return OllamaLLM(prompt_dir=prompt_dir, **kwargs)
-        
+
         # TODO: Add more providers for SOTA quality
         # elif provider == "openai":
         #     # BEST FOR: Structured output (json_schema), fast vision
         #     # COST: ~$0.01/image (expensive)
         #     return OpenAILLM(prompt_dir=prompt_dir, **kwargs)
-        # 
+        #
         # elif provider == "anthropic":
         #     # BEST FOR: Complex reasoning, chain-of-thought, re-ranking
         #     # COST: ~$0.015/1K tokens (expensive)
         #     return AnthropicLLM(prompt_dir=prompt_dir, **kwargs)
-        
+
         else:
             raise ValueError(
                 f"Unknown LLM provider: {provider}. "
@@ -168,11 +167,11 @@ class LLMFactory:
             # Production: Use best available
             if os.getenv("GEMINI_API_KEY"):
                 return LLMFactory.create_llm("gemini", prompt_dir)
-        
+
         # Default: Ollama (free)
         return LLMFactory.create_llm("ollama", prompt_dir)
 
-    @staticmethod  
+    @staticmethod
     def create_text_llm(prompt_dir: str = "./prompts") -> LLMInterface:
         """Create the best LLM for text tasks (query expansion, etc).
         

@@ -53,7 +53,7 @@ class ResourceManager:
         mem = psutil.virtual_memory()
         if mem.percent > settings.max_ram_percent:
             return False
-        
+
         # 2. Check VRAM (GPU memory) if available
         try:
             from core.utils.hardware import get_vram_usage_percent
@@ -78,7 +78,7 @@ class ResourceManager:
         temp = self._get_cpu_temp()
         if temp and temp > settings.max_temp_celsius:
             return False
-        
+
         # 5. Check GPU Temperature (NVIDIA via pynvml)
         gpu_temp = self._get_gpu_temp()
         if gpu_temp and gpu_temp > 80:  # 80°C threshold for GPU
@@ -134,16 +134,16 @@ class ResourceManager:
         cpu = psutil.cpu_percent()
         temp = self._get_cpu_temp()
         temp_str = f"{temp:.1f}°C" if temp else "N/A"
-        
+
         # Add VRAM if available
         try:
-            from core.utils.hardware import get_used_vram, get_available_vram
+            from core.utils.hardware import get_available_vram, get_used_vram
             vram_used = get_used_vram()
             vram_total = get_available_vram()
             vram_str = f" | VRAM: {vram_used:.1f}/{vram_total:.1f}GB"
         except Exception:
             vram_str = ""
-        
+
         return f"RAM: {mem}% | CPU: {cpu}% | Temp: {temp_str}{vram_str}"
 
 # Singleton instance

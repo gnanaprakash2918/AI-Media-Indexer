@@ -10,24 +10,22 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import time
 import urllib.request
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal
-from dataclasses import dataclass
 
 import cv2
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from PIL import Image
-from sklearn.cluster import DBSCAN, HDBSCAN
+from sklearn.cluster import HDBSCAN
 
 from config import settings
 from core.schemas import DetectedFace
 from core.utils.observe import observe
-
 
 # =========================================================================
 # SYSTEM CAPABILITY DETECTION
@@ -40,13 +38,13 @@ def _detect_system_capabilities() -> dict:
         Dict with 'ram_gb', 'vram_gb', 'is_high_end' keys.
     """
     import gc
-    
+
     capabilities = {
         'ram_gb': 8.0,  # Default conservative
         'vram_gb': 0.0,
         'is_high_end': False,
     }
-    
+
     # Detect RAM
     try:
         import psutil
@@ -74,7 +72,7 @@ def _detect_system_capabilities() -> dict:
             capabilities['ram_gb'] = mem_status.dwTotalPhys / (1024 ** 3)
         except Exception:
             pass
-    
+
     # Detect VRAM
     try:
         import torch
@@ -83,12 +81,12 @@ def _detect_system_capabilities() -> dict:
             capabilities['vram_gb'] = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
     except ImportError:
         pass
-    
+
     # High-end: 32GB+ RAM or 8GB+ VRAM
     capabilities['is_high_end'] = (
         capabilities['ram_gb'] >= 32.0 or capabilities['vram_gb'] >= 8.0
     )
-    
+
     gc.collect()
     return capabilities
 
@@ -147,13 +145,13 @@ class FaceTrackBuilder:
     because the track contains multiple angles/lighting conditions, and
     the averaged embedding is more robust.
     """
-    
+
     # Thresholds
     IOU_THRESHOLD: float = 0.3  # Minimum bbox overlap to consider same person
     COSINE_THRESHOLD: float = 0.5  # Minimum embedding similarity (1.0 - this = cosine distance)
     MAX_FRAMES_MISSING: int = 5  # Finalize track if face missing for this many frames
     MIN_TRACK_LENGTH: int = 2  # Minimum frames to consider a valid track
-    
+
     def __init__(self, frame_interval: float = 1.0) -> None:
         """Initialize the track builder.
         
@@ -166,7 +164,7 @@ class FaceTrackBuilder:
         self._next_track_id = 1
         self._current_frame = 0
         self._frames_since_last_seen: dict[int, int] = {}  # track_id -> frames
-    
+
     def process_frame(
         self,
         faces: list[DetectedFace],
@@ -181,17 +179,17 @@ class FaceTrackBuilder:
             timestamp: Current timestamp in seconds.
         """
         self._current_frame = frame_index
-        
+
         # Track which active tracks got matched this frame
         matched_track_ids: set[int] = set()
-        
+
         for face in faces:
             if face.embedding is None:
                 continue
-            
+
             # Try to match to an existing active track
             best_track_id = self._find_best_matching_track(face)
-            
+
             if best_track_id is not None:
                 # Extend existing track
                 track = self.active_tracks[best_track_id]
@@ -200,12 +198,12 @@ class FaceTrackBuilder:
                 track.embeddings.append(face.embedding)
                 track.bboxes.append(face.bbox)
                 track.confidences.append(face.confidence)
-                
+
                 # Update best thumbnail if this is higher confidence
                 if face.confidence > track.best_confidence:
                     track.best_confidence = face.confidence
                     track.best_thumbnail_frame = frame_index
-                
+
                 matched_track_ids.add(best_track_id)
                 self._frames_since_last_seen[best_track_id] = 0
             else:
@@ -225,7 +223,7 @@ class FaceTrackBuilder:
                 self.active_tracks[self._next_track_id] = new_track
                 self._frames_since_last_seen[self._next_track_id] = 0
                 self._next_track_id += 1
-        
+
         # Update frames since last seen for unmatched tracks
         tracks_to_finalize = []
         for track_id in list(self.active_tracks.keys()):
@@ -233,11 +231,11 @@ class FaceTrackBuilder:
                 self._frames_since_last_seen[track_id] = self._frames_since_last_seen.get(track_id, 0) + 1
                 if self._frames_since_last_seen[track_id] >= self.MAX_FRAMES_MISSING:
                     tracks_to_finalize.append(track_id)
-        
+
         # Finalize tracks that have been missing too long
         for track_id in tracks_to_finalize:
             self._finalize_track(track_id)
-    
+
     def _find_best_matching_track(self, face: DetectedFace) -> int | None:
         """Find the best matching active track for a face detection.
         
@@ -248,41 +246,41 @@ class FaceTrackBuilder:
         """
         if not self.active_tracks:
             return None
-        
+
         best_track_id = None
         best_score = 0.0
-        
+
         face_emb = np.array(face.embedding, dtype=np.float64)
         face_emb_norm = face_emb / (np.linalg.norm(face_emb) + 1e-9)
-        
+
         for track_id, track in self.active_tracks.items():
             # Skip if track hasn't been seen recently (likely a different person)
             if self._frames_since_last_seen.get(track_id, 0) > 2:
                 continue
-            
+
             # Compute IoU with last known bbox
             last_bbox = track.bboxes[-1]
             iou = self._compute_iou(face.bbox, last_bbox)
-            
+
             if iou < self.IOU_THRESHOLD:
                 continue
-            
+
             # Compute cosine similarity with track centroid
             track_centroid = self._compute_track_centroid(track)
             similarity = float(np.dot(face_emb_norm, track_centroid))
-            
+
             if similarity < self.COSINE_THRESHOLD:
                 continue
-            
+
             # Combined score: weighted average of IoU and similarity
             combined_score = 0.4 * iou + 0.6 * similarity
-            
+
             if combined_score > best_score:
                 best_score = combined_score
                 best_track_id = track_id
-        
+
         return best_track_id
-    
+
     def _compute_iou(
         self,
         box1: tuple[int, int, int, int],
@@ -294,50 +292,50 @@ class FaceTrackBuilder:
         """
         top1, right1, bottom1, left1 = box1
         top2, right2, bottom2, left2 = box2
-        
+
         # Intersection
         inter_left = max(left1, left2)
         inter_top = max(top1, top2)
         inter_right = min(right1, right2)
         inter_bottom = min(bottom1, bottom2)
-        
+
         if inter_right <= inter_left or inter_bottom <= inter_top:
             return 0.0
-        
+
         inter_area = (inter_right - inter_left) * (inter_bottom - inter_top)
-        
+
         # Union
         area1 = (right1 - left1) * (bottom1 - top1)
         area2 = (right2 - left2) * (bottom2 - top2)
         union_area = area1 + area2 - inter_area
-        
+
         if union_area <= 0:
             return 0.0
-        
+
         return inter_area / union_area
-    
+
     def _compute_track_centroid(self, track: ActiveFaceTrack) -> np.ndarray:
         """Compute normalized centroid embedding for a track."""
         if not track.embeddings:
             return np.zeros(512, dtype=np.float64)
-        
+
         embeddings = np.array(track.embeddings, dtype=np.float64)
         centroid = np.mean(embeddings, axis=0)
         centroid /= np.linalg.norm(centroid) + 1e-9
         return centroid
-    
+
     def _finalize_track(self, track_id: int) -> None:
         """Move a track from active to finalized."""
         if track_id not in self.active_tracks:
             return
-        
+
         track = self.active_tracks.pop(track_id)
         del self._frames_since_last_seen[track_id]
-        
+
         # Only keep tracks with minimum length
         if len(track.embeddings) >= self.MIN_TRACK_LENGTH:
             self.finalized_tracks.append(track)
-    
+
     def finalize_all(self) -> list[ActiveFaceTrack]:
         """Finalize all remaining active tracks and return all tracks.
         
@@ -345,9 +343,9 @@ class FaceTrackBuilder:
         """
         for track_id in list(self.active_tracks.keys()):
             self._finalize_track(track_id)
-        
+
         return self.finalized_tracks
-    
+
     def get_track_embeddings(self) -> list[tuple[int, list[float], dict]]:
         """Get averaged embeddings for all finalized tracks.
         
@@ -367,7 +365,7 @@ class FaceTrackBuilder:
                 "avg_confidence": np.mean(track.confidences) if track.confidences else 0.0,
             }
             results.append((track.track_id, centroid.tolist(), metadata))
-        
+
         return results
 
 # Directories
@@ -428,6 +426,7 @@ class FaceManager:
         max_fps: float = 8.0,
         batch_size: int = 16,
         global_clusters: dict[int, list[float]] | None = None,
+        db_client: Any = None,
     ) -> None:
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
@@ -437,18 +436,18 @@ class FaceManager:
         self._use_gpu = use_gpu
         self._initialized = False
         self._init_lock = asyncio.Lock()
-        
+
         self.global_clusters: dict[int, list[float]] = global_clusters or {}
         self._next_cluster_id = max(self.global_clusters.keys(), default=0) + 1
-        
+
         self._model_type: ModelType = "yunet_only"
         self._insightface_app = None
         self._opencv_detector = None
         self._opencv_recognizer = None
         self._embedding_dim = 128
-        
+
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        
+
         if self.global_clusters:
             print(f"[FaceManager] Loaded {len(self.global_clusters)} global clusters for cross-video matching")
 
@@ -459,13 +458,14 @@ class FaceManager:
         The models will be reloaded on next detect_faces() call.
         """
         import gc
+
         import torch
-        
+
         # Clear InsightFace
         if self._insightface_app is not None:
             del self._insightface_app
             self._insightface_app = None
-        
+
         # Clear OpenCV models (less important but be thorough)
         if self._opencv_detector is not None:
             del self._opencv_detector
@@ -473,16 +473,16 @@ class FaceManager:
         if self._opencv_recognizer is not None:
             del self._opencv_recognizer
             self._opencv_recognizer = None
-        
+
         # Reset init flag so models reload on next use
         self._initialized = False
-        
+
         # Force garbage collection and GPU memory release
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        
+
         print("[FaceManager] GPU models unloaded - VRAM freed for Ollama")
 
     @property
@@ -498,14 +498,14 @@ class FaceManager:
         async with self._init_lock:
             if self._initialized:
                 return
-            
+
             # Try InsightFace first
             if await self._try_init_insightface():
                 self._model_type = "insightface"
                 self._embedding_dim = 512
                 self._initialized = True
                 return
-            
+
             # Fallback to SFace
             # SFace natively produces 128-dim embeddings, which we pad to 512-dim
             # The clustering logic in server.py will detect this padding and handle it
@@ -514,7 +514,7 @@ class FaceManager:
                 self._embedding_dim = 128
                 self._initialized = True
                 return
-            
+
             # Last resort: YuNet detection only
             await self._init_yunet_only()
             self._model_type = "yunet_only"
@@ -528,16 +528,16 @@ class FaceManager:
         to prevent memory allocation failures.
         """
         import gc
-        
+
         FaceAnalysis = _try_import_insightface()
         if FaceAnalysis is None:
             print("[FaceManager] InsightFace library not found. Falling back.")
             return False
-        
+
         # Check system capabilities
         caps = get_system_capabilities()
         is_high_end = caps['is_high_end']
-        
+
         # CRITICAL: Clean VRAM before loading InsightFace to prevent OOM
         gc.collect()
         try:
@@ -545,13 +545,13 @@ class FaceManager:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                print(f"[FaceManager] Cleaned VRAM before InsightFace init")
+                print("[FaceManager] Cleaned VRAM before InsightFace init")
         except ImportError:
             pass
-        
+
         try:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._use_gpu else ["CPUExecutionProvider"]
-            
+
             if is_high_end:
                 # High-end system: load all models at once (faster)
                 print("[FaceManager] High-end system detected, loading all InsightFace models...")
@@ -566,7 +566,7 @@ class FaceManager:
                 # Skip genderage and 3d landmark models to reduce memory usage
                 print("[FaceManager] Low-resource system detected, loading InsightFace models sequentially...")
                 gc.collect()
-                
+
                 # Force garbage collection before loading
                 try:
                     import torch
@@ -575,7 +575,7 @@ class FaceManager:
                         torch.cuda.synchronize()
                 except ImportError:
                     pass
-                
+
                 # Only load detection and recognition models
                 # This skips: genderage.onnx, 1k3d68.onnx, 2d106det.onnx
                 app = FaceAnalysis(
@@ -584,30 +584,30 @@ class FaceManager:
                     providers=providers,
                     allowed_modules=['detection', 'recognition'],  # Skip age/gender/3d landmarks
                 )
-                
+
                 # Use smaller detection size to reduce memory
                 det_size = (480, 480) if caps['ram_gb'] < 16 else (640, 640)
                 app.prepare(ctx_id=0 if self._use_gpu else -1, det_size=det_size)
-                
+
                 # Clean up after model load
                 gc.collect()
-            
+
             self._insightface_app = app
             print(f"[FaceManager] SUCCESS: Using InsightFace ArcFace (512-dim). Providers: {providers}")
             return True
         except Exception as e:
             error_msg = str(e).lower()
             if "bad allocation" in error_msg or "out of memory" in error_msg or "oom" in error_msg:
-                print(f"[FaceManager] InsightFace OOM error, trying minimal config...")
+                print("[FaceManager] InsightFace OOM error, trying minimal config...")
                 gc.collect()
-                
+
                 try:
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 except ImportError:
                     pass
-                
+
                 # Last resort: CPU only with minimal modules and smallest detection size
                 try:
                     app = FaceAnalysis(
@@ -623,7 +623,7 @@ class FaceManager:
                 except Exception as e2:
                     print(f"[FaceManager] InsightFace minimal config also failed: {e2}")
                     return False
-            
+
             print(f"[FaceManager] CRITICAL: InsightFace init failed: {e}")
             import traceback
             traceback.print_exc()
@@ -635,7 +635,7 @@ class FaceManager:
             _ensure_opencv_models()
             backend = cv2.dnn.DNN_BACKEND_DEFAULT
             target = cv2.dnn.DNN_TARGET_CPU
-            
+
             if self._use_gpu:
                 try:
                     if cv2.cuda.getCudaEnabledDeviceCount() > 0:
@@ -643,7 +643,7 @@ class FaceManager:
                         target = cv2.dnn.DNN_TARGET_CUDA
                 except Exception:
                     pass
-            
+
             self._opencv_detector = cv2.FaceDetectorYN.create(
                 model=str(MODELS_DIR / YUNET_MODEL),
                 config="",
@@ -688,7 +688,7 @@ class FaceManager:
         await self._lazy_init()
         path = Path(image_path)
         image = self._load_image(path)
-        
+
         if self._model_type == "insightface":
             return await self._detect_insightface(image)
         elif self._model_type == "sface":
@@ -702,32 +702,32 @@ class FaceManager:
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
             faces = self._insightface_app.get(bgr)
-        
+
         results = []
         for face in faces:
             bbox = face.bbox.astype(int)
             # Convert to (top, right, bottom, left) format
             box = (int(bbox[1]), int(bbox[2]), int(bbox[3]), int(bbox[0]))
-            
+
             # Quality metrics for clustering
             det_score = float(face.det_score) if hasattr(face, 'det_score') else 1.0
             bbox_width = int(bbox[2] - bbox[0])
             bbox_height = int(bbox[3] - bbox[1])
             bbox_size = min(bbox_width, bbox_height)
-            
+
             # Get embedding and normalize
             emb = face.embedding.astype(np.float64)
             emb /= np.linalg.norm(emb) + 1e-9
-            
+
             results.append(DetectedFace(
-                bbox=box, 
+                bbox=box,
                 embedding=emb.tolist(),
                 confidence=det_score,  # Store detection confidence
                 # Note: bbox_size will be passed separately to insert_face
             ))
             # Store bbox_size as an attribute for pipeline to access
             results[-1]._bbox_size = bbox_size
-        
+
         return results
 
     async def _detect_sface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
@@ -735,71 +735,71 @@ class FaceManager:
         assert self._opencv_detector is not None, "OpenCV detector not initialized"
         assert self._opencv_recognizer is not None, "OpenCV recognizer not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        
+
         async with GPU_SEMAPHORE:
             h, w = bgr.shape[:2]
             self._opencv_detector.setInputSize((w, h))
             _, dets = self._opencv_detector.detect(bgr)
-        
+
         if dets is None:
             return []
-        
+
         results = []
         for d in dets:
             x, y, bw, bh = d[:4]
             box = (int(y), int(x + bw), int(y + bh), int(x))
-            
+
             # Quality metrics for clustering
             det_score = float(d[14]) if len(d) > 14 else 0.9  # YuNet confidence at index 14
             bbox_size = int(min(bw, bh))
-            
+
             # Get face crop and apply CLAHE for lighting normalization
             face_box = np.array([[x, y, bw, bh]], dtype=np.int32)
             aligned = self._opencv_recognizer.alignCrop(bgr, face_box)
-            
+
             # CLAHE on L channel
             lab = cv2.cvtColor(aligned, cv2.COLOR_BGR2LAB)
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             lab[:, :, 0] = clahe.apply(lab[:, :, 0])
             aligned = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-            
+
             # Get embedding and normalize
             emb = self._opencv_recognizer.feature(aligned).reshape(-1).astype(np.float64)
             emb /= np.linalg.norm(emb) + 1e-9
-            
+
             # Pad 128-dim to 512-dim for Qdrant compatibility
             emb_padded = np.zeros(512, dtype=np.float64)
             emb_padded[:len(emb)] = emb
-            
+
             results.append(DetectedFace(
-                bbox=box, 
+                bbox=box,
                 embedding=emb_padded.tolist(),
                 confidence=det_score,
             ))
             # Store bbox_size as an attribute for pipeline to access
             results[-1]._bbox_size = bbox_size
-        
+
         return results
 
     async def _detect_yunet_only(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
         """Detect faces with YuNet only (no embeddings)."""
         assert self._opencv_detector is not None, "OpenCV detector not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        
+
         async with GPU_SEMAPHORE:
             h, w = bgr.shape[:2]
             self._opencv_detector.setInputSize((w, h))
             _, dets = self._opencv_detector.detect(bgr)
-        
+
         if dets is None:
             return []
-        
+
         results = []
         for d in dets:
             x, y, bw, bh = d[:4]
             box = (int(y), int(x + bw), int(y + bh), int(x))
             results.append(DetectedFace(bbox=box, embedding=None))
-        
+
         return results
 
     @observe("face_cluster")
@@ -812,11 +812,11 @@ class FaceManager:
         if not all_encodings:
             return np.array([], dtype=np.int64)
         data = self._to_2d_array(all_encodings)
-        
+
         # HDBSCAN(min_cluster_size=5, min_samples=None, cluster_selection_epsilon=0.0, ...)
         # We map dbscan_min_samples -> min_samples (controls how conservative the clustering is)
         # We use a fixed min_cluster_size (e.g. 3 or 5) to allow small groups
-        
+
         return HDBSCAN(
             min_cluster_size=max(3, self.dbscan_min_samples),
             min_samples=self.dbscan_min_samples,
@@ -850,7 +850,7 @@ class FaceManager:
         # TTA: Test Time Augmentation (Flip)
         # Average embedding of original and flipped image for robustness
         embeddings = [embedding]
-        
+
         # Horizontal flip
         # NOTE: This section of code seems to be misplaced.
         # It attempts to perform Test Time Augmentation (TTA) by flipping an image
@@ -869,11 +869,11 @@ class FaceManager:
         # flipped_embedding = self.arcface.forward()
         # if flipped_embedding is not None:
         #      embeddings.append(flipped_embedding.flatten())
-        
+
         # Average and normalize
         # if len(embeddings) > 1:
         #     embedding = np.mean(embeddings, axis=0)
-            
+
         # embedding = embedding / (np.linalg.norm(embedding) + 1e-9)
         # return embedding.tolist() # This return statement would prematurely exit the function.
 
@@ -926,25 +926,25 @@ class FaceManager:
             Verified cluster_id (may differ from track_id if biometrics disagree).
         """
         from core.processing.biometrics import get_biometric_arbitrator
-        
+
         arbitrator = get_biometric_arbitrator()
         current_emb = arbitrator.get_embedding(current_crop)
-        
+
         if current_emb is None:
             return track_id
-            
+
         # Check if claimed identity matches
         if track_id in known_identities:
             if arbitrator.verify_identity(current_emb, known_identities[track_id]):
                 return track_id
             print(f"[FaceManager] Identity conflict: track {track_id} rejected by biometrics")
-        
+
         # Search for correct identity
         match_id = arbitrator.find_matching_identity(current_emb, known_identities)
         if match_id is not None:
             print(f"[FaceManager] Identity corrected: {track_id} -> {match_id}")
             return match_id
-            
+
         return track_id
 
 
@@ -974,7 +974,7 @@ class FaceManager:
     async def _detect_frame(self, frame: NDArray[np.uint8]) -> list[DetectedFace]:
         """Detect faces in a single frame."""
         await self._lazy_init()
-        
+
         if self._model_type == "insightface":
             return await self._detect_insightface(frame)
         elif self._model_type == "sface":

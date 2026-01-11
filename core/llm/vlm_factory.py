@@ -1,21 +1,22 @@
 from __future__ import annotations
+
+import base64
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
-import base64
 
 from config import settings
 from core.utils.logger import log
 
 if TYPE_CHECKING:
-    from PIL import Image
+    pass
 
 
 class VLMClient(ABC):
     @abstractmethod
     def generate_caption(self, image_path: Path | str, prompt: str) -> str:
         pass
-    
+
     @abstractmethod
     def generate_caption_from_bytes(self, image_bytes: bytes, prompt: str) -> str:
         pass
@@ -80,8 +81,9 @@ class GeminiVLM(VLMClient):
         return self._generate(img, prompt)
 
     def generate_caption_from_bytes(self, image_bytes: bytes, prompt: str) -> str:
-        from PIL import Image as PILImage
         import io
+
+        from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(image_bytes))
         return self._generate(img, prompt)
 

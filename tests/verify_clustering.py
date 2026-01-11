@@ -1,9 +1,10 @@
 
-import time
-import requests
-import sys
 import json
+import sys
+import time
 from pathlib import Path
+
+import requests
 
 BASE_URL = "http://localhost:8000"
 VIDEO_PATH = r"C:\Users\Gnana Prakash M\Downloads\Programs\Video Song ｜ Keladi Kannmani ｜ S P B ｜ Radhika ｜ Ilaiyaraaja Love Songs [033Z2WNg2Q.webm"
@@ -39,29 +40,29 @@ def wait_for_job(file_path):
             if Path(job["file_path"]).name == Path(VIDEO_PATH).name:
                 relevant_job = job
                 break
-        
+
         if not relevant_job:
             print("Job not found yet...")
             time.sleep(2)
             continue
-            
+
         status = relevant_job["status"]
         print(f"Job Status: {status} | Stage: {relevant_job.get('current_stage')} | Progress: {relevant_job.get('progress')}")
-        
+
         if status == "completed":
             print("Job Completed!")
             break
         if status == "failed":
             print(f"Job Failed: {relevant_job.get('error')}")
             sys.exit(1)
-        
+
         time.sleep(3)
 
 def trigger_clustering():
     print("Triggering Face Clustering...")
     res = requests.post(f"{BASE_URL}/faces/cluster")
     print("Face Cluster Result:", json.dumps(res.json(), indent=2))
-    
+
     print("Triggering Voice Clustering...")
     res = requests.post(f"{BASE_URL}/voices/cluster")
     print("Voice Cluster Result:", json.dumps(res.json(), indent=2))
@@ -78,11 +79,11 @@ if __name__ == "__main__":
     if not wait_for_server():
         print("Server failed to start.")
         sys.exit(1)
-        
+
     # Check if already indexed to avoid re-ingesting if unnecessary (optional, but good for speed)
-    # For verification, we might want to force re-ingest or just ingest. 
+    # For verification, we might want to force re-ingest or just ingest.
     # The system allows re-ingestion.
-    
+
     ingest_video()
     wait_for_job(VIDEO_PATH)
     trigger_clustering()

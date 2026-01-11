@@ -46,31 +46,31 @@ class MediaMetadata:
 
 class MetadataEngine:
     """Fetches metadata from TMDB and manages cast-to-face mapping."""
-    
-    def __init__(self, tmdb_api_key: Optional[str] = None, api_key: Optional[str] = None):
-        self.api_key = tmdb_api_key or api_key or os.getenv("TMDB_API_KEY")
+
+    def __init__(self, tmdb_api_key: Optional[str] = None, api_key: Optional[str] = None, tmdb_key: Optional[str] = None, **kwargs):
+        self.api_key = tmdb_api_key or api_key or tmdb_key or os.getenv("TMDB_API_KEY")
         self._client: Optional[httpx.AsyncClient] = None
         self.enabled = bool(self.api_key)
-        
+
         if not self.enabled:
             logger.warning("[MetadataEngine] TMDB_API_KEY not set. TMDB metadata disabled.")
-    
+
     @property
     def client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=10.0)
         return self._client
-    
+
     @property
     def is_available(self) -> bool:
         return self.enabled
-    
+
     async def search_movie(self, query: str, year: Optional[int] = None) -> list[MediaMetadata]:
         """Search TMDB for movies matching query."""
         if not self.api_key:
             logger.warning("TMDB_API_KEY not set. Cannot search movies.")
             return []
-        
+
         params = {
             "api_key": self.api_key,
             "query": query,
@@ -78,12 +78,12 @@ class MetadataEngine:
         }
         if year:
             params["year"] = str(year)
-        
+
         try:
             resp = await self.client.get(f"{TMDB_API_BASE}/search/movie", params=params)
             resp.raise_for_status()
             data = resp.json()
-            
+
             results = []
             for item in data.get("results", [])[:5]:
                 release_date = item.get("release_date", "")
@@ -100,12 +100,12 @@ class MetadataEngine:
         except Exception as e:
             logger.error(f"TMDB search failed: {e}")
             return []
-    
+
     async def get_cast(self, tmdb_id: int, media_type: str = "movie") -> list[CastMember]:
         """Get cast list for a movie/TV show."""
         if not self.api_key:
             return []
-        
+
         try:
             resp = await self.client.get(
                 f"{TMDB_API_BASE}/{media_type}/{tmdb_id}/credits",
@@ -113,7 +113,7 @@ class MetadataEngine:
             )
             resp.raise_for_status()
             data = resp.json()
-            
+
             cast_list = []
             for member in data.get("cast", [])[:20]:
                 cast_list.append(CastMember(
@@ -127,47 +127,47 @@ class MetadataEngine:
         except Exception as e:
             logger.error(f"TMDB cast fetch failed: {e}")
             return []
-    
+
     async def get_movie_with_cast(self, query: str, year: Optional[int] = None) -> Optional[MediaMetadata]:
         """Search for movie and fetch its cast in one call."""
         results = await self.search_movie(query, year)
         if not results:
             return None
-        
+
         movie = results[0]
         movie.cast = await self.get_cast(movie.tmdb_id, "movie")
         return movie
-    
+
     async def close(self):
         if self._client:
             await self._client.aclose()
             self._client = None
-    
+
     async def enrich_video(self, video_id: str | None, path: Path | str) -> Optional[MediaMetadata]:
         """Enrich video metadata using filename parsing and TMDB (if enabled)."""
         if not self.enabled:
             return None
-        
+
         try:
             filename = Path(path).name
-            
+
             # Simple heuristic: Look for (YYYY) pattern
             year_match = re.search(r'\((\d{4})\)', filename)
             year = int(year_match.group(1)) if year_match else None
-            
+
             # Clean title
             title = filename
             title = re.sub(r'\.\w+$', '', title)
             title = re.sub(r'\((\d{4})\).*', '', title)
             title = re.sub(r'\s+', ' ', title).strip()
-            
+
             # Search TMDB if enabled and looks like a movie
             if self.enabled and year:
                 found = await self.get_movie_with_cast(title, year)
                 if found:
                     logger.info(f"[Metadata] TMDB Match: {found.title} ({found.year})")
                     return found
-            
+
             return MediaMetadata(
                 title=title,
                 year=year,
@@ -187,16 +187,16 @@ def fuzzy_match_name(name1: str, name2: str, threshold: float = 0.8) -> bool:
     def normalize(s: str) -> set[str]:
         s = re.sub(r'[^\w\s]', '', s.lower())
         return set(s.split())
-    
+
     tokens1 = normalize(name1)
     tokens2 = normalize(name2)
-    
+
     if not tokens1 or not tokens2:
         return False
-    
+
     intersection = tokens1 & tokens2
     union = tokens1 | tokens2
-    
+
     jaccard = len(intersection) / len(union)
     return jaccard >= threshold
 
@@ -210,20 +210,20 @@ def match_cast_to_clusters(
     Returns mapping of cluster_id -> cast name (unverified).
     """
     matches: dict[int, str] = {}
-    
+
     for cluster in face_clusters:
         cluster_id = cluster.get("cluster_id")
         cluster_name = (cluster.get("name") or cluster.get("label") or "").strip()
-        
+
         if not cluster_name or cluster_name.lower() in ("unknown", "unnamed"):
             continue
-        
+
         for cast in cast_list:
             if fuzzy_match_name(cast.name, cluster_name):
                 matches[cluster_id] = cast.name
                 logger.info(f"Matched cluster {cluster_id} ({cluster_name}) -> {cast.name}")
                 break
-    
+
     return matches
 
 

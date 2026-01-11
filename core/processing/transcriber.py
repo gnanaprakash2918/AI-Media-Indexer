@@ -49,11 +49,11 @@ def get_transcriber(language: str | None = None):
         AudioTranscriber or IndicASRPipeline instance.
     """
     lang = language or settings.language or "en"
-    
+
     if settings.use_indic_asr and lang in ["ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"]:
         from core.processing.indic_transcriber import IndicASRPipeline
         return IndicASRPipeline(lang=lang)
-    
+
     return AudioTranscriber()
 
 
@@ -308,10 +308,10 @@ class AudioTranscriber:
         )
 
         final_model_path = self._convert_and_cache_model(model_key)
-        
+
         # Memory-efficient settings
         cpu_threads = min(4, os.cpu_count() or 4)  # Limit CPU threads to reduce memory
-        
+
         try:
             self._model = WhisperModel(
                 final_model_path,
@@ -642,7 +642,7 @@ class AudioTranscriber:
         """
         model_id = "openai/whisper-base"
         wav_path = None
-        
+
         try:
             # Ensure model is loaded (handles download/conversion)
             if self._current_model_size != model_id:
@@ -669,13 +669,13 @@ class AudioTranscriber:
                 task="transcribe", # Changed from 'detect_language'
                 beam_size=5,
             )
-            
+
             log(f"[Audio] Language detected: {info.language} ({info.language_probability:.1%})")
-            
+
             # Lower threshold to ensure we catch Indic languages even with background noise
             if info.language_probability > 0.4:
                 return info.language
-            
+
             # Special check: if detected is 'ta' but confidence is low (0.2-0.4), still return 'ta'
             # because Whisper often has low confidence for Tamil but correctly identifies it vs English
             if info.language in ["ta", "hi", "ml", "te", "kn"] and info.language_probability > 0.2:

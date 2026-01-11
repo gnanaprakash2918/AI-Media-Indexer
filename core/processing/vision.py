@@ -156,13 +156,13 @@ class VisionAnalyzer:
             log("[Vision] Lazy loading LLM...")
             self._llm = LLMFactory.create_llm(provider="ollama")
             self._llm_loaded = True
-            
+
         if self.prompt is None and self._llm is not None:
             try:
                 self.prompt = self._llm.construct_user_prompt(self.prompt_filename)
                 log(f"[Vision] Loaded prompt from {self.prompt_filename}")
             except FileNotFoundError:
-                log(f"[Vision] Prompt file not found, using DENSE_MULTIMODAL_PROMPT")
+                log("[Vision] Prompt file not found, using DENSE_MULTIMODAL_PROMPT")
                 self.prompt = DENSE_MULTIMODAL_PROMPT
 
     @property
@@ -175,7 +175,7 @@ class VisionAnalyzer:
 
     @observe("vision_analyze_frame")
     async def analyze_frame(
-        self, 
+        self,
         image_path: Path,
         *,
         identity_context: str | None = None,
@@ -208,16 +208,16 @@ class VisionAnalyzer:
 
         # Build enhanced prompt with multimodal context
         prompt_parts = [STRUCTURED_ANALYSIS_PROMPT]
-        
+
         if identity_context:
             prompt_parts.append(f"\n\n## KNOWN IDENTITIES IN FRAME\n{identity_context}\nUse these names when describing the people.")
-        
+
         if audio_context:
             prompt_parts.append(f"\n\n## AUDIO CONTEXT (what's being said)\n{audio_context}\nThis shows dialogue at this moment. Use it to understand the scene.")
-        
+
         if temporal_context:
             prompt_parts.append(f"\n\n## PREVIOUS FRAMES (temporal context)\n{temporal_context}\nThis shows what happened before. Use it to understand continuing actions and narrative flow.")
-        
+
         enhanced_prompt = "".join(prompt_parts)
 
         try:

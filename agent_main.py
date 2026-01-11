@@ -20,20 +20,20 @@ def main() -> None:
     )
     parser.add_argument("video_path", type=str, help="Path to input video")
     parser.add_argument(
-        "--task", 
-        type=str, 
-        default="analyze", 
+        "--task",
+        type=str,
+        default="analyze",
         help="Natural language task description"
     )
-    
+
     args = parser.parse_args()
-    
+
     video = Path(args.video_path)
     if not video.exists():
         print(f"Error: {video} does not exist.")
         sys.exit(1)
 
-    print(f"--- Antigravity Agent ---")
+    print("--- Antigravity Agent ---")
     print(f"Video: {video.name}")
     print(f"Task: {args.task}")
     print(f"SAM3: {settings.enable_sam3_tracking}")
@@ -43,17 +43,17 @@ def main() -> None:
 
     agent = MediaPipelineAgent()
     agent.initialize(str(video), args.task)
-    
+
     result = agent.run()
-    
+
     print()
     print("--- Result ---")
     print(f"Transcript: {result['transcript_length']} chars")
     print(f"Masks: {result['masks_count']}")
-    
+
     if result['output_path']:
         print(f"Output: {result['output_path']}")
-        
+
     if result['errors']:
         print(f"Errors: {result['errors']}")
 

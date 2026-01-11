@@ -58,7 +58,7 @@ class FrameExtractor:
         """
         # Store time offset for timestamp calculation
         self._time_offset = start_time or 0.0
-        
+
         # Non-blocking async generator for frame extraction
         try:
             if isinstance(video_path, str):
@@ -84,30 +84,30 @@ class FrameExtractor:
 
                 # Build FFmpeg command with optional time range
                 args_to_ffmpeg = ["ffmpeg"]
-                
+
                 # -ss before -i for fast seeking (input seeking)
                 if start_time is not None:
                     args_to_ffmpeg.extend(["-ss", str(start_time)])
-                
+
                 args_to_ffmpeg.extend(["-i", str(path_obj)])
-                
+
                 # -t for duration (if end_time specified)
                 if end_time is not None:
                     duration = end_time - (start_time or 0)
                     if duration > 0:
                         args_to_ffmpeg.extend(["-t", str(duration)])
-                
+
                 # Video filter and quality settings
                 video_filters = []
-                
+
                 # Zero interval means "every frame" - skip fps filter
                 if interval > 0:
                     # FPS = 1 / interval (e.g., 0.5s -> 2fps)
                     video_filters.append(f"fps=1/{interval}")
-                    
+
                 if video_filters:
                     args_to_ffmpeg.extend(["-vf", ",".join(video_filters)])
-                
+
                 args_to_ffmpeg.extend([
                     "-q:v", "2",  # High quality JPEG
                     "-f", "image2",

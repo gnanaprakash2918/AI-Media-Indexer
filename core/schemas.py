@@ -25,18 +25,18 @@ class MediaType(str, Enum):
 class EntityDetail(BaseModel):
     """Details about ANY specific object, food, item, or tool in a frame."""
     name: str = Field(
-        ..., 
+        ...,
         description="Specific name (e.g., 'Idly', 'iPhone 15 Pro', 'Katana', 'Tesla Model 3')"
     )
     category: str = Field(
-        ..., 
+        ...,
         description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle')"
     )
     visual_details: str | dict | list = Field(
-        default="", 
+        default="",
         description="Color, state, texture - accepts string or structured data from LLM"
     )
-    
+
     def details_as_string(self) -> str:
         """Convert visual_details to string for search indexing."""
         if isinstance(self.visual_details, str):
@@ -60,7 +60,7 @@ class SceneContext(BaseModel):
     action_narrative: str = Field(default="", description="Precise action physics")
     cultural_context: str | None = Field(default=None, description="Inferred cultural setting")
     visible_text: list = Field(default_factory=list, description="Readable text/brands")
-    
+
     def get_text_strings(self) -> list[str]:
         """Extract text strings from visible_text (handles dicts from LLM)."""
         result = []
@@ -81,7 +81,7 @@ class FrameAnalysis(BaseModel):
     action_physics: str | dict | list = Field(default="", description="Physical motion details")
     entities: list = Field(default_factory=list, description="Key objects")
     scene: SceneContext | dict = Field(default_factory=SceneContext)
-    
+
     @field_validator("scene", mode="before")
     @classmethod
     def validate_scene(cls, v: Any) -> Any:
@@ -89,9 +89,9 @@ class FrameAnalysis(BaseModel):
         if isinstance(v, list) and len(v) > 0:
             return v[0]  # Extract first item if it's a list
         return v
-    
+
     face_cluster_ids: list[int] = Field(default_factory=list, description="Face cluster IDs")
-    
+
     def _to_str(self, val) -> str:
         """Convert any value to string for search indexing."""
         if isinstance(val, str):
@@ -101,18 +101,18 @@ class FrameAnalysis(BaseModel):
         if isinstance(val, list):
             return "; ".join(self._to_str(item) for item in val)
         return str(val) if val else ""
-    
+
     def to_search_content(self) -> str:
         """Generate a rich semantic search string."""
         parts = []
-        
+
         if self.main_subject:
             parts.append(self._to_str(self.main_subject))
         if self.action:
             parts.append(self._to_str(self.action))
         if self.action_physics:
             parts.append(self._to_str(self.action_physics))
-        
+
         for e in self.entities:
             if isinstance(e, dict):
                 name = e.get("name", "")
@@ -126,14 +126,14 @@ class FrameAnalysis(BaseModel):
                 elif e.visual_details:
                     entity_str += f" ({self._to_str(e.visual_details)})"
                 parts.append(entity_str)
-        
+
         scene = self.scene if isinstance(self.scene, SceneContext) else SceneContext(**self.scene) if isinstance(self.scene, dict) else SceneContext()
         if scene.location:
             parts.append(scene.location)
         parts.extend(scene.get_text_strings() if hasattr(scene, 'get_text_strings') else [])
         if scene.cultural_context:
             parts.append(scene.cultural_context)
-        
+
         return " ".join(filter(None, parts))
 
 

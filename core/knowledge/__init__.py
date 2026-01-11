@@ -9,7 +9,7 @@ from core.knowledge.schemas import (
 
 __all__ = [
     "EntityDetail",
-    "FrameAnalysis", 
+    "FrameAnalysis",
     "ParsedQuery",
     "SceneContext",
 ]

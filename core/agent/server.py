@@ -112,7 +112,7 @@ async def agentic_search(
         ),
     ] = 10,
     use_expansion: Annotated[
-        bool, 
+        bool,
         Field(
             description="Use LLM to expand query (e.g. 'South Indian food' → 'idli, dosa').",
         ),
@@ -242,7 +242,7 @@ async def enrich_identity(
         Dict with possible_matches and confidence.
     """
     from core.processing.enrichment import enricher
-    
+
     if entity_type == "face":
         return await enricher.enrich_unknown_face(context=context)
     elif entity_type == "location":

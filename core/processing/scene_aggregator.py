@@ -6,72 +6,72 @@ video-level global context for long-term understanding (18-hour problem).
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from core.utils.logger import log
 
 if TYPE_CHECKING:
-    from core.knowledge.schemas import EntityDetail, FrameAnalysis, PersonAttribute, SceneData
+    pass
 
 
 class GlobalContextManager:
     """Manages global video-level context for long-term understanding."""
-    
+
     def __init__(self):
         self.scene_summaries: list[str] = []
         self.key_entities: dict[str, int] = defaultdict(int)
         self.key_people: dict[str, int] = defaultdict(int)
         self.key_locations: dict[str, int] = defaultdict(int)
         self.total_duration: float = 0.0
-    
+
     def add_scene(self, scene: dict) -> None:
         summary = scene.get("visual_summary", "")
         if summary:
             self.scene_summaries.append(summary)
-        
+
         for name in scene.get("person_names", []):
             self.key_people[name] += 1
-        
+
         location = scene.get("location", "")
         if location:
             self.key_locations[location] += 1
-        
+
         for entity in scene.get("entities", []):
             name = entity.get("name", "") if isinstance(entity, dict) else str(entity)
             if name:
                 self.key_entities[name] += 1
-        
+
         self.total_duration = max(self.total_duration, scene.get("end_time", 0))
-    
+
     def generate_global_summary(self, llm=None) -> str:
         """Generate video-level summary using LLM or rule-based fallback."""
         if llm and len(self.scene_summaries) > 3:
             return self._llm_summarize(llm)
         return self._rule_based_summary()
-    
+
     def _rule_based_summary(self) -> str:
         parts = []
-        
+
         top_people = sorted(self.key_people.items(), key=lambda x: -x[1])[:5]
         if top_people:
             names = ", ".join(n for n, _ in top_people)
             parts.append(f"Featuring: {names}")
-        
+
         top_locations = sorted(self.key_locations.items(), key=lambda x: -x[1])[:3]
         if top_locations:
             locs = ", ".join(l for l, _ in top_locations)
             parts.append(f"Locations: {locs}")
-        
+
         top_entities = sorted(self.key_entities.items(), key=lambda x: -x[1])[:5]
         if top_entities:
             ents = ", ".join(e for e, _ in top_entities)
             parts.append(f"Key objects: {ents}")
-        
+
         if self.scene_summaries:
             parts.append(f"Total scenes: {len(self.scene_summaries)}")
-        
+
         return ". ".join(parts) if parts else "Video content summary"
-    
+
     def _llm_summarize(self, llm) -> str:
         combined = " | ".join(self.scene_summaries[:20])
         prompt = f"Summarize this video in 2-3 sentences:\n{combined}"
@@ -80,7 +80,7 @@ class GlobalContextManager:
         except Exception as e:
             log(f"LLM summarization failed: {e}")
             return self._rule_based_summary()
-    
+
     def to_payload(self) -> dict:
         return {
             "global_summary": self._rule_based_summary(),

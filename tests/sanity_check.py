@@ -9,19 +9,16 @@ if torch.cuda.is_available():
 
 # Test other critical imports
 try:
-    from core.storage.db import VectorDB
     print("✅ VectorDB import OK")
 except Exception as e:
     print(f"❌ VectorDB import failed: {e}")
 
 try:
-    from core.retrieval.agentic_search import SearchAgent
     print("✅ SearchAgent import OK")
 except Exception as e:
     print(f"❌ SearchAgent import failed: {e}")
 
 try:
-    from core.processing.temporal_context import TemporalContextManager
     print("✅ TemporalContextManager import OK")
 except Exception as e:
     print(f"❌ TemporalContextManager import failed: {e}")

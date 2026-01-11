@@ -13,8 +13,9 @@ from typing import Any
 
 import ollama
 
-from .interface import LLMInterface, T
 from core.utils.observe import observe
+
+from .interface import LLMInterface, T
 
 
 class OllamaLLM(LLMInterface):
@@ -25,7 +26,7 @@ class OllamaLLM(LLMInterface):
     _last_call_time: float = 0
     _consecutive_errors: int = 0
     _cooldown_until: float = 0
-    
+
     # Configuration
     MAX_CONCURRENT_CALLS = 1  # Reduced from 2 to prevent VRAM spikes
     MIN_CALL_INTERVAL = 0.5  # Seconds between calls
@@ -75,12 +76,12 @@ class OllamaLLM(LLMInterface):
             wait_time = OllamaLLM._cooldown_until - now
             print(f"[Ollama] In cooldown, waiting {wait_time:.1f}s...")
             await asyncio.sleep(wait_time)
-        
+
         # Enforce minimum interval between calls
         elapsed = now - OllamaLLM._last_call_time
         if elapsed < self.MIN_CALL_INTERVAL:
             await asyncio.sleep(self.MIN_CALL_INTERVAL - elapsed)
-        
+
         OllamaLLM._last_call_time = time.time()
 
     def _record_success(self) -> None:
@@ -90,15 +91,15 @@ class OllamaLLM(LLMInterface):
     def _record_error(self, error: Any = None) -> None:
         """Track errors and trigger cooldown if needed."""
         OllamaLLM._consecutive_errors += 1
-        
+
         error_str = str(error).lower() if error else ""
-        
+
         # Check for CUDA OOM (VRAM exhaustion)
         is_cuda_oom = (
             "cuda" in error_str and ("out of memory" in error_str or "unable to allocate" in error_str)
             or "cudamalloc failed" in error_str
         )
-        
+
         # Check for model runner crash or 500 errors (VRAM exhaustion)
         is_runner_crash = (
             "model runner has unexpectedly stopped" in error_str
@@ -106,9 +107,9 @@ class OllamaLLM(LLMInterface):
             or "internal server error" in error_str
             or "unexpected" in error_str and "stop" in error_str
         )
-        
+
         if is_cuda_oom:
-            print(f"[Ollama] CUDA OOM detected! Moving encoder to CPU as fallback...")
+            print("[Ollama] CUDA OOM detected! Moving encoder to CPU as fallback...")
             try:
                 # Try to free VRAM by moving encoder to CPU
                 from core.ingestion.pipeline import IngestionPipeline
@@ -116,7 +117,7 @@ class OllamaLLM(LLMInterface):
                     IngestionPipeline._instance.db.encoder_to_cpu()
             except Exception as e:
                 print(f"[Ollama] Could not move encoder to CPU: {e}")
-            
+
             OllamaLLM._cooldown_until = time.time() + self.RUNNER_CRASH_COOLDOWN
             OllamaLLM._consecutive_errors = 0
         elif is_runner_crash:
@@ -138,7 +139,7 @@ class OllamaLLM(LLMInterface):
         assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
-            
+
             for attempt in range(self.MAX_RETRIES):
                 try:
                     resp = await self.client.chat(
@@ -155,7 +156,7 @@ class OllamaLLM(LLMInterface):
                         print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
                         await asyncio.sleep(backoff)
                         continue
-                    
+
                     self._record_error(e)
                     print(f"Ollama generation failed after {self.MAX_RETRIES} attempts: {e}")
                     raise RuntimeError(f"Ollama generation failed: {e}") from e
@@ -177,7 +178,7 @@ class OllamaLLM(LLMInterface):
 
         # Build JSON schema example with nested structure
         schema_example = self._build_schema_example(schema)
-        
+
         # Construct prompt with explicit JSON instructions
         json_instructions = f"""You MUST respond with ONLY valid JSON matching this EXACT structure:
 
@@ -192,7 +193,7 @@ CRITICAL RULES:
 Now respond with JSON:"""
 
         full_prompt = f"{json_instructions}\n\n{prompt}"
-        
+
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n{full_prompt}"
 
@@ -200,7 +201,7 @@ Now respond with JSON:"""
         assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
-            
+
             for attempt in range(self.MAX_RETRIES):
                 try:
                     # Use format='json' to force JSON mode in Ollama
@@ -211,10 +212,10 @@ Now respond with JSON:"""
                         format="json",
                     )
                     response_text = resp.get("message", {}).get("content", "")
-                    
+
                     if not response_text:
                         raise RuntimeError("Empty response from Ollama")
-                    
+
                     result = self.parse_json_response(response_text, schema)
                     self._record_success()
                     return result
@@ -224,7 +225,7 @@ Now respond with JSON:"""
                         print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
                         await asyncio.sleep(backoff)
                         continue
-                        
+
                     self._record_error(e)
                     print(f"Ollama structured generation failed after {self.MAX_RETRIES} attempts: {e}")
                     raise RuntimeError(f"Ollama structured generation failed: {e}") from e
@@ -233,22 +234,22 @@ Now respond with JSON:"""
     def _build_schema_example(self, schema: type) -> str:
         """Build a JSON example from a Pydantic schema, recursively handling nested models."""
         import json
-        from typing import get_origin, get_args
-        
+        from typing import get_args, get_origin
+
         def build_example(model_class: type) -> dict | str | int | list:
             """Recursively build example for a Pydantic model or primitive."""
             if not hasattr(model_class, 'model_fields'):
                 # It's a primitive type
                 return f"<{model_class.__name__ if hasattr(model_class, '__name__') else 'value'}>"
-            
+
             example = {}
             for name, field in model_class.model_fields.items():
                 annotation = field.annotation
                 desc = field.description or name
-                
+
                 # Get the origin (e.g., list, dict, Optional)
                 origin = get_origin(annotation)
-                
+
                 if origin is list:
                     # list[EntityDetail] -> show nested example
                     args = get_args(annotation)
@@ -280,9 +281,9 @@ Now respond with JSON:"""
                             example[name] = f"<{name}>"
                     else:
                         example[name] = f"<{name}>"
-            
+
             return example
-        
+
         try:
             result = build_example(schema)
             return json.dumps(result, indent=2)
@@ -317,7 +318,7 @@ Now respond with JSON:"""
         assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
-            
+
             for attempt in range(self.MAX_RETRIES):
                 try:
                     resp = await self.client.chat(
@@ -334,7 +335,7 @@ Now respond with JSON:"""
                         print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
                         await asyncio.sleep(backoff)
                         continue
-                        
+
                     self._record_error(e)
                     print(f"Ollama image description failed after {self.MAX_RETRIES} attempts: {e}")
                     raise RuntimeError(f"Ollama image description failed: {e}") from e
@@ -354,11 +355,11 @@ Now respond with JSON:"""
         Uses format='json' for proper JSON output from vision model.
         """
         img_path = str(Path(image_path))
-        
+
         # Build schema example
         schema_example = self._build_schema_example(schema)
-        
-        # Construct prompt with JSON instructions  
+
+        # Construct prompt with JSON instructions
         # Note: face_cluster_ids is excluded - it's filled by the pipeline, not LLM
         json_prompt = f"""Analyze this image and return ONLY valid JSON matching this EXACT structure:
 
@@ -392,7 +393,7 @@ Return JSON:"""
         assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
         async with OllamaLLM._semaphore:
             await self._rate_limit()
-            
+
             for attempt in range(self.MAX_RETRIES):
                 try:
                     resp = await self.client.chat(
@@ -404,18 +405,18 @@ Return JSON:"""
                     content = resp.get("message", {}).get("content", "")
                     if not content:
                         raise RuntimeError("Empty response from Ollama vision")
-                    
+
                     result = self.parse_json_response(content, schema)
                     self._record_success()
                     return result
-                    
+
                 except Exception as e:
                     if attempt < self.MAX_RETRIES - 1:
                         backoff = 2 ** (attempt + 1)
                         print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
                         await asyncio.sleep(backoff)
                         continue
-                        
+
                     self._record_error(e)
                     print(f"Ollama structured image description failed after {self.MAX_RETRIES} attempts: {e}")
                     raise RuntimeError(f"Ollama structured image description failed: {e}") from e

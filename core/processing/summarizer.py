@@ -20,7 +20,6 @@ from core.storage.db import VectorDB
 from core.utils.logger import log
 from llm.interface import LLMInterface, get_llm
 
-
 SCENE_SUMMARY_PROMPT = """Summarize this 5-minute scene from a video.
 
 TRANSCRIPT:
@@ -82,9 +81,9 @@ class HierarchicalSummarizer:
     - L2 (Scene): 5-minute chunks with local context
     - L1 (Video): Full video summary from L2 aggregation
     """
-    
+
     SCENE_DURATION_SECONDS = 300  # 5 minutes
-    
+
     def __init__(
         self,
         db: VectorDB | None = None,
@@ -95,7 +94,7 @@ class HierarchicalSummarizer:
         self._scene_duration = getattr(
             settings, 'summary_scene_duration', self.SCENE_DURATION_SECONDS
         )
-    
+
     async def summarize_video(
         self,
         video_path: str,
@@ -116,35 +115,35 @@ class HierarchicalSummarizer:
             if existing.get("l1_summary"):
                 log(f"Summaries already exist for {video_path}, skipping")
                 return existing
-        
+
         log(f"Generating hierarchical summaries for {video_path}")
-        
+
         # Get all indexed frames/segments for this video
         frames = self._get_video_frames(video_path)
         if not frames:
             log(f"No indexed frames found for {video_path}")
             return {"l1_summary": None, "l2_summaries": []}
-        
+
         # Get video duration
         duration = max(f.get("timestamp", 0) for f in frames)
-        
+
         # Generate L2 (scene) summaries
         l2_summaries = await self._generate_scene_summaries(video_path, frames, duration)
-        
+
         # Generate L1 (video) summary from L2s
         l1_summary = await self._generate_video_summary(
             video_path, l2_summaries, duration
         )
-        
+
         # Store summaries in Qdrant
         await self._store_summaries(video_path, l1_summary, l2_summaries)
-        
+
         return {
             "l1_summary": l1_summary,
             "l2_summaries": l2_summaries,
             "scene_count": len(l2_summaries),
         }
-    
+
     def _get_existing_summaries(self, video_path: str) -> dict[str, Any]:
         """Check for existing summaries in the database."""
         try:
@@ -159,10 +158,10 @@ class HierarchicalSummarizer:
                 limit=1,
                 with_payload=True,
             )
-            
+
             if results[0]:
                 l1 = results[0][0].payload
-                
+
                 # Get L2 summaries
                 l2_results = self.db.client.scroll(
                     collection_name=self.db.SUMMARIES_COLLECTION,
@@ -175,15 +174,15 @@ class HierarchicalSummarizer:
                     limit=100,
                     with_payload=True,
                 )
-                
+
                 l2_summaries = [p.payload for p in l2_results[0]]
                 return {"l1_summary": l1, "l2_summaries": l2_summaries}
-                
+
         except Exception:
             pass
-        
+
         return {"l1_summary": None, "l2_summaries": []}
-    
+
     def _get_video_frames(self, video_path: str) -> list[dict[str, Any]]:
         """Get all indexed frames for a video."""
         try:
@@ -197,12 +196,12 @@ class HierarchicalSummarizer:
                 limit=10000,
                 with_payload=True,
             )
-            
+
             return [p.payload for p in results[0]]
         except Exception as e:
             log(f"Error getting frames: {e}")
             return []
-    
+
     async def _generate_scene_summaries(
         self,
         video_path: str,
@@ -212,38 +211,38 @@ class HierarchicalSummarizer:
         """Generate L2 scene summaries for 5-minute chunks."""
         summaries = []
         scene_count = max(1, int(duration / self._scene_duration) + 1)
-        
+
         for i in range(scene_count):
             start_time = i * self._scene_duration
             end_time = min((i + 1) * self._scene_duration, duration)
-            
+
             # Get frames in this time range
             scene_frames = [
                 f for f in frames
                 if start_time <= f.get("timestamp", 0) < end_time
             ]
-            
+
             if not scene_frames:
                 continue
-            
+
             # Build context from frames
             transcript = self._extract_transcripts(scene_frames)
             visuals = self._extract_visuals(scene_frames)
             entities = self._extract_entities(scene_frames)
-            
+
             # Generate summary via LLM
             prompt = SCENE_SUMMARY_PROMPT.format(
                 transcript=transcript or "(No dialogue)",
                 visual_descriptions=visuals or "(No visual descriptions)",
                 entities=", ".join(entities) if entities else "(None identified)",
             )
-            
+
             try:
                 summary_text = await asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda: self.llm.generate(prompt, max_tokens=300)
                 )
-                
+
                 summaries.append({
                     "video_path": video_path,
                     "level": SummaryLevel.L2_SCENE,
@@ -253,12 +252,12 @@ class HierarchicalSummarizer:
                     "summary": summary_text.strip(),
                     "entities": entities,
                 })
-                
+
             except Exception as e:
                 log(f"Error generating scene {i} summary: {e}")
-        
+
         return summaries
-    
+
     async def _generate_video_summary(
         self,
         video_path: str,
@@ -274,11 +273,11 @@ class HierarchicalSummarizer:
                 "start_time": 0.0,
                 "end_time": duration,
             }
-        
+
         # Combine scene summaries
         scene_texts = []
         all_entities = set()
-        
+
         for s in scene_summaries:
             idx = s.get("scene_index", 0)
             start = s.get("start_time", 0)
@@ -288,22 +287,22 @@ class HierarchicalSummarizer:
                 f"{int(end // 60)}:{int(end % 60):02d}):\n{s.get('summary', '')}"
             )
             all_entities.update(s.get("entities", []))
-        
+
         title = Path(video_path).stem
-        
+
         prompt = VIDEO_SUMMARY_PROMPT.format(
             scene_summaries="\n\n".join(scene_texts),
             title=title,
             duration=f"{int(duration // 60)} minutes",
             scene_count=len(scene_summaries),
         )
-        
+
         try:
             summary_text = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.llm.generate(prompt, max_tokens=500)
             )
-            
+
             return {
                 "video_path": video_path,
                 "level": SummaryLevel.L1_VIDEO,
@@ -312,7 +311,7 @@ class HierarchicalSummarizer:
                 "end_time": duration,
                 "entities": list(all_entities),
             }
-            
+
         except Exception as e:
             log(f"Error generating video summary: {e}")
             return {
@@ -322,7 +321,7 @@ class HierarchicalSummarizer:
                 "start_time": 0.0,
                 "end_time": duration,
             }
-    
+
     def _extract_transcripts(self, frames: list[dict[str, Any]]) -> str:
         """Extract transcript text from frames."""
         texts = []
@@ -332,7 +331,7 @@ class HierarchicalSummarizer:
             if transcript := f.get("transcript"):
                 texts.append(transcript)
         return " ".join(texts)[:2000]  # Limit length
-    
+
     def _extract_visuals(self, frames: list[dict[str, Any]]) -> str:
         """Extract visual descriptions from frames."""
         visuals = []
@@ -344,7 +343,7 @@ class HierarchicalSummarizer:
         # Deduplicate and limit
         unique = list(dict.fromkeys(visuals))
         return " | ".join(unique[:20])
-    
+
     def _extract_entities(self, frames: list[dict[str, Any]]) -> list[str]:
         """Extract unique entities from frames."""
         entities = set()
@@ -356,7 +355,7 @@ class HierarchicalSummarizer:
                 if isinstance(faces, list):
                     entities.update(faces)
         return list(entities)[:20]
-    
+
     async def _store_summaries(
         self,
         video_path: str,
@@ -364,14 +363,15 @@ class HierarchicalSummarizer:
         l2_summaries: list[dict[str, Any]],
     ) -> None:
         """Store summaries in the global_summaries collection."""
-        from qdrant_client.models import PointStruct
         import uuid
-        
+
+        from qdrant_client.models import PointStruct
+
         # Ensure collection exists
         self.db._ensure_collection(self.db.SUMMARIES_COLLECTION)
-        
+
         points = []
-        
+
         # Add L1 summary
         if l1_summary and l1_summary.get("summary"):
             embedding = self.db.encode_texts([l1_summary["summary"]])[0]
@@ -380,7 +380,7 @@ class HierarchicalSummarizer:
                 vector=embedding.tolist(),
                 payload=l1_summary,
             ))
-        
+
         # Add L2 summaries
         for s in l2_summaries:
             if s.get("summary"):
@@ -390,7 +390,7 @@ class HierarchicalSummarizer:
                     vector=embedding.tolist(),
                     payload=s,
                 ))
-        
+
         if points:
             self.db.client.upsert(
                 collection_name=self.db.SUMMARIES_COLLECTION,

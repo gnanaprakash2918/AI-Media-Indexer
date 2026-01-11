@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
-
-import time
-from pathlib import Path
-from uuid import uuid4
-import sys
 
 # Windows-specific asyncio fix for "WinError 10054" noise
 if sys.platform == "win32":
     import asyncio
     import logging
-    
+    import warnings
+
+    # Suppress pynvml unrelated warnings from torch/fastapi
+    warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda")
+
     # Custom filter to suppress ConnectionResetError from logging
     class ConnectionResetFilter(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
@@ -29,15 +30,15 @@ if sys.platform == "win32":
                 if exc_type and issubclass(exc_type, ConnectionResetError):
                     return False
             return True
-    
+
     # Apply filter to root logger and common loggers
     for logger_name in ['', 'uvicorn', 'uvicorn.error', 'asyncio']:
         logging.getLogger(logger_name).addFilter(ConnectionResetFilter())
-    
+
     class SilenceEventLoopPolicy(asyncio.WindowsProactorEventLoopPolicy):
         def _loop_factory(self) -> asyncio.AbstractEventLoop:
             loop = super()._loop_factory()
-            
+
             def exception_handler(loop, context):
                 # Suppress connection reset errors typical in Windows
                 exc = context.get("exception")
@@ -55,23 +56,22 @@ if sys.platform == "win32":
 
     asyncio.set_event_loop_policy(SilenceEventLoopPolicy())
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+import numpy as np
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastapi import Header
-from core.utils.streaming import range_generator
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-import numpy as np
 from qdrant_client.http import models
 
 from config import settings
+from core.ingestion.jobs import JobStatus, job_manager
 from core.ingestion.pipeline import IngestionPipeline
-from core.ingestion.jobs import job_manager, JobStatus
 from core.ingestion.scanner import LibraryScanner
 from core.utils.logger import bind_context, clear_context, logger
 from core.utils.observability import end_trace, init_langfuse, start_trace
 from core.utils.progress import progress_tracker
+from core.utils.streaming import range_generator
 
 pipeline: IngestionPipeline | None = None
 
@@ -89,13 +89,13 @@ async def lifespan(app: FastAPI):
     try:
         pipeline = IngestionPipeline()
         logger.info("Pipeline initialized")
-        
+
         # Crash Recovery: Auto-detect stuck jobs from previous crashes
         # Uses heartbeat timeout (60s) to detect jobs that died mid-processing
         recovery_stats = job_manager.recover_on_startup(timeout_seconds=60.0)
         if recovery_stats["paused"] > 0:
             logger.warning(f"Crash recovery: Marked {recovery_stats['paused']} interrupted jobs as PAUSED (resumable)")
-                
+
     except Exception as exc:
         pipeline = None
         logger.error(f"Pipeline init failed: {exc}")
@@ -196,7 +196,11 @@ def create_app() -> FastAPI:
     @app.get("/config/system")
     async def get_system_config():
         """Get detected hardware profile and current settings."""
-        from core.utils.hardware import get_cached_profile, get_available_vram, get_used_vram
+        from core.utils.hardware import (
+            get_available_vram,
+            get_cached_profile,
+            get_used_vram,
+        )
         profile = get_cached_profile()
         return {
             "profile": profile.to_dict(),
@@ -221,49 +225,20 @@ def create_app() -> FastAPI:
             if key in allowed_keys:
                 setattr(settings, key, value)
                 applied[key] = value
-        
+
         # Refresh hardware profile
         from core.utils.hardware import refresh_profile
         new_profile = refresh_profile()
-        
+
         return {"applied": applied, "new_profile": new_profile.to_dict()}
 
     # Mount static files for pre-generated thumbnails
     thumb_dir = settings.cache_dir / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create subdirectories
     (thumb_dir / "faces").mkdir(exist_ok=True)
     (thumb_dir / "voices").mkdir(exist_ok=True)
-
-    @app.get("/health")
-    async def health_check():
-        """Health check endpoint with observability status."""
-        status = {"status": "ok", "components": {}}
-        
-        # Check DB
-        if pipeline and pipeline.db:
-            try:
-                pipeline.db.client.get_collections()
-                status["components"]["db"] = "connected"
-            except Exception as e:
-                status["components"]["db"] = f"error: {str(e)}"
-                status["status"] = "degraded"
-        else:
-             status["components"]["db"] = "initializing"
-        
-        # Check Langfuse
-        try:
-            # We assume init_langfuse() sets up the global handler
-            # We can check if settings.langfuse_public_key is set
-            if settings.langfuse_public_key:
-                status["components"]["langfuse"] = "configured"
-            else:
-                status["components"]["langfuse"] = "disabled"
-        except Exception:
-             status["components"]["langfuse"] = "error"
-
-        return status
 
 
 
@@ -271,35 +246,36 @@ def create_app() -> FastAPI:
     @app.get("/thumbnails/faces/{filename}")
     async def get_face_thumbnail(filename: str):
         """Serve face thumbnail, generating on-demand if missing using FFmpeg fast-seek."""
-        from fastapi.responses import FileResponse, Response
         import subprocess
         from subprocess import DEVNULL
-        
+
+        from fastapi.responses import FileResponse
+
         file_path = thumb_dir / "faces" / filename
-        
+
         # If file exists, serve it immediately
         if file_path.exists():
             return FileResponse(file_path, media_type="image/jpeg")
-        
+
         # Generate on-demand using FFmpeg (10-50x faster than OpenCV)
         try:
             if not pipeline or not pipeline.db:
                 raise HTTPException(status_code=503, detail="Database not ready")
-            
+
             # Look up face by thumbnail_path
             face_data = pipeline.db.get_face_by_thumbnail(f"/thumbnails/faces/{filename}")
             if not face_data:
                 raise HTTPException(status_code=404, detail="Face not found")
-            
+
             media_path = face_data.get("media_path")
             timestamp = face_data.get("timestamp", 0)
-            
+
             if not media_path or not Path(media_path).exists():
                 raise HTTPException(status_code=404, detail="Source video not found")
-            
+
             # Ensure directory exists
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             # FFmpeg fast-seek: -ss BEFORE -i for fast seeking (vs slow decode-seek)
             # Use scale filter for 192px thumbnail, quality 5 for small file
             cmd = [
@@ -311,19 +287,19 @@ def create_app() -> FastAPI:
                 "-q:v", "5",                 # Quality 5 (~75% JPEG)
                 str(file_path)
             ]
-            
+
             result = subprocess.run(
-                cmd, 
-                stdout=DEVNULL, 
-                stderr=DEVNULL, 
+                cmd,
+                stdout=DEVNULL,
+                stderr=DEVNULL,
                 timeout=10  # 10 second timeout
             )
-            
+
             if result.returncode == 0 and file_path.exists():
                 return FileResponse(file_path, media_type="image/jpeg")
             else:
                 raise HTTPException(status_code=500, detail="FFmpeg extraction failed")
-                
+
         except subprocess.TimeoutExpired:
             raise HTTPException(status_code=504, detail="Thumbnail generation timeout")
         except HTTPException:
@@ -336,32 +312,33 @@ def create_app() -> FastAPI:
     @app.get("/thumbnails/voices/{filename}")
     async def get_voice_audio(filename: str):
         """Serve voice audio clip, generating on-demand if missing."""
-        from fastapi.responses import FileResponse
         import subprocess
-        
+
+        from fastapi.responses import FileResponse
+
         file_path = thumb_dir / "voices" / filename
-        
+
         # If file exists, serve it
         if file_path.exists():
             return FileResponse(file_path, media_type="audio/mpeg")
-        
+
         # Parse filename: {hash}_{start}_{end}.mp3
         try:
             if not pipeline or not pipeline.db:
                 raise HTTPException(status_code=503, detail="Database not ready")
-            
+
             # Look up voice segment by audio_path
             segment = pipeline.db.get_voice_by_audio_path(f"/thumbnails/voices/{filename}")
             if not segment:
                 raise HTTPException(status_code=404, detail="Voice segment not found")
-            
+
             media_path = segment.get("media_path")
             start = segment.get("start", 0)
             end = segment.get("end", start + 5)
-            
+
             if not media_path or not Path(media_path).exists():
                 raise HTTPException(status_code=404, detail="Source video not found")
-            
+
             # Extract audio segment using FFmpeg
             file_path.parent.mkdir(parents=True, exist_ok=True)
             cmd = [
@@ -374,12 +351,12 @@ def create_app() -> FastAPI:
                 str(file_path)
             ]
             result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
+
             if file_path.exists():
                 return FileResponse(file_path, media_type="audio/mpeg")
             else:
                 raise HTTPException(status_code=500, detail="Audio extraction failed")
-                
+
         except HTTPException:
             raise
         except Exception as e:
@@ -413,37 +390,41 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         """Health check endpoint with Performance and Observability checks."""
-        # 1. DB Stats
-        stats = None
-        if pipeline and pipeline.db:
-            try:
-                stats = pipeline.db.get_collection_stats()
-            except Exception:
-                pass
+        try:
+            # 1. DB Stats
+            stats = None
+            if pipeline and pipeline.db:
+                try:
+                    stats = pipeline.db.get_collection_stats()
+                except Exception:
+                    pass
 
-        # 2. Observability Check
-        from core.utils.observability import langfuse
-        
-        observability_status = "disabled"
-        if langfuse:
-            try:
-                # Assuming auth_check is fast/sync or we iterate
-                if langfuse.auth_check():
-                    observability_status = "connected"
-                else:
-                     observability_status = "auth_failed"
-            except Exception:
-                 observability_status = "error"
-                 
-        return {
-            "status": "ok",
-            "device": settings.device,
-            "pipeline": "ready" if pipeline else "unavailable",
-            "qdrant": "connected" if pipeline and pipeline.db else "disconnected",
-            "stats": stats,
-            "observability": observability_status,
-            "asr_mode": "Native" if settings.use_native_nemo else "Docker/Whisper"
-        }
+            # 2. Observability Check
+            # from core.utils.observability import langfuse - Removed as it causes ImportError
+
+            observability_status = "disabled"
+            if settings.langfuse_public_key:
+                 observability_status = "configured"
+            
+            # Optional: Check if we can reach Langfuse host if configured
+            # But simple config check is enough for health/fast response
+
+            return {
+                "status": "ok",
+                "device": settings.device,
+                "pipeline": "ready" if pipeline else "unavailable",
+                "qdrant": "connected" if pipeline and pipeline.db else "disconnected",
+                "stats": stats,
+                "observability": observability_status,
+                "asr_mode": "Native" if settings.use_native_nemo else "Docker/Whisper"
+            }
+        except Exception as e:
+            logger.exception("Health check failed")
+            return {
+                "status": "error", 
+                "message": str(e),
+                "type": type(e).__name__
+            }
 
     @app.get("/events")
     async def sse_events():
@@ -489,17 +470,15 @@ def create_app() -> FastAPI:
         - HTTP Range requests (required for video seeking)
         - Optional start/end params for segment playback
         """
-        from fastapi.responses import StreamingResponse, Response
-        import os
-        import stat
-        
+        from fastapi.responses import StreamingResponse
+
         file_path = Path(path)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         # Get file stats
         file_size = file_path.stat().st_size
-        
+
         # Get mime type
         suffix = file_path.suffix.lower()
         mime_types = {
@@ -509,22 +488,22 @@ def create_app() -> FastAPI:
             '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg',
         }
         media_type = mime_types.get(suffix, 'application/octet-stream')
-        
+
         # Parse Range header
         range_header = request.headers.get("range")
-        
+
         if range_header:
             # Parse "bytes=start-end"
             range_match = range_header.replace("bytes=", "").split("-")
             range_start = int(range_match[0]) if range_match[0] else 0
             range_end = int(range_match[1]) if range_match[1] else file_size - 1
-            
+
             # Ensure valid range
             range_start = max(0, min(range_start, file_size - 1))
             range_end = max(range_start, min(range_end, file_size - 1))
-            
+
             content_length = range_end - range_start + 1
-            
+
             def iterfile():
                 with open(file_path, "rb") as f:
                     f.seek(range_start)
@@ -537,14 +516,14 @@ def create_app() -> FastAPI:
                             break
                         remaining -= len(data)
                         yield data
-            
+
             headers = {
                 "Content-Range": f"bytes {range_start}-{range_end}/{file_size}",
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(content_length),
                 "Content-Type": media_type,
             }
-            
+
             return StreamingResponse(
                 iterfile(),
                 status_code=206,  # Partial Content
@@ -558,12 +537,12 @@ def create_app() -> FastAPI:
                     chunk_size = 64 * 1024
                     while chunk := f.read(chunk_size):
                         yield chunk
-            
+
             headers = {
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(file_size),
             }
-            
+
             return StreamingResponse(
                 iterfile(),
                 headers=headers,
@@ -582,34 +561,35 @@ def create_app() -> FastAPI:
         - First request: Fast H264 encode and cache to disk (~5-10s)
         - Subsequent requests: Serve from cache (instant)
         """
-        from fastapi.responses import FileResponse
-        import subprocess
         import hashlib
-        
+        import subprocess
+
+        from fastapi.responses import FileResponse
+
         file_path = Path(path)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         # Default segment duration
         duration = (end - start) if end else 10.0
-        
+
         # Create cache directory for segments
         cache_dir = settings.cache_dir / "segments"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Generate cache filename based on path + start + end
         cache_key = f"{file_path.stem}_{start:.2f}_{duration:.2f}"
         cache_hash = hashlib.md5(f"{path}_{start}_{duration}".encode()).hexdigest()[:8]
         cache_file = cache_dir / f"{cache_key}_{cache_hash}.mp4"
-        
+
         # Serve from cache if exists
         if cache_file.exists():
             return FileResponse(
-                cache_file, 
+                cache_file,
                 media_type="video/mp4",
                 headers={"Cache-Control": "public, max-age=86400"}
             )
-        
+
         # Encode segment using fast H264
         # Using ultrafast preset + CRF 28 for speed over quality
         cmd = [
@@ -626,19 +606,19 @@ def create_app() -> FastAPI:
             "-f", "mp4",
             str(cache_file)
         ]
-        
+
         # Run synchronously (blocking but cached)
         result = subprocess.run(
-            cmd, 
-            stdout=subprocess.DEVNULL, 
+            cmd,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             timeout=60  # Max 60 seconds for encoding
         )
-        
+
         if cache_file.exists():
             return FileResponse(
                 cache_file,
-                media_type="video/mp4", 
+                media_type="video/mp4",
                 headers={"Cache-Control": "public, max-age=86400"}
             )
         else:
@@ -648,45 +628,44 @@ def create_app() -> FastAPI:
     @app.get("/media/thumbnail")
     async def get_media_thumbnail(path: str = Query(...), time: float = 0.0):
         """Generate a thumbnail for a video at a specific timestamp."""
-        from fastapi.responses import Response
         import cv2
-        import numpy as np
-        
+        from fastapi.responses import Response
+
         file_path = Path(path)
         if not file_path.exists():
              # Return a placeholder or 404
             raise HTTPException(status_code=404, detail="File not found")
-            
+
         # Use OpenCV for fast seeking
         try:
             cap = cv2.VideoCapture(str(file_path))
             if not cap.isOpened():
                 raise ValueError("Could not open video")
-                
+
             # Seek
             # Convert seconds to msec
             cap.set(cv2.CAP_PROP_POS_MSEC, time * 1000)
             ret, frame = cap.read()
             cap.release()
-            
+
             if not ret or frame is None:
                 raise ValueError("Could not read frame")
-                
+
             # Resize for thumbnail (e.g. 320px width)
             h, w = frame.shape[:2]
             target_w = 320
             scale = target_w / w
             target_h = int(h * scale)
             frame = cv2.resize(frame, (target_w, target_h))
-            
+
             # Encode as JPEG
             # [1] is quality (0-100)
             success, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
             if not success:
                 raise ValueError("Encoding failed")
-                
+
             return Response(content=buffer.tobytes(), media_type="image/jpeg")
-            
+
         except Exception as e:
             logger.error(f"Thumbnail generation failed: {e}")
             raise HTTPException(status_code=500, detail="Could not generate thumbnail")
@@ -706,7 +685,7 @@ def create_app() -> FastAPI:
                 status_code=404,
                 detail=f"File not found on server: {ingest_request.path}"
             )
-        
+
         # Validate media file extension
         ext = file_path.suffix.lower()
         if ext not in ALLOWED_MEDIA_EXTENSIONS:
@@ -722,7 +701,7 @@ def create_app() -> FastAPI:
         if settings.enable_distributed_ingestion:
             try:
                 from core.ingestion.tasks import ingest_video_task
-                
+
                 # Initialize job tracking locally so UI sees it immediately
                 progress_tracker.start(
                     job_id,
@@ -731,10 +710,10 @@ def create_app() -> FastAPI:
                     resume=False,
                 )
                 progress_tracker.update(job_id, 0.0, stage="queued", message="Queued for distributed worker")
-                
+
                 # Dispatch to Celery
                 ingest_video_task.delay(str(file_path), job_id)
-                
+
                 return {
                     "status": "queued_distributed",
                     "job_id": job_id,
@@ -744,7 +723,7 @@ def create_app() -> FastAPI:
                 }
             except Exception as e:
                  logger.error(f"Failed to dispatch to Celery: {e}")
-                 # Fallback to local execution if dispatch fails? 
+                 # Fallback to local execution if dispatch fails?
                  # Or raise error to alert user configuration is broken?
                  # Let's log and fall through to local for robustness, or raise if critical.
                  # Given "Future Work" status, safety first -> Fallback or explicit error.
@@ -852,12 +831,12 @@ def create_app() -> FastAPI:
         return {"status": "cancelled", "job_id": job_id}
 
 
-        
+
         # 3. Determine resume point
         start_time = 0.0
         if job.checkpoint_data and "timestamp" in job.checkpoint_data:
             start_time = float(job.checkpoint_data["timestamp"])
-            
+
         logger.info(f"Resuming job {job_id} ({job.file_path}) from {start_time:.1f}s")
 
         # 4. Respawn pipeline
@@ -879,32 +858,32 @@ def create_app() -> FastAPI:
                 end_trace("error", str(e))
 
         background_tasks.add_task(run_pipeline_resume)
-        
+
         return {"status": "resumed", "job_id": job_id, "start_time": start_time}
-    
+
     @app.delete("/library")
     async def delete_library_item(path: str = Query(...)):
         """Remove a media file from the library (DB + Thumbnails + Jobs)."""
         if not pipeline or not pipeline.db:
              raise HTTPException(status_code=503, detail="Database not ready")
-        
+
         logger.info(f"Deleting media: {path}")
-        
+
         # 1. Delete from Qdrant
         pipeline.db.delete_media_by_path(path)
-        
+
         # 2. Delete job history
         all_jobs = job_manager.get_all_jobs(limit=1000)
         for job in all_jobs:
             if job.file_path == path:
                 job_manager.delete_job(job.job_id)
-        
+
         # 3. Clean up thumbnails
         import hashlib
         try:
              safe_stem = hashlib.md5(Path(path).stem.encode()).hexdigest()
              thumb_dir = settings.cache_dir / "thumbnails"
-             
+
              # Delete generic thumbnails
              for f in (thumb_dir / "faces").glob(f"{safe_stem}_*"):
                  try: f.unlink()
@@ -914,7 +893,7 @@ def create_app() -> FastAPI:
                  except: pass
         except Exception as e:
             logger.warning(f"Thumbnail cleanup failed: {e}")
-            
+
         return {"status": "deleted", "path": path}
 
     @app.post("/search/advanced")
@@ -922,16 +901,16 @@ def create_app() -> FastAPI:
         from core.retrieval.engine import get_search_engine
         if not pipeline or not pipeline.db:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         engine = get_search_engine(db=pipeline.db)
         results = await engine.search(
             query=req.query,
             use_rerank=req.use_rerank,
             limit=req.limit,
         )
-        
+
         filtered = [r for r in results if r.score >= req.min_confidence]
-        
+
         return {
             "query": req.query,
             "total": len(filtered),
@@ -940,12 +919,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/media/thumbnail")
     async def get_video_thumbnail(path: str = Query(...), time: float = Query(0.0)):
-        from fastapi.responses import Response
         import subprocess
+
+        from fastapi.responses import Response
         video_path = Path(path)
         if not video_path.exists():
             raise HTTPException(status_code=404, detail="Video not found")
-        
+
         cmd = [
             "ffmpeg", "-ss", str(time),
             "-i", str(video_path),
@@ -1050,9 +1030,9 @@ def create_app() -> FastAPI:
         video_path = Path(req.video_path)
         if not video_path.exists():
             raise HTTPException(status_code=404, detail="Video not found")
-        
+
         output_path = Path(req.output_path) if req.output_path else None
-        
+
         async def run_redaction():
             redactor = VideoRedactor()
             result = await redactor.redact_identity(
@@ -1061,7 +1041,7 @@ def create_app() -> FastAPI:
                 output_path=output_path,
             )
             logger.info(f"Redaction complete: {result}")
-        
+
         background_tasks.add_task(asyncio.create_task, run_redaction())
         return {
             "status": "started",
@@ -1088,52 +1068,56 @@ def create_app() -> FastAPI:
         
         Uses parallel batch extraction for speed (4 concurrent FFmpeg processes).
         """
-        from core.utils.batch_extract import extract_frames_batch, extract_audio_clips_batch
         import hashlib
-        
+
+        from core.utils.batch_extract import (
+            extract_audio_clips_batch,
+            extract_frames_batch,
+        )
+
         file_path = Path(path)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         if not pipeline or not pipeline.db:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         # Get prefix for output files
         prefix = hashlib.md5(file_path.stem.encode()).hexdigest()
-        
+
         face_output_dir = settings.cache_dir / "thumbnails" / "faces"
         voice_output_dir = settings.cache_dir / "thumbnails" / "voices"
         face_output_dir.mkdir(parents=True, exist_ok=True)
         voice_output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Get all faces and voice segments for this media from database
         faces = pipeline.db.get_faces_by_media(str(file_path))
         voices = pipeline.db.get_voice_segments(str(file_path))
-        
+
         # Extract timestamps and segments
         face_timestamps = list(set(f.get("timestamp", 0) for f in faces if f.get("timestamp") is not None))
         voice_segments = [(v.get("start", 0), v.get("end", v.get("start", 0) + 3)) for v in voices]
-        
+
         # Run batch extraction in thread pool
         import asyncio
-        
+
         face_results = {}
         voice_results = {}
-        
+
         if face_timestamps:
             face_results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 extract_frames_batch,
                 file_path, face_timestamps, face_output_dir, prefix
             )
-        
+
         if voice_segments:
             voice_results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 extract_audio_clips_batch,
                 file_path, voice_segments, voice_output_dir, prefix
             )
-        
+
         return {
             "status": "completed",
             "faces_generated": len(face_results),
@@ -1165,10 +1149,10 @@ def create_app() -> FastAPI:
         """
         if not pipeline:
             return {"error": "Pipeline not initialized", "results": [], "stats": {}}
-        
-        from urllib.parse import quote
+
         from collections import defaultdict
-        
+        from urllib.parse import quote
+
         start_time_search = time.perf_counter()
         logger.info(f"Search query: '{q}' | type: {search_type} | limit: {limit} | video_filter: {video_path}")
 
@@ -1185,13 +1169,13 @@ def create_app() -> FastAPI:
         # Dialogue/transcript search
         if search_type in ("all", "dialogue"):
             dialogue_results = pipeline.db.search_media(q, limit=limit * 2)
-            
+
             # Post-filter by video_path if specified
             if video_path:
                 dialogue_results = [r for r in dialogue_results if r.get("video_path") == video_path]
-            
+
             stats["dialogue_count"] = len(dialogue_results)
-            
+
             for hit in dialogue_results[:limit]:
                 hit["result_type"] = "dialogue"
                 hit["thumbnail_url"] = None
@@ -1201,7 +1185,7 @@ def create_app() -> FastAPI:
                     safe_path = quote(str(video))
                     hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={start_time}"
                     hit["playback_url"] = f"/media?path={safe_path}#t={start_time}"
-            
+
             results.extend(dialogue_results[:limit])
             logger.info(f"  Dialogue results: {len(dialogue_results)}")
 
@@ -1209,13 +1193,13 @@ def create_app() -> FastAPI:
         if search_type in ("all", "visual"):
             # Fetch more results to allow for deduplication and filtering
             frame_results = pipeline.db.search_frames(q, limit=limit * 4)
-            
+
             # Post-filter by video_path if specified
             if video_path:
                 frame_results = [r for r in frame_results if r.get("video_path") == video_path]
-            
+
             stats["total_frames_scanned"] = len(frame_results)
-            
+
             # Log raw results to debug identical results issue
             if frame_results:
                 logger.info(f"  Raw frame results: {len(frame_results)}")
@@ -1223,22 +1207,22 @@ def create_app() -> FastAPI:
                 for i, hit in enumerate(frame_results[:3]):
                     desc = (hit.get("action") or "")[:80]
                     logger.info(f"     Match #{i+1}: score={hit.get('score', 0):.4f} | '{desc}...'")
-            
+
             # Group by video and deduplicate
             unique_frames = []
             seen_timestamps: dict[str, list[float]] = {}
             occurrence_tracker: dict[str, dict] = defaultdict(lambda: {"count": 0, "timestamps": []})
-            
+
             for hit in frame_results:
                 video = hit.get("video_path")
                 ts = hit.get("timestamp", 0)
                 score = hit.get("score", 0)
-                
+
                 # Track all occurrences for stats
                 if video:
                     occurrence_tracker[video]["count"] += 1
                     occurrence_tracker[video]["timestamps"].append(ts)
-                
+
                 # Deduplication: Skip if we already have a frame from this video within 5 seconds
                 # (reduced from 10s to get more diverse results)
                 if video in seen_timestamps:
@@ -1246,20 +1230,20 @@ def create_app() -> FastAPI:
                         continue
                 elif video is not None:
                     seen_timestamps[video] = []
-                
+
                 if video is not None:
                     seen_timestamps[video].append(ts)
-                
+
                 # Expand to 7-second context (timestamp center)
                 start_context = max(0.0, ts - 3.5)
                 end_context = ts + 3.5
-                
+
                 # Add rich metadata
                 hit["result_type"] = "visual"
                 hit["start"] = start_context
                 hit["end"] = end_context
                 hit["original_timestamp"] = ts
-                
+
                 # Add URLs for thumbnail and playback
                 if video:
                     safe_path = quote(str(video))
@@ -1267,18 +1251,18 @@ def create_app() -> FastAPI:
                     hit["playback_url"] = f"/media?path={safe_path}#t={start_context}"
                     # NEW: Segment URL with proper audio extraction (more reliable than #t= fragment)
                     hit["segment_url"] = f"/media/segment?path={safe_path}&start={start_context:.2f}&end={end_context:.2f}"
-                
+
                 unique_frames.append(hit)
                 if len(unique_frames) >= limit:
                     break
-            
+
             # Add occurrence stats to results
             for hit in unique_frames:
                 video = hit.get("video_path")
                 if video and video in occurrence_tracker:
                     hit["occurrence_count"] = occurrence_tracker[video]["count"]
                     hit["occurrence_timestamps"] = sorted(occurrence_tracker[video]["timestamps"])[:10]  # Top 10
-            
+
             stats["visual_count"] = len(unique_frames)
             results.extend(unique_frames)
             logger.info(f"  Unique visual results: {len(unique_frames)} (from {len(frame_results)} raw)")
@@ -1286,16 +1270,16 @@ def create_app() -> FastAPI:
         # Sort by score (highest first)
         results.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
         final_results = results[:limit]
-        
+
         stats["returned_count"] = len(final_results)
-        
+
         # Log final result summary
         if final_results:
             scores = [float(r.get("score", 0)) for r in final_results]
             stats["score_range"] = {"min": min(scores), "max": max(scores), "avg": sum(scores)/len(scores)}
             duration = time.perf_counter() - start_time_search
             logger.info(f"  Search complete: {len(final_results)} results | Score={min(scores):.4f}-{max(scores):.4f} | Duration={duration:.3f}s")
-        
+
         if not final_results:
              logger.warning(f"No results found for query: '{q}'. Using fallback.")
              # Fallback: return most recent indexed frames
@@ -1308,7 +1292,7 @@ def create_app() -> FastAPI:
                      safe_path = quote(str(video))
                      hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
                      hit["playback_url"] = f"/media?path={safe_path}#t={ max(0, ts-3) }"
-             
+
              final_results = fallback_results
              stats["fallback"] = True
              stats["message"] = "No exact matches found. Showing recent indexed content."
@@ -1462,29 +1446,20 @@ def create_app() -> FastAPI:
         """
         if not pipeline:
             return {"error": "Pipeline not initialized", "results": []}
-        
+
         from urllib.parse import quote
-        
+
         start_time_search = time.perf_counter()
         logger.info(f"[HybridSearch] Query: '{q}' | video_filter: {video_path}")
-        
+
         try:
-            # Map person names to cluster IDs if filter provided
-            face_cluster_ids = None
-            if request.person_filter:
-                face_cluster_ids = []
-                for name in request.person_filter:
-                     cid = pipeline.db.get_face_cluster_by_name(name)
-                     if cid:
-                         face_cluster_ids.append(cid)
-            
+            # Note: Identity filtering handled inside search_frames_hybrid via HITL names
             results = pipeline.db.search_frames_hybrid(
-                query=request.query,
-                video_paths=request.video_path,
-                limit=request.limit,
-                face_cluster_ids=face_cluster_ids,
+                query=q,
+                video_paths=[video_path] if video_path else None,
+                limit=limit,
             )
-            
+
             # Enrich results with URLs
             for hit in results:
                 video = hit.get("video_path")
@@ -1493,10 +1468,10 @@ def create_app() -> FastAPI:
                     safe_path = quote(str(video))
                     hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
                     hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts-3)}"
-            
+
             duration = time.perf_counter() - start_time_search
             logger.info(f"[HybridSearch] Returned {len(results)} results in {duration:.3f}s")
-            
+
             return {
                 "query": q,
                 "video_filter": video_path,
@@ -1506,7 +1481,7 @@ def create_app() -> FastAPI:
                     "duration_seconds": duration,
                 },
             }
-            
+
         except Exception as e:
             logger.error(f"[HybridSearch] Error: {e}")
             return {"error": str(e), "results": []}
@@ -1689,10 +1664,10 @@ def create_app() -> FastAPI:
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         name = name_request.name.strip()
         merged_from = None
-        
+
         # 0. Check if another face cluster already has this name → AUTO-MERGE
         existing_cluster = pipeline.db.get_face_cluster_by_name(name)
         if existing_cluster and existing_cluster != cluster_id:
@@ -1701,10 +1676,10 @@ def create_app() -> FastAPI:
             pipeline.db.merge_face_clusters(cluster_id, existing_cluster)
             merged_from = cluster_id
             cluster_id = existing_cluster  # Continue with merged cluster
-        
+
         # 1. Update face name in DB
         updated = pipeline.db.update_face_name(cluster_id, name)
-        
+
         # 2. Update frames containing this face with identity text
         frames = pipeline.db.get_frames_by_face_cluster(cluster_id)
         frames_updated = 0
@@ -1716,7 +1691,7 @@ def create_app() -> FastAPI:
                 fname = pipeline.db.get_face_name_by_cluster(cid)
                 if fname:
                     face_names.append(fname)
-            
+
             if face_names:
                 pipeline.db.update_frame_identity_text(
                     frame["id"],
@@ -1724,17 +1699,17 @@ def create_app() -> FastAPI:
                     speaker_names=[],  # Updated below if found
                 )
                 frames_updated += 1
-            
+
             # 3. Propagate Name to Overlapping Speakers
             try:
                 # Access payload correctly - data is nested under "payload" key
                 payload = frame.get("payload") or {}
                 video_path = payload.get("video_path")
                 timestamp = payload.get("timestamp", 0)
-                
+
                 if video_path:
                     speaker_cluster_ids = pipeline._get_speaker_clusters_at_time(
-                        video_path, 
+                        video_path,
                         timestamp
                     )
                     if len(speaker_cluster_ids) == 1:
@@ -1745,20 +1720,20 @@ def create_app() -> FastAPI:
                             pipeline.db.set_speaker_name(spk_cid, name)
             except Exception as e:
                 logger.warning(f"Failed to auto-map speaker: {e}")
-        
+
         logger.info(f"[HITL] Named cluster {cluster_id} as '{name}', updated {frames_updated} frames")
-        
+
         result = {
-            "updated": updated, 
-            "cluster_id": cluster_id, 
+            "updated": updated,
+            "cluster_id": cluster_id,
             "name": name,
             "frames_updated": frames_updated,
         }
-        
+
         if merged_from:
             result["merged_from"] = merged_from
             result["message"] = f"Auto-merged with existing cluster named '{name}'"
-        
+
         return result
 
     @app.put("/faces/{face_id}/name")
@@ -1803,13 +1778,13 @@ def create_app() -> FastAPI:
         """Assign a name to a voice cluster and auto-label overlapping faces."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         # 0. Get old name (for removal from frame embeddings)
         old_name = pipeline.db.get_speaker_name_by_cluster(cluster_id)
 
         # 1. Update speaker name in DB
         updated_count = pipeline.db.set_speaker_name(cluster_id, name_request.name)
-        
+
         # 2. Propagate Name to Overlapping Faces
         # Find frames where this speaker is active
         # Since we don't have a direct "get_frames_by_speaker" method, we can query segments
@@ -1826,31 +1801,31 @@ def create_app() -> FastAPI:
                 limit=50, # Limit to 50 segments to avoid timeout
                 with_payload=True
             )[0]
-            
+
             propagated_count = 0
             for point in segments:
                 payload = point.payload or {}
                 video_path = payload.get("video_path")
                 start = payload.get("start_time")
                 end = payload.get("end_time")
-                
+
                 if not video_path or start is None or end is None:
                     continue
-                
+
                 # Find faces in this time range
                 # We can sample the midpoint
                 midpoint = (start + end) / 2
-                
+
                 # Get frames/faces around this midpoint?
                 # Using existing db method if possible or standard logic
                 # For now, let's use the pipeline helper we used before
                 # But pipeline.get_faces_at_time isn't exposed nicely.
                 # Let's search frames in this video near this time.
-                
+
                 # BETTER APPROACH:
                 # Use the Face Collection directly. Find faces in this video between start/end.
                 # But Qdrant filtering by range is what we need.
-                
+
                 face_points = pipeline.db.client.scroll(
                     collection_name=pipeline.db.FACES_COLLECTION,
                     scroll_filter=models.Filter(
@@ -1862,19 +1837,19 @@ def create_app() -> FastAPI:
                     limit=10,
                     with_payload=True
                 )[0]
-                
+
                 for face_pt in face_points:
                     face_payload = face_pt.payload or {}
                     face_cluster_id = face_payload.get("cluster_id")
                     face_name = face_payload.get("name")
-                    
+
                     if face_cluster_id and not face_name:
                          # Found an unnamed face during this named speech segment
                          # Auto-label it!
                          pipeline.db.set_face_name(face_cluster_id, name_request.name)
                          propagated_count += 1
                          logger.info(f"Auto-mapping Speaker Cluster {cluster_id} ('{name_request.name}') -> Face Cluster {face_cluster_id}")
-            
+
             logger.info(f"Propagated speaker name to {propagated_count} overlapping face clusters")
 
         except Exception as e:
@@ -1898,16 +1873,16 @@ def create_app() -> FastAPI:
         return {"success": True, "cluster_id": cluster_id, "name": name_request.name, "updated": updated_count}
 
     # ========== HITL Power APIs: Merge & Link ==========
-    
+
     class MergeClustersRequest(BaseModel):
         source_cluster_id: int
         target_cluster_id: int
-    
+
     class LinkIdentitiesRequest(BaseModel):
         face_cluster_id: int
         voice_cluster_id: int
         name: str | None = None
-    
+
     @app.post("/faces/merge")
     async def merge_faces(request: IdentityMergeRequest):
         """Merge face clusters (placeholder for now)."""
@@ -1919,16 +1894,16 @@ def create_app() -> FastAPI:
         """Merge multiple speaker IDs into one target ID."""
         if not pipeline or not pipeline.db:
             raise HTTPException(status_code=503, detail="DB not ready")
-        
+
         # Update all voice segments with source_ids to target_id
         # This requires Qdrant update by filter
-        
+
         count = 0
         for src in request.source_speaker_ids:
             # Qdrant update mechanism...
             # We iterate and upsert? Or use set_payload?
             # client.set_payload(collection, payload={"speaker_id": target}, filter=...)
-            
+
             pipeline.db.client.set_payload(
                 collection_name=pipeline.db.VOICE_COLLECTION,
                 payload={"speaker_id": request.target_speaker_id},
@@ -1942,16 +1917,16 @@ def create_app() -> FastAPI:
                 )
             )
             count += 1
-            
+
         return {"status": "merged", "merged_count": count, "target_id": request.target_speaker_id}
- HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+        #     raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
         source = request.source_cluster_id
         target = request.target_cluster_id
-        
+
         if source == target:
             raise HTTPException(status_code=400, detail="Cannot merge cluster into itself")
-        
+
         try:
             merged_count = pipeline.db.merge_face_clusters(source, target)
             logger.info(f"[HITL] Merged face cluster {source} → {target} ({merged_count} faces)")
@@ -1964,23 +1939,23 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Face merge failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.post("/voices/merge")
     async def merge_voice_clusters(request: MergeClustersRequest):
         """Merge voice/speaker cluster A into cluster B."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         source = request.source_cluster_id
         target = request.target_cluster_id
-        
+
         if source == target:
             raise HTTPException(status_code=400, detail="Cannot merge cluster into itself")
-        
+
         try:
             # Update all voice segments from source to target cluster
             from qdrant_client import models
-            
+
             # Get all segments with source cluster
             results = pipeline.db.client.scroll(
                 collection_name=pipeline.db.VOICE_COLLECTION,
@@ -1993,7 +1968,7 @@ def create_app() -> FastAPI:
                 limit=10000,
                 with_payload=True,
             )
-            
+
             merged_count = 0
             for point in results[0]:
                 # Update cluster_id to target
@@ -2003,7 +1978,7 @@ def create_app() -> FastAPI:
                     points=[point.id],
                 )
                 merged_count += 1
-            
+
             logger.info(f"[HITL] Merged voice cluster {source} → {target} ({merged_count} segments)")
             return {
                 "success": True,
@@ -2014,26 +1989,26 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Voice merge failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.post("/identities/link")
     async def link_face_voice(request: LinkIdentitiesRequest):
         """Hard link a face cluster to a voice cluster (same person)."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         face_id = request.face_cluster_id
         voice_id = request.voice_cluster_id
         name = request.name
-        
+
         try:
             # If name provided, set it on both clusters
             if name:
                 pipeline.db.update_face_name(face_id, name)
                 pipeline.db.set_speaker_name(voice_id, name)
-            
+
             # Store the link in face cluster payload
             from qdrant_client import models
-            
+
             # Update faces with linked voice cluster
             face_results = pipeline.db.client.scroll(
                 collection_name=pipeline.db.FACES_COLLECTION,
@@ -2045,14 +2020,14 @@ def create_app() -> FastAPI:
                 ),
                 limit=10000,
             )
-            
+
             for point in face_results[0]:
                 pipeline.db.client.set_payload(
                     collection_name=pipeline.db.FACES_COLLECTION,
                     payload={"linked_voice_cluster": voice_id},
                     points=[point.id],
                 )
-            
+
             # Update voice segments with linked face cluster
             voice_results = pipeline.db.client.scroll(
                 collection_name=pipeline.db.VOICE_COLLECTION,
@@ -2064,14 +2039,14 @@ def create_app() -> FastAPI:
                 ),
                 limit=10000,
             )
-            
+
             for point in voice_results[0]:
                 pipeline.db.client.set_payload(
                     collection_name=pipeline.db.VOICE_COLLECTION,
                     payload={"linked_face_cluster": face_id},
                     points=[point.id],
                 )
-            
+
             logger.info(f"[HITL] Linked Face {face_id} ↔ Voice {voice_id}" + (f" as '{name}'" if name else ""))
             # Job stats for analysis completeness
             from core.ingestion.jobs import job_manager
@@ -2079,7 +2054,7 @@ def create_app() -> FastAPI:
             completed_jobs = len([j for j in all_jobs if j.status == "completed"])
             failed_jobs = len([j for j in all_jobs if j.status == "failed"])
             processing_jobs = len([j for j in all_jobs if j.status == "processing"])
-            
+
             # Placeholder values for media_count, frame_count, all_faces, named_faces, voice_segments
             # These variables are not defined in the current context of link_face_voice.
             # Assuming they would be retrieved from the pipeline or DB if this block were in a different endpoint.
@@ -2108,7 +2083,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Identity link failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     class BulkTagRequest(BaseModel):
         cluster_ids: list[int]
         name: str
@@ -2118,7 +2093,7 @@ def create_app() -> FastAPI:
         """Bulk name multiple face clusters."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         results = []
         # Reuse single name logic for consistency (handling merges etc)
         # But optimize? No, safe reuse is better.
@@ -2130,7 +2105,7 @@ def create_app() -> FastAPI:
                  # Actually, name_face_cluster endpoint logic is complex (merging, updating frames).
                  # Ideally we should refactor that logic into pipeline or db.
                  # For now, let's call the logic locally.
-                 
+
                  # Logic Duplicate (Safe):
                  name = request.name.strip()
                  updated = pipeline.db.update_face_name(cid, name)
@@ -2138,7 +2113,7 @@ def create_app() -> FastAPI:
                  # We need to replicate that logic here for consistency.
                  # This involves iterating through frames associated with the face cluster
                  # and updating their identity text.
-                 
+
                  # This part is a simplified version of what `name_face_cluster` does.
                  # For a full replication, one would need to call `pipeline.db.re_embed_face_cluster_frames`
                  # or similar logic that updates the identity text in frames.
@@ -2151,44 +2126,44 @@ def create_app() -> FastAPI:
                  # For a bulk operation, directly updating the cluster name and then potentially
                  # triggering a re-embedding job for all affected frames might be more efficient
                  # than frame-by-frame updates within the loop.
-                 
+
                  # For now, we'll just update the cluster name in the DB.
                  # The `name_face_cluster` endpoint has more complex logic for re-embedding.
                  # This bulk endpoint is simplified.
-                 
+
                  # frames = pipeline.db.get_frames_by_face_cluster(cid)
                  # cnt = 0
                  # for frame in frames:
                  #     # Update identity text...
                  #     # This is slow for bulk. But necessary.
                  #     # Actually, reusing the client-side loop is okay for < 100 clusters.
-                 #     pass 
-                 
+                 #     pass
+
                  results.append({"cluster_id": cid, "status": "updated", "name": name})
              except Exception as e:
                  results.append({"cluster_id": cid, "error": str(e)})
 
         return {"results": results, "bulk_count": len(request.cluster_ids)}
-    
+
     @app.get("/identities/suggestions")
     async def get_identity_suggestions(video_path: str | None = None):
         """Get AI-suggested face-voice links and merge candidates."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         try:
             from core.processing.identity_linker import get_identity_linker
             linker = get_identity_linker()
-            
+
             # Get face and voice clusters
             face_clusters = await _get_face_clusters_internal()
             voice_clusters = await _get_voice_clusters_internal()
-            
+
             suggestions = linker.get_all_suggestions(
                 face_clusters=face_clusters,
                 voice_clusters=voice_clusters,
             )
-            
+
             return {
                 "suggestions": [s.to_dict() for s in suggestions],
                 "count": len(suggestions),
@@ -2196,7 +2171,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Failed to get identity suggestions: {e}")
             return {"suggestions": [], "count": 0, "error": str(e)}
-    
+
     async def _get_face_clusters_internal() -> list[dict]:
         """Internal helper to get face clusters with timestamps."""
         clusters_raw = pipeline.db.get_face_clusters()
@@ -2211,7 +2186,7 @@ def create_app() -> FastAPI:
                 "count": len(faces),
             })
         return result
-    
+
     async def _get_voice_clusters_internal() -> list[dict]:
         """Internal helper to get voice clusters with timestamps."""
         voices = pipeline.db.get_all_voice_segments()
@@ -2221,7 +2196,7 @@ def create_app() -> FastAPI:
             if cid not in clusters:
                 clusters[cid] = []
             clusters[cid].append(v)
-        
+
         result = []
         for cid, segments in clusters.items():
             timestamps = [(s.get("start_time", 0), s.get("end_time", 0)) for s in segments]
@@ -2254,7 +2229,7 @@ def create_app() -> FastAPI:
         active_jobs = len([j for j in jobs if j.status == JobStatus.RUNNING])
         completed_jobs = len([j for j in jobs if j.status == JobStatus.COMPLETED])
         failed_jobs = len([j for j in jobs if j.status == JobStatus.FAILED])
-        
+
         # Add identity graph stats
         from core.storage.identity_graph import identity_graph
         try:
@@ -2295,10 +2270,10 @@ def create_app() -> FastAPI:
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         import numpy as np
         from sklearn.metrics.pairwise import cosine_distances
-        
+
         # Use config defaults if not specified
         if threshold is None:
             threshold = settings.face_clustering_threshold
@@ -2306,11 +2281,11 @@ def create_app() -> FastAPI:
             min_bbox_size = settings.face_min_bbox_size
         if min_det_score is None:
             min_det_score = settings.face_min_det_score
-        
+
         all_faces = pipeline.db.get_all_face_embeddings()
         if not all_faces:
             return {"status": "no_faces", "clusters": 0}
-        
+
         # Quality filtering - skip low-quality faces
         quality_faces = []
         filtered_count = 0
@@ -2321,17 +2296,17 @@ def create_app() -> FastAPI:
                 quality_faces.append(f)
             else:
                 filtered_count += 1
-        
+
         if len(quality_faces) < 2:
             return {
-                "status": "insufficient_quality_faces", 
-                "clusters": 0, 
+                "status": "insufficient_quality_faces",
+                "clusters": 0,
                 "message": f"Only {len(quality_faces)} quality faces (filtered {filtered_count} low-quality)",
                 "total_faces": len(all_faces),
             }
-        
+
         embeddings = np.array([f["embedding"] for f in quality_faces])
-        
+
         # Check for zero-padding (SFace 128-dim padded to 512-dim)
         is_sface = False
         if embeddings.shape[1] == 512:
@@ -2342,24 +2317,24 @@ def create_app() -> FastAPI:
                 logger.warning("Using SFace (128d) fallback. Install InsightFace for better quality!")
                 # SFace needs STRICTER threshold (less discriminative embeddings)
                 threshold = min(threshold, 0.28)
-        
+
         # L2 normalize
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1
         embeddings_norm = embeddings / norms
-        
+
         # Compute pairwise COSINE DISTANCE matrix
         dist_matrix = cosine_distances(embeddings_norm)
-        
+
         start_time_cluster = time.perf_counter()
         logger.info(f"Face Clustering: {len(quality_faces)} faces (filtered {filtered_count}) | "
                    f"Model={'SFace' if is_sface else 'InsightFace'} | "
                    f"Algo={algorithm} | Threshold={threshold:.2f}")
-        
+
         if algorithm == "chinese_whispers":
             labels = _chinese_whispers_cluster(
-                dist_matrix, 
-                threshold, 
+                dist_matrix,
+                threshold,
                 quality_faces if temporal_boost else None,
                 intra_video_threshold,
             )
@@ -2376,17 +2351,17 @@ def create_app() -> FastAPI:
                 for i in range(len(quality_faces)):
                     for j in range(i + 1, len(quality_faces)):
                         same_video = quality_faces[i].get("media_path") == quality_faces[j].get("media_path")
-                        
+
                         if same_video and temporal_boost:
                             # AGGRESSIVE same-video clustering
                             # Use higher threshold since same-video = high prior of same person
                             effective_threshold = intra_video_threshold
-                            
+
                             # Additional temporal boost based on time proximity
                             ts_i = quality_faces[i].get("timestamp", 0) or 0
                             ts_j = quality_faces[j].get("timestamp", 0) or 0
                             time_diff = abs(ts_i - ts_j)
-                            
+
                             if time_diff < 5.0:       # Within 5 seconds
                                 effective_threshold += 0.12
                             elif time_diff < 30.0:    # Within 30 seconds
@@ -2396,10 +2371,10 @@ def create_app() -> FastAPI:
                         else:
                             # Cross-video: use stricter threshold
                             effective_threshold = threshold
-                        
+
                         if dist_matrix[i, j] < effective_threshold:
                             G.add_edge(i, j)
-                
+
                 components = list(nx.connected_components(G))
                 labels = [0] * len(quality_faces)
                 for cluster_id, component in enumerate(components):
@@ -2415,29 +2390,29 @@ def create_app() -> FastAPI:
                 distance_threshold=threshold,
             )
             labels = clusterer.fit_predict(dist_matrix)
-        
+
         # Update each face with its cluster ID
         updated = 0
         for i, face in enumerate(quality_faces):
             cluster_id = int(labels[i])
             pipeline.db.update_face_cluster_id(face["id"], cluster_id)
             updated += 1
-        
+
         n_clusters = len(set(labels))
-        
+
         # Log cluster size distribution
         from collections import Counter
         cluster_sizes = Counter(labels)
         size_dist = dict(sorted(Counter(cluster_sizes.values()).items()))
-        
+
         # Find largest clusters
         largest = cluster_sizes.most_common(5)
-        
+
         duration = time.perf_counter() - start_time_cluster
         logger.info(f"Face Clustering complete: {n_clusters} clusters | "
                    f"Largest: {largest[0][1] if largest else 0} | "
                    f"Duration={duration:.3f}s")
-        
+
         return {
             "status": "clustered",
             "total_faces": len(all_faces),
@@ -2457,7 +2432,7 @@ def create_app() -> FastAPI:
         }
 
     def _chinese_whispers_cluster(
-        dist_matrix: "np.ndarray", 
+        dist_matrix: "np.ndarray",
         threshold: float,
         faces: list[dict] | None = None,
         intra_video_threshold: float = 0.55,
@@ -2480,11 +2455,10 @@ def create_app() -> FastAPI:
         3. Iterate: each node adopts the most common label among its neighbors
         4. Repeat until convergence
         """
-        import numpy as np
         import random
-        
+
         n = len(dist_matrix)
-        
+
         # Build adjacency list from distance matrix
         # Edge exists if cosine distance < threshold (i.e., similar enough)
         adjacency = [[] for _ in range(n)]
@@ -2493,15 +2467,15 @@ def create_app() -> FastAPI:
                 same_video = False
                 if faces is not None:
                     same_video = faces[i].get("media_path") == faces[j].get("media_path")
-                
+
                 if same_video and faces is not None:
                     # AGGRESSIVE same-video clustering
                     effective_threshold = intra_video_threshold
-                    
+
                     ts_i = faces[i].get("timestamp", 0) or 0
                     ts_j = faces[j].get("timestamp", 0) or 0
                     time_diff = abs(ts_i - ts_j)
-                    
+
                     if time_diff < 5.0:       # Within 5 seconds
                         effective_threshold += 0.12
                     elif time_diff < 30.0:    # Within 30 seconds
@@ -2510,18 +2484,18 @@ def create_app() -> FastAPI:
                         effective_threshold += 0.05
                 else:
                     effective_threshold = threshold
-                
+
                 if dist_matrix[i, j] < effective_threshold:
                     adjacency[i].append(j)
                     adjacency[j].append(i)
-        
+
         # Log connectivity
         edges = sum(len(adj) for adj in adjacency) // 2
         logger.info(f"  Chinese Whispers: {n} nodes, {edges} edges (threshold={threshold:.2f}, intra_video={intra_video_threshold:.2f})")
-        
+
         # Initialize each node with unique label
         labels = list(range(n))
-        
+
         # Iterate until convergence (or max iterations)
         max_iterations = 100
         for iteration in range(max_iterations):
@@ -2529,31 +2503,31 @@ def create_app() -> FastAPI:
             # Random order to avoid bias
             order = list(range(n))
             random.shuffle(order)
-            
+
             for node in order:
                 if not adjacency[node]:
                     continue
-                
+
                 # Count neighbor labels
                 neighbor_labels = [labels[neighbor] for neighbor in adjacency[node]]
                 from collections import Counter
                 label_counts = Counter(neighbor_labels)
-                
+
                 # Adopt most common neighbor label
                 most_common_label = label_counts.most_common(1)[0][0]
                 if labels[node] != most_common_label:
                     labels[node] = most_common_label
                     changed = True
-            
+
             if not changed:
                 logger.info(f"  Converged after {iteration + 1} iterations")
                 break
-        
+
         # Renumber labels to be consecutive 0, 1, 2, ...
         unique_labels = sorted(set(labels))
         label_map = {old: new for new, old in enumerate(unique_labels)}
         labels = [label_map[l] for l in labels]
-        
+
         return labels
 
     @app.get("/faces/clusters")
@@ -2562,16 +2536,16 @@ def create_app() -> FastAPI:
         if not pipeline:
             return {"error": "Pipeline not initialized", "clusters": {}}
         clusters = pipeline.db.get_faces_grouped_by_cluster()
-        
+
         # Transform to API-friendly format
         result = []
         for cluster_id, faces in clusters.items():
             # Pick the first face as representative
             representative = faces[0] if faces else None
-            
+
             # Check if any face in the cluster is marked as main
             is_main = any(f.get("is_main", False) for f in faces)
-            
+
             result.append({
                 "cluster_id": cluster_id,
                 "name": faces[0].get("name") if faces else None,
@@ -2580,7 +2554,7 @@ def create_app() -> FastAPI:
                 "faces": faces,
                 "is_main": is_main,
             })
-        
+
         # Sort by is_main (desc) -> face_count (desc)
         result.sort(key=lambda x: (x["is_main"], x["face_count"]), reverse=True)
         return {"clusters": result}
@@ -2590,9 +2564,9 @@ def create_app() -> FastAPI:
         """Get AI-powered identity linking suggestions (Face-Voice, TMDB, Merge)."""
         if not pipeline:
             return {"suggestions": [], "error": "Pipeline not initialized"}
-        
+
         from core.processing.identity_linker import get_identity_linker
-        
+
         try:
             face_clusters_raw = pipeline.db.get_faces_grouped_by_cluster()
             face_clusters = []
@@ -2602,7 +2576,7 @@ def create_app() -> FastAPI:
                     "name": faces[0].get("name") if faces else None,
                     "timestamps": [f.get("timestamp", 0) for f in faces],
                 })
-            
+
             voice_clusters = []
             try:
                 voices = pipeline.db.get_all_voice_segments()
@@ -2620,10 +2594,10 @@ def create_app() -> FastAPI:
                     })
             except Exception:
                 pass
-            
+
             linker = get_identity_linker()
             suggestions = linker.get_all_suggestions(face_clusters, voice_clusters)
-            
+
             return {"suggestions": suggestions}
         except Exception as e:
             return {"suggestions": [], "error": str(e)}
@@ -2654,35 +2628,36 @@ def create_app() -> FastAPI:
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         import numpy as np
         from sklearn.metrics.pairwise import cosine_distances
-        
+
         voices = pipeline.db.get_all_voice_embeddings()
         if not voices:
             return {"status": "no_voices", "clusters": 0}
-        
+
         if len(voices) < 2:
             return {"status": "insufficient_voices", "clusters": 1, "message": "Need at least 2 voice segments"}
-        
+
         embeddings = np.array([v["embedding"] for v in voices])
-        
+
         # Step 1: L2 normalize embeddings (should already be normalized, but ensure)
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1
         embeddings_norm = embeddings / norms
-        
+
         # Step 2: Compute pairwise COSINE DISTANCE matrix
         dist_matrix = cosine_distances(embeddings_norm)
-        
+
         start_time_voice = time.perf_counter()
         logger.info(f"Voice Clustering: {len(voices)} segments | Algo={algorithm} | Threshold={threshold:.2f}")
-        
+
         if algorithm == "chinese_whispers":
             # Use same proven algorithm as face clustering
             labels = _chinese_whispers_cluster(dist_matrix, threshold)
         elif algorithm == "hdbscan":
             import hdbscan
+
             from config import settings
             # Use precomputed distance matrix with HDBSCAN (configurable)
             clusterer = hdbscan.HDBSCAN(
@@ -2703,7 +2678,7 @@ def create_app() -> FastAPI:
                 distance_threshold=threshold,
             )
             labels = clusterer.fit_predict(dist_matrix)
-        
+
         # Update each voice segment with its cluster ID
         updated = 0
         for i, voice in enumerate(voices):
@@ -2713,19 +2688,19 @@ def create_app() -> FastAPI:
                 cluster_id = -abs(hash(voice["id"])) % (10**9)
             pipeline.db.update_voice_cluster_id(voice["id"], cluster_id)
             updated += 1
-        
+
         n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
         n_noise = list(labels).count(-1) if hasattr(labels, '__iter__') else 0
-        
+
         # Log cluster size distribution
         from collections import Counter
         cluster_sizes = Counter(labels)
         size_dist = dict(sorted(Counter(cluster_sizes.values()).items()))
         largest = cluster_sizes.most_common(5)
-        
+
         duration = time.perf_counter() - start_time_voice
         logger.info(f"Voice Clustering complete: {n_clusters} clusters | Largest cluster size: {largest[0][1] if largest else 0} | Duration={duration:.3f}s")
-        
+
         return {
             "status": "clustered",
             "total_segments": len(voices),
@@ -2745,7 +2720,7 @@ def create_app() -> FastAPI:
         if not pipeline:
             return {"error": "Pipeline not initialized", "clusters": {}}
         clusters = pipeline.db.get_voices_grouped_by_cluster()
-        
+
         result = []
         for cluster_id, segments in clusters.items():
             representative = segments[0] if segments else None
@@ -2756,7 +2731,7 @@ def create_app() -> FastAPI:
                 "representative": representative,
                 "segments": segments,
             })
-        
+
         result.sort(key=lambda x: x["segment_count"], reverse=True)
         return {"clusters": result}
 
@@ -2831,10 +2806,10 @@ def create_app() -> FastAPI:
         """Search for media by face name or speaker name."""
         if not pipeline:
             return {"error": "Pipeline not initialized", "results": []}
-        
+
         results = []
         name_lower = name.lower()
-        
+
         # Search faces by name
         try:
             face_clusters = pipeline.db.get_faces_grouped_by_cluster()
@@ -2852,7 +2827,7 @@ def create_app() -> FastAPI:
                         })
         except Exception:
             pass
-        
+
         # Search voices by speaker name
         try:
             voice_clusters = pipeline.db.get_voices_grouped_by_cluster()
@@ -2871,7 +2846,7 @@ def create_app() -> FastAPI:
                         })
         except Exception:
             pass
-        
+
         return {"results": results[:limit], "total": len(results)}
 
     @app.get("/debug/frames")
@@ -2883,7 +2858,7 @@ def create_app() -> FastAPI:
         """
         if not pipeline:
             return {"error": "Pipeline not initialized"}
-        
+
         try:
             # Scroll through all frames in the media_frames collection
             resp = pipeline.db.client.scroll(
@@ -2892,7 +2867,7 @@ def create_app() -> FastAPI:
                 with_payload=True,
                 with_vectors=False,
             )
-            
+
             frames = []
             for point in resp[0]:
                 payload = point.payload or {}
@@ -2903,16 +2878,16 @@ def create_app() -> FastAPI:
                     "description": payload.get("action"),
                     "type": payload.get("type"),
                 })
-            
+
             # Analyze description diversity
             descriptions = [f["description"] or "" for f in frames]
             unique_descriptions = set(descriptions)
-            
+
             # Check for identical descriptions
             from collections import Counter
             desc_counts = Counter(descriptions)
             duplicates = {k: v for k, v in desc_counts.items() if v > 1}
-            
+
             return {
                 "total_frames": len(frames),
                 "unique_descriptions": len(unique_descriptions),
@@ -2933,11 +2908,11 @@ def create_app() -> FastAPI:
         video_path = Path(path)
         if not video_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
-            
+
         file_size = video_path.stat().st_size
         start = 0
         end = file_size - 1
-        
+
         if range:
             try:
                 unit, ranges = range.split("=")
@@ -2948,26 +2923,26 @@ def create_app() -> FastAPI:
                         end = min(int(end_str), file_size - 1)
             except ValueError:
                 pass
-        
+
         chunk_size = 1024 * 64 # 64KB chunks
         content_length = end - start + 1
-        
+
         headers = {
             "Content-Range": f"bytes {start}-{end}/{file_size}",
             "Accept-Ranges": "bytes",
             "Content-Length": str(content_length),
-            "Content-Type": "video/mp4", 
+            "Content-Type": "video/mp4",
         }
-        
+
         def iterfile():
             with open(video_path, "rb") as f:
                 yield from range_generator(f, start, end, chunk_size)
-        
+
         return StreamingResponse(
             iterfile(),
             status_code=206,
             headers=headers,
-            media_type="video/mp4", 
+            media_type="video/mp4",
         )
 
     return app
