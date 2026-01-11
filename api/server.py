@@ -1798,6 +1798,226 @@ def create_app() -> FastAPI:
 
         return {"success": True, "cluster_id": cluster_id, "name": name_request.name, "updated": updated_count}
 
+    # ========== HITL Power APIs: Merge & Link ==========
+    
+    class MergeClustersRequest(BaseModel):
+        source_cluster_id: int
+        target_cluster_id: int
+    
+    class LinkIdentitiesRequest(BaseModel):
+        face_cluster_id: int
+        voice_cluster_id: int
+        name: str | None = None
+    
+    @app.post("/faces/merge")
+    async def merge_face_clusters(request: MergeClustersRequest):
+        """Merge face cluster A into cluster B (re-label all points)."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        source = request.source_cluster_id
+        target = request.target_cluster_id
+        
+        if source == target:
+            raise HTTPException(status_code=400, detail="Cannot merge cluster into itself")
+        
+        try:
+            merged_count = pipeline.db.merge_face_clusters(source, target)
+            logger.info(f"[HITL] Merged face cluster {source} → {target} ({merged_count} faces)")
+            return {
+                "success": True,
+                "source_cluster_id": source,
+                "target_cluster_id": target,
+                "merged_count": merged_count,
+            }
+        except Exception as e:
+            logger.error(f"Face merge failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/voices/merge")
+    async def merge_voice_clusters(request: MergeClustersRequest):
+        """Merge voice/speaker cluster A into cluster B."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        source = request.source_cluster_id
+        target = request.target_cluster_id
+        
+        if source == target:
+            raise HTTPException(status_code=400, detail="Cannot merge cluster into itself")
+        
+        try:
+            # Update all voice segments from source to target cluster
+            from qdrant_client import models
+            
+            # Get all segments with source cluster
+            results = pipeline.db.client.scroll(
+                collection_name=pipeline.db.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="cluster_id",
+                        match=models.MatchValue(value=source)
+                    )]
+                ),
+                limit=10000,
+                with_payload=True,
+            )
+            
+            merged_count = 0
+            for point in results[0]:
+                # Update cluster_id to target
+                pipeline.db.client.set_payload(
+                    collection_name=pipeline.db.VOICE_COLLECTION,
+                    payload={"cluster_id": target},
+                    points=[point.id],
+                )
+                merged_count += 1
+            
+            logger.info(f"[HITL] Merged voice cluster {source} → {target} ({merged_count} segments)")
+            return {
+                "success": True,
+                "source_cluster_id": source,
+                "target_cluster_id": target,
+                "merged_count": merged_count,
+            }
+        except Exception as e:
+            logger.error(f"Voice merge failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/identities/link")
+    async def link_face_voice(request: LinkIdentitiesRequest):
+        """Hard link a face cluster to a voice cluster (same person)."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        face_id = request.face_cluster_id
+        voice_id = request.voice_cluster_id
+        name = request.name
+        
+        try:
+            # If name provided, set it on both clusters
+            if name:
+                pipeline.db.update_face_name(face_id, name)
+                pipeline.db.set_speaker_name(voice_id, name)
+            
+            # Store the link in face cluster payload
+            from qdrant_client import models
+            
+            # Update faces with linked voice cluster
+            face_results = pipeline.db.client.scroll(
+                collection_name=pipeline.db.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="cluster_id",
+                        match=models.MatchValue(value=face_id)
+                    )]
+                ),
+                limit=10000,
+            )
+            
+            for point in face_results[0]:
+                pipeline.db.client.set_payload(
+                    collection_name=pipeline.db.FACES_COLLECTION,
+                    payload={"linked_voice_cluster": voice_id},
+                    points=[point.id],
+                )
+            
+            # Update voice segments with linked face cluster
+            voice_results = pipeline.db.client.scroll(
+                collection_name=pipeline.db.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="cluster_id",
+                        match=models.MatchValue(value=voice_id)
+                    )]
+                ),
+                limit=10000,
+            )
+            
+            for point in voice_results[0]:
+                pipeline.db.client.set_payload(
+                    collection_name=pipeline.db.VOICE_COLLECTION,
+                    payload={"linked_face_cluster": face_id},
+                    points=[point.id],
+                )
+            
+            logger.info(f"[HITL] Linked Face {face_id} ↔ Voice {voice_id}" + (f" as '{name}'" if name else ""))
+            return {
+                "success": True,
+                "face_cluster_id": face_id,
+                "voice_cluster_id": voice_id,
+                "name": name,
+                "faces_updated": len(face_results[0]),
+                "voices_updated": len(voice_results[0]),
+            }
+        except Exception as e:
+            logger.error(f"Identity link failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/identities/suggestions")
+    async def get_identity_suggestions(video_path: str | None = None):
+        """Get AI-suggested face-voice links and merge candidates."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        try:
+            from core.processing.identity_linker import get_identity_linker
+            linker = get_identity_linker()
+            
+            # Get face and voice clusters
+            face_clusters = await _get_face_clusters_internal()
+            voice_clusters = await _get_voice_clusters_internal()
+            
+            suggestions = linker.get_all_suggestions(
+                face_clusters=face_clusters,
+                voice_clusters=voice_clusters,
+            )
+            
+            return {
+                "suggestions": [s.to_dict() for s in suggestions],
+                "count": len(suggestions),
+            }
+        except Exception as e:
+            logger.error(f"Failed to get identity suggestions: {e}")
+            return {"suggestions": [], "count": 0, "error": str(e)}
+    
+    async def _get_face_clusters_internal() -> list[dict]:
+        """Internal helper to get face clusters with timestamps."""
+        clusters_raw = pipeline.db.get_face_clusters()
+        result = []
+        for cluster_id, faces in clusters_raw.items():
+            timestamps = [(f.get("timestamp", 0), f.get("timestamp", 0) + 1) for f in faces]
+            name = faces[0].get("name") if faces else None
+            result.append({
+                "cluster_id": cluster_id,
+                "name": name,
+                "timestamps": timestamps,
+                "count": len(faces),
+            })
+        return result
+    
+    async def _get_voice_clusters_internal() -> list[dict]:
+        """Internal helper to get voice clusters with timestamps."""
+        voices = pipeline.db.get_all_voice_segments()
+        clusters: dict[int, list] = {}
+        for v in voices:
+            cid = v.get("speaker_cluster_id", -1)
+            if cid not in clusters:
+                clusters[cid] = []
+            clusters[cid].append(v)
+        
+        result = []
+        for cid, segments in clusters.items():
+            timestamps = [(s.get("start_time", 0), s.get("end_time", 0)) for s in segments]
+            name = segments[0].get("speaker_name") if segments else None
+            result.append({
+                "cluster_id": cid,
+                "name": name,
+                "timestamps": timestamps,
+                "count": len(segments),
+            })
+        return result
+
     @app.delete("/voices/{segment_id}")
     async def delete_voice_segment(segment_id: str):
         """Delete a voice segment and its audio file."""
