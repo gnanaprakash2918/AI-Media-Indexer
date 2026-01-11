@@ -2082,16 +2082,34 @@ class VectorDB:
             log.error(f"Failed to update video metadata: {e}")
             return 0
 
+    def set_face_main(self, cluster_id: int, is_main: bool = True) -> bool:
+        """Set a face cluster as main character.
+        
+        Args:
+            cluster_id: The face cluster ID to mark.
+            is_main: Whether this is a main character.
+            
+        Returns:
+            Success status.
+        """
+        try:
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
-                payload=payload,
-                points=models.PointIdsList(points=ids),
+                payload={"is_main_character": is_main},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
             )
-
-            return len(ids)
+            log(f"[HITL] Set face cluster {cluster_id} as main character: {is_main}")
+            return True
         except Exception as e:
-            log("Failed to merge clusters", error=str(e))
-            return 0
+            log(f"[HITL] Failed to set main character: {e}")
+            return False
 
     @observe("db_get_named_faces")
     def get_named_faces(self) -> list[dict[str, Any]]:
