@@ -127,10 +127,28 @@ class IngestionPipeline:
             progress_tracker.fail(job_id, error=f"Media probe failed: {e}")
             raise
 
+        # RESUME LOGIC: Check checkpoint for crash recovery
+        checkpoint = None
+        skip_audio = False
+        skip_voice = False
+        resume_from_frame = 0
+        if resume:
+            from core.ingestion.jobs import job_manager
+            existing_job = job_manager.get_job(job_id)
+            if existing_job and existing_job.checkpoint_data:
+                checkpoint = existing_job.checkpoint_data
+                skip_audio = checkpoint.get("audio_complete", False)
+                skip_voice = checkpoint.get("voice_complete", False)
+                resume_from_frame = checkpoint.get("last_frame", 0)
+                logger.info(f"Resuming job {job_id}: skip_audio={skip_audio}, skip_voice={skip_voice}, resume_from={resume_from_frame}")
+        
+        self._resume_from_frame = resume_from_frame  # Store for _process_frames
+
         try:
-            progress_tracker.update(job_id, 5.0, stage="audio", message="Processing audio")
-            await retry(lambda: self._process_audio(path))
-            self._cleanup_memory("audio_complete")  # Unload Whisper
+            if not skip_audio:
+                progress_tracker.update(job_id, 5.0, stage="audio", message="Processing audio")
+                await retry(lambda: self._process_audio(path))
+                self._cleanup_memory("audio_complete")  # Unload Whisper
             progress_tracker.update(job_id, 30.0, stage="audio", message="Audio complete")
 
             if progress_tracker.is_cancelled(job_id):
@@ -138,9 +156,10 @@ class IngestionPipeline:
             if progress_tracker.is_paused(job_id):
                 return job_id
 
-            progress_tracker.update(job_id, 35.0, stage="voice", message="Processing voice")
-            await retry(lambda: self._process_voice(path))
-            self._cleanup_memory("voice_complete")  # Unload Pyannote
+            if not skip_voice:
+                progress_tracker.update(job_id, 35.0, stage="voice", message="Processing voice")
+                await retry(lambda: self._process_voice(path))
+                self._cleanup_memory("voice_complete")  # Unload Pyannote
             progress_tracker.update(job_id, 50.0, stage="voice", message="Voice complete")
 
             logger.debug("Voice complete - checking job status")
@@ -411,6 +430,9 @@ class IngestionPipeline:
         time_offset = getattr(self, '_start_time', None) or 0.0
 
         frame_count = 0
+        
+        # Resume support: skip already processed frames
+        resume_from_frame = getattr(self, '_resume_from_frame', 0)
 
         # XMem-style temporal context for video coherence
         from core.processing.temporal_context import TemporalContextManager, TemporalContext
@@ -420,6 +442,13 @@ class IngestionPipeline:
             if job_id:
                 if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
                     break
+            
+            # RESUME: Skip already processed frames
+            if frame_count < resume_from_frame:
+                frame_count += 1
+                if frame_path.exists():
+                    frame_path.unlink()
+                continue
 
             # Calculate actual timestamp including offset
             timestamp = time_offset + (frame_count * float(self.frame_interval_seconds))
@@ -509,6 +538,29 @@ class IngestionPipeline:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
+                
+                # Thermal throttling - pause if system overheating
+                await resource_manager.throttle_if_needed("compute")
+            
+            # CHECKPOINT: Save progress every 50 frames for crash recovery
+            CHECKPOINT_INTERVAL = 50
+            if job_id and frame_count % CHECKPOINT_INTERVAL == 0:
+                from core.ingestion.jobs import job_manager
+                checkpoint_data = {
+                    "last_frame": frame_count,
+                    "last_timestamp": timestamp,
+                    "audio_complete": True,
+                    "voice_complete": True,
+                    "frames_complete": False,
+                }
+                job_manager.update_job(
+                    job_id,
+                    checkpoint_data=checkpoint_data,
+                    processed_frames=frame_count,
+                    current_frame_timestamp=timestamp,
+                )
+                job_manager.update_heartbeat(job_id)
+                logger.debug(f"Checkpoint saved at frame {frame_count}")
 
         # Finalize face tracks and store in Identity Graph
         # This is the key step: convert frame-by-frame detections into stable tracks

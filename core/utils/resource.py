@@ -74,13 +74,32 @@ class ResourceManager:
         if psutil.cpu_percent(interval=None) > settings.max_cpu_percent:
             return False
 
-        # 4. Check Temperature (Best Effort)
-        # Windows often hides temp; Linux is usually good.
+        # 4. Check CPU Temperature (Best Effort)
         temp = self._get_cpu_temp()
         if temp and temp > settings.max_temp_celsius:
             return False
+        
+        # 5. Check GPU Temperature (NVIDIA via pynvml)
+        gpu_temp = self._get_gpu_temp()
+        if gpu_temp and gpu_temp > 80:  # 80°C threshold for GPU
+            log.warning(f"GPU overheating: {gpu_temp}°C. Throttling...")
+            return False
 
         return True
+
+    def _get_gpu_temp(self) -> float | None:
+        """Get NVIDIA GPU temperature using pynvml (cross-platform)."""
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            pynvml.nvmlShutdown()
+            return float(temp)
+        except ImportError:
+            return None  # pynvml not installed
+        except Exception:
+            return None  # No NVIDIA GPU or driver issue
 
     def _get_cpu_temp(self) -> float | None:
         """Attempts to fetch CPU temperature in a cross-platform way."""
