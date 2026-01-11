@@ -1,0 +1,74 @@
+# ==============================================================================
+# AI-Media-Indexer Production Dockerfile (CUDA + Multi-Stage)
+# Optimized for GPU-accelerated inference with InsightFace, Whisper, PyTorch
+# ==============================================================================
+
+# --- Stage 1: Builder (with build tools) ---
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /build
+
+# Install Python and build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3.11-venv python3.11-dev python3-pip \
+    gcc g++ make git cmake \
+    libsndfile1-dev libgl1-mesa-dev libglib2.0-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Cache layer: Install requirements first (before copying code)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools && \
+    pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 && \
+    pip install --no-cache-dir -r requirements.txt
+
+# --- Stage 2: Runtime (slim CUDA runtime, no build tools) ---
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+# Runtime dependencies only (minimal)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3.11-venv \
+    ffmpeg libsndfile1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# Copy venv from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create non-root user (UID 1000 for Docker Desktop compatibility)
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid 1000 -m appuser && \
+    mkdir -p /app/cache /app/data /app/logs && \
+    chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Copy application code (chown to appuser)
+COPY --chown=appuser:appuser . .
+
+# Expose API port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+# Default command
+ENTRYPOINT ["python", "main.py"]

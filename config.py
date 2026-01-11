@@ -88,6 +88,8 @@ class Settings(BaseSettings):
 
     tmdb_api_key: str | None = None
     omdb_api_key: str | None = None
+    brave_api_key: str | None = Field(default=None, description="Brave Search API key for external enrichment")
+    enable_external_search: bool = Field(default=False, description="Enable external web search for unknown entities")
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
     frame_interval: float = Field(default=1.0, description="Seconds between frames (0.5=2fps, 1.0=1fps)")

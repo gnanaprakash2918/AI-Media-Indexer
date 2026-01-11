@@ -1,6 +1,37 @@
 
 
 services:
+  # ===== Main Application =====
+  media-indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    container_name: media_agent_app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./cache:/app/cache
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /media:/media:ro  # Mount your media library (read-only)
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - qdrant
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 8G
+    restart: unless-stopped
+
+  # ===== Vector Database =====
   qdrant:
     image: qdrant/qdrant:v1.16.2
     container_name: media_agent_qdrant
