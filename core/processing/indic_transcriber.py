@@ -251,44 +251,53 @@ class IndicASRPipeline:
         """
         import httpx
         
-        target_lang = language or self.lang
+        # Hybrid Strategy: Native -> Docker -> Whisper
         
-        # 1. Try Remote Docker Service First
-        if settings.ai4bharat_url:
+        # 1. Attempt Native NeMo (If configured and installed)
+        native_success = False
+        if settings.use_native_nemo and HAS_NEMO:
             try:
-                # Fast check if service is up
-                # check if URL is localhost and port is open? Just try request
+                log(f"[IndicASR] Attempting Native NeMo for {audio_path.name}")
+                self._backend = "nemo"
+                self.load_model()
+                native_success = True
+            except Exception as e:
+                log(f"[IndicASR] Native NeMo failed ({e}). Falling back to next option.")
+                native_success = False
+        
+        # 2. Attempt Remote Docker (If Native failed or disabled)
+        if not native_success and settings.ai4bharat_url:
+            try:
                 url = f"{settings.ai4bharat_url}/transcribe"
-                log(f"[IndicASR] Attempting remote transcription at {url}")
+                log(f"[IndicASR] Attempting Remote Docker at {url}")
                 
                 with open(audio_path, "rb") as f:
                     response = httpx.post(
                         url,
                         files={"file": f},
                         data={"language": target_lang},
-                        timeout=300.0  # 5 min timeout for long files
+                        timeout=300.0
                     )
                 
                 if response.status_code == 200:
                     data = response.json()
                     segments = data.get("segments", [])
                     log(f"[IndicASR] Remote SUCCESS: {len(segments)} segments")
-                    
                     if output_srt:
                          self.write_srt(segments, output_srt)
                     return segments
-                else:
-                    log(f"[IndicASR] Remote failed: {response.status_code} - {response.text}")
             except Exception as e:
-                log(f"[IndicASR] Remote service unavailable ({e}). Falling back to local.")
+                log(f"[IndicASR] Remote Docker failed ({e}). Falling back to Local Whisper.")
         
-        # 2. Local Fallback
-        if target_lang and target_lang != self.lang:
-            self.lang = target_lang
-            self.model = None
-            self.processor = None
-            self.pipe = None
-
+        # 3. Final Fallback: Local Whisper (via HF)
+        # If we are here, either Native execution is set up (native_success=True) 
+        # OR both Native and Remote failed, so we force HF Whisper.
+        
+        if not native_success:
+            self._backend = "hf" 
+            # Reset model to ensure we load HF, not broken NeMo
+            self.model = None 
+            
         self.load_model()
 
         audio_path = Path(audio_path)

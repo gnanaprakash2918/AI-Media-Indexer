@@ -68,6 +68,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["black>=24.0.0", "mypy>=1.10.0", "pyright>=1.1.380"]
+indic = [
+    "nemo-toolkit[asr]>=1.23.0",
+    "protobuf<=3.20.3",
+    "Cython>=3.0.0",
+]
 
 [tool.black]
 line-length = 88

@@ -230,6 +230,11 @@ class Settings(BaseSettings):
         description="Use AI4Bharat IndicConformer for Indic languages"
     )
     
+    use_native_nemo: bool = Field(
+        default=True,
+        description="Attempt to use Native NeMo if installed (Preferred over Docker)"
+    )
+
     auto_detect_language: bool = Field(
         default=True,
         description="Auto-detect audio language before transcription"
