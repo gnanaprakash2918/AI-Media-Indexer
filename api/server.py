@@ -2247,13 +2247,14 @@ def create_app() -> FastAPI:
             labels = _chinese_whispers_cluster(dist_matrix, threshold)
         elif algorithm == "hdbscan":
             import hdbscan
-            # Use precomputed distance matrix with HDBSCAN
+            from config import settings
+            # Use precomputed distance matrix with HDBSCAN (configurable)
             clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=2,
-                min_samples=1,
+                min_cluster_size=settings.hdbscan_min_cluster_size,
+                min_samples=settings.hdbscan_min_samples,
                 metric="precomputed",
-                cluster_selection_epsilon=threshold * 0.5,  # Tighter for speaker ID
-                cluster_selection_method="leaf",  # More fine-grained clusters
+                cluster_selection_epsilon=settings.hdbscan_cluster_selection_epsilon * threshold,
+                cluster_selection_method="leaf",
             )
             labels = clusterer.fit_predict(dist_matrix)
         else:

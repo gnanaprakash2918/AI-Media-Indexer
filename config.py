@@ -158,6 +158,20 @@ class Settings(BaseSettings):
         description="Voice clustering cosine distance (lower=stricter, 0.3=70% similarity required for tighter clusters)"
     )
     
+    # HDBSCAN Tuning (used for clustering algorithms)
+    hdbscan_min_cluster_size: int = Field(
+        default=2,
+        description="Minimum cluster size for HDBSCAN (2=pair of samples)"
+    )
+    hdbscan_min_samples: int = Field(
+        default=1,
+        description="Min samples for core point (1=lenient, 3=stricter)"
+    )
+    hdbscan_cluster_selection_epsilon: float = Field(
+        default=0.55,
+        description="Cluster selection epsilon for HDBSCAN (0.55=balanced)"
+    )
+    
     # Audio Processing
     audio_rms_silence_db: float = Field(
         default=-40.0,

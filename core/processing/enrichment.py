@@ -110,33 +110,131 @@ class EntityEnricher:
     - Identify unknown faces by context
     - Get information about locations
     - Expand topic context for better search
+    
+    PRIVACY: Personal media blocks external search unless HITL approved.
     """
     
     def __init__(self):
         self.brave = BraveSearchClient()
         self._cache: dict[str, Any] = {}
+        self._pending_approvals: list[dict[str, Any]] = []  # HITL queue
     
     @property
     def is_available(self) -> bool:
         """Check if external enrichment is available."""
-        # Check if external search is enabled in settings
         enabled = getattr(settings, 'enable_external_search', False)
         return enabled and self.brave.is_available
+    
+    def check_privacy(self, media_type: str | None = None) -> tuple[bool, str]:
+        """Check if external search is allowed for this media type.
+        
+        Returns:
+            Tuple of (allowed, reason).
+        """
+        if not self.is_available:
+            return False, "External search not configured"
+        
+        # Personal content requires HITL approval
+        if media_type and media_type.lower() == "personal":
+            return False, "Personal content - external search blocked (requires HITL approval)"
+        
+        return True, "External search allowed"
+    
+    def queue_for_approval(
+        self,
+        entity_type: str,
+        context: str,
+        media_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Queue an entity for HITL approval before external search.
+        
+        Args:
+            entity_type: Type of entity (face, location, topic).
+            context: Contextual information about the entity.
+            media_path: Path to the media file.
+            
+        Returns:
+            Pending approval record.
+        """
+        record = {
+            "entity_type": entity_type,
+            "context": context,
+            "media_path": media_path,
+            "status": "pending",
+            "approved": False,
+            "result": None,
+        }
+        self._pending_approvals.append(record)
+        log(f"Queued {entity_type} for HITL approval: {context[:50]}...")
+        return record
+    
+    def get_pending_approvals(self) -> list[dict[str, Any]]:
+        """Get all entities pending HITL approval for external search."""
+        return [p for p in self._pending_approvals if p["status"] == "pending"]
+    
+    async def process_approved(self, indices: list[int]) -> list[dict[str, Any]]:
+        """Process approved entities with external search.
+        
+        Args:
+            indices: List of pending approval indices to process.
+            
+        Returns:
+            List of enrichment results.
+        """
+        results = []
+        for idx in indices:
+            if 0 <= idx < len(self._pending_approvals):
+                record = self._pending_approvals[idx]
+                record["approved"] = True
+                record["status"] = "processing"
+                
+                # Perform enrichment
+                if record["entity_type"] == "face":
+                    result = await self.enrich_unknown_face(
+                        context=record["context"],
+                        skip_privacy_check=True,
+                    )
+                elif record["entity_type"] == "location":
+                    result = await self.enrich_location(
+                        location_hint=record["context"],
+                        skip_privacy_check=True,
+                    )
+                else:
+                    result = await self.enrich_topic(
+                        topic=record["context"],
+                        skip_privacy_check=True,
+                    )
+                
+                record["result"] = result
+                record["status"] = "completed"
+                results.append(result)
+        
+        return results
     
     async def enrich_unknown_face(
         self,
         context: str,
         image_description: str | None = None,
+        media_type: str | None = None,
+        skip_privacy_check: bool = False,
     ) -> dict[str, Any]:
         """Attempt to identify an unknown face using context.
         
         Args:
             context: Contextual information (video title, scene description).
             image_description: Visual description of the person.
+            media_type: Type of media (personal blocks search).
+            skip_privacy_check: True if HITL approved.
             
         Returns:
             Dict with possible_matches and confidence.
         """
+        # Privacy check - block personal content unless approved
+        if not skip_privacy_check:
+            allowed, reason = self.check_privacy(media_type)
+            if not allowed:
+                return {"possible_matches": [], "confidence": 0.0, "blocked": True, "reason": reason}
+        
         if not self.is_available:
             return {"possible_matches": [], "confidence": 0.0, "source": "unavailable"}
         
