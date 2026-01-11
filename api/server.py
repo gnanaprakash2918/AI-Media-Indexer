@@ -172,7 +172,7 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
         title="AI Media Indexer",
-        version="2.0.0",
+        version="2.1.0",
         lifespan=lifespan,
     )
 
@@ -936,11 +936,22 @@ def create_app() -> FastAPI:
 
     @app.delete("/jobs/{job_id}")
     async def delete_job(job_id: str, background_tasks: BackgroundTasks):
+        """Delete a job and notify UI via SSE."""
         job = job_manager.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        # 1. Cancel running tasks
         progress_tracker.cancel(job_id)
+        # 2. Remove from DB
         job_manager.delete_job(job_id)
+        # 3. Emit SSE Event so UI updates immediately
+        progress_tracker.emit_event(
+            job_id,
+            status=JobStatus.CANCELLED,
+            progress=0,
+            message="Job deleted",
+            payload={"action": "delete", "job_id": job_id}
+        )
         return {"status": "deleted", "job_id": job_id}
 
     # === PRIVACY TOOLS ===
@@ -1050,6 +1061,10 @@ def create_app() -> FastAPI:
             default="all",
             description="Type of search: all, dialogue, visual, voice",
         ),
+        video_path: str | None = Query(
+            default=None,
+            description="Filter results to specific video path",
+        ),
     ):
         """Semantic search across audio, visual, and voice with detailed stats.
         
@@ -1066,12 +1081,13 @@ def create_app() -> FastAPI:
         from collections import defaultdict
         
         start_time_search = time.perf_counter()
-        logger.info(f"Search query: '{q}' | type: {search_type} | limit: {limit}")
+        logger.info(f"Search query: '{q}' | type: {search_type} | limit: {limit} | video_filter: {video_path}")
 
         results = []
         stats = {
             "query": q,
             "search_type": search_type,
+            "video_filter": video_path,
             "dialogue_count": 0,
             "visual_count": 0,
             "total_frames_scanned": 0,
@@ -1079,12 +1095,17 @@ def create_app() -> FastAPI:
 
         # Dialogue/transcript search
         if search_type in ("all", "dialogue"):
-            dialogue_results = pipeline.db.search_media(q, limit=limit)
+            dialogue_results = pipeline.db.search_media(q, limit=limit * 2)
+            
+            # Post-filter by video_path if specified
+            if video_path:
+                dialogue_results = [r for r in dialogue_results if r.get("video_path") == video_path]
+            
             stats["dialogue_count"] = len(dialogue_results)
             
-            for hit in dialogue_results:
+            for hit in dialogue_results[:limit]:
                 hit["result_type"] = "dialogue"
-                hit["thumbnail_url"] = None  # Could generate from video_path + start time
+                hit["thumbnail_url"] = None
                 video = hit.get("video_path")
                 start_time = hit.get("start", 0)
                 if video:
@@ -1092,13 +1113,18 @@ def create_app() -> FastAPI:
                     hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={start_time}"
                     hit["playback_url"] = f"/media?path={safe_path}#t={start_time}"
             
-            results.extend(dialogue_results)
+            results.extend(dialogue_results[:limit])
             logger.info(f"  Dialogue results: {len(dialogue_results)}")
 
         # Visual/frame search
         if search_type in ("all", "visual"):
-            # Fetch more results to allow for deduplication
-            frame_results = pipeline.db.search_frames(q, limit=limit * 3)
+            # Fetch more results to allow for deduplication and filtering
+            frame_results = pipeline.db.search_frames(q, limit=limit * 4)
+            
+            # Post-filter by video_path if specified
+            if video_path:
+                frame_results = [r for r in frame_results if r.get("video_path") == video_path]
+            
             stats["total_frames_scanned"] = len(frame_results)
             
             # Log raw results to debug identical results issue

@@ -388,6 +388,31 @@ class ProgressTracker:
         if queue in self._subscribers:
             self._subscribers.remove(queue)
 
+    def emit_event(
+        self,
+        job_id: str,
+        status: JobStatus | None = None,
+        progress: float | None = None,
+        message: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a custom event to SSE subscribers.
+        
+        Used for special events like job deletion that need to notify UI.
+        """
+        event: dict[str, Any] = {
+            "event": "custom",
+            "job_id": job_id,
+            "message": message,
+        }
+        if status is not None:
+            event["status"] = status.value if isinstance(status, JobStatus) else status
+        if progress is not None:
+            event["progress"] = progress
+        if payload:
+            event.update(payload)
+        self._broadcast(event)
+
     def _broadcast(self, event: dict[str, Any]) -> None:
         """Broadcast event to all subscribers."""
         event["timestamp"] = time.time()
