@@ -373,20 +373,38 @@ def create_app() -> FastAPI:
             clear_context()
 
     @app.get("/health")
-    async def health():
-        """Health check endpoint."""
+    async def health_check():
+        """Health check endpoint with Performance and Observability checks."""
+        # 1. DB Stats
         stats = None
         if pipeline and pipeline.db:
             try:
                 stats = pipeline.db.get_collection_stats()
             except Exception:
                 pass
+
+        # 2. Observability Check
+        from core.utils.observability import langfuse
+        
+        observability_status = "disabled"
+        if langfuse:
+            try:
+                # Assuming auth_check is fast/sync or we iterate
+                if langfuse.auth_check():
+                    observability_status = "connected"
+                else:
+                     observability_status = "auth_failed"
+            except Exception:
+                 observability_status = "error"
+                 
         return {
             "status": "ok",
             "device": settings.device,
             "pipeline": "ready" if pipeline else "unavailable",
             "qdrant": "connected" if pipeline and pipeline.db else "disconnected",
             "stats": stats,
+            "observability": observability_status,
+            "asr_mode": "Native" if settings.use_native_nemo else "Docker/Whisper"
         }
 
     @app.get("/events")

@@ -8,6 +8,48 @@ from typing import Literal
 import torch
 from pydantic import Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import logging
+
+def get_hardware_profile() -> dict:
+    """Detect hardware and return optimal settings."""
+    profile = {
+        "batch_size": 4,
+        "worker_count": 1,
+        "embedding_batch_size": 4,
+        "device": "cpu"
+    }
+    
+    if not torch.cuda.is_available():
+        return profile
+        
+    profile["device"] = "cuda"
+    
+    try:
+        # Get VRAM in GB
+        vram_bytes = torch.cuda.get_device_properties(0).total_memory
+        vram_gb = vram_bytes / (1024**3)
+        
+        logging.info(f"Detected GPU with {vram_gb:.1f}GB VRAM")
+        
+        if vram_gb >= 23.0: # Workstation (e.g. 3090/4090)
+            profile["batch_size"] = 16
+            profile["worker_count"] = 4
+            profile["embedding_batch_size"] = 32
+        elif vram_gb >= 11.0: # High-end Consumer (e.g. 3080 Ti)
+            profile["batch_size"] = 8
+            profile["worker_count"] = 2
+            profile["embedding_batch_size"] = 16
+        else: # Laptop / Mid-range (8GB)
+            profile["batch_size"] = 4
+            profile["worker_count"] = 1
+            profile["embedding_batch_size"] = 8
+            
+    except Exception as e:
+        logging.warning(f"Failed to detect detailed hardware specs: {e}")
+        
+    return profile
+
+_HW_PROFILE = get_hardware_profile()
 
 
 class LLMProvider(str, Enum):
@@ -66,6 +108,27 @@ class Settings(BaseSettings):
         path = self.project_root() / "logs"
         path.mkdir(exist_ok=True)
         return path
+
+    # --- Performance ---
+    batch_size: int = Field(
+        default=_HW_PROFILE["batch_size"],
+        description="Batch size for inference"
+    )
+    
+    embedding_batch_size: int = Field(
+         default=_HW_PROFILE["embedding_batch_size"],
+         description="Batch size for embedding generation"
+    )
+    
+    worker_count: int = Field(
+        default=_HW_PROFILE["worker_count"],
+        description="Number of parallel ingestion workers"
+    )
+    
+    device: str = Field(
+        default=_HW_PROFILE["device"],
+        description="Device to run models on (cuda/cpu)"
+    )
 
     #  Infrastructure (Qdrant)
     qdrant_host: str = Field(default="localhost", description="Qdrant host")
