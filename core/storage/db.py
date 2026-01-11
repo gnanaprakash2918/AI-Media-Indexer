@@ -2937,24 +2937,32 @@ class VectorDB:
         query: str,
         video_paths: str | list[str] | None = None,
         limit: int = 20,
+        weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """SOTA hybrid search combining vector + keyword + identity.
-        
-        This method provides 100% retrieval accuracy by:
-        1. Detecting HITL names in query → filter by identity
-        2. Vector search on text embeddings
-        3. Keyword boost on structured fields
-        4. Reciprocal Rank Fusion of all signals
         
         Args:
             query: Natural language search query.
             video_paths: Optional filter to specific video(s).
             limit: Maximum results to return.
+            weights: Optional dictionary of boosting weights.
             
         Returns:
             Ranked list of matching frames with scores.
         """
         from collections import Counter
+        
+        # Default Weights (Tuned for balanced precision/recall)
+        w = {
+            "face_match": 0.20,
+            "speaker_match": 0.15,
+            "entity_match": 0.10,
+            "text_match": 0.08,
+            "scene_match": 0.08,
+            "action_match": 0.05,
+        }
+        if weights:
+            w.update(weights)
         
         # 1. Check for HITL names in query
         known_names = self.get_all_hitl_names()
@@ -3029,32 +3037,32 @@ class VectorDB:
             # Check face_names
             for name in payload.get("face_names", []):
                 if name and name.lower() in query_lower:
-                    boost += 0.20
+                    boost += w["face_match"]
             
             # Check speaker_names
             for name in payload.get("speaker_names", []):
                 if name and name.lower() in query_lower:
-                    boost += 0.15
+                    boost += w["speaker_match"]
             
             # Check entities
             for entity in payload.get("entities", []):
                 if entity and any(w in entity.lower() for w in query_words):
-                    boost += 0.10
+                    boost += w["entity_match"]
             
             # Check visible_text
             for text in payload.get("visible_text", []):
                 if text and any(w in text.lower() for w in query_words):
-                    boost += 0.08
+                    boost += w["text_match"]
             
             # Check scene_location
             location = payload.get("scene_location", "") or ""
             if any(w in location.lower() for w in query_words):
-                boost += 0.08
+                boost += w["scene_match"]
             
             # Check action/description
             action = payload.get("action", "") or payload.get("description", "") or ""
             if any(w in action.lower() for w in query_words):
-                boost += 0.05
+                boost += w["action_match"]
             
             results.append({
                 "id": str(hit.id),

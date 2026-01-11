@@ -19,8 +19,8 @@ async def verify_mcp_server():
     server_script = os.path.join(project_root, "core", "agent", "server.py")
     
     server_params = StdioServerParameters(
-        command="uv",
-        args=["run", "python", server_script],
+        command=sys.executable,
+        args=[server_script],
         env=os.environ.copy()
     )
 

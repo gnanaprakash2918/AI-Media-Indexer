@@ -4,146 +4,111 @@ Commercial-grade AI engine for hyper-specific video search using identity, visua
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           CORE STACK                                │
-├─────────────────────────────────────────────────────────────────────┤
-│  FastAPI (REST API)  │  Qdrant (Vectors)  │  SQLite (Identity Graph)│
-│  Ollama/Gemini (VLM) │  Whisper (ASR)     │  InsightFace (Faces)    │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Ingestion Pipeline
-
-```
-Video → Extract → Diarize → Track-Cluster → VLM Caption → Index
-        ▼          ▼           ▼              ▼            ▼
-      Frames    Speakers    FaceTracks    Scenes      Qdrant
-      Audio    (Pyannote)   (IoU+Cosine)  (Dense)     Vectors
-```
-
-| Stage | File | Purpose |
-|-------|------|---------|
-| Extract | `core/processing/extractor.py` | Frame extraction at intervals |
-| Transcribe | `core/processing/transcriber.py` | Whisper ASR with language lock |
-| Diarize | `core/processing/voice.py` | Speaker segmentation + RMS silence filter |
-| Face Track | `core/processing/identity.py` | FaceTrackBuilder (IoU + cosine) |
-| Scene Caption | `core/processing/scene_detector.py` | PySceneDetect + VLM dense captions |
-| Index | `core/storage/db.py` | Qdrant hybrid vectors |
-
-### Search Pipeline
-
-```
-Query → Intent Parse → Graph Filter → Vector Search → VLM Rerank
-        ▼               ▼              ▼               ▼
-    SearchIntent    video_ids     Candidates   SearchResultDetail
-    (LLM)         (IdentityGraph)  (Qdrant)     (Calibrated 0-1.0)
+```mermaid
+graph TD
+    User[User] -->|Web UI| API[FastAPI Server]
+    API -->|Ingest| Pipeline[Ingestion Pipeline]
+    API -->|Search| Search[Search Engine]
+    
+    subgraph "Core Processing"
+        Pipeline -->|Extract| Frames[Frames & Audio]
+        Frames -->|Transcribe| Whisper[Whisper/AI4Bharat]
+        Frames -->|Vision| Vision[Ollama/Gemini]
+        Frames -->|Identify| Faces[InsightFace/Brave]
+    end
+    
+    subgraph "Data Store"
+        Pipeline -->|Vectors| Qdrant[(Qdrant DB)]
+        Pipeline -->|Graph| SQLite[(Identity Graph)]
+    end
+    
+    subgraph "Agents (MCP)"
+        Search -->|A2A| Agents[Search Agents]
+        Agents -->|Tools| VideoRAG[VideoRAG]
+        Agents -->|Tools| Summary[Summarizer]
+    end
+    
+    Agents -.-> Qdrant
+    Search -.-> SQLite
 ```
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| Text LLM Factory | `core/llm/text_factory.py` | Strategy: Ollama/Gemini |
-| Query Parser | `core/retrieval/query_parser.py` | NL → SearchIntent |
-| Identity Graph | `core/storage/identity_graph.py` | SQLite pre-filtering |
-| VLM Reranker | `core/retrieval/reranker.py` | Keyframe verification |
-| Score Calibration | `core/retrieval/calibration.py` | Normalize to 0-1.0 |
+## AI4Bharat Indic ASR Setup
 
-### Key APIs
+For SOTA transcription of Indian languages (Tamil, Hindi, etc.), we support **AI4Bharat IndicConformer**.
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/search/advanced` | POST | Agentic search with reranking |
-| `/identities` | GET | List all identities |
-| `/identities/{id}/merge` | POST | Merge two identities |
-| `/jobs/{id}/pause` | POST | Pause job (SQLite-backed) |
-| `/tools/redact` | POST | Smart blur identity |
-| `/api/media/thumbnail` | GET | Dynamic frame extraction |
-
----
-
-## Quick Start
-
+### Option 1: Native (Recommended)
+This uses the lightweight HuggingFace model (~600MB).
 ```bash
-# Install
-git clone https://github.com/gnanaprakash2918/AI-Media-Indexer.git
-cd AI-Media-Indexer
-uv sync
-
-# Run
-./start.ps1  # or ./start.sh
-
-# Web UI
-cd web && npm install && npm run dev
+# Enabled by default if language is 'ta', 'hi', etc.
+# config.py: use_indic_asr = True
 ```
 
-Open http://localhost:3000
+### Option 2: Docker Container (SOTA Quality)
+Use the NVIDIA NeMo backend (requires ~5GB VRAM and Linux/WSL).
 
----
-
-## SOTA Features
-
-| Feature | Component | Description |
-|---------|-----------|-------------|
-| **BGE-M3 Embedding** | `core/storage/db.py` | 1024d SOTA multilingual embeddings |
-| **SAM-3 Segmentation** | `core/processing/segmentation.py` | Interactive/automatic segmentation |
-| **ProPainter Inpainting** | `core/manipulation/inpainting.py` | Video object removal |
-| **InsightFace 512D** | `core/processing/identity.py` | High-accuracy face recognition |
-| **AI4Bharat ASR** | `core/processing/indic_transcriber.py` | SOTA Indic language transcription |
-| **Global Context** | `core/processing/scene_aggregator.py` | Video-level summarization |
-| **Identity Linker** | `core/processing/identity_linker.py` | Face-Voice temporal matching |
-| **TMDB Metadata** | `core/processing/metadata.py` | Movie cast auto-lookup |
-
-### Installation Notes
-
+1. **Create Dockerfile.asr**:
+```dockerfile
+FROM python:3.10-slim
+RUN apt-get update && apt-get install -y libsndfile1 ffmpeg
+RUN pip install nemo_toolkit[asr]
+COPY . /app
+WORKDIR /app
+RUN pip install -r requirements.txt
+CMD ["python", "api/server.py"]
+```
+2. **Run**:
 ```bash
-# Using uv (recommended)
-uv sync
-
-# For SOTA Indic ASR (optional)
-pip install nemo_toolkit[asr]
-
-# Windows: Increase pagefile if OOM errors occur
-# Settings > System > About > Advanced > Performance > Virtual Memory > Custom Size
+docker build -t ai-media-asr -f Dockerfile.asr .
+docker run --gpus all -v $(pwd)/data:/app/data ai-media-asr
 ```
 
 ---
 
 ## Configuration
 
-Copy `.env.example` to `.env`:
+Settings are managed via `.env` (overrides `config.py` defaults).
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `OLLAMA_MODEL` | `llava:7b` | Vision model |
-| `AI_PROVIDER_VISION` | `ollama` | VLM provider (ollama/gemini) |
-| `AI_PROVIDER_TEXT` | `ollama` | Text LLM provider |
-| `HF_TOKEN` | - | Voice analysis |
-| `QDRANT_HOST` | `localhost` | Vector DB |
-| `TEXT_EMBEDDING_DIM` | `1024` | Dimension of text embeddings |
-| `VISUAL_EMBEDDING_DIM` | `1024` | Dimension of visual embeddings |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| **Core** | | |
+| `PROJECT_ROOT` | (Auto) | Root directory path |
+| `QDRANT_HOST` | `localhost` | Vector DB host |
+| `QDRANT_PORT` | `6333` | Vector DB port |
+| `LOG_LEVEL` | `INFO` | Logging verbosity |
+| **AI Models** | | |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
+| `OLLAMA_MODEL` | `moondream` | Vision model (moondream/llava) |
+| `OLLAMA_VISION_MODEL`| `moondream:latest` | Vision model tag |
+| `GEMINI_API_KEY` | None | Google Gemini API Key |
+| `BRAVE_API_KEY` | None | Brave Search API (Identity Enrichment) |
+| `HF_TOKEN` | None | HuggingFace Token (Speaker Diarization) |
+| **Features** | | |
+| `USE_INDIC_ASR` | `True` | Enable AI4Bharat for Indic langs |
+| `AUTO_DETECT_LANGUAGE`| `True` | Detect audio language automatically |
+| `ENABLE_VISUAL_EMBEDDINGS`| `True` | Use SigLIP for visual search |
+| `ENABLE_HYBRID_SEARCH`| `True` | Use weights for ranking |
+| **Embeddings** | | |
+| `TEXT_EMBEDDING_DIM` | `1024` | Text vector dimension (BGE-M3) |
+| `VISUAL_EMBEDDING_DIM` | `1024` | Visual vector dimension |
+| `SIGLIP_MODEL` | `google/siglip...` | Visual embedding model |
+| **Tuning (New)** | | |
+| `FACE_MATCH_WEIGHT` | `0.20` | Boost for identity matches |
+| `SPEAKER_MATCH_WEIGHT`| `0.15` | Boost for speaker matches |
 
 ---
 
-## Agents & MCP
+## Tools
 
-The system exposes an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for AI agents.
-
+### Search Optimization
+Tune search weights for your dataset:
 ```bash
-# Start MCP Server
-uv run python core/agent/server.py
+python tools/tune_search.py
 ```
 
-### Protocol Usage (A2A)
-
-The Orchestrator dispatches tasks to `SearchAgent` via the MCP tools:
-
-- `query_video_rag`: High-IQ cognitive search with query decomposition.
-- `get_video_summary`: Hierarchical L1/L2 summaries.
-- `enrich_identity`: External knowledge (Brave Search) for unknown faces.
-
-To verify agents:
+### Agent Verification
+Verify MCP server and tools:
 ```bash
-uv run python tests/verifymcp.py
+python tests/verifymcp.py
 ```
 
 ---
