@@ -293,3 +293,43 @@ export interface FaceCluster {
     timestamp?: number;
     thumbnail_path?: string;
 }
+
+// NEW: Enhanced Search Result with RRF explainability
+export interface SearchResult {
+    id: string;
+    video_path: string;
+    timestamp: number;
+    score: number;
+    rrf_score?: number;
+    vector_score?: number;
+    keyword_score?: number;
+    action?: string;
+    dialogue?: string;
+    match_reasons: string[];
+    matched_identity?: string;
+    thumbnail_path?: string;
+    face_cluster_ids?: number[];
+    face_names?: string[];
+}
+
+// Get list of indexed videos for filter dropdown
+export const getIndexedVideos = async (): Promise<string[]> => {
+    const res = await apiClient.get('/library');
+    const items = res.data.media || res.data || [];
+    return items.map((item: { path?: string; video_path?: string }) => item.path || item.video_path || '');
+};
+
+// Ingest with resume support
+export const ingestWithResume = async (
+    path: string,
+    resumeJobId?: string,
+    hint: string = 'unknown'
+) => {
+    const res = await apiClient.post('/ingest', {
+        path,
+        media_type_hint: hint,
+        resume_job_id: resumeJobId,
+    });
+    return res.data;
+};
+

@@ -31,6 +31,12 @@ interface MediaResult {
     match_reason?: string;
     agent_thought?: string;
     matched_constraints?: string[];
+    // RRF Hybrid Search Explainability
+    match_reasons?: string[];
+    rrf_score?: number;
+    vector_score?: number;
+    keyword_score?: number;
+    matched_identity?: string;
 }
 
 export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }) {
