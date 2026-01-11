@@ -646,6 +646,245 @@ class VectorDB:
         except Exception:
             return []
 
+    @observe("db_search_frames_hybrid")
+    def search_frames_hybrid(
+        self,
+        query: str,
+        limit: int = 20,
+        video_paths: str | list[str] | None = None,
+        face_cluster_ids: list[int] | None = None,
+        rrf_k: int = 60,
+    ) -> list[dict[str, Any]]:
+        """Hybrid search with Reciprocal Rank Fusion (RRF).
+        
+        Combines:
+        1. Vector semantic search (visual/action descriptions)
+        2. Keyword/text matching (entities, visible_text, scene)
+        3. Identity filtering (face names, speaker names)
+        
+        RRF Formula: score = sum(1 / (k + rank_i)) for each retrieval method.
+        Default k=60 balances fusion (standard in SIGIR papers).
+        
+        Returns explainable results with match_reasons.
+        """
+        import numpy as np
+        from collections import defaultdict
+        
+        results_by_id: dict[str, dict] = {}
+        rank_lists: dict[str, dict[str, int]] = defaultdict(dict)
+        
+        # Normalize video_paths to list
+        if isinstance(video_paths, str):
+            video_paths = [video_paths]
+        
+        # === 1. VECTOR SEARCH (Semantic Understanding) ===
+        try:
+            self._ensure_encoder_loaded()
+            query_vector = self.encode_texts(query, is_query=True)[0]
+            
+            conditions = []
+            if video_paths:
+                conditions.append(
+                    models.FieldCondition(
+                        key="video_path",
+                        match=models.MatchAny(any=video_paths),
+                    )
+                )
+            if face_cluster_ids:
+                conditions.append(
+                    models.FieldCondition(
+                        key="face_cluster_ids",
+                        match=models.MatchAny(any=face_cluster_ids),
+                    )
+                )
+            
+            qfilter = models.Filter(must=conditions) if conditions else None
+            
+            vec_resp = self.client.query_points(
+                collection_name=self.MEDIA_COLLECTION,
+                query=query_vector,
+                limit=limit * 2,
+                query_filter=qfilter,
+            )
+            
+            for rank, hit in enumerate(vec_resp.points):
+                point_id = str(hit.id)
+                rank_lists["vector"][point_id] = rank + 1
+                if point_id not in results_by_id:
+                    payload = hit.payload or {}
+                    results_by_id[point_id] = {
+                        "id": point_id,
+                        "score": 0.0,
+                        "vector_score": hit.score,
+                        "match_reasons": [],
+                        **payload,
+                    }
+                results_by_id[point_id]["match_reasons"].append(
+                    f"Visual match ({hit.score:.2f})"
+                )
+        except Exception as e:
+            log(f"Vector search failed: {e}")
+        
+        # === 2. KEYWORD SEARCH (Text Fields) ===
+        try:
+            query_lower = query.lower()
+            query_words = set(query_lower.split())
+            
+            conditions = []
+            if video_paths:
+                conditions.append(
+                    models.FieldCondition(
+                        key="video_path",
+                        match=models.MatchAny(any=video_paths),
+                    )
+                )
+            
+            qfilter = models.Filter(must=conditions) if conditions else None
+            
+            scroll_resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=qfilter,
+                limit=500,
+                with_payload=True,
+                with_vectors=False,
+            )
+            
+            keyword_matches: list[tuple[str, float, dict]] = []
+            for point in scroll_resp[0]:
+                payload = point.payload or {}
+                point_id = str(point.id)
+                
+                text_fields = [
+                    str(payload.get("action", "")),
+                    str(payload.get("dialogue", "")),
+                    str(payload.get("scene_type", "")),
+                    " ".join(payload.get("entities", [])) if isinstance(payload.get("entities"), list) else "",
+                    " ".join(payload.get("visible_text", [])) if isinstance(payload.get("visible_text"), list) else "",
+                    " ".join(payload.get("face_names", [])) if isinstance(payload.get("face_names"), list) else "",
+                ]
+                combined_text = " ".join(text_fields).lower()
+                
+                word_hits = sum(1 for w in query_words if w in combined_text)
+                if word_hits > 0:
+                    score = word_hits / len(query_words) if query_words else 0
+                    keyword_matches.append((point_id, score, payload))
+            
+            keyword_matches.sort(key=lambda x: x[1], reverse=True)
+            for rank, (point_id, score, payload) in enumerate(keyword_matches[:limit * 2]):
+                rank_lists["keyword"][point_id] = rank + 1
+                if point_id not in results_by_id:
+                    results_by_id[point_id] = {
+                        "id": point_id,
+                        "score": 0.0,
+                        "keyword_score": score,
+                        "match_reasons": [],
+                        **payload,
+                    }
+                matched_fields = []
+                if query_lower in str(payload.get("action", "")).lower():
+                    matched_fields.append("action")
+                if payload.get("face_names"):
+                    matched_fields.append(f"person: {payload.get('face_names')}")
+                if matched_fields:
+                    results_by_id[point_id]["match_reasons"].append(
+                        f"Text match: {', '.join(matched_fields)}"
+                    )
+                else:
+                    results_by_id[point_id]["match_reasons"].append(
+                        f"Keyword hit ({score:.2f})"
+                    )
+        except Exception as e:
+            log(f"Keyword search failed: {e}")
+        
+        # === 3. IDENTITY SEARCH (Face/Speaker Names) ===
+        try:
+            identity_names = self._extract_identity_names(query)
+            if identity_names:
+                for name in identity_names:
+                    cluster_id = self.fuzzy_get_cluster_id_by_name(name)
+                    if cluster_id is not None:
+                        conditions = [
+                            models.FieldCondition(
+                                key="face_cluster_ids",
+                                match=models.MatchAny(any=[cluster_id]),
+                            )
+                        ]
+                        if video_paths:
+                            conditions.append(
+                                models.FieldCondition(
+                                    key="video_path",
+                                    match=models.MatchAny(any=video_paths),
+                                )
+                            )
+                        
+                        identity_resp = self.client.scroll(
+                            collection_name=self.MEDIA_COLLECTION,
+                            scroll_filter=models.Filter(must=conditions),
+                            limit=limit * 2,
+                            with_payload=True,
+                        )
+                        
+                        for rank, point in enumerate(identity_resp[0]):
+                            point_id = str(point.id)
+                            rank_lists["identity"][point_id] = rank + 1
+                            if point_id not in results_by_id:
+                                payload = point.payload or {}
+                                results_by_id[point_id] = {
+                                    "id": point_id,
+                                    "score": 0.0,
+                                    "identity_match": True,
+                                    "match_reasons": [],
+                                    **payload,
+                                }
+                            results_by_id[point_id]["match_reasons"].append(
+                                f"Person match: '{name}'"
+                            )
+                            results_by_id[point_id]["matched_identity"] = name
+        except Exception as e:
+            log(f"Identity search failed: {e}")
+        
+        # === 4. RRF FUSION ===
+        for point_id, result in results_by_id.items():
+            rrf_score = 0.0
+            for method, ranks in rank_lists.items():
+                if point_id in ranks:
+                    rrf_score += 1.0 / (rrf_k + ranks[point_id])
+            result["score"] = rrf_score
+            result["rrf_score"] = rrf_score
+        
+        final_results = sorted(
+            results_by_id.values(),
+            key=lambda x: x["score"],
+            reverse=True,
+        )[:limit]
+        
+        return final_results
+
+    def _extract_identity_names(self, query: str) -> list[str]:
+        """Extract potential person names from query for identity search."""
+        known_names = set()
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                limit=500,
+                with_payload=["name"],
+                with_vectors=False,
+            )
+            for pt in resp[0]:
+                name = (pt.payload or {}).get("name")
+                if name:
+                    known_names.add(name.lower())
+        except Exception:
+            pass
+        
+        query_lower = query.lower()
+        found_names = []
+        for name in known_names:
+            if name in query_lower:
+                found_names.append(name)
+        
+        return found_names
+
     def get_cluster_id_by_name(self, name: str) -> int | None:
         """Resolve a person's name to their cluster ID.
 
