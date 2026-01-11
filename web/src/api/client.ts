@@ -150,8 +150,11 @@ export const getFaceClusters = async () => {
     return res.data;
 };
 
-export const mergeFaceClusters = async (fromCluster: number, toCluster: number) => {
-    const res = await apiClient.post('/faces/merge', null, { params: { from_cluster: fromCluster, to_cluster: toCluster } });
+export const mergeFaceClusters = async (sourceClusterId: number, targetClusterId: number) => {
+    const res = await apiClient.post('/faces/merge', {
+        source_cluster_id: sourceClusterId,
+        target_cluster_id: targetClusterId,
+    });
     return res.data;
 };
 
@@ -181,8 +184,11 @@ export const renameVoiceSpeaker = async (segmentId: string, name: string) => {
     return res.data;
 };
 
-export const mergeVoiceClusters = async (fromCluster: number, toCluster: number) => {
-    const res = await apiClient.post('/voices/merge', null, { params: { from_cluster: fromCluster, to_cluster: toCluster } });
+export const mergeVoiceClusters = async (sourceClusterId: number, targetClusterId: number) => {
+    const res = await apiClient.post('/voices/merge', {
+        source_cluster_id: sourceClusterId,
+        target_cluster_id: targetClusterId,
+    });
     return res.data;
 };
 
@@ -333,3 +339,20 @@ export const ingestWithResume = async (
     return res.data;
 };
 
+// ========== HITL Power APIs: Link ==========
+
+export const linkFaceVoice = async (faceClusterId: number, voiceClusterId: number, name?: string) => {
+    const res = await apiClient.post('/identities/link', {
+        face_cluster_id: faceClusterId,
+        voice_cluster_id: voiceClusterId,
+        name: name,
+    });
+    return res.data;
+};
+
+export const getIdentitySuggestions = async (videoPath?: string) => {
+    const res = await apiClient.get('/identities/suggestions', {
+        params: { video_path: videoPath }
+    });
+    return res.data;
+};

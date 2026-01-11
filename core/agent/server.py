@@ -139,6 +139,119 @@ async def agentic_search(
 
 
 @mcp.tool()
+async def query_video_rag(
+    query: Annotated[
+        str,
+        Field(
+            description="Natural language question or search query about video content "
+            "(e.g. 'Why did he cry?', 'Find the red car scene').",
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results to return.",
+            ge=1,
+            le=50,
+        ),
+    ] = 10,
+) -> dict:
+    """Cognitive VideoRAG search with query decomposition and answer generation.
+    
+    This is the "High IQ" search that:
+    1. Decomposes queries into visual/audio/identity components
+    2. Searches across multiple modalities
+    3. Generates text answers for questions with citations
+    4. Uses external knowledge (Brave Search) when needed
+    
+    Args:
+        query: Natural language query or question.
+        limit: Maximum results to retrieve.
+        
+    Returns:
+        Dict with structured query, results, and optional answer.
+    """
+    from core.retrieval.rag import get_orchestrator
+    orchestrator = get_orchestrator()
+    response = await orchestrator.search(query, limit=limit)
+    return response.model_dump()
+
+
+@mcp.tool()
+async def get_video_summary(
+    video_path: Annotated[
+        str,
+        Field(
+            description="Path to the video file to summarize.",
+        ),
+    ],
+    force_regenerate: Annotated[
+        bool,
+        Field(
+            description="Force regenerating summaries even if they exist.",
+        ),
+    ] = False,
+) -> dict:
+    """Get or generate hierarchical summaries for a video.
+    
+    Returns two levels of summaries:
+    - L1: Full video summary (plot, themes, main events)
+    - L2: Scene summaries (5-minute chunks)
+    
+    Useful for answering "What is this video about?" questions.
+    
+    Args:
+        video_path: Path to the video file.
+        force_regenerate: If True, regenerate even if summaries exist.
+        
+    Returns:
+        Dict with l1_summary, l2_summaries, and scene_count.
+    """
+    from core.processing.summarizer import summarizer
+    return await summarizer.summarize_video(video_path, force=force_regenerate)
+
+
+@mcp.tool()
+async def enrich_identity(
+    context: Annotated[
+        str,
+        Field(
+            description="Context about the identity to enrich "
+            "(e.g. 'person in blue shirt at bowling alley').",
+        ),
+    ],
+    entity_type: Annotated[
+        str,
+        Field(
+            description="Type of entity: 'face', 'location', or 'topic'.",
+        ),
+    ] = "face",
+) -> dict:
+    """Enrich an unknown identity using external knowledge (Brave Search).
+    
+    This tool queries the web to identify unknown people, locations, or topics.
+    Useful when a face is detected but not recognized.
+    
+    Note: Requires BRAVE_API_KEY to be configured. Returns empty results otherwise.
+    
+    Args:
+        context: Contextual description of the entity.
+        entity_type: Type of entity to enrich.
+        
+    Returns:
+        Dict with possible_matches and confidence.
+    """
+    from core.processing.enrichment import enricher
+    
+    if entity_type == "face":
+        return await enricher.enrich_unknown_face(context=context)
+    elif entity_type == "location":
+        return await enricher.enrich_location(location_hint=context)
+    else:
+        return await enricher.enrich_topic(topic=context)
+
+
+@mcp.tool()
 async def search_media(
     query: Annotated[
         str,
