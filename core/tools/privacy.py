@@ -105,6 +105,100 @@ class VideoRedactor:
             return RedactionResult(True, str(output_path), frames_processed, faces_blurred)
         return RedactionResult(False, "", frames_processed, faces_blurred, "Audio mux failed")
     
+    async def redact_all_faces(
+        self,
+        video_path: Path,
+        output_path: Path | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> RedactionResult:
+        """Blur ALL faces in a video for complete privacy.
+        
+        Args:
+            video_path: Input video file.
+            output_path: Output path (default: {stem}_redacted.{ext}).
+            progress_callback: Progress callback(current_frame, total_frames).
+            
+        Returns:
+            RedactionResult with success status and stats.
+        """
+        video_path = Path(video_path)
+        if not video_path.exists():
+            return RedactionResult(False, "", 0, 0, "Video not found")
+        
+        if output_path is None:
+            output_path = video_path.parent / f"{video_path.stem}_redacted{video_path.suffix}"
+        output_path = Path(output_path)
+        
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            return RedactionResult(False, "", 0, 0, "Cannot open video")
+        
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
+        temp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        writer = cv2.VideoWriter(temp_video.name, fourcc, fps, (width, height))
+        
+        frames_processed = 0
+        faces_blurred = 0
+        process_every_n = max(1, int(fps // 5))
+        last_boxes: list[tuple[int, int, int, int]] = []
+        
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if frames_processed % process_every_n == 0:
+                    boxes = await self._detect_all_faces(frame)
+                    last_boxes = boxes
+                
+                for box in last_boxes:
+                    frame = self._apply_blur(frame, box)
+                    faces_blurred += 1
+                
+                writer.write(frame)
+                frames_processed += 1
+                
+                if progress_callback and frames_processed % 30 == 0:
+                    progress_callback(frames_processed, total_frames)
+        finally:
+            cap.release()
+            writer.release()
+        
+        success = self._mux_audio(video_path, Path(temp_video.name), output_path)
+        
+        try:
+            Path(temp_video.name).unlink()
+        except Exception:
+            pass
+        
+        if success:
+            return RedactionResult(True, str(output_path), frames_processed, faces_blurred)
+        return RedactionResult(False, "", frames_processed, faces_blurred, "Audio mux failed")
+    
+    async def _detect_all_faces(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+        """Detect all faces in a frame without identity matching."""
+        import tempfile
+        temp_path = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+        cv2.imwrite(temp_path.name, frame)
+        
+        try:
+            faces = await self.face_manager.detect_faces(temp_path.name)
+        except Exception:
+            return []
+        finally:
+            try:
+                Path(temp_path.name).unlink()
+            except Exception:
+                pass
+        
+        return [face.bbox for face in faces]
+    
     def _get_identity_embedding(self, identity_id: str) -> np.ndarray | None:
         identity = identity_graph.get_identity(identity_id)
         if not identity:

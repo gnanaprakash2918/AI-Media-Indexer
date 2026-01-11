@@ -68,9 +68,11 @@ class VectorDB:
 
     MEDIA_SEGMENTS_COLLECTION = "media_segments"
     MEDIA_COLLECTION = "media_frames"
+    FRAMES_COLLECTION = "media_frames"  # Alias for summarizer
     FACES_COLLECTION = "faces"
     VOICE_COLLECTION = "voice_segments"
     SCENES_COLLECTION = "scenes"  # Scene-level storage (production approach)
+    SUMMARIES_COLLECTION = "global_summaries"  # Hierarchical summaries (L1/L2)
 
     MEDIA_VECTOR_SIZE = _SELECTED_DIM
     FACE_VECTOR_SIZE = 512  # InsightFace ArcFace (fallback SFace uses 128 but vectors are padded)

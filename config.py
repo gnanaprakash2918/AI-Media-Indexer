@@ -244,6 +244,16 @@ class Settings(BaseSettings):
         default="disabled",
         description="Backend for video inpainting/manipulation"
     )
+    
+    # Hierarchical Summarization
+    summary_scene_duration: int = Field(
+        default=300,
+        description="Duration in seconds for L2 scene chunks (300=5 minutes)"
+    )
+    auto_summarize_on_ingest: bool = Field(
+        default=False,
+        description="Auto-generate hierarchical summaries after ingestion"
+    )
 
     # --- Biometrics Configuration ---
     arcface_model_path: Path = Field(
