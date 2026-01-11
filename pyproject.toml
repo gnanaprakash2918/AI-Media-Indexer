@@ -66,6 +66,8 @@ dependencies = [
     "pytest>=9.0.2",
     "brave-search>=0.1.0",
     "pynvml>=11.5.0",
+    "celery[redis]>=5.3.6",
+    "redis>=5.0.1",
 ]
 
 [project.optional-dependencies]

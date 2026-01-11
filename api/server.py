@@ -718,6 +718,39 @@ def create_app() -> FastAPI:
         # Generate Job ID upfront so we can return it
         job_id = str(uuid4())
 
+        # DISTRIBUTED INGESTION DISPATCH
+        if settings.enable_distributed_ingestion:
+            try:
+                from core.ingestion.tasks import ingest_video_task
+                
+                # Initialize job tracking locally so UI sees it immediately
+                progress_tracker.start(
+                    job_id,
+                    file_path=str(file_path),
+                    media_type=ingest_request.media_type_hint or "unknown",
+                    resume=False,
+                )
+                progress_tracker.update(job_id, 0.0, stage="queued", message="Queued for distributed worker")
+                
+                # Dispatch to Celery
+                ingest_video_task.delay(str(file_path), job_id)
+                
+                return {
+                    "status": "queued_distributed",
+                    "job_id": job_id,
+                    "file": str(file_path),
+                    "start_time": ingest_request.start_time,
+                    "message": "Distributed processing started.",
+                }
+            except Exception as e:
+                 logger.error(f"Failed to dispatch to Celery: {e}")
+                 # Fallback to local execution if dispatch fails? 
+                 # Or raise error to alert user configuration is broken?
+                 # Let's log and fall through to local for robustness, or raise if critical.
+                 # Given "Future Work" status, safety first -> Fallback or explicit error.
+                 # Let's raise to not confuse user why it ran locally.
+                 raise HTTPException(status_code=500, detail=f"Distributed dispatch failed: {e}")
+
         async def run_pipeline():
             # Start a new trace for the background task
             trace_name = f"ingest_{file_path.name}"

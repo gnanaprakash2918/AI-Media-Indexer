@@ -287,6 +287,12 @@ class Settings(BaseSettings):
     # Local (Docker) Langfuse
     langfuse_docker_host: str = "http://localhost:3300"
     
+    # Redis/Celery Configuration
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_auth: str = "redispass"
+    enable_distributed_ingestion: bool = False
+    
     # Observability (Loki)
     enable_loki: bool = Field(default=False, description="Enable log shipping to Grafana Loki")
     loki_url: str = Field(default="http://localhost:3100/loki/api/v1/push", description="Loki push API URL")

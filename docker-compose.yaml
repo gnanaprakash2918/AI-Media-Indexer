@@ -20,6 +20,7 @@ services:
       - PYTHONUNBUFFERED=1
     depends_on:
       - qdrant
+      - redis
     deploy:
       resources:
         reservations:
