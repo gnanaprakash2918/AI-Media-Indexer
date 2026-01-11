@@ -368,9 +368,38 @@ class IngestionPipeline:
             # Create safe prefix
             safe_stem = hashlib.md5(path.stem.encode()).hexdigest()
 
+            # Global Speaker Registry Logic
+            # 1. Match against existing speakers
+            # 2. Assign Global ID
+            # 3. Persist specific samples for future matching
+            
             for idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
+                global_speaker_id = f"unknown_{uuid.uuid4().hex[:8]}"
+                
+                # Check Global Registry if embedding exists
                 if seg.embedding is not None:
+                    match = self.db.match_speaker(seg.embedding, threshold=0.5)
+                    if match:
+                        global_speaker_id, score = match
+                        # log(f"Matched speaker {seg.speaker_label} -> {global_speaker_id} ({score:.2f})")
+                    else:
+                        # New Global Speaker
+                        # Use the first segment of this speaker as the "anchor"
+                        # We map local label (SPEAKER_00) to new Global ID? 
+                        # Ideally we assume SPEAKER_00 in this video is consistent.
+                        # But we treat each segment independently for now to allow simple logic.
+                        # Better: Upsert this as a valid sample for this new ID
+                        global_speaker_id = f"SPK_{uuid.uuid4().hex[:12]}"
+                        self.db.upsert_speaker_embedding(
+                            speaker_id=global_speaker_id,
+                            embedding=seg.embedding,
+                            media_path=str(path),
+                            start=seg.start_time,
+                            end=seg.end_time
+                        )
+
+
                     # Extract audio clip
                     try:
                         clip_name = f"{safe_stem}_{seg.start_time:.2f}_{seg.end_time:.2f}.mp3"
@@ -385,6 +414,7 @@ class IngestionPipeline:
                                 "-to", str(seg.end_time),
                                 "-q:a", "2",  # High quality MP3
                                 "-map", "a",
+                                "-loglevel", "error",
                                 str(clip_file)
                             ]
                             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -398,11 +428,13 @@ class IngestionPipeline:
                         media_path=str(path),
                         start=seg.start_time,
                         end=seg.end_time,
-                        speaker_label=seg.speaker_label,
+                        speaker_label=global_speaker_id, # Use Global ID
                         embedding=seg.embedding,
                         audio_path=audio_path,
                     )
         finally:
+            if self.voice:
+                self.voice.cleanup()
             del self.voice
             self.voice = None
             self._cleanup_memory()
@@ -1042,7 +1074,22 @@ class IngestionPipeline:
                 payload["action"] = analysis.action or ""
                 payload["description"] = description
 
-            # 3d. Add temporal context for video-aware search (not isolated frames)
+            # 3d. Add structured face data for UI overlays (bboxes)
+            # This enables drawing boxes around identified people in the UI
+            faces_metadata = []
+            for face, cluster_id in zip(detected_faces, face_cluster_ids):
+                face_name = self.db.get_face_name_by_cluster(cluster_id)
+                faces_metadata.append({
+                    "bbox": face.bbox if isinstance(face.bbox, list) else list(face.bbox), # [top, right, bottom, left]
+                    "cluster_id": cluster_id,
+                    "name": face_name,
+                    "confidence": face.det_score if hasattr(face, "det_score") else 1.0
+                })
+            
+            if faces_metadata:
+                payload["faces"] = faces_metadata
+
+            # 3e. Add temporal context for video-aware search (not isolated frames)
             # This enables queries like "pin falling slowly" by connecting adjacent frames
             if neighbor_timestamps:
                 payload["neighbor_timestamps"] = neighbor_timestamps
@@ -1051,7 +1098,7 @@ class IngestionPipeline:
                 # Store truncated context for retrieval boost
                 payload["temporal_context"] = context[:500] if len(context) > 500 else context
 
-            # 3e. Generate Vector (Include identity for searchability)
+            # 3f. Generate Vector (Include identity for searchability)
             # "A man walking. Visible: John. Speaking: John"
             full_text = description
             if "identity_text" in payload:

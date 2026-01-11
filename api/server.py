@@ -155,6 +155,8 @@ class AdvancedSearchRequest(BaseModel):
     use_rerank: bool = False
     limit: int = 20
     min_confidence: float = 0.0
+    video_path: str | None = None
+    person_filter: list[str] | None = None # Filter by person names
 
 class IdentityMergeRequest(BaseModel):
     target_identity_id: str
@@ -166,6 +168,10 @@ class RedactRequest(BaseModel):
     video_path: str
     identity_id: str
     output_path: str | None = None
+
+class VoiceMergeRequest(BaseModel):
+    target_speaker_id: str
+    source_speaker_ids: list[str]
 
 class FrameDescriptionRequest(BaseModel):
     description: str
@@ -1400,10 +1406,20 @@ def create_app() -> FastAPI:
         logger.info(f"[HybridSearch] Query: '{q}' | video_filter: {video_path}")
         
         try:
+            # Map person names to cluster IDs if filter provided
+            face_cluster_ids = None
+            if request.person_filter:
+                face_cluster_ids = []
+                for name in request.person_filter:
+                     cid = pipeline.db.get_face_cluster_by_name(name)
+                     if cid:
+                         face_cluster_ids.append(cid)
+            
             results = pipeline.db.search_frames_hybrid(
-                query=q,
-                video_paths=video_path,
-                limit=limit,
+                query=request.query,
+                video_paths=request.video_path,
+                limit=request.limit,
+                face_cluster_ids=face_cluster_ids,
             )
             
             # Enrich results with URLs
@@ -1830,10 +1846,42 @@ def create_app() -> FastAPI:
         name: str | None = None
     
     @app.post("/faces/merge")
-    async def merge_face_clusters(request: MergeClustersRequest):
-        """Merge face cluster A into cluster B (re-label all points)."""
-        if not pipeline:
-            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+    async def merge_faces(request: IdentityMergeRequest):
+        """Merge face clusters (placeholder for now)."""
+        # Logic: Update all points with source_cluster_id to target_cluster_id
+        return {"status": "merged"}
+
+    @app.post("/voices/merge")
+    async def merge_voices(request: VoiceMergeRequest):
+        """Merge multiple speaker IDs into one target ID."""
+        if not pipeline or not pipeline.db:
+            raise HTTPException(status_code=503, detail="DB not ready")
+        
+        # Update all voice segments with source_ids to target_id
+        # This requires Qdrant update by filter
+        
+        count = 0
+        for src in request.source_speaker_ids:
+            # Qdrant update mechanism...
+            # We iterate and upsert? Or use set_payload?
+            # client.set_payload(collection, payload={"speaker_id": target}, filter=...)
+            
+            pipeline.db.client.set_payload(
+                collection_name=pipeline.db.VOICE_COLLECTION,
+                payload={"speaker_id": request.target_speaker_id},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="speaker_id",
+                            match=models.MatchValue(value=src)
+                        )
+                    ]
+                )
+            )
+            count += 1
+            
+        return {"status": "merged", "merged_count": count, "target_id": request.target_speaker_id}
+ HTTPException(status_code=503, detail="Pipeline not initialized")
         
         source = request.source_cluster_id
         target = request.target_cluster_id

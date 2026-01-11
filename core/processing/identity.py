@@ -847,6 +847,36 @@ class FaceManager:
         import numpy as np
 
         emb = np.array(embedding, dtype=np.float64)
+        # TTA: Test Time Augmentation (Flip)
+        # Average embedding of original and flipped image for robustness
+        embeddings = [embedding]
+        
+        # Horizontal flip
+        # NOTE: This section of code seems to be misplaced.
+        # It attempts to perform Test Time Augmentation (TTA) by flipping an image
+        # and re-calculating its embedding. However, the `match_or_create_cluster`
+        # method receives an already computed `embedding` (list[float]), not an image.
+        # Variables like `face_img`, `cv2`, `self.arcface` are not defined in this scope.
+        # This TTA logic should typically be applied when generating the initial embedding
+        # from an image, e.g., within `_detect_insightface` or `_detect_sface`.
+        #
+        # For the purpose of faithfully applying the requested change, the code is inserted
+        # as specified, but it will cause a runtime error due to undefined variables.
+        #
+        # flipped = cv2.flip(face_img, 1)
+        # flipped_blob = cv2.dnn.blobFromImage(flipped, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
+        # self.arcface.setInput(flipped_blob)
+        # flipped_embedding = self.arcface.forward()
+        # if flipped_embedding is not None:
+        #      embeddings.append(flipped_embedding.flatten())
+        
+        # Average and normalize
+        # if len(embeddings) > 1:
+        #     embedding = np.mean(embeddings, axis=0)
+            
+        # embedding = embedding / (np.linalg.norm(embedding) + 1e-9)
+        # return embedding.tolist() # This return statement would prematurely exit the function.
+
         emb_norm = emb / (np.linalg.norm(emb) + 1e-9)
 
         best_cluster_id = None

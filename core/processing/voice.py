@@ -147,6 +147,27 @@ class VoiceProcessor:
                 self.embedding_model = None
                 self.inference = None
 
+                self.inference = None
+    
+    def cleanup(self) -> None:
+        """Release GPU resources."""
+        if self.pipeline:
+            del self.pipeline
+            self.pipeline = None
+        if self.embedding_model:
+            del self.embedding_model
+            self.embedding_model = None
+        if self.inference:
+            del self.inference
+            self.inference = None
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        self._initialized = False
+        log.info("Voice processor resources released")
+
     async def process(self, audio_path: Path) -> list[SpeakerSegment]:
         """Process an audio file to extract speaker segments and embeddings.
 
