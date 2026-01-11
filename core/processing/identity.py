@@ -427,6 +427,7 @@ class FaceManager:
         use_gpu: bool = False,
         max_fps: float = 8.0,
         batch_size: int = 16,
+        global_clusters: dict[int, list[float]] | None = None,
     ) -> None:
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
@@ -437,14 +438,19 @@ class FaceManager:
         self._initialized = False
         self._init_lock = asyncio.Lock()
         
-        # Model references
+        self.global_clusters: dict[int, list[float]] = global_clusters or {}
+        self._next_cluster_id = max(self.global_clusters.keys(), default=0) + 1
+        
         self._model_type: ModelType = "yunet_only"
         self._insightface_app = None
         self._opencv_detector = None
         self._opencv_recognizer = None
-        self._embedding_dim = 128  # Updated during init
+        self._embedding_dim = 128
         
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if self.global_clusters:
+            print(f"[FaceManager] Loaded {len(self.global_clusters)} global clusters for cross-video matching")
 
     def unload_gpu(self) -> None:
         """Unload models from GPU to free VRAM for other processes (like Ollama).

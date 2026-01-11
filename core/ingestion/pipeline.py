@@ -379,8 +379,17 @@ class IngestionPipeline:
         from llm.factory import LLMFactory
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)
+        
+        # GLOBAL IDENTITY: Load existing cluster centroids from DB
+        # This enables cross-video identity matching (O(1) gallery-probe)
+        global_clusters = self.db.get_all_cluster_centroids()
+        logger.info(f"[GlobalIdentity] Loaded {len(global_clusters)} cluster centroids for matching")
+        
         # InsightFace uses GPU for fast detection, but we unload it before Ollama
-        self.faces = FaceManager(use_gpu=settings.device == "cuda")
+        self.faces = FaceManager(
+            use_gpu=settings.device == "cuda",
+            global_clusters=global_clusters,
+        )
 
         # Initialize FaceTrackBuilder for temporal face grouping
         # This creates stable per-video tracks before global identity linking
@@ -720,10 +729,6 @@ class IngestionPipeline:
         if not self.vision or not self.faces:
             return None
 
-        # Track cluster centroids across frames (initialized once per video)
-        if not hasattr(self, '_face_clusters'):
-            self._face_clusters: dict[int, list[float]] = {}
-
         # 1. DETECT FACES FIRST (Capture Identity before Vision)
         face_cluster_ids: list[int] = []
         detected_faces = []
@@ -751,10 +756,11 @@ class IngestionPipeline:
 
         for idx, face in enumerate(detected_faces):
             if face.embedding is not None:
-                # PROPER CLUSTERING: Use embedding similarity, not hash
-                cluster_id, self._face_clusters = self.faces.match_or_create_cluster(
+                # GLOBAL IDENTITY: Match against DB clusters (gallery-probe)
+                # FaceManager.global_clusters loaded at _process_frames init
+                cluster_id, self.faces.global_clusters = self.faces.match_or_create_cluster(
                     embedding=face.embedding,
-                    existing_clusters=self._face_clusters,
+                    existing_clusters=self.faces.global_clusters,
                     threshold=settings.face_clustering_threshold,
                 )
                 face_cluster_ids.append(cluster_id)

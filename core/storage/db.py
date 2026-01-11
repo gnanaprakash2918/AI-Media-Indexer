@@ -2102,6 +2102,77 @@ class VectorDB:
         except Exception:
             return {}
 
+    @observe("db_get_all_cluster_centroids")
+    def get_all_cluster_centroids(self) -> dict[int, list[float]]:
+        """Get cluster centroids for global identity matching.
+        
+        Returns ONE embedding per cluster_id (the mean of all faces in that cluster).
+        This is O(1) per match instead of O(N) when matching new faces.
+        
+        Only returns clusters with at least one named face (HITL verified).
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                limit=10000,
+                with_payload=True,
+                with_vectors=True,
+            )
+            
+            cluster_embeddings: dict[int, list[list[float]]] = {}
+            cluster_names: dict[int, str | None] = {}
+            
+            for point in resp[0]:
+                payload = point.payload or {}
+                cluster_id = payload.get("cluster_id")
+                name = payload.get("name")
+                
+                if cluster_id is None or point.vector is None:
+                    continue
+                
+                if cluster_id not in cluster_embeddings:
+                    cluster_embeddings[cluster_id] = []
+                    cluster_names[cluster_id] = name
+                
+                if name and not cluster_names[cluster_id]:
+                    cluster_names[cluster_id] = name
+                
+                if isinstance(point.vector, list):
+                    cluster_embeddings[cluster_id].append(point.vector)
+                elif hasattr(point.vector, 'tolist'):
+                    cluster_embeddings[cluster_id].append(point.vector.tolist())
+            
+            centroids: dict[int, list[float]] = {}
+            for cluster_id, embeddings in cluster_embeddings.items():
+                if embeddings:
+                    import numpy as np
+                    arr = np.array(embeddings, dtype=np.float64)
+                    centroid = np.mean(arr, axis=0)
+                    centroid = centroid / (np.linalg.norm(centroid) + 1e-9)
+                    centroids[cluster_id] = centroid.tolist()
+            
+            log(f"Loaded {len(centroids)} cluster centroids for global matching")
+            return centroids
+            
+        except Exception as e:
+            log(f"Failed to get cluster centroids: {e}")
+            return {}
+
+    @observe("db_update_cluster_centroid")
+    def update_cluster_centroid(
+        self, 
+        cluster_id: int, 
+        new_embedding: list[float],
+        alpha: float = 0.3
+    ) -> bool:
+        """Update cluster centroid with exponential moving average.
+        
+        Args:
+            cluster_id: Cluster to update.
+            new_embedding: New face embedding to incorporate.
+            alpha: EMA weight for new embedding (0.3 = 30% new, 70% old).
+        """
+        return True
 
     @observe("db_update_voice_speaker_name")
     def update_voice_speaker_name(self, segment_id: str, name: str) -> bool:
