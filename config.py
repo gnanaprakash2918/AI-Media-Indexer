@@ -287,6 +287,10 @@ class Settings(BaseSettings):
     # Local (Docker) Langfuse
     langfuse_docker_host: str = "http://localhost:3300"
     
+    # Observability (Loki)
+    enable_loki: bool = Field(default=False, description="Enable log shipping to Grafana Loki")
+    loki_url: str = Field(default="http://localhost:3100/loki/api/v1/push", description="Loki push API URL")
+
     # --- Antigravity Feature Flags ---
     use_indic_asr: bool = Field(
         default=True, 
