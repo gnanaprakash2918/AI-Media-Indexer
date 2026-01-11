@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -280,23 +281,56 @@ class VideoRAGOrchestrator:
     ) -> list[SearchResultItem]:
         """Search across modalities and fuse results.
         
-        Uses RRF (Reciprocal Rank Fusion) to combine results from:
-        - Visual semantic search
-        - Audio/dialogue search
-        - Identity filtering
+        Uses RRF (Reciprocal Rank Fusion) or Strict Intersection:
+        - If query has clear Audio vs Visual split, we intersect results.
+        - Otherwise we use hybrid search.
         """
-        # Use the hybrid search which already implements RRF
-        search_query = structured.scene_description or structured.original_query
-        
         # Resolve identities to cluster IDs
         face_cluster_ids: list[int] = []
         for identity in structured.identities:
             cluster_id = self._resolve_identity(identity)
             if cluster_id is not None:
                 face_cluster_ids.append(cluster_id)
+
+        # STRICT INTERSECTION LOGIC (The "Rain + Smile" Test)
+        # If we have distinct Visual AND Audio cues, we fetch them separately and intersect.
+        has_visual = bool(structured.visual_cues)
+        has_audio = bool(structured.audio_cues)
+        
+        if has_visual and has_audio:
+            log(f"[VideoRAG] Performing Strict Intersection: Audio({structured.audio_cues}) ∩ Visual({structured.visual_cues})")
+            
+            # 1. Search Visual
+            visual_query = " ".join(structured.visual_cues)
+            visual_results = await asyncio.to_thread(
+                self.db.search_frames_hybrid,
+                query=visual_query,
+                limit=limit * 2,
+                video_paths=video_path,
+                face_cluster_ids=face_cluster_ids or None
+            )
+            
+            # 2. Search Audio
+            audio_query = " ".join(structured.audio_cues)
+            audio_results = await asyncio.to_thread(
+                self.db.search_frames_hybrid,
+                query=audio_query,
+                limit=limit * 2,
+                video_paths=video_path,
+                face_cluster_ids=face_cluster_ids or None
+            )
+            
+            # 3. Intersect
+            intersections = self._intersect_results(visual_results, audio_results)
+            log(f"[VideoRAG] Intersection found {len(intersections)} overlapping segments.")
+            return intersections[:limit]
+
+        # FALLBACK / STANDARD HYBRID SEARCH (Single Query)
+        search_query = structured.scene_description or structured.original_query
         
         # Call hybrid search
-        raw_results = self.db.search_frames_hybrid(
+        raw_results = await asyncio.to_thread(
+            self.db.search_frames_hybrid,
             query=search_query,
             limit=limit,
             video_paths=video_path,
@@ -304,6 +338,73 @@ class VideoRAGOrchestrator:
         )
         
         # Convert to SearchResultItem
+        return self._convert_to_items(raw_results)
+
+    def _intersect_results(
+        self, 
+        visual_hits: list[dict], 
+        audio_hits: list[dict], 
+        window: float = 5.0
+    ) -> list[SearchResultItem]:
+        """Find overlapping timestamps between two result sets."""
+        matches = []
+        
+        # Group by video for efficiency
+        visual_by_vid = {}
+        for h in visual_hits:
+            vid = h.get("video_path", "")
+            if vid not in visual_by_vid:
+                visual_by_vid[vid] = []
+            visual_by_vid[vid].append(h)
+            
+        for a_hit in audio_hits:
+            vid = a_hit.get("video_path", "")
+            if vid not in visual_by_vid:
+                continue
+                
+            a_time = a_hit.get("timestamp", 0.0)
+            
+            # Check for overlap with any visual hit in same video
+            for v_hit in visual_by_vid[vid]:
+                v_time = v_hit.get("timestamp", 0.0)
+                
+                if abs(a_time - v_time) <= window:
+                    # Found intersection!
+                    # Merge info
+                    combined_score = (a_hit.get("score", 0) + v_hit.get("score", 0)) / 2
+                    
+                    # Create synthetic intersection item
+                    item = SearchResultItem(
+                        id=f"{a_hit['id']}_{v_hit['id']}",
+                        video_path=vid,
+                        timestamp=(a_time + v_time) / 2, # Midpoint
+                        score=combined_score * 1.2, # Boost intersection
+                        match_reasons=["strict_intersection"],
+                        matched_entities=list(set(a_hit.get("entities", []) + v_hit.get("entities", []))),
+                        action=v_hit.get("action"),
+                        dialogue=a_hit.get("dialogue") or v_hit.get("dialogue"),
+                        face_names=list(set(a_hit.get("face_names", []) + v_hit.get("face_names", []))),
+                        visual_score=v_hit.get("score"),
+                    )
+                    matches.append(item)
+        
+        # Deduplicate matches (by approximate timestamp)
+        # Sort by score desc
+        matches.sort(key=lambda x: x.score, reverse=True)
+        unique = []
+        seen_keys = set()
+        
+        for m in matches:
+            # key = video + rounded time (bucket 2s)
+            key = (m.video_path, int(m.timestamp / 2.0))
+            if key not in seen_keys:
+                unique.append(m)
+                seen_keys.add(key)
+                
+        return unique
+
+    def _convert_to_items(self, raw_results: list[dict]) -> list[SearchResultItem]:
+        """Helper to convert DB dicts to SearchResultItems."""
         items = []
         for r in raw_results:
             item = SearchResultItem(
@@ -321,7 +422,6 @@ class VideoRAGOrchestrator:
                 rrf_score=r.get("rrf_score"),
             )
             items.append(item)
-        
         return items
     
     def _resolve_identity(self, name: str) -> int | None:
@@ -342,8 +442,8 @@ class VideoRAGOrchestrator:
             if results[0]:
                 return results[0][0].payload.get("cluster_id")
                 
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"Identity resolution failed: {e}", level="DEBUG")
         
         return None
     

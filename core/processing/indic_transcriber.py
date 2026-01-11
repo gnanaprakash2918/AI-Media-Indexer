@@ -249,8 +249,42 @@ class IndicASRPipeline:
         Returns:
             List of dicts with text and timestamp info.
         """
-        if language and language != self.lang:
-            self.lang = language
+        import httpx
+        
+        target_lang = language or self.lang
+        
+        # 1. Try Remote Docker Service First
+        if settings.ai4bharat_url:
+            try:
+                # Fast check if service is up
+                # check if URL is localhost and port is open? Just try request
+                url = f"{settings.ai4bharat_url}/transcribe"
+                log(f"[IndicASR] Attempting remote transcription at {url}")
+                
+                with open(audio_path, "rb") as f:
+                    response = httpx.post(
+                        url,
+                        files={"file": f},
+                        data={"language": target_lang},
+                        timeout=300.0  # 5 min timeout for long files
+                    )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    segments = data.get("segments", [])
+                    log(f"[IndicASR] Remote SUCCESS: {len(segments)} segments")
+                    
+                    if output_srt:
+                         self.write_srt(segments, output_srt)
+                    return segments
+                else:
+                    log(f"[IndicASR] Remote failed: {response.status_code} - {response.text}")
+            except Exception as e:
+                log(f"[IndicASR] Remote service unavailable ({e}). Falling back to local.")
+        
+        # 2. Local Fallback
+        if target_lang and target_lang != self.lang:
+            self.lang = target_lang
             self.model = None
             self.processor = None
             self.pipe = None

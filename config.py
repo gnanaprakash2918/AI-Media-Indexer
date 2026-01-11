@@ -235,6 +235,11 @@ class Settings(BaseSettings):
         description="Auto-detect audio language before transcription"
     )
     
+    ai4bharat_url: str = Field(
+        default="http://localhost:8001",
+        description="URL for local AI4Bharat IndicConformer Docker service"
+    )
+    
     enable_sam3_tracking: bool = Field(
         default=False,
         description="Enable SAM 3 Promptable Concept Segmentation"
