@@ -358,6 +358,11 @@ export default function IngestPage() {
                         {(ingestMutation.error as Error)?.message || 'Failed to start'}
                     </Alert>
                 )}
+                {deleteMutation.isError && (
+                    <Alert severity="error" sx={{ mt: 1.5 }}>
+                        Failed to delete job: {(deleteMutation.error as Error)?.message}
+                    </Alert>
+                )}
             </Paper>
 
             {/* Pending Jobs - Shows immediately after clicking ingest */}

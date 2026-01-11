@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from PIL import Image
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, HDBSCAN
 
 from config import settings
 from core.schemas import DetectedFace
@@ -804,14 +804,25 @@ class FaceManager:
 
     @observe("face_cluster")
     def cluster_faces(self, all_encodings: Sequence[ArrayLike]) -> NDArray[np.int64]:
-        """Cluster face encodings using DBSCAN."""
+        """Cluster face encodings using HDBSCAN (Hierarchical DBSCAN).
+        
+        HDBSCAN is more robust to variable densities and noise than DBSCAN.
+        User-defined `dbscan_eps` is mapped to `cluster_selection_epsilon`.
+        """
         if not all_encodings:
             return np.array([], dtype=np.int64)
         data = self._to_2d_array(all_encodings)
-        return DBSCAN(
-            eps=self.dbscan_eps,
+        
+        # HDBSCAN(min_cluster_size=5, min_samples=None, cluster_selection_epsilon=0.0, ...)
+        # We map dbscan_min_samples -> min_samples (controls how conservative the clustering is)
+        # We use a fixed min_cluster_size (e.g. 3 or 5) to allow small groups
+        
+        return HDBSCAN(
+            min_cluster_size=max(3, self.dbscan_min_samples),
             min_samples=self.dbscan_min_samples,
+            cluster_selection_epsilon=self.dbscan_eps,
             metric=self.dbscan_metric,
+            allow_single_cluster=True, # Important for small datasets
         ).fit_predict(data)
 
     def match_or_create_cluster(

@@ -25,7 +25,7 @@ export function VideoPlayer({ videoPath, startTime, endTime, open, onClose }: Vi
 
     // Video URL - always use the direct media endpoint (no encoding)
     const videoUrl = useMemo(() => {
-        return `http://localhost:8000/media?path=${encodeURIComponent(videoPath)}`;
+        return `http://localhost:8000/stream?path=${encodeURIComponent(videoPath)}`;
     }, [videoPath]);
 
     // Reset state when dialog opens

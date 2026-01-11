@@ -58,6 +58,8 @@ if sys.platform == "win32":
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi import Header
+from core.utils.streaming import range_generator
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import numpy as np
@@ -2728,6 +2730,49 @@ def create_app() -> FastAPI:
     thumb_path = settings.cache_dir / "thumbnails"
     thumb_path.mkdir(parents=True, exist_ok=True)
     app.mount("/thumbnails", StaticFiles(directory=str(thumb_path)), name="thumbnails")
+
+    @app.get("/stream")
+    async def stream_video(path: str = Query(..., description="Absolute path to media file"), range: str = Header(None)):
+        """Stream video content with Range header support for seeking."""
+        video_path = Path(path)
+        if not video_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        file_size = video_path.stat().st_size
+        start = 0
+        end = file_size - 1
+        
+        if range:
+            try:
+                unit, ranges = range.split("=")
+                if unit == "bytes":
+                    start_str, end_str = ranges.split("-")
+                    start = int(start_str) if start_str else 0
+                    if end_str:
+                        end = min(int(end_str), file_size - 1)
+            except ValueError:
+                pass
+        
+        chunk_size = 1024 * 64 # 64KB chunks
+        content_length = end - start + 1
+        
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(content_length),
+            "Content-Type": "video/mp4", 
+        }
+        
+        def iterfile():
+            with open(video_path, "rb") as f:
+                yield from range_generator(f, start, end, chunk_size)
+        
+        return StreamingResponse(
+            iterfile(),
+            status_code=206,
+            headers=headers,
+            media_type="video/mp4", 
+        )
 
     return app
 

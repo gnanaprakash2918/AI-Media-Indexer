@@ -410,6 +410,8 @@ class IngestionPipeline:
         
         # InsightFace uses GPU for fast detection, but we unload it before Ollama
         self.faces = FaceManager(
+            dbscan_eps=0.55, # HDBSCAN cluster_selection_epsilon
+            dbscan_min_samples=3, # HDBSCAN min_samples
             use_gpu=settings.device == "cuda",
             global_clusters=global_clusters,
         )
