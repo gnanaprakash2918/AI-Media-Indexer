@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import torch
-from pydantic import Field, SecretStr, computed_field
+from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import logging
 
@@ -382,6 +382,31 @@ class Settings(BaseSettings):
         default=True,
         description="Unload models after use to free VRAM."
     )
+
+    @model_validator(mode="after")
+    def adjust_dimensions(self) -> "Settings":
+        """Auto-adjust embedding dimensions based on model name."""
+        model = self.embedding_model_override.lower()
+        
+        if "nv-embed-v2" in model:
+            # NV-Embed-v2 is 4096 dim
+            if self.text_embedding_dim != 4096:
+                logging.info("Auto-adjusting text_embedding_dim to 4096 for NV-Embed-v2")
+                self.text_embedding_dim = 4096
+                self.visual_embedding_dim = 4096 # If using for both (likely not, usually SigLIP is separate)
+                # But VectorDB.MEDIA_VECTOR_SIZE uses visual_embedding_dim.
+                # If we use LLM for vision, SigLIP is still 768 or 1024.
+                # Wait, visual_embedding_dim configures Media Collection.
+                # If we use SigLIP, it stays SigLIP dim.
+                # Only TEXT DIM changes.
+        elif "bge-m3" in model:
+            if self.text_embedding_dim != 1024:
+                self.text_embedding_dim = 1024
+        elif "mxbai" in model:
+             if self.text_embedding_dim != 1024:
+                self.text_embedding_dim = 1024
+        
+        return self
     
     @computed_field
     @property

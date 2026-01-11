@@ -22,6 +22,7 @@ from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
+from core.processing.segmentation import Sam3Tracker
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
@@ -54,11 +55,24 @@ class IngestionPipeline:
             host=qdrant_host,
             port=qdrant_port,
         )
-        self.metadata_engine = MetadataEngine(tmdb_api_key=tmdb_api_key)
+        self.vision_analyzer = VisionAnalyzer()
+        self.metadata_engine = MetadataEngine(
+            tmdb_key=settings.tmdb_api_key,
+            omdb_key=settings.omdb_api_key
+        )
+        self.face_manager = FaceManager(
+            db_client=self.db.client,
+            dbscan_eps=settings.hdbscan_cluster_selection_epsilon,
+            dbscan_min_samples=settings.hdbscan_min_samples
+        )
+        self.voice_processor = VoiceProcessor(db=self.db)
         self.frame_interval_seconds = frame_interval_seconds
         self.vision: VisionAnalyzer | None = None
         self.faces: FaceManager | None = None
         self.voice: VoiceProcessor | None = None
+        
+        # Deep Video Understanding (SAM 3)
+        self.sam3_tracker = Sam3Tracker() if settings.enable_sam3_tracking else None
         self.frame_sampler = FrameSampler(every_n=5)
 
     def _cleanup_memory(self, context: str = "") -> None:
@@ -1210,6 +1224,14 @@ class IngestionPipeline:
             frames = self._get_frames_for_video(media_path)
             audio_segments = self._get_audio_segments_for_video(media_path)
             
+            # Deep Video Understanding: SAM 3 Concept Tracking
+            # Only run if enabled and frames exist
+            if self.sam3_tracker and frames:
+                try:
+                    self._process_video_masklets(path, frames)
+                except Exception as e:
+                    logger.warning(f"SAM3 Tracking failed: {e}")
+            
             if frames:
                 scene_data = {
                     "start_time": 0,
@@ -1257,7 +1279,104 @@ class IngestionPipeline:
             if thumb_file.exists():
                 return rel_path
             
+            
             # Extract at 5 seconds
+            
+            
+    def _process_video_masklets(self, path: Path, frames: list[dict]) -> None:
+        """Run SAM 3 Tracking on top concepts extracted from video frames."""
+        # 1. Extract potential concepts from frame entities/descriptions
+        concept_counts = {}
+        for f in frames:
+            # Entities
+            for e in f.get("entities", []):
+                concept_counts[e] = concept_counts.get(e, 0) + 1
+            # Keywords from action (simple heuristic)
+            action = f.get("action", "")
+            if "holding a" in action:
+                try:
+                    obj = action.split("holding a")[1].split()[0].strip().strip(".,")
+                    if len(obj) > 2:
+                        concept_counts[obj] = concept_counts.get(obj, 0) + 1
+                except: pass
+                
+        # 2. Select top 5 concepts to track
+        top_concepts = sorted(concept_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        prompts = [c[0] for c in top_concepts]
+        
+        if not prompts:
+            logger.info("No concepts found to track with SAM3.")
+            return
+
+        logger.info(f"SAM3 Tracking Concepts: {prompts}")
+        
+        # 3. Run Tracker
+        # Result aggregation: TrackID -> {start, end, max_conf}
+        tracks = {} 
+        
+        # SAM3 returns iterator of {frame_idx, object_ids, masks}
+        # object_ids maps to the index in 'prompts' list added sequentially?
+        # Actually Sam3Tracker.add_concept_prompt adds one text.
+        # We need to map object_id back to prompt text.
+        # Implementation Detail: Sam3 wrapper doesn't provide easy mapping back yet.
+        # We will iterate prompts and run sequentially or concurrently if supported.
+        # Sam3Tracker.process_video_concepts runs all prompts.
+        # The object IDs returned correspond to sequential addition. 
+        # i.e. Prompt 0 -> obj_id 0, Prompt 1 -> obj_id 1 (usually).
+        
+        # We assume 1-to-1 for now.
+        
+        for frame_data in self.sam3_tracker.process_video_concepts(path, prompts):
+            frame_idx = frame_data["frame_idx"]
+            obj_ids = frame_data["object_ids"]
+            
+            for obj_id in obj_ids:
+                # Get concept name
+                if obj_id < len(prompts):
+                    concept = prompts[obj_id]
+                else:
+                    concept = f"object_{obj_id}"
+                
+                track_key = f"{concept}_{obj_id}"
+                
+                if track_key not in tracks:
+                    tracks[track_key] = {"start": frame_idx, "end": frame_idx, "concept": concept}
+                else:
+                    tracks[track_key]["end"] = max(tracks[track_key]["end"], frame_idx)
+                    
+        # 4. Save Masklets to DB
+        fps = settings.frame_interval # Ingestion loop uses frame_interval approx?
+        # Actually frames have timestamps. We can map frame_idx to timestamp roughly.
+        # Or better: pipeline knows fps or duration.
+        # We can map frame_idx to time if we know video FPS.
+        # For now, we estimate based on frame_interval setting if available, or just index.
+        # Ideally we should use CV2 to get FPS of source to map frame_idx -> time.
+        
+        # Simpler: Use frame data if we have it? No, SAM3 processes all frames.
+        # We will assume standard 30fps for timestamp estimation if metadata unavailable, 
+        # or fetch it.
+        import cv2
+        try:
+            cap = cv2.VideoCapture(str(path))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            cap.release()
+        except:
+            fps = 30.0
+            
+        for key, data in tracks.items():
+            start_time = data["start"] / fps
+            end_time = data["end"] / fps
+            duration = end_time - start_time
+            
+            if duration > 0.5: # Ignore blips
+                self.db.insert_masklet(
+                    video_path=str(path),
+                    concept=data["concept"],
+                    start_time=start_time,
+                    end_time=end_time,
+                    confidence=0.9 # SAM3 is usually confident
+                )
+                logger.info(f"Masklet saved: {data['concept']} ({start_time:.1f}-{end_time:.1f}s)")
             cmd = [
                 "ffmpeg", 
                 "-y",

@@ -234,9 +234,22 @@ class VectorDB:
             texts_list = list(texts)
 
         # e5 models require prefix (query: or passage:)
-        if "e5" in self.MODEL_NAME.lower():
+        model_lower = self.MODEL_NAME.lower()
+        if "e5" in model_lower:
             prefix = "query: " if is_query else "passage: "
             texts_list = [prefix + t for t in texts_list]
+        elif "nv-embed-v2" in model_lower:
+            # NV-Embed-v2 instructions
+            if is_query:
+                prefix = "Instruction: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
+                texts_list = [prefix + t for t in texts_list]
+            # No prefix for passages
+        elif "mxbai" in model_lower:
+            # mxbai-embed-large-v1 instructions
+            if is_query:
+                prefix = "Represent this sentence for searching relevant passages: "
+                texts_list = [prefix + t for t in texts_list]
+            # No prefix for passages
 
         try:
             if torch.cuda.is_available():
@@ -505,6 +518,45 @@ class VectorDB:
         except Exception as e:
             log(f"Upsert failed for {point_id}: {e}", level="ERROR")
 
+    @observe("db_insert_masklet")
+    def insert_masklet(
+        self,
+        video_path: str,
+        concept: str,
+        start_time: float,
+        end_time: float,
+        confidence: float = 1.0,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Insert a masklet (video segment tracking a specific concept)."""
+        unique_str = f"{video_path}_{concept}_{start_time}_{end_time}"
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
+        
+        final_payload = {
+            "video_path": video_path,
+            "concept": concept,
+            "start_time": start_time,
+            "end_time": end_time,
+            "confidence": confidence,
+            "type": "masklet",
+        }
+        if payload:
+            final_payload.update(payload)
+            
+        try:
+             self.client.upsert(
+                collection_name="masklets",
+                points=[
+                    models.PointStruct(
+                        id=point_id,
+                        vector=[1.0],  # Dummy vector, as we filter by payload
+                        payload=final_payload,
+                    )
+                ],
+            )
+        except Exception as e:
+            log(f"Failed to insert masklet: {e}", level="ERROR")
+
     @observe("db_search_frames")
     def search_frames(
         self,
@@ -756,7 +808,7 @@ class VectorDB:
                     str(payload.get("scene_type", "")),
                     " ".join(payload.get("entities", [])) if isinstance(payload.get("entities"), list) else "",
                     " ".join(payload.get("visible_text", [])) if isinstance(payload.get("visible_text"), list) else "",
-                    " ".join(payload.get("face_names", [])) if isinstance(payload.get("face_names"), list) else "",
+                    " ".join(payload.get("face_names", [])) if isinstance(payload.get("face_names", []), list) else "",
                 ]
                 combined_text = " ".join(text_fields).lower()
                 
@@ -765,6 +817,67 @@ class VectorDB:
                     score = word_hits / len(query_words) if query_words else 0
                     keyword_matches.append((point_id, score, payload))
             
+            # === 2b. MASKLET SEARCH (Deep Video Understanding) ===
+            # Search for SAM3-tracked concepts overlap with query
+            try:
+                masklet_conditions = []
+                if video_paths:
+                    masklet_conditions.append(
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchAny(any=video_paths),
+                        )
+                    )
+                # Check for concept match
+                concept_matches = []
+                for word in query_words:
+                    if len(word) > 3: # Ignore short words
+                        concept_matches.append(
+                            models.FieldCondition(
+                                key="concept",
+                                match=models.MatchValue(value=word)
+                            )
+                        )
+                
+                if concept_matches:
+                    masklet_filter = models.Filter(
+                        must=masklet_conditions,
+                        should=concept_matches, # Match ANY concept word
+                    )
+                    
+                    mask_resp = self.client.scroll(
+                        collection_name="masklets",
+                        scroll_filter=masklet_filter,
+                        limit=50,
+                        with_payload=True,
+                    )
+                    
+                    for point in mask_resp[0]:
+                        payload = point.payload or {}
+                        point_id = str(point.id) # Use unique ID
+                        
+                        # Create a synthetic result from masklet
+                        # Masklet has start/end. We map to start time.
+                        
+                        rank_lists["keyword"][point_id] = 1 # High rank
+                        
+                        if point_id not in results_by_id:
+                            results_by_id[point_id] = {
+                                "id": point_id,
+                                "score": 0.0,
+                                "keyword_score": 0.9, # High confidence
+                                "match_reasons": [],
+                                "timestamp": payload.get("start_time", 0.0),
+                                "video_path": payload.get("video_path"),
+                                "action": f"Tracked concept: {payload.get('concept')}",
+                                "type": "masklet",
+                            }
+                        results_by_id[point_id]["match_reasons"].append(
+                            f"Concept match: {payload.get('concept')}"
+                        )
+            except Exception as e:
+                log(f"Masklet search failed: {e}")
+
             keyword_matches.sort(key=lambda x: x[1], reverse=True)
             for rank, (point_id, score, payload) in enumerate(keyword_matches[:limit * 2]):
                 rank_lists["keyword"][point_id] = rank + 1
