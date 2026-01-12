@@ -148,6 +148,7 @@ function Check-Port-Availability {
 }
 
 Write-Host ">>> AI-Media-Indexer Full System Startup" -ForegroundColor Cyan
+Write-Host "    Agentic Search: ENABLED (LLM query expansion)" -ForegroundColor Green
 Write-Host ""
 
 # Show active flags

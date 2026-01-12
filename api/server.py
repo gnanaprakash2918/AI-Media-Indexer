@@ -426,6 +426,424 @@ def create_app() -> FastAPI:
                 "type": type(e).__name__
             }
 
+    # =========================================================================
+    # AGENT INTEGRATION ENDPOINTS
+    # =========================================================================
+    
+    logger.info("[Agent] Initializing agent integration endpoints...")
+    
+    # Lazy-load agent components
+    _agent_db = None
+    _agentic_search = None
+    
+    def _get_agent_db():
+        nonlocal _agent_db
+        if _agent_db is None and pipeline:
+            _agent_db = pipeline.db
+        return _agent_db
+    
+    def _get_agentic_search():
+        nonlocal _agentic_search
+        if _agentic_search is None:
+            from core.retrieval.agentic_search import SearchAgent
+            _agentic_search = SearchAgent(db=_get_agent_db())
+            logger.info("[Agent] SearchAgent initialized")
+        return _agentic_search
+
+    class AgentChatRequest(BaseModel):
+        message: str
+        use_tools: bool = True
+        model: str = "llama3.2:3b"
+
+    class AgentToolRequest(BaseModel):
+        arguments: dict = {}
+
+    @app.get("/agent/status")
+    async def get_agent_status():
+        """Get agent system status and available tools."""
+        logger.info("[Agent] Status check requested")
+        
+        available_tools = [
+            {
+                "name": "agentic_search",
+                "description": "FAANG-level search with LLM query expansion and identity resolution",
+                "parameters": ["query", "limit", "use_expansion"]
+            },
+            {
+                "name": "query_video_rag", 
+                "description": "Cognitive VideoRAG with query decomposition and answer generation",
+                "parameters": ["query", "limit"]
+            },
+            {
+                "name": "get_video_summary",
+                "description": "Get hierarchical L1/L2 summaries for a video",
+                "parameters": ["video_path", "force_regenerate"]
+            },
+            {
+                "name": "search_hybrid",
+                "description": "Hybrid vector + keyword search with identity boosting",
+                "parameters": ["query", "video_path", "limit"]
+            },
+        ]
+        
+        # Check Ollama connectivity
+        ollama_status = "unknown"
+        try:
+            import ollama
+            models = ollama.list()
+            ollama_status = f"connected ({len(models.get('models', []))} models)"
+        except Exception as e:
+            ollama_status = f"error: {e}"
+        
+        return {
+            "status": "active",
+            "ollama": ollama_status,
+            "tools": available_tools,
+            "default_model": "llama3.2:3b"
+        }
+
+    @app.post("/agent/chat")
+    async def agent_chat(request: AgentChatRequest):
+        """Send a message to the AI agent and get a response with tool usage logging.
+        
+        The agent uses Ollama LLM to:
+        1. Understand the user's intent
+        2. Decide which tools to call (search, ingest, summarize)
+        3. Execute tools and synthesize results
+        4. Return a natural language response
+        """
+        start_time = time.perf_counter()
+        logger.info(f"[Agent] RECV: '{request.message[:100]}...'")
+        logger.info(f"[Agent] Model: {request.model}, tools_enabled: {request.use_tools}")
+        
+        try:
+            import ollama
+            
+            # Build system prompt
+            system_prompt = """You are a helpful AI assistant for a multimedia indexing system.
+You can search through indexed videos to find specific scenes, people, or dialogue.
+When the user asks to find something, use the search tools available.
+Always explain what you found and why it matches the query."""
+
+            # Build tool schemas if tools enabled
+            tools = []
+            if request.use_tools:
+                tools = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "search_media",
+                            "description": "Search indexed videos for scenes matching a description",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {"type": "string", "description": "Natural language search query"},
+                                    "limit": {"type": "integer", "description": "Max results", "default": 5}
+                                },
+                                "required": ["query"]
+                            }
+                        }
+                    },
+                    {
+                        "type": "function", 
+                        "function": {
+                            "name": "get_video_summary",
+                            "description": "Get a summary of what happens in a video",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "video_path": {"type": "string", "description": "Path to video file"}
+                                },
+                                "required": ["video_path"]
+                            }
+                        }
+                    }
+                ]
+            
+            # First LLM call
+            logger.info("[Agent] LLM: Calling Ollama...")
+            response = ollama.chat(
+                model=request.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": request.message}
+                ],
+                tools=tools if tools else None
+            )
+            
+            msg = response.get("message", {})
+            tool_calls = msg.get("tool_calls") or []
+            
+            tool_results = []
+            if tool_calls:
+                logger.info(f"[Agent] TOOLS: LLM requested {len(tool_calls)} call(s)")
+                
+                for call in tool_calls:
+                    fn = call.get("function", {})
+                    fn_name = fn.get("name", "")
+                    fn_args = fn.get("arguments", {})
+                    
+                    logger.info(f"[Agent] EXEC: {fn_name}({fn_args})")
+                    
+                    # Execute the tool
+                    result = await _execute_agent_tool(fn_name, fn_args, pipeline)
+                    tool_results.append({
+                        "tool": fn_name,
+                        "args": fn_args,
+                        "result": result
+                    })
+                    logger.info(f"[Agent] OK: {fn_name} returned {len(str(result))} chars")
+                
+                # Second LLM call with tool results
+                logger.info("[Agent] LLM: Calling Ollama with tool results...")
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": request.message},
+                    msg,
+                ]
+                for tr in tool_results:
+                    messages.append({
+                        "role": "tool",
+                        "content": json.dumps(tr["result"]),
+                        "name": tr["tool"]
+                    })
+                
+                final_response = ollama.chat(model=request.model, messages=messages)
+                final_text = final_response.get("message", {}).get("content", "")
+            else:
+                logger.info("[Agent] Direct response (no tools needed)")
+                final_text = msg.get("content", "")
+            
+            duration = time.perf_counter() - start_time
+            logger.info(f"[Agent] DONE: Response in {duration:.2f}s")
+            
+            return {
+                "response": final_text,
+                "tools_used": [tr["tool"] for tr in tool_results],
+                "tool_results": tool_results,
+                "model": request.model,
+                "duration_seconds": duration
+            }
+            
+        except Exception as e:
+            logger.error(f"[Agent] ERROR: {e}")
+            return {
+                "response": f"Agent error: {str(e)}",
+                "tools_used": [],
+                "error": str(e)
+            }
+
+    async def _execute_agent_tool(name: str, args: dict, pipeline) -> dict:
+        """Execute a tool by name and return results."""
+        if name == "search_media":
+            query = args.get("query", "")
+            limit = int(args.get("limit", 5))
+            if pipeline and pipeline.db:
+                results = pipeline.db.search_frames_hybrid(query=query, limit=limit)
+                return {
+                    "query": query,
+                    "count": len(results),
+                    "results": results[:5]  # Limit for LLM context
+                }
+            return {"error": "Pipeline not available"}
+        
+        if name == "get_video_summary":
+            video_path = args.get("video_path", "")
+            try:
+                from core.processing.summarizer import summarizer
+                result = await summarizer.summarize_video(video_path)
+                return result
+            except Exception as e:
+                return {"error": str(e)}
+        
+        return {"error": f"Unknown tool: {name}"}
+
+    @app.post("/agent/tool/{tool_name}")
+    async def execute_agent_tool(tool_name: str, request: AgentToolRequest):
+        """Execute a specific agent tool directly (bypass LLM reasoning)."""
+        logger.info(f"[Agent] DIRECT: {tool_name}({request.arguments})")
+        
+        result = await _execute_agent_tool(tool_name, request.arguments, pipeline)
+        
+        logger.info(f"[Agent] OK: {tool_name} completed")
+        return {"tool": tool_name, "result": result}
+
+    @app.post("/agent/search")
+    async def agent_search(
+        query: str = Query(..., description="Natural language search query"),
+        limit: int = Query(10, description="Maximum results"),
+        use_expansion: bool = Query(True, description="Use LLM query expansion"),
+    ):
+        """Execute agentic search with LLM query expansion and identity resolution.
+        
+        This is the "smart" search that:
+        1. Uses LLM to expand queries (e.g., "South Indian food" → "idli, dosa")
+        2. Resolves HITL person names to face cluster IDs
+        3. Searches with identity boosting
+        """
+        logger.info(f"[Agent] SEARCH: '{query}' (expansion: {use_expansion})")
+        
+        try:
+            agent = _get_agentic_search()
+            if agent:
+                result = await agent.search(query, limit=limit, use_expansion=use_expansion)
+                logger.info(f"[Agent] OK: Found {len(result.get('results', []))} results")
+                return result
+            else:
+                # Fallback to basic hybrid search
+                logger.info("[Agent] WARN: SearchAgent unavailable, using hybrid fallback")
+                if pipeline and pipeline.db:
+                    results = pipeline.db.search_frames_hybrid(query=query, limit=limit)
+                    return {"query": query, "results": results, "fallback": True}
+                return {"error": "Search not available"}
+        except Exception as e:
+            logger.error(f"[Agent] ERROR: Search failed: {e}")
+            return {"error": str(e)}
+
+    # =========================================================================
+    # VIDEO SUMMARY AGENT - Generates narrative summaries from frame data
+    # =========================================================================
+    
+    @app.post("/agent/summarize")
+    async def agent_summarize_video(
+        video_path: str = Query(..., description="Path to video file"),
+        style: str = Query("narrative", description="Style: narrative, bullet, or timeline"),
+    ):
+        """Generate an LLM-powered narrative summary of a video.
+        
+        Uses indexed frame descriptions to create a coherent story.
+        """
+        if not pipeline or not pipeline.db:
+            return {"error": "Pipeline not available"}
+        
+        logger.info(f"[Agent] SUMMARY: Generating {style} summary for {video_path}")
+        
+        try:
+            # Get all frames for this video
+            frames = pipeline.db.get_frames_for_video(video_path, limit=50)
+            
+            if not frames:
+                return {"error": "No frames found for video", "video_path": video_path}
+            
+            # Build context from frames
+            frame_descriptions = []
+            for f in sorted(frames, key=lambda x: x.get("timestamp", 0)):
+                ts = f.get("timestamp", 0)
+                desc = f.get("action") or f.get("description") or "Scene"
+                entities = f.get("entities", [])
+                entity_str = f", featuring {', '.join(entities)}" if entities else ""
+                frame_descriptions.append(f"[{ts:.0f}s] {desc}{entity_str}")
+            
+            context = "\n".join(frame_descriptions)
+            
+            # Use LLM to generate summary
+            import ollama
+            
+            if style == "narrative":
+                prompt = f"""Create a narrative summary of this video based on these scene descriptions. Write it as a flowing story, 2-3 paragraphs.
+
+Scene descriptions:
+{context}
+
+Narrative summary:"""
+            elif style == "bullet":
+                prompt = f"""Create a bullet-point summary of key events in this video.
+
+Scene descriptions:
+{context}
+
+Key events:"""
+            else:  # timeline
+                prompt = f"""Create a timeline summary of this video with timestamps.
+
+Scene descriptions:
+{context}
+
+Timeline:"""
+            
+            response = ollama.chat(
+                model="llama3.2:3b",
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.7}
+            )
+            
+            summary = response.get("message", {}).get("content", "")
+            
+            logger.info(f"[Agent] SUMMARY: Generated {len(summary)} char summary")
+            
+            return {
+                "video_path": video_path,
+                "style": style,
+                "summary": summary,
+                "frame_count": len(frames),
+            }
+            
+        except Exception as e:
+            logger.error(f"[Agent] SUMMARY ERROR: {e}")
+            return {"error": str(e)}
+
+    # =========================================================================
+    # INTENT PARSER AGENT - Extracts emotions, actions, and entities from queries
+    # =========================================================================
+    
+    @app.post("/agent/parse-intent")
+    async def agent_parse_intent(query: str = Query(..., description="User search query")):
+        """Parse a search query to extract intent, emotions, actions, and entities.
+        
+        Helps understand WHAT the user is really looking for.
+        """
+        logger.info(f"[Agent] INTENT: Parsing '{query}'")
+        
+        try:
+            import ollama
+            
+            prompt = f"""Analyze this video search query and extract structured information. Return JSON only.
+
+Query: "{query}"
+
+Extract:
+- intent: "find_scene", "find_person", "find_dialogue", or "general"
+- emotions: list of emotions mentioned or implied (happy, sad, angry, romantic, etc)
+- actions: list of actions (running, dancing, fighting, talking, etc)
+- entities: list of people, objects, or locations mentioned
+- time_hints: any time-related hints (beginning, end, night, morning, etc)
+
+JSON output:"""
+
+            response = ollama.chat(
+                model="llama3.2:3b",
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.1}
+            )
+            
+            result_text = response.get("message", {}).get("content", "")
+            
+            # Try to parse JSON from response
+            import json
+            try:
+                # Find JSON in response
+                start = result_text.find("{")
+                end = result_text.rfind("}") + 1
+                if start >= 0 and end > start:
+                    parsed = json.loads(result_text[start:end])
+                else:
+                    parsed = {"raw": result_text}
+            except json.JSONDecodeError:
+                parsed = {"raw": result_text}
+            
+            logger.info(f"[Agent] INTENT: Parsed intent={parsed.get('intent', 'unknown')}")
+            
+            return {
+                "query": query,
+                "parsed": parsed,
+            }
+            
+        except Exception as e:
+            logger.error(f"[Agent] INTENT ERROR: {e}")
+            return {"error": str(e)}
+
+    logger.info("[Agent] All agent endpoints registered: /agent/status, /agent/chat, /agent/search, /agent/summarize, /agent/parse-intent")
+
     @app.get("/events")
     async def sse_events():
         """Server-Sent Events endpoint for real-time updates with heartbeat."""
@@ -1450,12 +1868,51 @@ def create_app() -> FastAPI:
         from urllib.parse import quote
 
         start_time_search = time.perf_counter()
-        logger.info(f"[HybridSearch] Query: '{q}' | video_filter: {video_path}")
+        logger.info(f"[AgenticSearch] Query: '{q}' | video_filter: {video_path}")
+
+        # === AGENTIC ENHANCEMENT: LLM Query Expansion ===
+        expanded_query = q
+        expansion_used = False
+        expansion_terms = []
+        
+        try:
+            import ollama
+            
+            # Use LLM to expand query with related terms
+            expansion_prompt = f"""Expand this search query with related terms. Return ONLY a comma-separated list of search terms, no explanations.
+
+Query: "{q}"
+
+Examples:
+- "South Indian food" -> "idli, dosa, sambar, rasam, South Indian food"
+- "Alia dancing" -> "Alia Bhatt, dancing, dance sequence, choreography"
+- "red car" -> "red car, red vehicle, automobile, sedan"
+
+Expanded terms:"""
+
+            response = ollama.chat(
+                model="llama3.2:3b",
+                messages=[{"role": "user", "content": expansion_prompt}],
+                options={"temperature": 0.3}
+            )
+            
+            expanded_text = response.get("message", {}).get("content", "").strip()
+            if expanded_text and expanded_text != q:
+                # Parse comma-separated terms
+                terms = [t.strip() for t in expanded_text.split(",") if t.strip()]
+                if terms:
+                    expansion_terms = terms[:5]  # Limit to 5 terms
+                    expanded_query = " ".join(expansion_terms)
+                    expansion_used = True
+                    logger.info(f"[AgenticSearch] Expanded: '{q}' -> '{expanded_query}'")
+        except Exception as e:
+            logger.debug(f"[AgenticSearch] LLM expansion skipped: {e}")
+            # Continue with original query
 
         try:
-            # Note: Identity filtering handled inside search_frames_hybrid via HITL names
+            # Use expanded query for search
             results = pipeline.db.search_frames_hybrid(
-                query=q,
+                query=expanded_query,
                 video_paths=[video_path] if video_path else None,
                 limit=limit,
             )
@@ -1470,15 +1927,18 @@ def create_app() -> FastAPI:
                     hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts-3)}"
 
             duration = time.perf_counter() - start_time_search
-            logger.info(f"[HybridSearch] Returned {len(results)} results in {duration:.3f}s")
+            logger.info(f"[AgenticSearch] Returned {len(results)} results in {duration:.3f}s")
 
             return {
                 "query": q,
+                "expanded_query": expanded_query if expansion_used else None,
+                "expansion_terms": expansion_terms if expansion_used else None,
                 "video_filter": video_path,
                 "results": results,
                 "stats": {
                     "total": len(results),
                     "duration_seconds": duration,
+                    "agentic": expansion_used,
                 },
             }
 
