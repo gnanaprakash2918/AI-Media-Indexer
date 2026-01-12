@@ -2460,8 +2460,8 @@ JSON output:"""
             
             # Perform the merge
             merged_count = pipeline.db.merge_face_clusters(
-                source_cluster_id=source_id,
-                target_cluster_id=target_id,
+                from_cluster=source_id,
+                to_cluster=target_id,
             )
             
             # Apply final name if we have one
@@ -2586,15 +2586,7 @@ JSON output:"""
                 if not video_path or start is None or end is None:
                     continue
 
-                # Find faces in this time range
-                # We can sample the midpoint
-                midpoint = (start + end) / 2
-
-                # Get frames/faces around this midpoint?
-                # Using existing db method if possible or standard logic
-                # For now, let's use the pipeline helper we used before
-                # But pipeline.get_faces_at_time isn't exposed nicely.
-                # Let's search frames in this video near this time.
+                # Search faces in this video between start and end timestamps
 
                 # BETTER APPROACH:
                 # Use the Face Collection directly. Find faces in this video between start/end.
@@ -2773,15 +2765,9 @@ JSON output:"""
             failed_jobs = len([j for j in all_jobs if j.status == "failed"])
             processing_jobs = len([j for j in all_jobs if j.status == "processing"])
 
-            # Placeholder values for media_count, frame_count, all_faces, named_faces, voice_segments
-            # These variables are not defined in the current context of link_face_voice.
-            # Assuming they would be retrieved from the pipeline or DB if this block were in a different endpoint.
-            # For now, setting them to 0 or deriving from available info.
-            media_count = 0 # Placeholder
-            frame_count = 0 # Placeholder
-            all_faces_count = len(face_results[0]) # Using faces updated in this link operation
-            named_faces_count = 1 if name else 0 # If a name was provided, we named at least one face
-            voice_segments_count = len(voice_results[0]) # Using voices updated in this link operation
+            all_faces_count = len(face_results[0])
+            named_faces_count = 1 if name else 0
+            voice_segments_count = len(voice_results[0])
 
             return {
                 "success": True,

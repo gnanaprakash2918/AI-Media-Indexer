@@ -413,6 +413,10 @@ class ProgressTracker:
             event.update(payload)
         self._broadcast(event)
 
+    def broadcast(self, event: dict[str, Any]) -> None:
+        """Broadcast arbitrary event to SSE subscribers."""
+        self._broadcast(event)
+
     def _broadcast(self, event: dict[str, Any]) -> None:
         """Broadcast event to all subscribers."""
         event["timestamp"] = time.time()
