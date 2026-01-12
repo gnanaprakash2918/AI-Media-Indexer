@@ -2766,7 +2766,6 @@ JSON output:"""
             processing_jobs = len([j for j in all_jobs if j.status == "processing"])
 
             all_faces_count = len(face_results[0])
-            named_faces_count = 1 if name else 0
             voice_segments_count = len(voice_results[0])
 
             return {
@@ -2810,13 +2809,8 @@ JSON output:"""
                  # Ideally we should refactor that logic into pipeline or db.
                  # For now, let's call the logic locally.
 
-                 # Logic Duplicate (Safe):
                  name = request.name.strip()
-                 updated = pipeline.db.update_face_name(cid, name)
-                 # The original `name_face_cluster` endpoint also updates frames.
-                 # We need to replicate that logic here for consistency.
-                 # This involves iterating through frames associated with the face cluster
-                 # and updating their identity text.
+                 pipeline.db.set_face_name(cid, name)
 
                  # This part is a simplified version of what `name_face_cluster` does.
                  # For a full replication, one would need to call `pipeline.db.re_embed_face_cluster_frames`
