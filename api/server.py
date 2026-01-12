@@ -3029,7 +3029,7 @@ JSON output:"""
             # Job stats for analysis completeness
             from core.ingestion.jobs import job_manager
 
-            all_jobs = job_manager.list_jobs(limit=1000)
+            all_jobs = job_manager.get_all_jobs(limit=1000)
             completed_jobs = len([j for j in all_jobs if j.status == "completed"])
             failed_jobs = len([j for j in all_jobs if j.status == "failed"])
             processing_jobs = len([j for j in all_jobs if j.status == "processing"])
