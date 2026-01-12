@@ -76,7 +76,7 @@ class VideoSummary(BaseModel):
 
 class HierarchicalSummarizer:
     """Generates hierarchical summaries for video content.
-    
+
     Creates two levels of summaries:
     - L2 (Scene): 5-minute chunks with local context
     - L1 (Video): Full video summary from L2 aggregation
@@ -92,7 +92,7 @@ class HierarchicalSummarizer:
         self.db = db or VectorDB()
         self.llm = llm or get_llm()
         self._scene_duration = getattr(
-            settings, 'summary_scene_duration', self.SCENE_DURATION_SECONDS
+            settings, "summary_scene_duration", self.SCENE_DURATION_SECONDS
         )
 
     async def summarize_video(
@@ -101,11 +101,11 @@ class HierarchicalSummarizer:
         force: bool = False,
     ) -> dict[str, Any]:
         """Generate hierarchical summaries for a video.
-        
+
         Args:
             video_path: Path to the video file.
             force: If True, regenerate even if summaries exist.
-            
+
         Returns:
             Dict with l1_summary and l2_summaries.
         """
@@ -128,7 +128,9 @@ class HierarchicalSummarizer:
         duration = max(f.get("timestamp", 0) for f in frames)
 
         # Generate L2 (scene) summaries
-        l2_summaries = await self._generate_scene_summaries(video_path, frames, duration)
+        l2_summaries = await self._generate_scene_summaries(
+            video_path, frames, duration
+        )
 
         # Generate L1 (video) summary from L2s
         l1_summary = await self._generate_video_summary(
@@ -189,9 +191,7 @@ class HierarchicalSummarizer:
             results = self.db.client.scroll(
                 collection_name=self.db.FRAMES_COLLECTION,
                 scroll_filter={
-                    "must": [
-                        {"key": "video_path", "match": {"value": video_path}}
-                    ]
+                    "must": [{"key": "video_path", "match": {"value": video_path}}]
                 },
                 limit=10000,
                 with_payload=True,
@@ -218,8 +218,7 @@ class HierarchicalSummarizer:
 
             # Get frames in this time range
             scene_frames = [
-                f for f in frames
-                if start_time <= f.get("timestamp", 0) < end_time
+                f for f in frames if start_time <= f.get("timestamp", 0) < end_time
             ]
 
             if not scene_frames:
@@ -239,19 +238,20 @@ class HierarchicalSummarizer:
 
             try:
                 summary_text = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.llm.generate(prompt, max_tokens=300)
+                    None, lambda: self.llm.generate(prompt, max_tokens=300)
                 )
 
-                summaries.append({
-                    "video_path": video_path,
-                    "level": SummaryLevel.L2_SCENE,
-                    "scene_index": i,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "summary": summary_text.strip(),
-                    "entities": entities,
-                })
+                summaries.append(
+                    {
+                        "video_path": video_path,
+                        "level": SummaryLevel.L2_SCENE,
+                        "scene_index": i,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "summary": summary_text.strip(),
+                        "entities": entities,
+                    }
+                )
 
             except Exception as e:
                 log(f"Error generating scene {i} summary: {e}")
@@ -299,8 +299,7 @@ class HierarchicalSummarizer:
 
         try:
             summary_text = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.llm.generate(prompt, max_tokens=500)
+                None, lambda: self.llm.generate(prompt, max_tokens=500)
             )
 
             return {
@@ -375,21 +374,25 @@ class HierarchicalSummarizer:
         # Add L1 summary
         if l1_summary and l1_summary.get("summary"):
             embedding = self.db.encode_texts([l1_summary["summary"]])[0]
-            points.append(PointStruct(
-                id=str(uuid.uuid4()),
-                vector=embedding.tolist(),
-                payload=l1_summary,
-            ))
+            points.append(
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=embedding.tolist(),
+                    payload=l1_summary,
+                )
+            )
 
         # Add L2 summaries
         for s in l2_summaries:
             if s.get("summary"):
                 embedding = self.db.encode_texts([s["summary"]])[0]
-                points.append(PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=embedding.tolist(),
-                    payload=s,
-                ))
+                points.append(
+                    PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector=embedding.tolist(),
+                        payload=s,
+                    )
+                )
 
         if points:
             self.db.client.upsert(

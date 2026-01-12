@@ -57,18 +57,18 @@ DEFAULT_PROVIDER = "ollama"
 
 class LLMFactory:
     """Factory class that constructs LLMInterface implementations.
-    
+
     Usage:
         # Use default (Ollama)
         llm = LLMFactory.create_llm()
-        
+
         # Specify provider
         llm = LLMFactory.create_llm(provider="gemini")
-        
+
         # Use environment variable
         # export LLM_PROVIDER=gemini
         llm = LLMFactory.get_default_llm()
-    
+
     To swap providers:
         1. Set LLM_PROVIDER environment variable, OR
         2. Change DEFAULT_PROVIDER constant above, OR
@@ -82,7 +82,7 @@ class LLMFactory:
         **kwargs,
     ) -> LLMInterface:
         """Create an LLM instance for the given provider.
-        
+
         Args:
             provider: Which LLM to use. Options:
                 - "ollama": Local Ollama (FREE, good for dev)
@@ -90,10 +90,10 @@ class LLMFactory:
                 - Future: "openai", "anthropic"
             prompt_dir: Directory containing prompt templates.
             **kwargs: Provider-specific options (model name, etc.)
-        
+
         Returns:
             LLMInterface implementation.
-        
+
         Best Practices:
             - Use Ollama for development/testing (free, fast iteration)
             - Use Gemini/GPT-4o for production vision tasks (best accuracy)
@@ -128,18 +128,17 @@ class LLMFactory:
 
         else:
             raise ValueError(
-                f"Unknown LLM provider: {provider}. "
-                f"Supported: {SUPPORTED_PROVIDERS}"
+                f"Unknown LLM provider: {provider}. Supported: {SUPPORTED_PROVIDERS}"
             )
 
     @staticmethod
     def get_default_llm(prompt_dir: str = "./prompts") -> LLMInterface:
         """Return the default LLM based on the LLM_PROVIDER environment variable.
-        
+
         Environment Variables:
             LLM_PROVIDER: Provider name (ollama, gemini, openai, anthropic)
                          Default: "ollama" (free, local)
-        
+
         To swap providers easily:
             Windows: set LLM_PROVIDER=gemini
             Linux:   export LLM_PROVIDER=gemini
@@ -158,7 +157,7 @@ class LLMFactory:
     @staticmethod
     def create_vision_llm(prompt_dir: str = "./prompts") -> LLMInterface:
         """Create the best LLM for vision/frame analysis tasks.
-        
+
         For SOTA accuracy, use Gemini 1.5 Pro or GPT-4o.
         For free development, use Ollama with llava.
         """
@@ -174,9 +173,8 @@ class LLMFactory:
     @staticmethod
     def create_text_llm(prompt_dir: str = "./prompts") -> LLMInterface:
         """Create the best LLM for text tasks (query expansion, etc).
-        
+
         For SOTA accuracy, use Claude 3.5 or GPT-4o.
         For free development, use Ollama with llama3.
         """
         return LLMFactory.get_default_llm(prompt_dir)
-

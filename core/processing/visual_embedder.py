@@ -25,7 +25,7 @@ class VisualEmbedder:
 
     def __init__(self, model_name: str | None = None):
         """Initialize SigLIP model.
-        
+
         Args:
             model_name: Override model name (default from config).
         """
@@ -78,10 +78,10 @@ class VisualEmbedder:
 
     def embed_image(self, image_path: str | Path) -> list[float]:
         """Generate visual embedding for an image.
-        
+
         Args:
             image_path: Path to image file.
-            
+
         Returns:
             List of floats (1152-dim for SigLIP-SO400M).
         """
@@ -115,13 +115,13 @@ class VisualEmbedder:
 
     def embed_text(self, text: str) -> list[float]:
         """Generate text embedding for cross-modal search.
-        
+
         Use this to embed search queries that will be matched against
         image embeddings.
-        
+
         Args:
             text: Search query text.
-            
+
         Returns:
             List of floats (same dimension as image embeddings).
         """
@@ -155,10 +155,10 @@ class VisualEmbedder:
 
     def embed_images_batch(self, image_paths: list[str | Path]) -> list[list[float]]:
         """Batch embed multiple images.
-        
+
         Args:
             image_paths: List of image paths.
-            
+
         Returns:
             List of embedding vectors.
         """
@@ -168,7 +168,7 @@ class VisualEmbedder:
         batch_size = 8  # Process 8 images at a time
 
         for i in range(0, len(image_paths), batch_size):
-            batch_paths = image_paths[i:i + batch_size]
+            batch_paths = image_paths[i : i + batch_size]
             images = []
 
             for path in batch_paths:

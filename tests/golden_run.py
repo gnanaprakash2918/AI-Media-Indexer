@@ -1,4 +1,3 @@
-
 """Golden Run - Operational Verification Suite.
 
 Verifies the integration of Antigravity features:
@@ -6,6 +5,7 @@ Verifies the integration of Antigravity features:
 2. VideoRAG (Search Response Structure)
 3. Agent System (Connectivity)
 """
+
 import os
 import sys
 import unittest
@@ -20,14 +20,15 @@ from core.processing.indic_transcriber import IndicASRPipeline
 
 
 class TestOperationalIntegration(unittest.TestCase):
-
     def test_01_hybrid_asr_switching(self):
         """Verify ASR backend switches based on configuration."""
         print("\nTesting Hybrid ASR Switch logic...")
 
         # Mock dependencies to avoid real loading
-        with patch("core.processing.indic_transcriber.IndicASRPipeline.load_model") as mock_load:
-             with patch("core.processing.indic_transcriber.HAS_NEMO", True):
+        with patch(
+            "core.processing.indic_transcriber.IndicASRPipeline.load_model"
+        ) as _mock_load:
+            with patch("core.processing.indic_transcriber.HAS_NEMO", True):
                 # Case 1: Native Enabled
                 settings.use_native_nemo = True
                 settings.ai4bharat_url = ""
@@ -45,7 +46,9 @@ class TestOperationalIntegration(unittest.TestCase):
                     pipeline.transcribe(dummy)
                     # Implementation details check:
                     # Logic sets `self._backend = "nemo"` if Native
-                    self.assertEqual(pipeline._backend, "nemo", "Should prefer Native NeMo")
+                    self.assertEqual(
+                        pipeline._backend, "nemo", "Should prefer Native NeMo"
+                    )
                 finally:
                     dummy.unlink()
 
@@ -62,7 +65,7 @@ class TestOperationalIntegration(unittest.TestCase):
                 "video_path": "vid.mp4",
                 "match_reasons": ["semantic", "face_match"],
                 "entities": ["Prakash"],
-                "timestamp": 10.0
+                "timestamp": 10.0,
             }
         ]
 
@@ -72,11 +75,19 @@ class TestOperationalIntegration(unittest.TestCase):
 
         # Run search (Async requires sync wrapper or IsolatedAsyncioTestCase)
         import asyncio
-        results = asyncio.run(orchestrator._search_multimodal(
-             structured=MagicMock(identities=[], visual_cues=["bowling"], audio_cues=[], scene_description="test"),
-             limit=1,
-             video_path=None
-        ))
+
+        results = asyncio.run(
+            orchestrator._search_multimodal(
+                structured=MagicMock(
+                    identities=[],
+                    visual_cues=["bowling"],
+                    audio_cues=[],
+                    scene_description="test",
+                ),
+                limit=1,
+                video_path=None,
+            )
+        )
 
         self.assertTrue(len(results) > 0)
         item = results[0]
@@ -88,6 +99,7 @@ class TestOperationalIntegration(unittest.TestCase):
         """Verify Agent Client can init (Phase 12 Fix)."""
         print("Testing Agent connection...")
         from core.agent.client import McpClient
+
         try:
             client = McpClient()
             # If __init__ fails (e.g. path issues), verification failed.
@@ -95,6 +107,7 @@ class TestOperationalIntegration(unittest.TestCase):
             print("✅ Agent Client initialized.")
         except Exception as e:
             self.fail(f"Agent Client init failed: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()

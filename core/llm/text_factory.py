@@ -40,13 +40,19 @@ class TextLLMClient(ABC):
 
 
 class OllamaText(TextLLMClient):
-    def __init__(self, model: str | None = None, base_url: str | None = None, timeout: float = 60.0):
+    def __init__(
+        self,
+        model: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+    ):
         self.model = model or settings.ollama_model
         self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self.timeout = timeout
 
     def generate(self, prompt: str) -> str:
         import httpx
+
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -66,17 +72,22 @@ class OllamaText(TextLLMClient):
 class GeminiText(TextLLMClient):
     def __init__(self, model: str | None = None, api_key: str | None = None):
         self.model = model or settings.gemini_model
-        self.api_key = api_key or (settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None)
+        self.api_key = api_key or (
+            settings.gemini_api_key.get_secret_value()
+            if settings.gemini_api_key
+            else None
+        )
         self._client = None
 
     def _get_client(self):
         if self._client is None:
             try:
                 import google.generativeai as genai
+
                 if not self.api_key:
                     raise ValueError("GOOGLE_API_KEY not set")
-                genai.configure(api_key=self.api_key) # type: ignore
-                self._client = genai.GenerativeModel( # type: ignore
+                genai.configure(api_key=self.api_key)  # type: ignore
+                self._client = genai.GenerativeModel(  # type: ignore
                     self.model,
                     generation_config={"response_mime_type": "application/json"},
                 )

@@ -88,16 +88,16 @@ class LLMInterface(ABC):
     def _repair_json(self, text: str) -> str:
         """Attempt to repair common JSON errors from LLMs."""
         # Remove trailing commas before closing braces/brackets
-        text = re.sub(r',\s*([}\]])', r'\1', text)
+        text = re.sub(r",\s*([}\]])", r"\1", text)
 
         # Count braces and add missing closing braces
-        open_braces = text.count('{') - text.count('}')
-        open_brackets = text.count('[') - text.count(']')
+        open_braces = text.count("{") - text.count("}")
+        open_brackets = text.count("[") - text.count("]")
 
         if open_braces > 0:
-            text = text.rstrip() + '}' * open_braces
+            text = text.rstrip() + "}" * open_braces
         if open_brackets > 0:
-            text = text.rstrip() + ']' * open_brackets
+            text = text.rstrip() + "]" * open_brackets
 
         return text
 
@@ -194,10 +194,12 @@ class LLMInterface(ABC):
         **kwargs: Any,
     ) -> T:
         """Describe an image and return a structured Pydantic object.
-        
+
         Default implementation: describe image, then parse JSON.
         Subclasses can override to use native format=json with image.
         """
         # Default: get text description, then try to parse as JSON
-        response = await self.describe_image(prompt, image_path, system_prompt, **kwargs)
+        response = await self.describe_image(
+            prompt, image_path, system_prompt, **kwargs
+        )
         return self.parse_json_response(response, schema)

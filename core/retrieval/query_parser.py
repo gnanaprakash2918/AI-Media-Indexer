@@ -58,8 +58,25 @@ class QueryParser:
         temporal = ""
         has_dialogue = False
 
-        temporal_keywords = {"beginning", "start", "end", "middle", "slow", "motion", "fast"}
-        dialogue_keywords = {"said", "says", "saying", "spoke", "speaks", "talking", "dialogue", "speech"}
+        temporal_keywords = {
+            "beginning",
+            "start",
+            "end",
+            "middle",
+            "slow",
+            "motion",
+            "fast",
+        }
+        dialogue_keywords = {
+            "said",
+            "says",
+            "saying",
+            "spoke",
+            "speaks",
+            "talking",
+            "dialogue",
+            "speech",
+        }
 
         for word in words:
             if word[0].isupper() if word else False:
@@ -73,7 +90,19 @@ class QueryParser:
 
         words_orig = query.split()
         for w in words_orig:
-            if w[0].isupper() and w.lower() not in {"the", "a", "an", "in", "on", "at", "to", "for", "with", "is", "are"}:
+            if w[0].isupper() and w.lower() not in {
+                "the",
+                "a",
+                "an",
+                "in",
+                "on",
+                "at",
+                "to",
+                "for",
+                "with",
+                "is",
+                "are",
+            }:
                 if w not in names:
                     names.append(w)
 

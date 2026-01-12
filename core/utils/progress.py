@@ -42,7 +42,7 @@ class ProgressTracker:
         resume: bool = False,
     ) -> None:
         """Start tracking a job.
-        
+
         Args:
             resume: If True, don't create a new DB entry, just update cache.
         """
@@ -61,12 +61,14 @@ class ProgressTracker:
         with self._lock:
             self._cache[job_id] = job
 
-        self._broadcast({
-            "event": "job_started" if not resume else "job_resumed",
-            "job_id": job_id,
-            "file_path": file_path,
-            "media_type": media_type,
-        })
+        self._broadcast(
+            {
+                "event": "job_started" if not resume else "job_resumed",
+                "job_id": job_id,
+                "file_path": file_path,
+                "media_type": media_type,
+            }
+        )
 
     def update(
         self,
@@ -93,13 +95,15 @@ class ProgressTracker:
                 job.message = message
 
             # Broadcast immediately
-            self._broadcast({
-                "event": "job_progress",
-                "job_id": job_id,
-                "progress": job.progress,
-                "stage": job.current_stage,
-                "message": job.message,
-            })
+            self._broadcast(
+                {
+                    "event": "job_progress",
+                    "job_id": job_id,
+                    "progress": job.progress,
+                    "stage": job.current_stage,
+                    "message": job.message,
+                }
+            )
 
             # Persist to DB (throttled)
             self._persist_throttled(job)
@@ -131,18 +135,20 @@ class ProgressTracker:
             if current_timestamp is not None:
                 job.checkpoint_data = {
                     "timestamp": current_timestamp,
-                    "processed_frames": job.processed_frames
+                    "processed_frames": job.processed_frames,
                 }
 
             # Broadcast detailed update
-            self._broadcast({
-                "event": "job_granular_update",
-                "job_id": job_id,
-                "processed_frames": job.processed_frames,
-                "total_frames": job.total_frames,
-                "timestamp": job.current_frame_timestamp,
-                "duration": job.total_duration
-            })
+            self._broadcast(
+                {
+                    "event": "job_granular_update",
+                    "job_id": job_id,
+                    "processed_frames": job.processed_frames,
+                    "total_frames": job.total_frames,
+                    "timestamp": job.current_frame_timestamp,
+                    "duration": job.total_duration,
+                }
+            )
 
             # Persist to DB (throttled)
             self._persist_throttled(job)
@@ -150,6 +156,7 @@ class ProgressTracker:
     def _persist_throttled(self, job: JobInfo) -> None:
         """Persist job state to DB if enough time has passed."""
         import time as time_module
+
         now = time_module.time()
         last = self._last_db_update.get(job.job_id, 0)
 
@@ -169,7 +176,7 @@ class ProgressTracker:
                     current_frame_timestamp=job.current_frame_timestamp,
                     total_duration=job.total_duration,
                     last_heartbeat=now,  # Update heartbeat on every persist
-                    checkpoint_data=job.checkpoint_data
+                    checkpoint_data=job.checkpoint_data,
                 )
                 self._last_db_update[job.job_id] = now
             except Exception:
@@ -184,7 +191,7 @@ class ProgressTracker:
         message: str = "",
     ) -> None:
         """Update the pipeline stage for granular progress tracking.
-        
+
         Args:
             job_id: Job ID to update.
             stage: Current pipeline stage.
@@ -206,14 +213,16 @@ class ProgressTracker:
             job.last_heartbeat = time.time()
 
         # Broadcast stage update
-        self._broadcast({
-            "event": "pipeline_stage_update",
-            "job_id": job_id,
-            "pipeline_stage": stage_value,
-            "current_item": current_item,
-            "total_items": total_items,
-            "message": message,
-        })
+        self._broadcast(
+            {
+                "event": "pipeline_stage_update",
+                "job_id": job_id,
+                "pipeline_stage": stage_value,
+                "current_item": current_item,
+                "total_items": total_items,
+                "message": message,
+            }
+        )
 
         # Always persist stage changes immediately (important for crash recovery)
         try:
@@ -244,14 +253,16 @@ class ProgressTracker:
                     status=JobStatus.COMPLETED,
                     progress=100.0,
                     completed_at=job.completed_at,
-                    message=message
+                    message=message,
                 )
 
-        self._broadcast({
-            "event": "job_completed",
-            "job_id": job_id,
-            "message": message,
-        })
+        self._broadcast(
+            {
+                "event": "job_completed",
+                "job_id": job_id,
+                "message": message,
+            }
+        )
 
     def fail(self, job_id: str, error: str = "Unknown error") -> None:
         """Mark job as failed."""
@@ -269,14 +280,16 @@ class ProgressTracker:
                     status=JobStatus.FAILED,
                     progress=-1.0,
                     completed_at=job.completed_at,
-                    error=error
+                    error=error,
                 )
 
-        self._broadcast({
-            "event": "job_failed",
-            "job_id": job_id,
-            "error": error,
-        })
+        self._broadcast(
+            {
+                "event": "job_failed",
+                "job_id": job_id,
+                "error": error,
+            }
+        )
 
     def cancel(self, job_id: str) -> bool:
         """Cancel a running job."""
@@ -291,13 +304,15 @@ class ProgressTracker:
                     job_manager.update_job(
                         job_id,
                         status=JobStatus.CANCELLED,
-                        completed_at=job.completed_at
+                        completed_at=job.completed_at,
                     )
 
-                    self._broadcast({
-                        "event": "job_cancelled",
-                        "job_id": job_id,
-                    })
+                    self._broadcast(
+                        {
+                            "event": "job_cancelled",
+                            "job_id": job_id,
+                        }
+                    )
                     return True
         return False
 
@@ -332,13 +347,13 @@ class ProgressTracker:
         # Check in DB if not in cache (e.g. after restart)
         job = job_manager.get_job(job_id)
         if job and job.status == JobStatus.PAUSED:
-             with self._lock:
-                 self._cache[job_id] = job
-                 job.status = JobStatus.RUNNING
+            with self._lock:
+                self._cache[job_id] = job
+                job.status = JobStatus.RUNNING
 
-             job_manager.update_job(job_id, status=JobStatus.RUNNING)
-             self._broadcast({"event": "job_resumed", "job_id": job_id})
-             return True
+            job_manager.update_job(job_id, status=JobStatus.RUNNING)
+            self._broadcast({"event": "job_resumed", "job_id": job_id})
+            return True
 
         return False
 
@@ -372,9 +387,7 @@ class ProgressTracker:
         self._sync_cache()
         with self._lock:
             return sorted(
-                list(self._cache.values()),
-                key=lambda x: x.started_at,
-                reverse=True
+                list(self._cache.values()), key=lambda x: x.started_at, reverse=True
             )
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
@@ -397,7 +410,7 @@ class ProgressTracker:
         payload: dict[str, Any] | None = None,
     ) -> None:
         """Emit a custom event to SSE subscribers.
-        
+
         Used for special events like job deletion that need to notify UI.
         """
         event: dict[str, Any] = {

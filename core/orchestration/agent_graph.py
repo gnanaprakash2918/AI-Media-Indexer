@@ -3,6 +3,7 @@
 Routes complex user queries to specialized agents (Search, Vision, Audio)
 using Semantic Routing (LLM-based decision making).
 """
+
 import json
 import logging
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ User Query: {query}
 
 class AgentCard:
     """Capability card for an agent."""
+
     def __init__(self, name: str, description: str, capabilities: list[str] = None):
         self.name = name
         self.description = description
@@ -60,21 +62,34 @@ class MultiAgentOrchestrator:
 
     def _register_default_agents(self):
         """Register the default agent cards."""
-        self.register_agent("search_agent", AgentCard(
-            name="search_agent",
-            description="Searches indexed media for specific moments, people, objects, actions. Handles complex queries like 'Prakash bowling at Brunswick'.",
-            capabilities=["semantic_search", "identity_filter", "temporal_search"]
-        ))
-        self.register_agent("vision_agent", AgentCard(
-            name="vision_agent",
-            description="Analyzes images/frames for objects, people, text, scene context using VLM.",
-            capabilities=["frame_analysis", "object_detection", "ocr"]
-        ))
-        self.register_agent("audio_agent", AgentCard(
-            name="audio_agent",
-            description="Handles transcripts, speech, speaker identification, and dialogue search.",
-            capabilities=["transcription", "speaker_diarization", "dialogue_search"]
-        ))
+        self.register_agent(
+            "search_agent",
+            AgentCard(
+                name="search_agent",
+                description="Searches indexed media for specific moments, people, objects, actions. Handles complex queries like 'Prakash bowling at Brunswick'.",
+                capabilities=["semantic_search", "identity_filter", "temporal_search"],
+            ),
+        )
+        self.register_agent(
+            "vision_agent",
+            AgentCard(
+                name="vision_agent",
+                description="Analyzes images/frames for objects, people, text, scene context using VLM.",
+                capabilities=["frame_analysis", "object_detection", "ocr"],
+            ),
+        )
+        self.register_agent(
+            "audio_agent",
+            AgentCard(
+                name="audio_agent",
+                description="Handles transcripts, speech, speaker identification, and dialogue search.",
+                capabilities=[
+                    "transcription",
+                    "speaker_diarization",
+                    "dialogue_search",
+                ],
+            ),
+        )
 
     def register_agent(self, name: str, card: AgentCard):
         """Registers an agent with its capabilities card."""
@@ -86,6 +101,7 @@ class MultiAgentOrchestrator:
         if self._llm is None and not self._llm_loaded:
             try:
                 from llm.factory import LLMFactory
+
                 self._llm = LLMFactory.create_llm(provider="ollama")
                 self._llm_loaded = True
             except Exception as e:
@@ -108,17 +124,18 @@ class MultiAgentOrchestrator:
             return self._fallback_route(user_query)
 
         # Build Agent Descriptions for Prompt
-        agents_desc = "\n".join([
-            f"- {name}: {card.description}"
-            for name, card in self.agents.items()
-        ])
+        agents_desc = "\n".join(
+            [f"- {name}: {card.description}" for name, card in self.agents.items()]
+        )
 
         try:
             response_text = await self._llm.generate(
                 ROUTER_PROMPT.format(agents_desc=agents_desc, query=user_query)
             )
             # Clean JSON markdown
-            response_text = response_text.replace("```json", "").replace("```", "").strip()
+            response_text = (
+                response_text.replace("```json", "").replace("```", "").strip()
+            )
             routing_data = json.loads(response_text)
 
             selected_agent_name = routing_data.get("selected_agent")
@@ -126,11 +143,13 @@ class MultiAgentOrchestrator:
                 logger.warning(f"Router selected unknown agent: {selected_agent_name}")
                 return self._fallback_route(user_query)
 
-            logger.info(f"Routing to {selected_agent_name}: {routing_data.get('reasoning', '')}")
+            logger.info(
+                f"Routing to {selected_agent_name}: {routing_data.get('reasoning', '')}"
+            )
 
             return AgentResponse(
                 agent_name=selected_agent_name,
-                content=routing_data.get('refined_query', user_query)
+                content=routing_data.get("refined_query", user_query),
             )
         except Exception as e:
             logger.error(f"Routing failed: {e}")
@@ -141,11 +160,17 @@ class MultiAgentOrchestrator:
         query_lower = user_query.lower()
 
         # Audio queries
-        if any(w in query_lower for w in ["said", "say", "transcript", "speech", "subtitle", "dialogue"]):
+        if any(
+            w in query_lower
+            for w in ["said", "say", "transcript", "speech", "subtitle", "dialogue"]
+        ):
             return AgentResponse(agent_name="audio_agent", content=user_query)
 
         # Vision queries (describe specific frame)
-        if any(w in query_lower for w in ["describe", "analyze", "explain"]) and "frame" in query_lower:
+        if (
+            any(w in query_lower for w in ["describe", "analyze", "explain"])
+            and "frame" in query_lower
+        ):
             return AgentResponse(agent_name="vision_agent", content=user_query)
 
         # Default to search
@@ -154,6 +179,7 @@ class MultiAgentOrchestrator:
 
 # Singleton
 _orchestrator: Optional[MultiAgentOrchestrator] = None
+
 
 def get_orchestrator() -> MultiAgentOrchestrator:
     global _orchestrator

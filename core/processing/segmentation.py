@@ -3,6 +3,7 @@
 Falls back to Ultralytics SAM/YOLO if weights are missing.
 Uses LAZY LOADING to prevent OOM on startup.
 """
+
 import gc
 import logging
 from pathlib import Path
@@ -26,6 +27,7 @@ class SegmentationEngine:
     def device(self) -> str:
         if self._device is None:
             import torch
+
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
         return self._device
 
@@ -34,31 +36,34 @@ class SegmentationEngine:
         if self.model is not None:
             return True
 
-        logger.info(f"Loading Segmentation Model ({self.model_type}) on {self.device}...")
+        logger.info(
+            f"Loading Segmentation Model ({self.model_type}) on {self.device}..."
+        )
 
         try:
             from ultralytics import SAM
+
             self.model = SAM("sam_b.pt")  # Downloads automatically if missing
             logger.info("SAM Model loaded successfully.")
             return True
         except ImportError:
-            logger.warning("Ultralytics not found. Install with: pip install ultralytics")
+            logger.warning(
+                "Ultralytics not found. Install with: pip install ultralytics"
+            )
             return False
         except Exception as e:
             logger.error(f"Failed to load SAM: {e}")
             return False
 
     def segment_frame(
-        self,
-        frame: np.ndarray,
-        prompt_points: Optional[List[List[int]]] = None
+        self, frame: np.ndarray, prompt_points: Optional[List[List[int]]] = None
     ) -> List[Dict[str, Any]]:
         """Segments objects in a frame.
-        
+
         Args:
             frame: Input image as numpy array.
             prompt_points: Optional click points for interactive segmentation.
-            
+
         Returns:
             List of segment dicts with id, segmentation polygon, confidence.
         """
@@ -73,16 +78,22 @@ class SegmentationEngine:
                 res = self.model(frame, device=self.device)
 
             for r in res:
-                if hasattr(r, 'masks') and r.masks is not None:
+                if hasattr(r, "masks") and r.masks is not None:
                     masks_data = r.masks.xy
                     for i, mask_poly in enumerate(masks_data):
-                        conf = float(r.boxes.conf[i]) if r.boxes is not None and len(r.boxes.conf) > i else 1.0
-                        results.append({
-                            "id": i,
-                            "segmentation": mask_poly.tolist(),
-                            "confidence": conf,
-                            "label": "object"
-                        })
+                        conf = (
+                            float(r.boxes.conf[i])
+                            if r.boxes is not None and len(r.boxes.conf) > i
+                            else 1.0
+                        )
+                        results.append(
+                            {
+                                "id": i,
+                                "segmentation": mask_poly.tolist(),
+                                "confidence": conf,
+                                "label": "object",
+                            }
+                        )
         except Exception as e:
             logger.error(f"Segmentation error: {e}")
 
@@ -92,6 +103,7 @@ class SegmentationEngine:
         """Release resources."""
         self.model = None
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
@@ -100,7 +112,7 @@ class SegmentationEngine:
 
 class Sam3Tracker:
     """SAM 3 video segmentation and concept tracking.
-    
+
     This is the full SAM-3 wrapper for video tracking with text prompts.
     """
 
@@ -114,6 +126,7 @@ class Sam3Tracker:
     def device(self) -> str:
         if self._device is None:
             from config import settings
+
             self._device = settings.device
         return self._device
 
@@ -134,7 +147,9 @@ class Sam3Tracker:
 
             if not checkpoint.exists():
                 logger.warning(f"SAM3 checkpoint not found: {checkpoint}")
-                logger.info("Download from: https://github.com/facebookresearch/segment-anything-2")
+                logger.info(
+                    "Download from: https://github.com/facebookresearch/segment-anything-2"
+                )
                 return False
 
             logger.info("Loading SAM3 video predictor...")
@@ -143,7 +158,9 @@ class Sam3Tracker:
             return True
 
         except ImportError:
-            logger.warning("sam2 package not installed. Run: pip install segment-anything-2")
+            logger.warning(
+                "sam2 package not installed. Run: pip install segment-anything-2"
+            )
             return False
         except Exception as e:
             logger.error(f"SAM3 load failed: {e}")
@@ -172,12 +189,10 @@ class Sam3Tracker:
 
         try:
             _, obj_ids, _ = self.predictor.add_new_prompt(
-                self.inference_state,
-                frame_idx=frame_idx,
-                text=text
+                self.inference_state, frame_idx=frame_idx, text=text
             )
             logger.info(f"SAM3 added concept '{text}': {len(obj_ids)} instances")
-            return obj_ids.tolist() if hasattr(obj_ids, 'tolist') else list(obj_ids)
+            return obj_ids.tolist() if hasattr(obj_ids, "tolist") else list(obj_ids)
         except Exception as e:
             logger.error(f"SAM3 prompt failed: {e}")
             return []
@@ -194,16 +209,16 @@ class Sam3Tracker:
                 masks = (mask_logits > 0.0).cpu().numpy()
                 yield {
                     "frame_idx": frame_idx,
-                    "object_ids": obj_ids.tolist() if hasattr(obj_ids, 'tolist') else list(obj_ids),
+                    "object_ids": obj_ids.tolist()
+                    if hasattr(obj_ids, "tolist")
+                    else list(obj_ids),
                     "masks": masks,
                 }
         except Exception as e:
             logger.error(f"SAM3 propagation error: {e}")
 
     def process_video_concepts(
-        self,
-        video_path: Path,
-        prompts: List[str]
+        self, video_path: Path, prompts: List[str]
     ) -> Iterator[Dict[str, Any]]:
         """Full pipeline: init video, add prompts, propagate."""
         if not self.init_video(video_path):
@@ -219,6 +234,7 @@ class Sam3Tracker:
         """Release resources."""
         self.inference_state = None
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()

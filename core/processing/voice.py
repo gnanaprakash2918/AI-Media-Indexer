@@ -13,10 +13,12 @@ import torch
 # torch.load to disable weights_only enforcement for pyannote/speechbrain compatibility
 _original_load = torch.load
 
+
 def safe_load(*args, **kwargs):
     # FORCE weights_only=False even if True was passed
-    kwargs['weights_only'] = False
+    kwargs["weights_only"] = False
     return _original_load(*args, **kwargs)
+
 
 torch.load = safe_load
 
@@ -94,7 +96,9 @@ class VoiceProcessor:
                             use_auth_token=self.hf_token,
                         )
                     except Exception as pipe_err:
-                        log.warning(f"Pyannote Pipeline load failed: {pipe_err}. Attempting snapshot_download...")
+                        log.warning(
+                            f"Pyannote Pipeline load failed: {pipe_err}. Attempting snapshot_download..."
+                        )
                         try:
                             snapshot_download(
                                 repo_id=settings.pyannote_model,
@@ -106,7 +110,9 @@ class VoiceProcessor:
                                 use_auth_token=self.hf_token,
                             )
                         except Exception as dl_err:
-                            log.error(f"Failed to download/reload Pyannote pipeline: {dl_err}")
+                            log.error(
+                                f"Failed to download/reload Pyannote pipeline: {dl_err}"
+                            )
                             raise pipe_err
 
                     self.pipeline.to(self.device)
@@ -117,7 +123,9 @@ class VoiceProcessor:
                             use_auth_token=self.hf_token,
                         )
                     except Exception as model_err:
-                        log.warning(f"Voice embedding model load failed: {model_err}. Attempting snapshot_download...")
+                        log.warning(
+                            f"Voice embedding model load failed: {model_err}. Attempting snapshot_download..."
+                        )
                         try:
                             snapshot_download(
                                 repo_id=settings.voice_embedding_model,
@@ -129,7 +137,9 @@ class VoiceProcessor:
                                 use_auth_token=self.hf_token,
                             )
                         except Exception as dl_err:
-                            log.error(f"Failed to download/reload embedding model: {dl_err}")
+                            log.error(
+                                f"Failed to download/reload embedding model: {dl_err}"
+                            )
                             raise model_err
 
                     self.inference = Inference(
@@ -193,7 +203,9 @@ class VoiceProcessor:
             log.info(f"[Voice] Processing: {audio_path.name}")
             temp_wav = await self._convert_to_wav(audio_path)
             if temp_wav is None:
-                log.warning(f"[Voice] Skipped - WAV conversion failed for {audio_path.name}")
+                log.warning(
+                    f"[Voice] Skipped - WAV conversion failed for {audio_path.name}"
+                )
                 return []
             processing_path = temp_wav
 
@@ -252,19 +264,21 @@ class VoiceProcessor:
         cmd = [
             "ffmpeg",
             "-y",
-            "-i", str(path),
-            "-vn",              # Disable video
-            "-acodec", "pcm_s16le",
-            "-ar", "16000",     # 16kHz
-            "-ac", "1",         # Mono
-            str(temp_path)
+            "-i",
+            str(path),
+            "-vn",  # Disable video
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",  # 16kHz
+            "-ac",
+            "1",  # Mono
+            str(temp_path),
         ]
 
         try:
             process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE
+                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
             )
             _, stderr = await process.communicate()
 

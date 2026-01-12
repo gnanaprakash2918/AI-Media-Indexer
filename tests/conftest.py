@@ -4,6 +4,7 @@ NOTE: Do NOT import transformers or sentence_transformers here.
 The torch.__spec__ error in Python 3.12 is triggered by those packages
 when they check for torch availability. Keep this file minimal.
 """
+
 import os
 import sys
 
@@ -26,6 +27,7 @@ def setup_test_env():
 def mock_qdrant():
     """Mock Qdrant client for unit tests."""
     from unittest.mock import MagicMock
+
     mock_client = MagicMock()
     mock_client.get_collections.return_value = MagicMock(collections=[])
     mock_client.collection_exists.return_value = True

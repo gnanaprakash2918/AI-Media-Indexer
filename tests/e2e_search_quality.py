@@ -2,6 +2,7 @@
 
 These tests verify core logic WITHOUT importing heavy ML libraries.
 """
+
 import json
 import os
 import sys
@@ -27,8 +28,22 @@ class TestTemporalContext:
         )
 
         mgr = TemporalContextManager(sensory_size=3)
-        mgr.add_frame(TemporalContext(timestamp=0.0, description="Person standing still", entities=["person"], actions=["standing"]))
-        mgr.add_frame(TemporalContext(timestamp=1.0, description="Person turning head", entities=["person"], actions=["turning"]))
+        mgr.add_frame(
+            TemporalContext(
+                timestamp=0.0,
+                description="Person standing still",
+                entities=["person"],
+                actions=["standing"],
+            )
+        )
+        mgr.add_frame(
+            TemporalContext(
+                timestamp=1.0,
+                description="Person turning head",
+                entities=["person"],
+                actions=["turning"],
+            )
+        )
 
         context = mgr.get_context_for_vlm()
         assert len(mgr.sensory) == 2
@@ -79,6 +94,7 @@ class TestVLMPrompt:
             # Fallback: read from module but may trigger imports
             try:
                 from core.processing.vision import DENSE_MULTIMODAL_PROMPT
+
                 prompt = DENSE_MULTIMODAL_PROMPT.lower()
             except Exception:
                 prompt = "action clothing spatial position"  # Dummy for test pass
@@ -86,10 +102,16 @@ class TestVLMPrompt:
         checks = {
             "action": "action" in prompt,
             "clothing": "cloth" in prompt or "wear" in prompt or "shirt" in prompt,
-            "spatial": "spatial" in prompt or "position" in prompt or "location" in prompt or "left" in prompt or "right" in prompt,
+            "spatial": "spatial" in prompt
+            or "position" in prompt
+            or "location" in prompt
+            or "left" in prompt
+            or "right" in prompt,
         }
 
-        assert all(checks.values()), f"Missing: {[k for k,v in checks.items() if not v]}"
+        assert all(checks.values()), (
+            f"Missing: {[k for k, v in checks.items() if not v]}"
+        )
         RESULTS["scenarios"].append({"name": "vlm_prompt", "passed": True})
 
 

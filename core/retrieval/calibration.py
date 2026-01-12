@@ -24,5 +24,6 @@ def combine_scores(vector_score: float, vlm_confidence: int | None) -> float:
 
 def generate_thumbnail_url(video_path: str, timestamp: float) -> str:
     from urllib.parse import quote
-    encoded_path = quote(video_path, safe='')
+
+    encoded_path = quote(video_path, safe="")
     return f"/api/media/thumbnail?path={encoded_path}&time={timestamp:.2f}"

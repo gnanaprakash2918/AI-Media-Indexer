@@ -15,31 +15,35 @@ from core.utils.logger import logger
 
 class JobStatus(str, Enum):
     """Status of a processing job."""
+
     PENDING = "pending"
     RUNNING = "running"
-    PAUSED = "paused"      # Persistent pause (process stopped, can resume)
+    PAUSED = "paused"  # Persistent pause (process stopped, can resume)
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    STUCK = "stuck"        # Detected as stuck (heartbeat timeout)
+    STUCK = "stuck"  # Detected as stuck (heartbeat timeout)
 
 
 class PipelineStage(str, Enum):
     """Granular pipeline stages for accurate progress tracking."""
-    INIT = "init"              # Initial setup
-    EXTRACT = "extract"        # Extracting audio/frames
+
+    INIT = "init"  # Initial setup
+    EXTRACT = "extract"  # Extracting audio/frames
     TRANSCRIBE = "transcribe"  # Whisper transcription
-    DIARIZE = "diarize"        # Speaker diarization
+    DIARIZE = "diarize"  # Speaker diarization
     FACE_DETECT = "face_detect"  # Face detection
-    FACE_TRACK = "face_track"    # Track-level face clustering
+    FACE_TRACK = "face_track"  # Track-level face clustering
     VOICE_EMBED = "voice_embed"  # Voice embedding extraction
     VLM_CAPTION = "vlm_caption"  # VLM dense captioning
-    INDEX = "index"            # Vector DB indexing
-    COMPLETE = "complete"      # All stages done
+    INDEX = "index"  # Vector DB indexing
+    COMPLETE = "complete"  # All stages done
+
 
 @dataclass
 class JobInfo:
     """Information about a processing job."""
+
     job_id: str
     file_path: str
     status: JobStatus = JobStatus.PENDING
@@ -55,16 +59,17 @@ class JobInfo:
     # Granular Progress Details
     processed_frames: int = 0
     total_frames: int = 0
-    current_item_index: int = 0   # Generic item counter (frames, segments, etc)
-    total_items: int = 0          # Total items in current stage
+    current_item_index: int = 0  # Generic item counter (frames, segments, etc)
+    total_items: int = 0  # Total items in current stage
     current_frame_timestamp: float = 0.0
     total_duration: float = 0.0
 
     # Crash recovery
-    last_heartbeat: float = 0.0   # Last heartbeat timestamp
+    last_heartbeat: float = 0.0  # Last heartbeat timestamp
 
     # Checkpoint data for resuming
     checkpoint_data: dict[str, Any] | None = None
+
 
 class JobManager:
     """SQLite-backed job manager for persistent state."""
@@ -129,14 +134,16 @@ class JobManager:
                 except sqlite3.OperationalError:
                     pass  # Column already exists
 
-    def create_job(self, job_id: str, file_path: str, media_type: str = "unknown") -> JobInfo:
+    def create_job(
+        self, job_id: str, file_path: str, media_type: str = "unknown"
+    ) -> JobInfo:
         """Create a new job."""
         job = JobInfo(
             job_id=job_id,
             file_path=file_path,
             media_type=media_type,
             started_at=time.time(),
-            status=JobStatus.RUNNING # Starts running immediately in our model
+            status=JobStatus.RUNNING,  # Starts running immediately in our model
         )
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -145,7 +152,13 @@ class JobManager:
                     job_id, file_path, status, media_type, started_at
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (job.job_id, job.file_path, job.status.value, job.media_type, job.started_at)
+                (
+                    job.job_id,
+                    job.file_path,
+                    job.status.value,
+                    job.media_type,
+                    job.started_at,
+                ),
             )
             conn.commit()
         return job
@@ -153,10 +166,21 @@ class JobManager:
     def update_job(self, job_id: str, **kwargs: Any) -> None:
         """Update job fields."""
         valid_fields = {
-            "status", "progress", "message", "completed_at", "error",
-            "current_stage", "pipeline_stage", "processed_frames", "total_frames",
-            "current_item_index", "total_items", "current_frame_timestamp",
-            "total_duration", "last_heartbeat", "checkpoint_data"
+            "status",
+            "progress",
+            "message",
+            "completed_at",
+            "error",
+            "current_stage",
+            "pipeline_stage",
+            "processed_frames",
+            "total_frames",
+            "current_item_index",
+            "total_items",
+            "current_frame_timestamp",
+            "total_duration",
+            "last_heartbeat",
+            "checkpoint_data",
         }
 
         updates = []
@@ -178,8 +202,7 @@ class JobManager:
 
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                f"UPDATE jobs SET {', '.join(updates)} WHERE job_id = ?",
-                values
+                f"UPDATE jobs SET {', '.join(updates)} WHERE job_id = ?", values
             )
             conn.commit()
 
@@ -197,7 +220,9 @@ class JobManager:
         """Get all jobs, most recent first."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
+            cursor = conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            )
             return [self._row_to_job(row) for row in cursor.fetchall()]
 
     def delete_job(self, job_id: str) -> None:
@@ -228,13 +253,19 @@ class JobManager:
             current_stage=row["current_stage"],
             processed_frames=row["processed_frames"],
             total_frames=row["total_frames"],
-            current_item_index=row["current_item_index"] if "current_item_index" in row.keys() else 0,
+            current_item_index=row["current_item_index"]
+            if "current_item_index" in row.keys()
+            else 0,
             total_items=row["total_items"] if "total_items" in row.keys() else 0,
             current_frame_timestamp=row["current_frame_timestamp"],
             total_duration=row["total_duration"],
-            pipeline_stage=row["pipeline_stage"] if "pipeline_stage" in row.keys() else "init",
-            last_heartbeat=row["last_heartbeat"] if "last_heartbeat" in row.keys() else 0.0,
-            checkpoint_data=checkpoint
+            pipeline_stage=row["pipeline_stage"]
+            if "pipeline_stage" in row.keys()
+            else "init",
+            last_heartbeat=row["last_heartbeat"]
+            if "last_heartbeat" in row.keys()
+            else 0.0,
+            checkpoint_data=checkpoint,
         )
 
     def update_heartbeat(self, job_id: str) -> None:
@@ -242,17 +273,16 @@ class JobManager:
         now = time.time()
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "UPDATE jobs SET last_heartbeat = ? WHERE job_id = ?",
-                (now, job_id)
+                "UPDATE jobs SET last_heartbeat = ? WHERE job_id = ?", (now, job_id)
             )
             conn.commit()
 
     def detect_stuck_jobs(self, timeout_seconds: float = 60.0) -> list[JobInfo]:
         """Detect jobs that are RUNNING but haven't sent a heartbeat in timeout_seconds.
-        
+
         Args:
             timeout_seconds: Heartbeat timeout (default 60s = 1 minute).
-            
+
         Returns:
             List of stuck jobs.
         """
@@ -261,12 +291,15 @@ class JobManager:
 
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT * FROM jobs 
                 WHERE status = 'running' 
                 AND last_heartbeat > 0 
                 AND last_heartbeat < ?
-            """, (cutoff,))
+            """,
+                (cutoff,),
+            )
 
             stuck_jobs = [self._row_to_job(row) for row in cursor.fetchall()]
 
@@ -274,31 +307,33 @@ class JobManager:
 
     def mark_stuck_jobs(self, timeout_seconds: float = 60.0) -> int:
         """Mark stuck jobs as STUCK status.
-        
+
         Args:
             timeout_seconds: Heartbeat timeout.
-            
+
         Returns:
             Number of jobs marked as stuck.
         """
         stuck = self.detect_stuck_jobs(timeout_seconds)
         for job in stuck:
             self.update_job(job.job_id, status=JobStatus.STUCK)
-            logger.warning(f"Marked job {job.job_id} as STUCK (no heartbeat for {timeout_seconds}s)")
+            logger.warning(
+                f"Marked job {job.job_id} as STUCK (no heartbeat for {timeout_seconds}s)"
+            )
         return len(stuck)
 
     def recover_on_startup(self, timeout_seconds: float = 60.0) -> dict[str, int]:
         """Auto-detect and handle stuck jobs on application startup.
-        
+
         Called during server initialization to recover from crashes.
-        
+
         Strategy:
         - Jobs with status=RUNNING but stale heartbeat → mark as PAUSED (resumable)
         - Jobs with status=STUCK → leave as is for manual review
-        
+
         Args:
             timeout_seconds: Heartbeat timeout.
-            
+
         Returns:
             Dict with recovery stats.
         """
@@ -309,21 +344,25 @@ class JobManager:
             cutoff = time.time() - timeout_seconds
 
             # Find running jobs with stale heartbeat
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT * FROM jobs 
                 WHERE status = 'running' 
                 AND (last_heartbeat < ? OR last_heartbeat = 0)
-            """, (cutoff,))
+            """,
+                (cutoff,),
+            )
 
             for row in cursor.fetchall():
                 job_id = row["job_id"]
                 # Auto-pause for resumption
                 conn.execute(
-                    "UPDATE jobs SET status = 'paused' WHERE job_id = ?",
-                    (job_id,)
+                    "UPDATE jobs SET status = 'paused' WHERE job_id = ?", (job_id,)
                 )
                 stats["paused"] += 1
-                logger.info(f"Recovered job {job_id}: marked as PAUSED (was running without heartbeat)")
+                logger.info(
+                    f"Recovered job {job_id}: marked as PAUSED (was running without heartbeat)"
+                )
 
             conn.commit()
 

@@ -41,17 +41,29 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 def get_transcriber(language: str | None = None):
     """Factory to return appropriate transcriber engine based on settings.
-    
+
     Args:
         language: Target language code (e.g., 'ta', 'hi', 'en').
-        
+
     Returns:
         AudioTranscriber or IndicASRPipeline instance.
     """
     lang = language or settings.language or "en"
 
-    if settings.use_indic_asr and lang in ["ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"]:
+    if settings.use_indic_asr and lang in [
+        "ta",
+        "hi",
+        "te",
+        "ml",
+        "kn",
+        "bn",
+        "gu",
+        "mr",
+        "or",
+        "pa",
+    ]:
         from core.processing.indic_transcriber import IndicASRPipeline
+
         return IndicASRPipeline(lang=lang)
 
     return AudioTranscriber()
@@ -134,7 +146,7 @@ class AudioTranscriber:
         1. User-provided subtitle file (explicit override)
         2. Sidecar .srt files (same directory as video)
         3. Embedded subtitle streams (FFmpeg extraction)
-        
+
         Returns True if subtitles found, False if AI transcription needed.
         """
         log("[Subtitle] Checking for existing subtitles (Sidecar > Embedded > AI)...")
@@ -163,9 +175,12 @@ class AudioTranscriber:
         cmd = [
             self._get_ffmpeg_cmd(),
             "-y",
-            "-v", "error",
-            "-i", str(input_path),
-            "-map", "0:s:0",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-map",
+            "0:s:0",
             str(output_path),
         ]
         try:
@@ -258,10 +273,14 @@ class AudioTranscriber:
             log("[SUCCESS] Download complete.")
 
             # Check if already CTranslate2 format
-            if (raw_model_dir / "model.bin").exists() and (raw_model_dir / "config.json").exists():
-                 log(f"[INFO] Model {model_id} appears to be already converted. Skipping conversion step.")
-                 shutil.copytree(raw_model_dir, ct2_output_dir, dirs_exist_ok=True)
-                 return str(ct2_output_dir)
+            if (raw_model_dir / "model.bin").exists() and (
+                raw_model_dir / "config.json"
+            ).exists():
+                log(
+                    f"[INFO] Model {model_id} appears to be already converted. Skipping conversion step."
+                )
+                shutil.copytree(raw_model_dir, ct2_output_dir, dirs_exist_ok=True)
+                return str(ct2_output_dir)
 
             log(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
 
@@ -289,7 +308,7 @@ class AudioTranscriber:
     @observe("transcriber_load_model")
     def _load_model(self, model_key: str) -> None:
         """Loads the Faster-Whisper model with memory-efficient settings.
-        
+
         Falls back to smaller models if memory allocation fails.
         """
         if self._model:
@@ -327,7 +346,9 @@ class AudioTranscriber:
         except (RuntimeError, MemoryError, Exception) as e:
             error_msg = str(e).lower()
             # Check for memory-related errors
-            if any(x in error_msg for x in ["memory", "mkl_malloc", "allocation", "oom"]):
+            if any(
+                x in error_msg for x in ["memory", "mkl_malloc", "allocation", "oom"]
+            ):
                 log(f"[WARN] Memory error loading {model_key}: {e}")
                 if not self._fallback_attempted:
                     self._fallback_attempted = True
@@ -339,7 +360,9 @@ class AudioTranscriber:
                             if self.device == "cuda" and torch.cuda.is_available():
                                 torch.cuda.empty_cache()
                             log(f"[INFO] Trying fallback model: {fallback_model}")
-                            fallback_path = self._convert_and_cache_model(fallback_model)
+                            fallback_path = self._convert_and_cache_model(
+                                fallback_model
+                            )
                             self._model = WhisperModel(
                                 fallback_path,
                                 device="cpu",  # Force CPU for stability
@@ -348,12 +371,18 @@ class AudioTranscriber:
                                 cpu_threads=2,
                                 num_workers=1,
                             )
-                            self._batched_model = BatchedInferencePipeline(model=self._model)
+                            self._batched_model = BatchedInferencePipeline(
+                                model=self._model
+                            )
                             self._current_model_size = fallback_model
-                            log(f"[SUCCESS] Loaded fallback model {fallback_model} on CPU")
+                            log(
+                                f"[SUCCESS] Loaded fallback model {fallback_model} on CPU"
+                            )
                             return
                         except Exception as fallback_err:
-                            log(f"[WARN] Fallback {fallback_model} also failed: {fallback_err}")
+                            log(
+                                f"[WARN] Fallback {fallback_model} also failed: {fallback_err}"
+                            )
                             continue
             raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
 
@@ -514,7 +543,9 @@ class AudioTranscriber:
 
         # Existing Sidecar / Embedded Subtitles
         if start_time == 0.0 and end_time is None:
-            if self._find_existing_subtitles(audio_path, out_srt, subtitle_path, lang or "en"):
+            if self._find_existing_subtitles(
+                audio_path, out_srt, subtitle_path, lang or "en"
+            ):
                 log(f"[INFO] Parsing existing subtitles from {out_srt}...")
                 parsed_segments = parse_srt(out_srt)
                 log(
@@ -528,7 +559,9 @@ class AudioTranscriber:
         proc_path = self._slice_audio(audio_path, start_time, end_time)
         chunks: list[dict[str, Any]] = []
 
-        candidates = settings.whisper_model_map.get(lang or "en", [settings.fallback_model_id])
+        candidates = settings.whisper_model_map.get(
+            lang or "en", [settings.fallback_model_id]
+        )
         model_to_use = candidates[0] if candidates else settings.fallback_model_id
 
         try:
@@ -572,7 +605,11 @@ class AudioTranscriber:
             )
 
             # Lock detected language for subsequent chunks
-            if settings.whisper_language_lock and not self._locked_language and info.language:
+            if (
+                settings.whisper_language_lock
+                and not self._locked_language
+                and info.language
+            ):
                 self._locked_language = info.language
                 log(f"[INFO] Language locked to: {self._locked_language}")
 
@@ -632,11 +669,10 @@ class AudioTranscriber:
                     pass
         return None
 
-
     @observe("language_detection")
     def detect_language(self, audio_path: Path) -> str:
         """Detect language using robust model loading.
-        
+
         Uses the base model (`openai/whisper-base`) to detect language.
         Leverages _load_model() to ensure model is downloaded if missing.
         """
@@ -666,11 +702,13 @@ class AudioTranscriber:
             # and check info.language.
             _, info = self._model.transcribe(
                 str(wav_path),
-                task="transcribe", # Changed from 'detect_language'
+                task="transcribe",  # Changed from 'detect_language'
                 beam_size=5,
             )
 
-            log(f"[Audio] Language detected: {info.language} ({info.language_probability:.1%})")
+            log(
+                f"[Audio] Language detected: {info.language} ({info.language_probability:.1%})"
+            )
 
             # Lower threshold to ensure we catch Indic languages even with background noise
             if info.language_probability > 0.4:
@@ -678,9 +716,14 @@ class AudioTranscriber:
 
             # Special check: if detected is 'ta' but confidence is low (0.2-0.4), still return 'ta'
             # because Whisper often has low confidence for Tamil but correctly identifies it vs English
-            if info.language in ["ta", "hi", "ml", "te", "kn"] and info.language_probability > 0.2:
-                 log(f"[Audio] Low confidence Indic language detected: {info.language}. accepting.")
-                 return info.language
+            if (
+                info.language in ["ta", "hi", "ml", "te", "kn"]
+                and info.language_probability > 0.2
+            ):
+                log(
+                    f"[Audio] Low confidence Indic language detected: {info.language}. accepting."
+                )
+                return info.language
 
             return "en"
 

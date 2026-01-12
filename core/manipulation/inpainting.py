@@ -1,10 +1,11 @@
 """SOTA Video Inpainting Module.
 
-Uses ProPainter (Propagation-based inpainting) as the default for high-fidelity 
+Uses ProPainter (Propagation-based inpainting) as the default for high-fidelity
 object removal. Falls back to simpler methods if ProPainter unavailable.
 
 LAZY LOADING: Models only load when Inpaint tool is called by Agent.
 """
+
 from __future__ import annotations
 
 import gc
@@ -45,6 +46,7 @@ class VideoInpainter:
     def device(self) -> str:
         if self._device is None:
             import torch
+
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
         return self._device
 
@@ -57,6 +59,7 @@ class VideoInpainter:
 
         try:
             from propainter import ProPainter
+
             self._propainter_model = ProPainter(device=self.device)
             self._initialized = True
             logger.info("ProPainter loaded successfully")
@@ -71,18 +74,22 @@ class VideoInpainter:
     def inpaint_video(self, request: InpaintRequest) -> InpaintResult:
         """Inpaint video using best available method."""
         video_path = request.video_path
-        output_path = request.output_path or video_path.parent / f"{video_path.stem}_inpainted{video_path.suffix}"
+        output_path = (
+            request.output_path
+            or video_path.parent / f"{video_path.stem}_inpainted{video_path.suffix}"
+        )
 
         if self._lazy_load_propainter():
-            return self._inpaint_propainter(video_path, request.mask_frames, output_path)
+            return self._inpaint_propainter(
+                video_path, request.mask_frames, output_path
+            )
 
-        return self._inpaint_opencv_fallback(video_path, request.mask_frames, output_path)
+        return self._inpaint_opencv_fallback(
+            video_path, request.mask_frames, output_path
+        )
 
     def _inpaint_propainter(
-        self,
-        video_path: Path,
-        mask_frames: dict[int, np.ndarray],
-        output_path: Path
+        self, video_path: Path, mask_frames: dict[int, np.ndarray], output_path: Path
     ) -> InpaintResult:
         """Inpaint using ProPainter propagation-based method."""
         try:
@@ -94,7 +101,7 @@ class VideoInpainter:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
             frames = []
@@ -106,14 +113,20 @@ class VideoInpainter:
                 if not ret:
                     break
                 frames.append(frame)
-                mask = mask_frames.get(frame_idx, np.zeros((height, width), dtype=np.uint8))
+                mask = mask_frames.get(
+                    frame_idx, np.zeros((height, width), dtype=np.uint8)
+                )
                 masks.append(mask)
                 frame_idx += 1
 
             cap.release()
 
-            frames_tensor = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float() / 255.0
-            masks_tensor = torch.from_numpy(np.stack(masks)).unsqueeze(1).float() / 255.0
+            frames_tensor = (
+                torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float() / 255.0
+            )
+            masks_tensor = (
+                torch.from_numpy(np.stack(masks)).unsqueeze(1).float() / 255.0
+            )
 
             if self.device == "cuda":
                 frames_tensor = frames_tensor.cuda()
@@ -122,7 +135,9 @@ class VideoInpainter:
             with torch.no_grad():
                 inpainted = self._propainter_model.inpaint(frames_tensor, masks_tensor)
 
-            inpainted = (inpainted.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
+            inpainted = (inpainted.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(
+                np.uint8
+            )
 
             for frame in inpainted:
                 writer.write(frame)
@@ -131,17 +146,16 @@ class VideoInpainter:
             self._cleanup()
 
             logger.info(f"ProPainter inpaint complete: {output_path}")
-            return InpaintResult(success=True, output_path=output_path, backend_used="propainter")
+            return InpaintResult(
+                success=True, output_path=output_path, backend_used="propainter"
+            )
 
         except Exception as e:
             logger.error(f"ProPainter inpaint failed: {e}")
             return InpaintResult(success=False, error=str(e), backend_used="propainter")
 
     def _inpaint_opencv_fallback(
-        self,
-        video_path: Path,
-        mask_frames: dict[int, np.ndarray],
-        output_path: Path
+        self, video_path: Path, mask_frames: dict[int, np.ndarray], output_path: Path
     ) -> InpaintResult:
         """Fallback: OpenCV Telea inpainting (fast but lower quality)."""
         try:
@@ -152,7 +166,7 @@ class VideoInpainter:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
             frame_idx = 0
@@ -163,7 +177,9 @@ class VideoInpainter:
 
                 mask = mask_frames.get(frame_idx)
                 if mask is not None and mask.any():
-                    frame = cv2.inpaint(frame, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+                    frame = cv2.inpaint(
+                        frame, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA
+                    )
 
                 writer.write(frame)
                 frame_idx += 1
@@ -172,16 +188,21 @@ class VideoInpainter:
             writer.release()
 
             logger.info(f"OpenCV inpaint complete: {output_path}")
-            return InpaintResult(success=True, output_path=output_path, backend_used="opencv_telea")
+            return InpaintResult(
+                success=True, output_path=output_path, backend_used="opencv_telea"
+            )
 
         except Exception as e:
             logger.error(f"OpenCV inpaint failed: {e}")
-            return InpaintResult(success=False, error=str(e), backend_used="opencv_telea")
+            return InpaintResult(
+                success=False, error=str(e), backend_used="opencv_telea"
+            )
 
     def _cleanup(self) -> None:
         """Free GPU memory after inpainting."""
         self._propainter_model = None
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
@@ -204,6 +225,7 @@ class WanVideoInpainter:
     def device(self) -> str:
         if self._device is None:
             import torch
+
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
         return self._device
 
@@ -232,7 +254,7 @@ class WanVideoInpainter:
         self,
         frame: np.ndarray,
         mask: np.ndarray,
-        prompt: str = "clean background, no objects"
+        prompt: str = "clean background, no objects",
     ) -> Optional[np.ndarray]:
         """Inpaint single frame using diffusion."""
         if not self._lazy_load():
@@ -259,6 +281,7 @@ class WanVideoInpainter:
     def unload(self) -> None:
         self._model = None
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()

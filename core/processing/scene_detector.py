@@ -19,7 +19,7 @@ class SceneInfo:
 
 def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     try:
-        from scenedetect import AdaptiveDetector, FrameTimecode, detect
+        from scenedetect import AdaptiveDetector, detect
     except ImportError:
         log("scenedetect not installed")
         return []
@@ -33,7 +33,9 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
             str(path),
             AdaptiveDetector(
                 adaptive_threshold=settings.scene_detect_threshold,
-                min_scene_len=int(settings.scene_detect_min_length * 30),  # assuming 30fps
+                min_scene_len=int(
+                    settings.scene_detect_min_length * 30
+                ),  # assuming 30fps
             ),
             show_progress=False,
         )
@@ -50,14 +52,16 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
         mid_frame = (start_frame + end_frame) // 2
         mid_time = (start_time + end_time) / 2.0
 
-        scenes.append(SceneInfo(
-            start_time=start_time,
-            end_time=end_time,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            mid_frame=mid_frame,
-            mid_time=mid_time,
-        ))
+        scenes.append(
+            SceneInfo(
+                start_time=start_time,
+                end_time=end_time,
+                start_frame=start_frame,
+                end_frame=end_frame,
+                mid_frame=mid_frame,
+                mid_time=mid_time,
+            )
+        )
 
     log(f"Detected {len(scenes)} scenes in {path.name}")
     return scenes
@@ -65,18 +69,26 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
 
 def extract_scene_frame(video_path: Path | str, timestamp: float) -> bytes | None:
     import subprocess
+
     path = Path(video_path)
     if not path.exists():
         return None
 
     cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(timestamp),
-        "-i", str(path),
-        "-frames:v", "1",
-        "-f", "image2pipe",
-        "-vcodec", "mjpeg",
-        "-q:v", "5",
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(timestamp),
+        "-i",
+        str(path),
+        "-frames:v",
+        "1",
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "-q:v",
+        "5",
         "pipe:1",
     ]
     try:

@@ -1,9 +1,9 @@
-
 """System Stress Tester & Monitor.
 
 Launches parallel ingestion load and monitors VRAM usage to verify
 stability and semaphore effectiveness.
 """
+
 import sys
 import threading
 import time
@@ -13,11 +13,13 @@ import torch
 # Try to import pynvml
 try:
     import pynvml
+
     pynvml.nvmlInit()
     HAS_NVML = True
 except ImportError:
     HAS_NVML = False
     print("⚠️  pynvml not installed. VRAM monitoring will be estimated via torch.")
+
 
 def get_vram_usage():
     if HAS_NVML:
@@ -32,6 +34,7 @@ def get_vram_usage():
         return used / (1024**3), total / (1024**3)
     return 0.0, 0.0
 
+
 def monitor_vram(stop_event):
     print("📊 Starting VRAM Monitor...")
     max_usage = 0.0
@@ -42,6 +45,7 @@ def monitor_vram(stop_event):
         sys.stdout.flush()
         time.sleep(1)
     print(f"\n✅ Peak VRAM Usage: {max_usage:.1f}GB")
+
 
 def trigger_ingest(job_id: int):
     # Trigger a dummy ingest or just hit the endpoint
@@ -55,6 +59,7 @@ def trigger_ingest(job_id: int):
         pass
     except Exception as e:
         print(f"❌ Job {job_id} failed: {e}")
+
 
 def main():
     print("🧪 Starting Stress Test (Phase 15)...")
@@ -83,6 +88,7 @@ def main():
     finally:
         stop_event.set()
         monitor_thread.join()
+
 
 if __name__ == "__main__":
     main()

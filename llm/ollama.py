@@ -96,7 +96,8 @@ class OllamaLLM(LLMInterface):
 
         # Check for CUDA OOM (VRAM exhaustion)
         is_cuda_oom = (
-            "cuda" in error_str and ("out of memory" in error_str or "unable to allocate" in error_str)
+            "cuda" in error_str
+            and ("out of memory" in error_str or "unable to allocate" in error_str)
             or "cudamalloc failed" in error_str
         )
 
@@ -105,7 +106,8 @@ class OllamaLLM(LLMInterface):
             "model runner has unexpectedly stopped" in error_str
             or "500" in error_str
             or "internal server error" in error_str
-            or "unexpected" in error_str and "stop" in error_str
+            or "unexpected" in error_str
+            and "stop" in error_str
         )
 
         if is_cuda_oom:
@@ -113,7 +115,11 @@ class OllamaLLM(LLMInterface):
             try:
                 # Try to free VRAM by moving encoder to CPU
                 from core.ingestion.pipeline import IngestionPipeline
-                if hasattr(IngestionPipeline, '_instance') and IngestionPipeline._instance:
+
+                if (
+                    hasattr(IngestionPipeline, "_instance")
+                    and IngestionPipeline._instance
+                ):
                     IngestionPipeline._instance.db.encoder_to_cpu()
             except Exception as e:
                 print(f"[Ollama] Could not move encoder to CPU: {e}")
@@ -122,11 +128,17 @@ class OllamaLLM(LLMInterface):
             OllamaLLM._consecutive_errors = 0
         elif is_runner_crash:
             OllamaLLM._cooldown_until = time.time() + self.RUNNER_CRASH_COOLDOWN
-            print(f"[Ollama] Model crash/500 detected! Waiting {self.RUNNER_CRASH_COOLDOWN}s for recovery...")
-            OllamaLLM._consecutive_errors = 0  # Reset count since we take immediate long cooldown
+            print(
+                f"[Ollama] Model crash/500 detected! Waiting {self.RUNNER_CRASH_COOLDOWN}s for recovery..."
+            )
+            OllamaLLM._consecutive_errors = (
+                0  # Reset count since we take immediate long cooldown
+            )
         elif OllamaLLM._consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
             OllamaLLM._cooldown_until = time.time() + self.COOLDOWN_DURATION
-            print(f"[Ollama] Too many errors, entering {self.COOLDOWN_DURATION}s cooldown")
+            print(
+                f"[Ollama] Too many errors, entering {self.COOLDOWN_DURATION}s cooldown"
+            )
             OllamaLLM._consecutive_errors = 0
 
     @observe("llm_generate")
@@ -153,14 +165,18 @@ class OllamaLLM(LLMInterface):
                 except Exception as e:
                     if attempt < self.MAX_RETRIES - 1:
                         backoff = 2 ** (attempt + 1)
-                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        print(
+                            f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s..."
+                        )
                         await asyncio.sleep(backoff)
                         continue
 
                     self._record_error(e)
-                    print(f"Ollama generation failed after {self.MAX_RETRIES} attempts: {e}")
+                    print(
+                        f"Ollama generation failed after {self.MAX_RETRIES} attempts: {e}"
+                    )
                     raise RuntimeError(f"Ollama generation failed: {e}") from e
-            return "" # Should not reach here
+            return ""  # Should not reach here
 
     @observe("llm_generate_structured")
     async def generate_structured(
@@ -171,7 +187,7 @@ class OllamaLLM(LLMInterface):
         **kwargs: Any,
     ) -> T:
         """Generate structured JSON output matching the Pydantic schema.
-        
+
         Uses Ollama's native format='json' for structured output.
         """
         print("Ollama structured generation requested.")
@@ -222,13 +238,19 @@ Now respond with JSON:"""
                 except Exception as e:
                     if attempt < self.MAX_RETRIES - 1:
                         backoff = 2 ** (attempt + 1)
-                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        print(
+                            f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s..."
+                        )
                         await asyncio.sleep(backoff)
                         continue
 
                     self._record_error(e)
-                    print(f"Ollama structured generation failed after {self.MAX_RETRIES} attempts: {e}")
-                    raise RuntimeError(f"Ollama structured generation failed: {e}") from e
+                    print(
+                        f"Ollama structured generation failed after {self.MAX_RETRIES} attempts: {e}"
+                    )
+                    raise RuntimeError(
+                        f"Ollama structured generation failed: {e}"
+                    ) from e
             raise RuntimeError("Exhausted retries")
 
     def _build_schema_example(self, schema: type) -> str:
@@ -238,7 +260,7 @@ Now respond with JSON:"""
 
         def build_example(model_class: type) -> dict | str | int | list:
             """Recursively build example for a Pydantic model or primitive."""
-            if not hasattr(model_class, 'model_fields'):
+            if not hasattr(model_class, "model_fields"):
                 # It's a primitive type
                 return f"<{model_class.__name__ if hasattr(model_class, '__name__') else 'value'}>"
 
@@ -253,19 +275,23 @@ Now respond with JSON:"""
                 if origin is list:
                     # list[EntityDetail] -> show nested example
                     args = get_args(annotation)
-                    if args and hasattr(args[0], 'model_fields'):
+                    if args and hasattr(args[0], "model_fields"):
                         # It's a list of Pydantic models
                         example[name] = [build_example(args[0])]
                     else:
                         # Simple list like list[str] or list[int]
                         example[name] = ["<item>"]
-                elif hasattr(annotation, 'model_fields'):
+                elif hasattr(annotation, "model_fields"):
                     # It's a nested Pydantic model like SceneContext
                     example[name] = build_example(annotation)
-                elif annotation == str or (origin is None and 'str' in str(annotation).lower()):
+                elif annotation == str or (
+                    origin is None and "str" in str(annotation).lower()
+                ):
                     # String field - use description as hint
                     example[name] = desc[:60] + "..." if len(desc) > 60 else desc
-                elif annotation == int or (origin is None and 'int' in str(annotation).lower()):
+                elif annotation == int or (
+                    origin is None and "int" in str(annotation).lower()
+                ):
                     example[name] = 0
                 elif annotation == bool:
                     example[name] = False
@@ -274,8 +300,10 @@ Now respond with JSON:"""
                     args = get_args(annotation)
                     if args:
                         if args[0] == str:
-                            example[name] = desc[:60] + "..." if len(desc) > 60 else desc
-                        elif hasattr(args[0], 'model_fields'):
+                            example[name] = (
+                                desc[:60] + "..." if len(desc) > 60 else desc
+                            )
+                        elif hasattr(args[0], "model_fields"):
                             example[name] = build_example(args[0])
                         else:
                             example[name] = f"<{name}>"
@@ -332,12 +360,16 @@ Now respond with JSON:"""
                 except Exception as e:
                     if attempt < self.MAX_RETRIES - 1:
                         backoff = 2 ** (attempt + 1)
-                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        print(
+                            f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s..."
+                        )
                         await asyncio.sleep(backoff)
                         continue
 
                     self._record_error(e)
-                    print(f"Ollama image description failed after {self.MAX_RETRIES} attempts: {e}")
+                    print(
+                        f"Ollama image description failed after {self.MAX_RETRIES} attempts: {e}"
+                    )
                     raise RuntimeError(f"Ollama image description failed: {e}") from e
             return ""
 
@@ -351,7 +383,7 @@ Now respond with JSON:"""
         **kwargs: Any,
     ) -> T:
         """Describe an image and return structured JSON output.
-        
+
         Uses format='json' for proper JSON output from vision model.
         """
         img_path = str(Path(image_path))
@@ -383,11 +415,13 @@ Return JSON:"""
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
 
-        messages.append({
-            "role": "user",
-            "content": json_prompt,
-            "images": [img_path],
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": json_prompt,
+                "images": [img_path],
+            }
+        )
 
         # Apply rate limiting
         assert OllamaLLM._semaphore is not None, "Semaphore not initialized"
@@ -413,11 +447,17 @@ Return JSON:"""
                 except Exception as e:
                     if attempt < self.MAX_RETRIES - 1:
                         backoff = 2 ** (attempt + 1)
-                        print(f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s...")
+                        print(
+                            f"[Ollama] Attempt {attempt + 1} failed: {e}. Retrying in {backoff}s..."
+                        )
                         await asyncio.sleep(backoff)
                         continue
 
                     self._record_error(e)
-                    print(f"Ollama structured image description failed after {self.MAX_RETRIES} attempts: {e}")
-                    raise RuntimeError(f"Ollama structured image description failed: {e}") from e
+                    print(
+                        f"Ollama structured image description failed after {self.MAX_RETRIES} attempts: {e}"
+                    )
+                    raise RuntimeError(
+                        f"Ollama structured image description failed: {e}"
+                    ) from e
             raise RuntimeError("Exhausted retries")

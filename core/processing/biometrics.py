@@ -22,6 +22,7 @@ class BiometricArbitrator:
 
     def __init__(self, model_path: Path | None = None):
         from config import settings
+
         self.model_path = model_path or settings.arcface_model_path
         self.threshold = settings.biometric_threshold
         self.session: Any | None = None
@@ -43,7 +44,7 @@ class BiometricArbitrator:
         try:
             self.session = ort.InferenceSession(
                 str(self.model_path),
-                providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
             log(f"[BIO] ArcFace loaded: {self.model_path.name}")
             return True
@@ -51,7 +52,9 @@ class BiometricArbitrator:
             log(f"[BIO] Load failed: {e}")
             return False
 
-    def get_embedding(self, face_crop: "NDArray[np.uint8]") -> "NDArray[np.float32] | None":
+    def get_embedding(
+        self, face_crop: "NDArray[np.uint8]"
+    ) -> "NDArray[np.float32] | None":
         if not self._lazy_load() or self.session is None:
             return None
 
@@ -73,13 +76,17 @@ class BiometricArbitrator:
             log(f"[BIO] Embedding failed: {e}")
             return None
 
-    def compute_similarity(self, emb1: "NDArray[np.float32]", emb2: "NDArray[np.float32]") -> float:
+    def compute_similarity(
+        self, emb1: "NDArray[np.float32]", emb2: "NDArray[np.float32]"
+    ) -> float:
         norm1, norm2 = np.linalg.norm(emb1), np.linalg.norm(emb2)
         if norm1 < 1e-6 or norm2 < 1e-6:
             return 0.0
         return float(np.dot(emb1, emb2) / (norm1 * norm2))
 
-    def verify_identity(self, emb1: "NDArray[np.float32] | None", emb2: "NDArray[np.float32] | None") -> bool:
+    def verify_identity(
+        self, emb1: "NDArray[np.float32] | None", emb2: "NDArray[np.float32] | None"
+    ) -> bool:
         if emb1 is None or emb2 is None:
             return False
         similarity = self.compute_similarity(emb1, emb2)

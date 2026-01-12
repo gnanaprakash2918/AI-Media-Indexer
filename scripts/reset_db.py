@@ -82,11 +82,21 @@ def reset_cache() -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Reset application databases")
-    parser.add_argument("--confirm", action="store_true", help="Reset all databases (requires confirmation)")
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Reset all databases (requires confirmation)",
+    )
     parser.add_argument("--jobs", action="store_true", help="Reset only jobs.db")
-    parser.add_argument("--qdrant", action="store_true", help="Reset only Qdrant collections")
-    parser.add_argument("--cache", action="store_true", help="Reset only cache directories")
-    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    parser.add_argument(
+        "--qdrant", action="store_true", help="Reset only Qdrant collections"
+    )
+    parser.add_argument(
+        "--cache", action="store_true", help="Reset only cache directories"
+    )
+    parser.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
 
     args = parser.parse_args()
 
@@ -95,9 +105,9 @@ def main():
         print("\n[ERROR] At least one reset option is required.")
         sys.exit(1)
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("AI-Media-Indexer Database Reset")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     # Confirmation prompt
     if not args.yes:
@@ -127,12 +137,12 @@ def main():
     if args.confirm or args.cache:
         success &= reset_cache()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     if success:
         print("[COMPLETE] Database reset successful.")
     else:
         print("[WARNING] Some operations failed. Check output above.")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
 
 if __name__ == "__main__":

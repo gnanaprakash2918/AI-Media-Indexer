@@ -16,6 +16,7 @@ trace_id_ctx: ContextVar[str | None] = ContextVar("trace_id", default=None)
 span_ctx: ContextVar[str | None] = ContextVar("span", default=None)
 component_ctx: ContextVar[str | None] = ContextVar("component", default=None)
 
+
 class InterceptHandler(logging.Handler):
     """Redirects standard logging into Loguru while preserving correct caller info."""
 
@@ -85,7 +86,7 @@ def setup_logger() -> None:
     logger.add(
         str(log_file),
         level="DEBUG",
-        rotation="00:00", # Daily rotation at midnight
+        rotation="00:00",  # Daily rotation at midnight
         retention="7 days",
         compression="zip",
         serialize=True,
@@ -205,9 +206,7 @@ class LokiSink:
                             "level": record_level,
                             "component": record["extra"].get("component", "unknown"),
                         },
-                        "values": [
-                            [timestamp_ns, json.dumps(record)]
-                        ]
+                        "values": [[timestamp_ns, text]],
                     }
                 ]
             }
@@ -223,18 +222,17 @@ class LokiSink:
                 self.url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=2.0
+                timeout=2.0,
             )
         except Exception:
             # Failsafe: don't crash logging
             pass
+
 
 if settings.enable_loki:
     logger.add(
         LokiSink(settings.loki_url).write,
         level="INFO",
         serialize=True,  # Pass JSON string to sink
-        enqueue=True,    # Run in background thread
+        enqueue=True,  # Run in background thread
     )
-
-

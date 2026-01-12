@@ -32,7 +32,7 @@ if sys.platform == "win32":
             return True
 
     # Apply filter to root logger and common loggers
-    for logger_name in ['', 'uvicorn', 'uvicorn.error', 'asyncio']:
+    for logger_name in ["", "uvicorn", "uvicorn.error", "asyncio"]:
         logging.getLogger(logger_name).addFilter(ConnectionResetFilter())
 
     class SilenceEventLoopPolicy(asyncio.WindowsProactorEventLoopPolicy):
@@ -94,7 +94,9 @@ async def lifespan(app: FastAPI):
         # Uses heartbeat timeout (60s) to detect jobs that died mid-processing
         recovery_stats = job_manager.recover_on_startup(timeout_seconds=60.0)
         if recovery_stats["paused"] > 0:
-            logger.warning(f"Crash recovery: Marked {recovery_stats['paused']} interrupted jobs as PAUSED (resumable)")
+            logger.warning(
+                f"Crash recovery: Marked {recovery_stats['paused']} interrupted jobs as PAUSED (resumable)"
+            )
 
     except Exception as exc:
         pipeline = None
@@ -106,10 +108,22 @@ async def lifespan(app: FastAPI):
         pipeline.db.close()
     logger.info("shutdown")
 
+
 # Media file validation
 ALLOWED_MEDIA_EXTENSIONS = {
-    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv",  # Video
-    ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg",  # Audio
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".webm",
+    ".m4v",
+    ".flv",  # Video
+    ".mp3",
+    ".wav",
+    ".flac",
+    ".m4a",
+    ".aac",
+    ".ogg",  # Audio
 }
 
 
@@ -122,16 +136,18 @@ class IngestRequest(BaseModel):
     start_time: float | None = None
     end_time: float | None = None
 
+
 class ScanRequest(BaseModel):
     """Request body for folder scanning."""
+
     directory: str
     recursive: bool = True
-    extensions: list[str] = Field(
-        default=[".mp4", ".mkv", ".avi", ".mov", ".webm"]
-    )
+    extensions: list[str] = Field(default=[".mp4", ".mkv", ".avi", ".mov", ".webm"])
+
 
 class ConfigUpdate(BaseModel):
     """Configuration update model."""
+
     device: str | None = None
     compute_type: str | None = None
     frame_interval: int | None = None
@@ -147,9 +163,12 @@ class ConfigUpdate(BaseModel):
     enable_voice_analysis: bool | None = None
     enable_resource_monitoring: bool | None = None
 
+
 class NameFaceRequest(BaseModel):
     """Request body for naming a face cluster."""
+
     name: str
+
 
 class AdvancedSearchRequest(BaseModel):
     query: str
@@ -157,33 +176,41 @@ class AdvancedSearchRequest(BaseModel):
     limit: int = 20
     min_confidence: float = 0.0
     video_path: str | None = None
-    person_filter: list[str] | None = None # Filter by person names
+    person_filter: list[str] | None = None  # Filter by person names
+
 
 class IdentityMergeRequest(BaseModel):
     target_identity_id: str
 
+
 class IdentityRenameRequest(BaseModel):
     name: str
+
 
 class RedactRequest(BaseModel):
     video_path: str
     identity_id: str
     output_path: str | None = None
 
+
 class VoiceMergeRequest(BaseModel):
     target_speaker_id: str
     source_speaker_ids: list[str]
 
+
 class FrameDescriptionRequest(BaseModel):
     description: str
+
 
 class CreateClusterRequest(BaseModel):
     name: str = ""
     type: str = "manual"
 
+
 class MoveFacesRequest(BaseModel):
     face_ids: list[str]
     target_cluster_id: str
+
 
 class MergeClustersRequest(BaseModel):
     source_cluster_id: str | int
@@ -191,8 +218,10 @@ class MergeClustersRequest(BaseModel):
     strategy: str = "merge_to_target"
     force: bool = False
 
+
 class BulkApproveRequest(BaseModel):
     cluster_ids: list[str | int]
+
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -219,6 +248,7 @@ def create_app() -> FastAPI:
             get_cached_profile,
             get_used_vram,
         )
+
         profile = get_cached_profile()
         return {
             "profile": profile.to_dict(),
@@ -231,13 +261,18 @@ def create_app() -> FastAPI:
                 "max_concurrent_jobs": settings.max_concurrent_jobs,
                 "lazy_unload": settings.lazy_unload,
                 "high_performance_mode": settings.high_performance_mode,
-            }
+            },
         }
 
     @app.post("/config/system")
     async def update_system_config(updates: dict):
         """Runtime override of system settings."""
-        allowed_keys = {"batch_size", "max_concurrent_jobs", "lazy_unload", "high_performance_mode"}
+        allowed_keys = {
+            "batch_size",
+            "max_concurrent_jobs",
+            "lazy_unload",
+            "high_performance_mode",
+        }
         applied = {}
         for key, value in updates.items():
             if key in allowed_keys:
@@ -246,6 +281,7 @@ def create_app() -> FastAPI:
 
         # Refresh hardware profile
         from core.utils.hardware import refresh_profile
+
         new_profile = refresh_profile()
 
         return {"applied": applied, "new_profile": new_profile.to_dict()}
@@ -257,8 +293,6 @@ def create_app() -> FastAPI:
     # Create subdirectories
     (thumb_dir / "faces").mkdir(exist_ok=True)
     (thumb_dir / "voices").mkdir(exist_ok=True)
-
-
 
     # Dynamic face thumbnail endpoint - generates on-demand if file doesn't exist
     @app.get("/thumbnails/faces/{filename}")
@@ -281,7 +315,9 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=503, detail="Database not ready")
 
             # Look up face by thumbnail_path
-            face_data = pipeline.db.get_face_by_thumbnail(f"/thumbnails/faces/{filename}")
+            face_data = pipeline.db.get_face_by_thumbnail(
+                f"/thumbnails/faces/{filename}"
+            )
             if not face_data:
                 raise HTTPException(status_code=404, detail="Face not found")
 
@@ -297,20 +333,26 @@ def create_app() -> FastAPI:
             # FFmpeg fast-seek: -ss BEFORE -i for fast seeking (vs slow decode-seek)
             # Use scale filter for 192px thumbnail, quality 5 for small file
             cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(timestamp),      # Fast seek before input
-                "-i", str(media_path),
-                "-frames:v", "1",
-                "-vf", "scale=192:-2",       # 192px width, maintain aspect
-                "-q:v", "5",                 # Quality 5 (~75% JPEG)
-                str(file_path)
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(timestamp),  # Fast seek before input
+                "-i",
+                str(media_path),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=192:-2",  # 192px width, maintain aspect
+                "-q:v",
+                "5",  # Quality 5 (~75% JPEG)
+                str(file_path),
             ]
 
             result = subprocess.run(
                 cmd,
                 stdout=DEVNULL,
                 stderr=DEVNULL,
-                timeout=10  # 10 second timeout
+                timeout=10,  # 10 second timeout
             )
 
             if result.returncode == 0 and file_path.exists():
@@ -346,7 +388,9 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=503, detail="Database not ready")
 
             # Look up voice segment by audio_path
-            segment = pipeline.db.get_voice_by_audio_path(f"/thumbnails/voices/{filename}")
+            segment = pipeline.db.get_voice_by_audio_path(
+                f"/thumbnails/voices/{filename}"
+            )
             if not segment:
                 raise HTTPException(status_code=404, detail="Voice segment not found")
 
@@ -360,15 +404,23 @@ def create_app() -> FastAPI:
             # Extract audio segment using FFmpeg
             file_path.parent.mkdir(parents=True, exist_ok=True)
             cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(start),
-                "-i", media_path,
-                "-t", str(end - start),
-                "-q:a", "2",
-                "-map", "a",
-                str(file_path)
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(start),
+                "-i",
+                media_path,
+                "-t",
+                str(end - start),
+                "-q:a",
+                "2",
+                "-map",
+                "a",
+                str(file_path),
             ]
-            _ = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _ = subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
 
             if file_path.exists():
                 return FileResponse(file_path, media_type="audio/mpeg")
@@ -422,8 +474,8 @@ def create_app() -> FastAPI:
 
             observability_status = "disabled"
             if settings.langfuse_public_key:
-                 observability_status = "configured"
-            
+                observability_status = "configured"
+
             # Optional: Check if we can reach Langfuse host if configured
             # But simple config check is enough for health/fast response
 
@@ -434,36 +486,33 @@ def create_app() -> FastAPI:
                 "qdrant": "connected" if pipeline and pipeline.db else "disconnected",
                 "stats": stats,
                 "observability": observability_status,
-                "asr_mode": "Native" if settings.use_native_nemo else "Docker/Whisper"
+                "asr_mode": "Native" if settings.use_native_nemo else "Docker/Whisper",
             }
         except Exception as e:
             logger.exception("Health check failed")
-            return {
-                "status": "error", 
-                "message": str(e),
-                "type": type(e).__name__
-            }
+            return {"status": "error", "message": str(e), "type": type(e).__name__}
 
     # =========================================================================
     # AGENT INTEGRATION ENDPOINTS
     # =========================================================================
-    
+
     logger.info("[Agent] Initializing agent integration endpoints...")
-    
+
     # Lazy-load agent components
     _agent_db = None
     _agentic_search = None
-    
+
     def _get_agent_db():
         nonlocal _agent_db
         if _agent_db is None and pipeline:
             _agent_db = pipeline.db
         return _agent_db
-    
+
     def _get_agentic_search():
         nonlocal _agentic_search
         if _agentic_search is None:
             from core.retrieval.agentic_search import SearchAgent
+
             _agentic_search = SearchAgent(db=_get_agent_db())
             logger.info("[Agent] SearchAgent initialized")
         return _agentic_search
@@ -480,50 +529,51 @@ def create_app() -> FastAPI:
     async def get_agent_status():
         """Get agent system status and available tools."""
         logger.info("[Agent] Status check requested")
-        
+
         available_tools = [
             {
                 "name": "agentic_search",
                 "description": "FAANG-level search with LLM query expansion and identity resolution",
-                "parameters": ["query", "limit", "use_expansion"]
+                "parameters": ["query", "limit", "use_expansion"],
             },
             {
-                "name": "query_video_rag", 
+                "name": "query_video_rag",
                 "description": "Cognitive VideoRAG with query decomposition and answer generation",
-                "parameters": ["query", "limit"]
+                "parameters": ["query", "limit"],
             },
             {
                 "name": "get_video_summary",
                 "description": "Get hierarchical L1/L2 summaries for a video",
-                "parameters": ["video_path", "force_regenerate"]
+                "parameters": ["video_path", "force_regenerate"],
             },
             {
                 "name": "search_hybrid",
                 "description": "Hybrid vector + keyword search with identity boosting",
-                "parameters": ["query", "video_path", "limit"]
+                "parameters": ["query", "video_path", "limit"],
             },
         ]
-        
+
         # Check Ollama connectivity
         ollama_status = "unknown"
         try:
             import ollama
+
             models = ollama.list()
             ollama_status = f"connected ({len(models.get('models', []))} models)"
         except Exception as e:
             ollama_status = f"error: {e}"
-        
+
         return {
             "status": "active",
             "ollama": ollama_status,
             "tools": available_tools,
-            "default_model": "llama3.2:3b"
+            "default_model": "llama3.2:3b",
         }
 
     @app.post("/agent/chat")
     async def agent_chat(request: AgentChatRequest):
         """Send a message to the AI agent and get a response with tool usage logging.
-        
+
         The agent uses Ollama LLM to:
         1. Understand the user's intent
         2. Decide which tools to call (search, ingest, summarize)
@@ -532,11 +582,13 @@ def create_app() -> FastAPI:
         """
         start_time = time.perf_counter()
         logger.info(f"[Agent] RECV: '{request.message[:100]}...'")
-        logger.info(f"[Agent] Model: {request.model}, tools_enabled: {request.use_tools}")
-        
+        logger.info(
+            f"[Agent] Model: {request.model}, tools_enabled: {request.use_tools}"
+        )
+
         try:
             import ollama
-            
+
             # Build system prompt
             system_prompt = """You are a helpful AI assistant for a multimedia indexing system.
 You can search through indexed videos to find specific scenes, people, or dialogue.
@@ -555,63 +607,73 @@ Always explain what you found and why it matches the query."""
                             "parameters": {
                                 "type": "object",
                                 "properties": {
-                                    "query": {"type": "string", "description": "Natural language search query"},
-                                    "limit": {"type": "integer", "description": "Max results", "default": 5}
+                                    "query": {
+                                        "type": "string",
+                                        "description": "Natural language search query",
+                                    },
+                                    "limit": {
+                                        "type": "integer",
+                                        "description": "Max results",
+                                        "default": 5,
+                                    },
                                 },
-                                "required": ["query"]
-                            }
-                        }
+                                "required": ["query"],
+                            },
+                        },
                     },
                     {
-                        "type": "function", 
+                        "type": "function",
                         "function": {
                             "name": "get_video_summary",
                             "description": "Get a summary of what happens in a video",
                             "parameters": {
                                 "type": "object",
                                 "properties": {
-                                    "video_path": {"type": "string", "description": "Path to video file"}
+                                    "video_path": {
+                                        "type": "string",
+                                        "description": "Path to video file",
+                                    }
                                 },
-                                "required": ["video_path"]
-                            }
-                        }
-                    }
+                                "required": ["video_path"],
+                            },
+                        },
+                    },
                 ]
-            
+
             # First LLM call
             logger.info("[Agent] LLM: Calling Ollama...")
             response = ollama.chat(
                 model=request.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": request.message}
+                    {"role": "user", "content": request.message},
                 ],
-                tools=tools if tools else None
+                tools=tools if tools else None,
             )
-            
+
             msg = response.get("message", {})
             tool_calls = msg.get("tool_calls") or []
-            
+
             tool_results = []
             if tool_calls:
                 logger.info(f"[Agent] TOOLS: LLM requested {len(tool_calls)} call(s)")
-                
+
                 for call in tool_calls:
                     fn = call.get("function", {})
                     fn_name = fn.get("name", "")
                     fn_args = fn.get("arguments", {})
-                    
+
                     logger.info(f"[Agent] EXEC: {fn_name}({fn_args})")
-                    
+
                     # Execute the tool
                     result = await _execute_agent_tool(fn_name, fn_args, pipeline)
-                    tool_results.append({
-                        "tool": fn_name,
-                        "args": fn_args,
-                        "result": result
-                    })
-                    logger.info(f"[Agent] OK: {fn_name} returned {len(str(result))} chars")
-                
+                    tool_results.append(
+                        {"tool": fn_name, "args": fn_args, "result": result}
+                    )
+                    logger.info(
+                        f"[Agent] OK: {fn_name} returned {len(str(result))} chars"
+                    )
+
                 # Second LLM call with tool results
                 logger.info("[Agent] LLM: Calling Ollama with tool results...")
                 messages = [
@@ -620,35 +682,37 @@ Always explain what you found and why it matches the query."""
                     msg,
                 ]
                 for tr in tool_results:
-                    messages.append({
-                        "role": "tool",
-                        "content": json.dumps(tr["result"]),
-                        "name": tr["tool"]
-                    })
-                
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "content": json.dumps(tr["result"]),
+                            "name": tr["tool"],
+                        }
+                    )
+
                 final_response = ollama.chat(model=request.model, messages=messages)
                 final_text = final_response.get("message", {}).get("content", "")
             else:
                 logger.info("[Agent] Direct response (no tools needed)")
                 final_text = msg.get("content", "")
-            
+
             duration = time.perf_counter() - start_time
             logger.info(f"[Agent] DONE: Response in {duration:.2f}s")
-            
+
             return {
                 "response": final_text,
                 "tools_used": [tr["tool"] for tr in tool_results],
                 "tool_results": tool_results,
                 "model": request.model,
-                "duration_seconds": duration
+                "duration_seconds": duration,
             }
-            
+
         except Exception as e:
             logger.error(f"[Agent] ERROR: {e}")
             return {
                 "response": f"Agent error: {str(e)}",
                 "tools_used": [],
-                "error": str(e)
+                "error": str(e),
             }
 
     async def _execute_agent_tool(name: str, args: dict, pipeline) -> dict:
@@ -661,28 +725,29 @@ Always explain what you found and why it matches the query."""
                 return {
                     "query": query,
                     "count": len(results),
-                    "results": results[:5]  # Limit for LLM context
+                    "results": results[:5],  # Limit for LLM context
                 }
             return {"error": "Pipeline not available"}
-        
+
         if name == "get_video_summary":
             video_path = args.get("video_path", "")
             try:
                 from core.processing.summarizer import summarizer
+
                 result = await summarizer.summarize_video(video_path)
                 return result
             except Exception as e:
                 return {"error": str(e)}
-        
+
         return {"error": f"Unknown tool: {name}"}
 
     @app.post("/agent/tool/{tool_name}")
     async def execute_agent_tool(tool_name: str, request: AgentToolRequest):
         """Execute a specific agent tool directly (bypass LLM reasoning)."""
         logger.info(f"[Agent] DIRECT: {tool_name}({request.arguments})")
-        
+
         result = await _execute_agent_tool(tool_name, request.arguments, pipeline)
-        
+
         logger.info(f"[Agent] OK: {tool_name} completed")
         return {"tool": tool_name, "result": result}
 
@@ -693,23 +758,29 @@ Always explain what you found and why it matches the query."""
         use_expansion: bool = Query(True, description="Use LLM query expansion"),
     ):
         """Execute agentic search with LLM query expansion and identity resolution.
-        
+
         This is the "smart" search that:
         1. Uses LLM to expand queries (e.g., "South Indian food" → "idli, dosa")
         2. Resolves HITL person names to face cluster IDs
         3. Searches with identity boosting
         """
         logger.info(f"[Agent] SEARCH: '{query}' (expansion: {use_expansion})")
-        
+
         try:
             agent = _get_agentic_search()
             if agent:
-                result = await agent.search(query, limit=limit, use_expansion=use_expansion)
-                logger.info(f"[Agent] OK: Found {len(result.get('results', []))} results")
+                result = await agent.search(
+                    query, limit=limit, use_expansion=use_expansion
+                )
+                logger.info(
+                    f"[Agent] OK: Found {len(result.get('results', []))} results"
+                )
                 return result
             else:
                 # Fallback to basic hybrid search
-                logger.info("[Agent] WARN: SearchAgent unavailable, using hybrid fallback")
+                logger.info(
+                    "[Agent] WARN: SearchAgent unavailable, using hybrid fallback"
+                )
                 if pipeline and pipeline.db:
                     results = pipeline.db.search_frames_hybrid(query=query, limit=limit)
                     return {"query": query, "results": results, "fallback": True}
@@ -721,28 +792,30 @@ Always explain what you found and why it matches the query."""
     # =========================================================================
     # VIDEO SUMMARY AGENT - Generates narrative summaries from frame data
     # =========================================================================
-    
+
     @app.post("/agent/summarize")
     async def agent_summarize_video(
         video_path: str = Query(..., description="Path to video file"),
-        style: str = Query("narrative", description="Style: narrative, bullet, or timeline"),
+        style: str = Query(
+            "narrative", description="Style: narrative, bullet, or timeline"
+        ),
     ):
         """Generate an LLM-powered narrative summary of a video.
-        
+
         Uses indexed frame descriptions to create a coherent story.
         """
         if not pipeline or not pipeline.db:
             return {"error": "Pipeline not available"}
-        
+
         logger.info(f"[Agent] SUMMARY: Generating {style} summary for {video_path}")
-        
+
         try:
             # Get all frames for this video
             frames = pipeline.db.get_frames_for_video(video_path, limit=50)
-            
+
             if not frames:
                 return {"error": "No frames found for video", "video_path": video_path}
-            
+
             # Build context from frames
             frame_descriptions = []
             for f in sorted(frames, key=lambda x: x.get("timestamp", 0)):
@@ -751,12 +824,12 @@ Always explain what you found and why it matches the query."""
                 entities = f.get("entities", [])
                 entity_str = f", featuring {', '.join(entities)}" if entities else ""
                 frame_descriptions.append(f"[{ts:.0f}s] {desc}{entity_str}")
-            
+
             context = "\n".join(frame_descriptions)
-            
+
             # Use LLM to generate summary
             import ollama
-            
+
             if style == "narrative":
                 prompt = f"""Create a narrative summary of this video based on these scene descriptions. Write it as a flowing story, 2-3 paragraphs.
 
@@ -778,24 +851,24 @@ Scene descriptions:
 {context}
 
 Timeline:"""
-            
+
             response = ollama.chat(
                 model="llama3.2:3b",
                 messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.7}
+                options={"temperature": 0.7},
             )
-            
+
             summary = response.get("message", {}).get("content", "")
-            
+
             logger.info(f"[Agent] SUMMARY: Generated {len(summary)} char summary")
-            
+
             return {
                 "video_path": video_path,
                 "style": style,
                 "summary": summary,
                 "frame_count": len(frames),
             }
-            
+
         except Exception as e:
             logger.error(f"[Agent] SUMMARY ERROR: {e}")
             return {"error": str(e)}
@@ -803,18 +876,20 @@ Timeline:"""
     # =========================================================================
     # INTENT PARSER AGENT - Extracts emotions, actions, and entities from queries
     # =========================================================================
-    
+
     @app.post("/agent/parse-intent")
-    async def agent_parse_intent(query: str = Query(..., description="User search query")):
+    async def agent_parse_intent(
+        query: str = Query(..., description="User search query"),
+    ):
         """Parse a search query to extract intent, emotions, actions, and entities.
-        
+
         Helps understand WHAT the user is really looking for.
         """
         logger.info(f"[Agent] INTENT: Parsing '{query}'")
-        
+
         try:
             import ollama
-            
+
             prompt = f"""Analyze this video search query and extract structured information. Return JSON only.
 
 Query: "{query}"
@@ -831,13 +906,14 @@ JSON output:"""
             response = ollama.chat(
                 model="llama3.2:3b",
                 messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.1}
+                options={"temperature": 0.1},
             )
-            
+
             result_text = response.get("message", {}).get("content", "")
-            
+
             # Try to parse JSON from response
             import json
+
             try:
                 # Find JSON in response
                 start = result_text.find("{")
@@ -848,23 +924,28 @@ JSON output:"""
                     parsed = {"raw": result_text}
             except json.JSONDecodeError:
                 parsed = {"raw": result_text}
-            
-            logger.info(f"[Agent] INTENT: Parsed intent={parsed.get('intent', 'unknown')}")
-            
+
+            logger.info(
+                f"[Agent] INTENT: Parsed intent={parsed.get('intent', 'unknown')}"
+            )
+
             return {
                 "query": query,
                 "parsed": parsed,
             }
-            
+
         except Exception as e:
             logger.error(f"[Agent] INTENT ERROR: {e}")
             return {"error": str(e)}
 
-    logger.info("[Agent] All agent endpoints registered: /agent/status, /agent/chat, /agent/search, /agent/summarize, /agent/parse-intent")
+    logger.info(
+        "[Agent] All agent endpoints registered: /agent/status, /agent/chat, /agent/search, /agent/summarize, /agent/parse-intent"
+    )
 
     @app.get("/events")
     async def sse_events():
         """Server-Sent Events endpoint for real-time updates with heartbeat."""
+
         async def event_generator():
             queue = progress_tracker.subscribe()
             heartbeat_interval = 15  # seconds
@@ -897,11 +978,15 @@ JSON output:"""
     async def stream_media(
         request: Request,
         path: str = Query(...),
-        start: float = Query(0.0, description="Start time in seconds for segment playback"),
-        end: float = Query(None, description="End time in seconds for segment playback"),
+        start: float = Query(
+            0.0, description="Start time in seconds for segment playback"
+        ),
+        end: float = Query(
+            None, description="End time in seconds for segment playback"
+        ),
     ):
         """Stream a media file with HTTP Range support for proper seeking and audio.
-        
+
         Supports:
         - HTTP Range requests (required for video seeking)
         - Optional start/end params for segment playback
@@ -918,12 +1003,20 @@ JSON output:"""
         # Get mime type
         suffix = file_path.suffix.lower()
         mime_types = {
-            '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm',
-            '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v',
-            '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.flac': 'audio/flac',
-            '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg',
+            ".mp4": "video/mp4",
+            ".mkv": "video/x-matroska",
+            ".webm": "video/webm",
+            ".avi": "video/x-msvideo",
+            ".mov": "video/quicktime",
+            ".m4v": "video/x-m4v",
+            ".mp3": "audio/mpeg",
+            ".wav": "audio/wav",
+            ".flac": "audio/flac",
+            ".m4a": "audio/mp4",
+            ".aac": "audio/aac",
+            ".ogg": "audio/ogg",
         }
-        media_type = mime_types.get(suffix, 'application/octet-stream')
+        media_type = mime_types.get(suffix, "application/octet-stream")
 
         # Parse Range header
         range_header = request.headers.get("range")
@@ -989,11 +1082,13 @@ JSON output:"""
     async def stream_segment(
         path: str = Query(...),
         start: float = Query(..., description="Start time in seconds"),
-        end: float = Query(None, description="End time in seconds (default: start + 10)"),
+        end: float = Query(
+            None, description="End time in seconds (default: start + 10)"
+        ),
     ):
         """Stream a specific video segment with caching.
-        
-        Strategy: 
+
+        Strategy:
         - First request: Fast H264 encode and cache to disk (~5-10s)
         - Subsequent requests: Serve from cache (instant)
         """
@@ -1023,24 +1118,35 @@ JSON output:"""
             return FileResponse(
                 cache_file,
                 media_type="video/mp4",
-                headers={"Cache-Control": "public, max-age=86400"}
+                headers={"Cache-Control": "public, max-age=86400"},
             )
 
         # Encode segment using fast H264
         # Using ultrafast preset + CRF 28 for speed over quality
         cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(start),           # Fast seek before input
-            "-i", str(file_path),
-            "-t", str(duration),
-            "-c:v", "libx264",           # H264 encoding
-            "-preset", "ultrafast",       # Fastest encoding
-            "-crf", "28",                 # Good quality/speed balance
-            "-c:a", "aac",               # AAC audio
-            "-b:a", "128k",
-            "-movflags", "+faststart",    # Enable fast start for streaming
-            "-f", "mp4",
-            str(cache_file)
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(start),  # Fast seek before input
+            "-i",
+            str(file_path),
+            "-t",
+            str(duration),
+            "-c:v",
+            "libx264",  # H264 encoding
+            "-preset",
+            "ultrafast",  # Fastest encoding
+            "-crf",
+            "28",  # Good quality/speed balance
+            "-c:a",
+            "aac",  # AAC audio
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",  # Enable fast start for streaming
+            "-f",
+            "mp4",
+            str(cache_file),
         ]
 
         # Run synchronously (blocking but cached)
@@ -1048,14 +1154,14 @@ JSON output:"""
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
-            timeout=60  # Max 60 seconds for encoding
+            timeout=60,  # Max 60 seconds for encoding
         )
 
         if cache_file.exists():
             return FileResponse(
                 cache_file,
                 media_type="video/mp4",
-                headers={"Cache-Control": "public, max-age=86400"}
+                headers={"Cache-Control": "public, max-age=86400"},
             )
         else:
             logger.error(f"Segment encoding failed: {result.stderr.decode()[:500]}")
@@ -1069,7 +1175,7 @@ JSON output:"""
 
         file_path = Path(path)
         if not file_path.exists():
-             # Return a placeholder or 404
+            # Return a placeholder or 404
             raise HTTPException(status_code=404, detail="File not found")
 
         # Use OpenCV for fast seeking
@@ -1096,7 +1202,9 @@ JSON output:"""
 
             # Encode as JPEG
             # [1] is quality (0-100)
-            success, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            success, buffer = cv2.imencode(
+                ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+            )
             if not success:
                 raise ValueError("Encoding failed")
 
@@ -1108,28 +1216,29 @@ JSON output:"""
 
     @app.post("/ingest")
     async def ingest_media(
-        ingest_request: IngestRequest,
-        background_tasks: BackgroundTasks
+        ingest_request: IngestRequest, background_tasks: BackgroundTasks
     ):
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
         import base64
         from urllib.parse import unquote
-        
+
         if ingest_request.encoded_path:
             try:
-                raw_path = base64.b64decode(ingest_request.encoded_path).decode('utf-8')
+                raw_path = base64.b64decode(ingest_request.encoded_path).decode("utf-8")
                 logger.info(f"[Ingest] Base64 decoded: {repr(raw_path)}")
             except Exception as e:
-                logger.warning(f"[Ingest] Base64 decode failed: {e}, falling back to path")
+                logger.warning(
+                    f"[Ingest] Base64 decode failed: {e}, falling back to path"
+                )
                 raw_path = ingest_request.path.strip().strip('"').strip("'")
         else:
             raw_path = ingest_request.path.strip().strip('"').strip("'")
-        
+
         file_path = Path(raw_path).resolve()
         logger.info(f"[Ingest] Resolved: {file_path}, Exists: {file_path.exists()}")
-        
+
         if not file_path.exists():
             decoded_path = Path(unquote(raw_path)).resolve()
             if decoded_path.exists():
@@ -1138,8 +1247,7 @@ JSON output:"""
             else:
                 logger.warning(f"[Ingest] File not found. Raw: {repr(raw_path)}")
                 raise HTTPException(
-                    status_code=404,
-                    detail=f"File not found: {raw_path}"
+                    status_code=404, detail=f"File not found: {raw_path}"
                 )
 
         # Validate media file extension
@@ -1147,7 +1255,7 @@ JSON output:"""
         if ext not in ALLOWED_MEDIA_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_MEDIA_EXTENSIONS))}"
+                detail=f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_MEDIA_EXTENSIONS))}",
             )
 
         # Generate Job ID upfront so we can return it
@@ -1165,7 +1273,9 @@ JSON output:"""
                     media_type=ingest_request.media_type_hint or "unknown",
                     resume=False,
                 )
-                progress_tracker.update(job_id, 0.0, stage="queued", message="Queued for distributed worker")
+                progress_tracker.update(
+                    job_id, 0.0, stage="queued", message="Queued for distributed worker"
+                )
 
                 # Dispatch to Celery
                 ingest_video_task.delay(str(file_path), job_id)
@@ -1178,16 +1288,21 @@ JSON output:"""
                     "message": "Distributed processing started.",
                 }
             except Exception as e:
-                 logger.error(f"Failed to dispatch to Celery: {e}")
-                 # Fallback to local execution if dispatch fails?
-                 # Or raise error to alert user configuration is broken?
-                 # Let's log and fall through to local for robustness, or raise if critical.
-                 # Given "Future Work" status, safety first -> Fallback or explicit error.
-                 # Let's raise to not confuse user why it ran locally.
-                 raise HTTPException(status_code=500, detail=f"Distributed dispatch failed: {e}")
+                logger.error(f"Failed to dispatch to Celery: {e}")
+                # Fallback to local execution if dispatch fails?
+                # Or raise error to alert user configuration is broken?
+                # Let's log and fall through to local for robustness, or raise if critical.
+                # Given "Future Work" status, safety first -> Fallback or explicit error.
+                # Let's raise to not confuse user why it ran locally.
+                raise HTTPException(
+                    status_code=500, detail=f"Distributed dispatch failed: {e}"
+                )
 
         async def run_pipeline():
-            start_trace(name="background_ingest", metadata={"file": str(file_path), "job_id": job_id})
+            start_trace(
+                name="background_ingest",
+                metadata={"file": str(file_path), "job_id": job_id},
+            )
             try:
                 assert pipeline is not None
                 await pipeline.process_video(
@@ -1227,7 +1342,7 @@ JSON output:"""
                     "file_path": j.file_path,
                     "media_type": j.media_type,
                     "current_stage": j.current_stage,
-                    "pipeline_stage": getattr(j, 'pipeline_stage', 'init'),
+                    "pipeline_stage": getattr(j, "pipeline_stage", "init"),
                     "message": j.message,
                     "started_at": j.started_at,
                     "completed_at": j.completed_at,
@@ -1235,11 +1350,11 @@ JSON output:"""
                     # Granular stats
                     "total_frames": j.total_frames,
                     "processed_frames": j.processed_frames,
-                    "current_item_index": getattr(j, 'current_item_index', 0),
-                    "total_items": getattr(j, 'total_items', 0),
+                    "current_item_index": getattr(j, "current_item_index", 0),
+                    "total_items": getattr(j, "total_items", 0),
                     "timestamp": j.current_frame_timestamp,
                     "duration": j.total_duration,
-                    "last_heartbeat": getattr(j, 'last_heartbeat', 0.0),
+                    "last_heartbeat": getattr(j, "last_heartbeat", 0.0),
                 }
                 for j in jobs
             ]
@@ -1258,7 +1373,7 @@ JSON output:"""
             "file_path": job.file_path,
             "media_type": job.media_type,
             "current_stage": job.current_stage,
-            "pipeline_stage": getattr(job, 'pipeline_stage', 'init'),
+            "pipeline_stage": getattr(job, "pipeline_stage", "init"),
             "message": job.message,
             "started_at": job.started_at,
             "completed_at": job.completed_at,
@@ -1266,11 +1381,11 @@ JSON output:"""
             # Granular stats
             "total_frames": job.total_frames,
             "processed_frames": job.processed_frames,
-            "current_item_index": getattr(job, 'current_item_index', 0),
-            "total_items": getattr(job, 'total_items', 0),
+            "current_item_index": getattr(job, "current_item_index", 0),
+            "total_items": getattr(job, "total_items", 0),
             "timestamp": job.current_frame_timestamp,
             "duration": job.total_duration,
-            "last_heartbeat": getattr(job, 'last_heartbeat', 0.0),
+            "last_heartbeat": getattr(job, "last_heartbeat", 0.0),
             "checkpoint_data": job.checkpoint_data,
         }
 
@@ -1288,25 +1403,24 @@ JSON output:"""
     @app.post("/jobs/{job_id}/resume")
     async def resume_job(job_id: str, background_tasks: BackgroundTasks):
         """Resume a paused/failed job from checkpoint.
-        
+
         Resumes processing from the last saved checkpoint timestamp.
         If no checkpoint data, starts from beginning.
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-            
+
         # 1. Get job from manager
         job = job_manager.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-            
+
         # 2. Check job state
         if job.status not in ["paused", "failed", "cancelled"]:
             raise HTTPException(
-                status_code=400,
-                detail=f"Cannot resume job with status: {job.status}"
+                status_code=400, detail=f"Cannot resume job with status: {job.status}"
             )
-        
+
         # 3. Determine resume point
         start_time = 0.0
         if job.checkpoint_data and "timestamp" in job.checkpoint_data:
@@ -1316,14 +1430,13 @@ JSON output:"""
 
         # 4. Respawn pipeline in background
         async def run_pipeline_resume():
-            start_trace(name="resume_ingest", metadata={"file": job.file_path, "job_id": job_id})
+            start_trace(
+                name="resume_ingest", metadata={"file": job.file_path, "job_id": job_id}
+            )
             try:
                 assert pipeline is not None
                 await pipeline.process_video(
-                    job.file_path,
-                    job.media_type,
-                    start_time=start_time,
-                    job_id=job_id
+                    job.file_path, job.media_type, start_time=start_time, job_id=job_id
                 )
                 end_trace("success")
             except Exception as e:
@@ -1339,7 +1452,7 @@ JSON output:"""
     async def delete_library_item(path: str = Query(...)):
         """Remove a media file from the library (DB + Thumbnails + Jobs)."""
         if not pipeline or not pipeline.db:
-             raise HTTPException(status_code=503, detail="Database not ready")
+            raise HTTPException(status_code=503, detail="Database not ready")
 
         logger.info(f"Deleting media: {path}")
 
@@ -1354,17 +1467,22 @@ JSON output:"""
 
         # 3. Clean up thumbnails
         import hashlib
-        try:
-             safe_stem = hashlib.md5(Path(path).stem.encode()).hexdigest()
-             thumb_dir = settings.cache_dir / "thumbnails"
 
-             # Delete generic thumbnails
-             for f in (thumb_dir / "faces").glob(f"{safe_stem}_*"):
-                 try: f.unlink()
-                 except: pass
-             for f in (thumb_dir / "voices").glob(f"{safe_stem}_*"):
-                 try: f.unlink()
-                 except: pass
+        try:
+            safe_stem = hashlib.md5(Path(path).stem.encode()).hexdigest()
+            thumb_dir = settings.cache_dir / "thumbnails"
+
+            # Delete generic thumbnails
+            for f in (thumb_dir / "faces").glob(f"{safe_stem}_*"):
+                try:
+                    f.unlink()
+                except:
+                    pass
+            for f in (thumb_dir / "voices").glob(f"{safe_stem}_*"):
+                try:
+                    f.unlink()
+                except:
+                    pass
         except Exception as e:
             logger.warning(f"Thumbnail cleanup failed: {e}")
 
@@ -1373,6 +1491,7 @@ JSON output:"""
     @app.post("/search/advanced")
     async def advanced_search(req: AdvancedSearchRequest):
         from core.retrieval.engine import get_search_engine
+
         if not pipeline or not pipeline.db:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
@@ -1396,25 +1515,27 @@ JSON output:"""
         q: str = Query(..., description="Search query"),
         video_path: str | None = Query(None, description="Optional video filter"),
         limit: int = Query(20, description="Maximum results"),
-        use_reranking: bool = Query(True, description="Use LLM re-ranking for higher accuracy"),
+        use_reranking: bool = Query(
+            True, description="Use LLM re-ranking for higher accuracy"
+        ),
     ):
         """SOTA hybrid search with reasoning and identity resolution.
-        
+
         This is the primary search endpoint that:
         1. Uses LLM to expand queries dynamically
         2. Resolves HITL person names to face clusters
         3. Searches with multi-vector hybrid approach
         4. Re-ranks with LLM constraint verification
         5. Returns reasoning for each match
-        
+
         Returns match_reason and matched_constraints for frontend explainability.
         """
         start_time = time.perf_counter()
         logger.info(f"[Search] Hybrid search: '{q}' (reranking: {use_reranking})")
-        
+
         if not pipeline or not pipeline.db:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         try:
             # Use SOTA search with full reasoning
             agent = _get_agentic_search()
@@ -1425,7 +1546,7 @@ JSON output:"""
                     video_path=video_path,
                     use_reranking=use_reranking,
                 )
-                
+
                 # Transform results for frontend compatibility
                 # Ensure each result has the fields MediaCard expects
                 transformed_results = []
@@ -1437,18 +1558,25 @@ JSON output:"""
                         "match_reason": r.get("llm_reasoning", r.get("reasoning", "")),
                         "agent_thought": r.get("llm_reasoning", ""),
                         "matched_constraints": [
-                            c.get("constraint", "") for c in r.get("constraints_satisfied", [])
-                        ] if r.get("constraints_satisfied") else [],
+                            c.get("constraint", "")
+                            for c in r.get("constraints_satisfied", [])
+                        ]
+                        if r.get("constraints_satisfied")
+                        else [],
                         # Ensure score is present
                         "score": r.get("combined_score", r.get("score", 0.5)),
                         # Ensure timestamp is present (fix 0:00 bug)
-                        "timestamp": r.get("timestamp") or r.get("start_time") or r.get("start", 0),
+                        "timestamp": r.get("timestamp")
+                        or r.get("start_time")
+                        or r.get("start", 0),
                     }
                     transformed_results.append(transformed)
-                
+
                 duration = time.perf_counter() - start_time
-                logger.info(f"[Search] SOTA search completed in {duration:.2f}s with {len(transformed_results)} results")
-                
+                logger.info(
+                    f"[Search] SOTA search completed in {duration:.2f}s with {len(transformed_results)} results"
+                )
+
                 return {
                     "query": q,
                     "video_filter": video_path,
@@ -1475,7 +1603,7 @@ JSON output:"""
                     },
                     "search_type": "basic_fallback",
                 }
-                
+
         except Exception as e:
             logger.error(f"[Search] Hybrid search failed: {e}")
             # Last resort fallback
@@ -1496,17 +1624,25 @@ JSON output:"""
         import subprocess
 
         from fastapi.responses import Response
+
         video_path = Path(path)
         if not video_path.exists():
             raise HTTPException(status_code=404, detail="Video not found")
 
         cmd = [
-            "ffmpeg", "-ss", str(time),
-            "-i", str(video_path),
-            "-frames:v", "1",
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "-q:v", "5",
+            "ffmpeg",
+            "-ss",
+            str(time),
+            "-i",
+            str(video_path),
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-q:v",
+            "5",
             "pipe:1",
         ]
         try:
@@ -1521,31 +1657,40 @@ JSON output:"""
     @app.get("/identities")
     async def list_identities():
         from core.storage.identity_graph import identity_graph
+
         identities = identity_graph.get_all_identities()
         result = []
         for ident in identities:
             tracks = identity_graph.get_face_tracks_for_identity(ident.id)
-            result.append({
-                "id": ident.id,
-                "name": ident.name,
-                "is_verified": ident.is_verified,
-                "face_track_count": len(tracks),
-                "created_at": ident.created_at,
-            })
+            result.append(
+                {
+                    "id": ident.id,
+                    "name": ident.name,
+                    "is_verified": ident.is_verified,
+                    "face_track_count": len(tracks),
+                    "created_at": ident.created_at,
+                }
+            )
         return {"identities": result, "total": len(result)}
 
     @app.post("/identities/{identity_id}/merge")
     async def merge_identities(identity_id: str, req: IdentityMergeRequest):
         from core.storage.identity_graph import identity_graph
+
         try:
             identity_graph.merge_identities(identity_id, req.target_identity_id)
-            return {"status": "merged", "source": identity_id, "target": req.target_identity_id}
+            return {
+                "status": "merged",
+                "source": identity_id,
+                "target": req.target_identity_id,
+            }
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.patch("/identities/{identity_id}")
     async def rename_identity(identity_id: str, req: IdentityRenameRequest):
         from core.storage.identity_graph import identity_graph
+
         identity = identity_graph.get_identity(identity_id)
         if not identity:
             raise HTTPException(status_code=404, detail="Identity not found")
@@ -1555,6 +1700,7 @@ JSON output:"""
     @app.delete("/identities/{identity_id}")
     async def delete_identity(identity_id: str):
         from core.storage.identity_graph import identity_graph
+
         identity_graph.delete_identity(identity_id)
         return {"status": "deleted", "id": identity_id}
 
@@ -1562,13 +1708,12 @@ JSON output:"""
     @app.post("/jobs/{job_id}/pause")
     async def pause_job(job_id: str):
         from core.ingestion.jobs import JobStatus
+
         job = job_manager.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         job_manager.update_job(job_id, status=JobStatus.PAUSED)
         return {"status": "paused", "job_id": job_id}
-
-
 
     @app.delete("/jobs/{job_id}")
     async def delete_job(job_id: str, background_tasks: BackgroundTasks):
@@ -1586,7 +1731,7 @@ JSON output:"""
             status=JobStatus.CANCELLED,
             progress=0,
             message="Job deleted",
-            payload={"action": "delete", "job_id": job_id}
+            payload={"action": "delete", "job_id": job_id},
         )
         return {"status": "deleted", "job_id": job_id}
 
@@ -1594,6 +1739,7 @@ JSON output:"""
     @app.post("/tools/redact")
     async def redact_identity(req: RedactRequest, background_tasks: BackgroundTasks):
         from core.tools.privacy import VideoRedactor
+
         video_path = Path(req.video_path)
         if not video_path.exists():
             raise HTTPException(status_code=404, detail="Video not found")
@@ -1626,13 +1772,20 @@ JSON output:"""
             raise HTTPException(status_code=400, detail="Description cannot be empty")
         success = pipeline.db.update_frame_description(frame_id, description)
         if not success:
-            raise HTTPException(status_code=404, detail="Frame not found or update failed")
-        return {"status": "updated", "id": frame_id, "new_description": description, "re_embedded": True}
+            raise HTTPException(
+                status_code=404, detail="Frame not found or update failed"
+            )
+        return {
+            "status": "updated",
+            "id": frame_id,
+            "new_description": description,
+            "re_embedded": True,
+        }
 
     @app.post("/media/regenerate-thumbnails")
     async def regenerate_thumbnails(path: str = Query(...)):
         """Regenerate all face thumbnails and voice clips for a media file.
-        
+
         Uses parallel batch extraction for speed (4 concurrent FFmpeg processes).
         """
         import hashlib
@@ -1662,8 +1815,12 @@ JSON output:"""
         voices = pipeline.db.get_voice_segments(str(file_path))
 
         # Extract timestamps and segments
-        face_timestamps = list(set(f.get("timestamp", 0) for f in faces if f.get("timestamp") is not None))
-        voice_segments = [(v.get("start", 0), v.get("end", v.get("start", 0) + 3)) for v in voices]
+        face_timestamps = list(
+            set(f.get("timestamp", 0) for f in faces if f.get("timestamp") is not None)
+        )
+        voice_segments = [
+            (v.get("start", 0), v.get("end", v.get("start", 0) + 3)) for v in voices
+        ]
 
         # Run batch extraction in thread pool
         import asyncio
@@ -1675,14 +1832,20 @@ JSON output:"""
             face_results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 extract_frames_batch,
-                file_path, face_timestamps, face_output_dir, prefix
+                file_path,
+                face_timestamps,
+                face_output_dir,
+                prefix,
             )
 
         if voice_segments:
             voice_results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 extract_audio_clips_batch,
-                file_path, voice_segments, voice_output_dir, prefix
+                file_path,
+                voice_segments,
+                voice_output_dir,
+                prefix,
             )
 
         return {
@@ -1707,7 +1870,7 @@ JSON output:"""
         ),
     ):
         """Semantic search across audio, visual, and voice with detailed stats.
-        
+
         Returns results with:
         - Occurrence stats (frame count, time ranges)
         - Thumbnail URLs
@@ -1721,7 +1884,9 @@ JSON output:"""
         from urllib.parse import quote
 
         start_time_search = time.perf_counter()
-        logger.info(f"Search query: '{q}' | type: {search_type} | limit: {limit} | video_filter: {video_path}")
+        logger.info(
+            f"Search query: '{q}' | type: {search_type} | limit: {limit} | video_filter: {video_path}"
+        )
 
         results = []
         stats = {
@@ -1739,7 +1904,9 @@ JSON output:"""
 
             # Post-filter by video_path if specified
             if video_path:
-                dialogue_results = [r for r in dialogue_results if r.get("video_path") == video_path]
+                dialogue_results = [
+                    r for r in dialogue_results if r.get("video_path") == video_path
+                ]
 
             stats["dialogue_count"] = len(dialogue_results)
 
@@ -1750,7 +1917,9 @@ JSON output:"""
                 start_time = hit.get("start", 0)
                 if video:
                     safe_path = quote(str(video))
-                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={start_time}"
+                    hit["thumbnail_url"] = (
+                        f"/media/thumbnail?path={safe_path}&time={start_time}"
+                    )
                     hit["playback_url"] = f"/media?path={safe_path}#t={start_time}"
 
             results.extend(dialogue_results[:limit])
@@ -1763,7 +1932,9 @@ JSON output:"""
 
             # Post-filter by video_path if specified
             if video_path:
-                frame_results = [r for r in frame_results if r.get("video_path") == video_path]
+                frame_results = [
+                    r for r in frame_results if r.get("video_path") == video_path
+                ]
 
             stats["total_frames_scanned"] = len(frame_results)
 
@@ -1773,12 +1944,16 @@ JSON output:"""
                 # Log top 3 scores and descriptions to see if they're discriminative
                 for i, hit in enumerate(frame_results[:3]):
                     desc = (hit.get("action") or "")[:80]
-                    logger.info(f"     Match #{i+1}: score={hit.get('score', 0):.4f} | '{desc}...'")
+                    logger.info(
+                        f"     Match #{i + 1}: score={hit.get('score', 0):.4f} | '{desc}...'"
+                    )
 
             # Group by video and deduplicate
             unique_frames = []
             seen_timestamps: dict[str, list[float]] = {}
-            occurrence_tracker: dict[str, dict] = defaultdict(lambda: {"count": 0, "timestamps": []})
+            occurrence_tracker: dict[str, dict] = defaultdict(
+                lambda: {"count": 0, "timestamps": []}
+            )
 
             for hit in frame_results:
                 video = hit.get("video_path")
@@ -1792,7 +1967,9 @@ JSON output:"""
                 # Deduplication: Skip if we already have a frame from this video within 5 seconds
                 # (reduced from 10s to get more diverse results)
                 if video in seen_timestamps:
-                    if any(abs(ts - existing) < 5.0 for existing in seen_timestamps[video]):
+                    if any(
+                        abs(ts - existing) < 5.0 for existing in seen_timestamps[video]
+                    ):
                         continue
                 elif video is not None:
                     seen_timestamps[video] = []
@@ -1813,10 +1990,14 @@ JSON output:"""
                 # Add URLs for thumbnail and playback
                 if video:
                     safe_path = quote(str(video))
-                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
+                    hit["thumbnail_url"] = (
+                        f"/media/thumbnail?path={safe_path}&time={ts}"
+                    )
                     hit["playback_url"] = f"/media?path={safe_path}#t={start_context}"
                     # NEW: Segment URL with proper audio extraction (more reliable than #t= fragment)
-                    hit["segment_url"] = f"/media/segment?path={safe_path}&start={start_context:.2f}&end={end_context:.2f}"
+                    hit["segment_url"] = (
+                        f"/media/segment?path={safe_path}&start={start_context:.2f}&end={end_context:.2f}"
+                    )
 
                 unique_frames.append(hit)
                 if len(unique_frames) >= limit:
@@ -1827,11 +2008,15 @@ JSON output:"""
                 video = hit.get("video_path")
                 if video and video in occurrence_tracker:
                     hit["occurrence_count"] = occurrence_tracker[video]["count"]
-                    hit["occurrence_timestamps"] = sorted(occurrence_tracker[video]["timestamps"])[:10]  # Top 10
+                    hit["occurrence_timestamps"] = sorted(
+                        occurrence_tracker[video]["timestamps"]
+                    )[:10]  # Top 10
 
             stats["visual_count"] = len(unique_frames)
             results.extend(unique_frames)
-            logger.info(f"  Unique visual results: {len(unique_frames)} (from {len(frame_results)} raw)")
+            logger.info(
+                f"  Unique visual results: {len(unique_frames)} (from {len(frame_results)} raw)"
+            )
 
         # Sort by score (highest first)
         results.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
@@ -1842,26 +2027,34 @@ JSON output:"""
         # Log final result summary
         if final_results:
             scores = [float(r.get("score", 0)) for r in final_results]
-            stats["score_range"] = {"min": min(scores), "max": max(scores), "avg": sum(scores)/len(scores)}
+            stats["score_range"] = {
+                "min": min(scores),
+                "max": max(scores),
+                "avg": sum(scores) / len(scores),
+            }
             duration = time.perf_counter() - start_time_search
-            logger.info(f"  Search complete: {len(final_results)} results | Score={min(scores):.4f}-{max(scores):.4f} | Duration={duration:.3f}s")
+            logger.info(
+                f"  Search complete: {len(final_results)} results | Score={min(scores):.4f}-{max(scores):.4f} | Duration={duration:.3f}s"
+            )
 
         if not final_results:
-             logger.warning(f"No results found for query: '{q}'. Using fallback.")
-             # Fallback: return most recent indexed frames
-             fallback_results = pipeline.db.get_recent_frames(limit=10)
-             # Enrich fallback results like normal results
-             for hit in fallback_results:
-                 video = hit.get("video_path")
-                 ts = hit.get("timestamp", 0)
-                 if video:
-                     safe_path = quote(str(video))
-                     hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
-                     hit["playback_url"] = f"/media?path={safe_path}#t={ max(0, ts-3) }"
+            logger.warning(f"No results found for query: '{q}'. Using fallback.")
+            # Fallback: return most recent indexed frames
+            fallback_results = pipeline.db.get_recent_frames(limit=10)
+            # Enrich fallback results like normal results
+            for hit in fallback_results:
+                video = hit.get("video_path")
+                ts = hit.get("timestamp", 0)
+                if video:
+                    safe_path = quote(str(video))
+                    hit["thumbnail_url"] = (
+                        f"/media/thumbnail?path={safe_path}&time={ts}"
+                    )
+                    hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
 
-             final_results = fallback_results
-             stats["fallback"] = True
-             stats["message"] = "No exact matches found. Showing recent indexed content."
+            final_results = fallback_results
+            stats["fallback"] = True
+            stats["message"] = "No exact matches found. Showing recent indexed content."
 
         return {
             "results": final_results,
@@ -1895,6 +2088,7 @@ JSON output:"""
 
         try:
             from core.retrieval.agentic_search import SearchAgent
+
             agent = SearchAgent(db=pipeline.db)
             result = await agent.search(q, limit=limit, use_expansion=use_expansion)
             return result
@@ -1948,6 +2142,7 @@ JSON output:"""
 
         try:
             from core.retrieval.agentic_search import SearchAgent
+
             agent = SearchAgent(db=pipeline.db)
             result = await agent.search_scenes(
                 query=q,
@@ -1962,7 +2157,9 @@ JSON output:"""
                 start = hit.get("start_time", 0)
                 if video:
                     safe_path = quote(str(video))
-                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={start}"
+                    hit["thumbnail_url"] = (
+                        f"/media/thumbnail?path={safe_path}&time={start}"
+                    )
                     hit["playback_url"] = f"/media?path={safe_path}#t={start}"
 
             duration = time.perf_counter() - start_time_search
@@ -1970,7 +2167,9 @@ JSON output:"""
                 "duration_seconds": duration,
                 "search_mode": "scene",
             }
-            logger.info(f"[SceneSearch] Returned {len(result.get('results', []))} scenes in {duration:.3f}s")
+            logger.info(
+                f"[SceneSearch] Returned {len(result.get('results', []))} scenes in {duration:.3f}s"
+            )
             return result
 
         except Exception as e:
@@ -1982,8 +2181,6 @@ JSON output:"""
                 "fallback": True,
                 "results": pipeline.db.search_frames(query=q, limit=limit),
             }
-
-
 
     @app.post("/search/hybrid")
     async def hybrid_search_post(request: AdvancedSearchRequest):
@@ -2004,34 +2201,41 @@ JSON output:"""
         """Retroactively generate Scenelet embeddings for existing videos."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         try:
-            from core.processing.temporal_context import SceneletBuilder, TemporalContext
-            
+            from core.processing.temporal_context import (
+                SceneletBuilder,
+                TemporalContext,
+            )
+
             if video_path:
                 videos = [video_path]
             else:
                 videos = pipeline.db.get_indexed_videos()
-            
+
             processed = 0
             for vid_path in videos:
                 frames = pipeline.db.get_frames_for_video(vid_path)
                 if not frames:
                     continue
-                    
+
                 builder = SceneletBuilder(window_seconds=5.0, stride_seconds=2.5)
                 for frame in frames:
-                    builder.add_frame(TemporalContext(
-                        timestamp=frame.get("timestamp", 0),
-                        description=frame.get("description", ""),
-                        entities=frame.get("entities", []),
-                        actions=frame.get("actions", []),
-                    ))
-                
+                    builder.add_frame(
+                        TemporalContext(
+                            timestamp=frame.get("timestamp", 0),
+                            description=frame.get("description", ""),
+                            entities=frame.get("entities", []),
+                            actions=frame.get("actions", []),
+                        )
+                    )
+
                 scenelets = builder.build_scenelets()
-                logger.info(f"[Reprocess] Generated {len(scenelets)} scenelets for {vid_path}")
+                logger.info(
+                    f"[Reprocess] Generated {len(scenelets)} scenelets for {vid_path}"
+                )
                 processed += 1
-            
+
             return {"success": True, "videos_processed": processed}
         except Exception as e:
             logger.error(f"[Reprocess] Error: {e}")
@@ -2055,8 +2259,7 @@ JSON output:"""
 
     @app.post("/scan")
     async def scan_directory(
-        scan_request: ScanRequest,
-        background_tasks: BackgroundTasks
+        scan_request: ScanRequest, background_tasks: BackgroundTasks
     ):
         """Scan a directory for media files and queue them for processing."""
         if not pipeline:
@@ -2074,7 +2277,10 @@ JSON output:"""
 
         async def process_all():
             # Start a new trace for the background scan
-            start_trace(name="background_scan", metadata={"directory": str(dir_path), "files": len(files)})
+            start_trace(
+                name="background_scan",
+                metadata={"directory": str(dir_path), "files": len(files)},
+            )
             try:
                 for media_asset in files:
                     try:
@@ -2087,7 +2293,7 @@ JSON output:"""
                         logger.error(f"Error processing {media_asset.file_path}: {e}")
                 end_trace("success")
             except Exception as e:
-                 end_trace("error", str(e))
+                end_trace("error", str(e))
 
         background_tasks.add_task(process_all)
 
@@ -2125,9 +2331,9 @@ JSON output:"""
         """Update configuration."""
         if config_update.device is not None:
             from typing import Literal, cast
+
             settings.device_override = cast(
-                Literal["cuda", "cpu", "mps"] | None,
-                config_update.device
+                Literal["cuda", "cpu", "mps"] | None, config_update.device
             )
         if config_update.frame_interval is not None:
             settings.frame_interval = config_update.frame_interval
@@ -2135,6 +2341,7 @@ JSON output:"""
             settings.language = config_update.language
         if config_update.llm_provider is not None:
             from config import LLMProvider
+
             try:
                 settings.llm_provider = LLMProvider(config_update.llm_provider)
             except ValueError:
@@ -2145,14 +2352,16 @@ JSON output:"""
             settings.ollama_model = config_update.ollama_model
         if config_update.google_api_key is not None:
             from pydantic import SecretStr
+
             settings.gemini_api_key = SecretStr(config_update.google_api_key)
         if config_update.hf_token is not None:
             settings.hf_token = config_update.hf_token
         if config_update.enable_voice_analysis is not None:
             settings.enable_voice_analysis = config_update.enable_voice_analysis
         if config_update.enable_resource_monitoring is not None:
-            settings.enable_resource_monitoring = \
+            settings.enable_resource_monitoring = (
                 config_update.enable_resource_monitoring
+            )
         if config_update.frame_sample_ratio is not None:
             settings.frame_sample_ratio = config_update.frame_sample_ratio
         if config_update.face_detection_threshold is not None:
@@ -2165,16 +2374,17 @@ JSON output:"""
     @app.get("/system/browse")
     async def browse_file(initial_dir: str = "") -> dict:
         """Open a native file dialog on the server to select a file."""
+
         def open_dialog():
             import tkinter as tk
             from tkinter import filedialog
+
             try:
                 root = tk.Tk()
                 root.withdraw()
                 root.attributes("-topmost", True)
                 file_path = filedialog.askopenfilename(
-                    initialdir=initial_dir or None,
-                    title="Select Media File to Ingest"
+                    initialdir=initial_dir or None, title="Select Media File to Ingest"
                 )
                 root.destroy()
                 return file_path
@@ -2185,7 +2395,6 @@ JSON output:"""
         # Run in a separate thread to not block the event loop
         path = await asyncio.to_thread(open_dialog)
         return {"path": path if path else None}
-
 
     @app.get("/faces/unresolved")
     async def get_unresolved_faces(limit: int = 50):
@@ -2206,7 +2415,7 @@ JSON output:"""
     @app.post("/faces/{cluster_id}/name")
     async def name_face_cluster(cluster_id: int, name_request: NameFaceRequest):
         """Assign a name to a face cluster and update all related embeddings.
-        
+
         HITL naming triggers:
         1. Check if another cluster already has this name → AUTO-MERGE
         2. Update all faces in cluster with the name
@@ -2223,7 +2432,9 @@ JSON output:"""
         existing_cluster = pipeline.db.get_face_cluster_by_name(name)
         if existing_cluster and existing_cluster != cluster_id:
             # Merge target cluster into the existing named cluster
-            logger.info(f"[AUTO-MERGE] Cluster {cluster_id} → Cluster {existing_cluster} (same name: '{name}')")
+            logger.info(
+                f"[AUTO-MERGE] Cluster {cluster_id} → Cluster {existing_cluster} (same name: '{name}')"
+            )
             pipeline.db.merge_face_clusters(cluster_id, existing_cluster)
             merged_from = cluster_id
             cluster_id = existing_cluster  # Continue with merged cluster
@@ -2260,19 +2471,24 @@ JSON output:"""
 
                 if video_path:
                     speaker_cluster_ids = pipeline._get_speaker_clusters_at_time(
-                        video_path,
-                        timestamp
+                        video_path, timestamp
                     )
                     if len(speaker_cluster_ids) == 1:
                         spk_cid = speaker_cluster_ids[0]
-                        existing_spk_name = pipeline.db.get_speaker_name_by_cluster(spk_cid)
+                        existing_spk_name = pipeline.db.get_speaker_name_by_cluster(
+                            spk_cid
+                        )
                         if not existing_spk_name:
-                            logger.info(f"Auto-mapping Face Cluster {cluster_id} ('{name}') -> Speaker Cluster {spk_cid}")
+                            logger.info(
+                                f"Auto-mapping Face Cluster {cluster_id} ('{name}') -> Speaker Cluster {spk_cid}"
+                            )
                             pipeline.db.set_speaker_name(spk_cid, name)
             except Exception as e:
                 logger.warning(f"Failed to auto-map speaker: {e}")
 
-        logger.info(f"[HITL] Named cluster {cluster_id} as '{name}', updated {frames_updated} frames")
+        logger.info(
+            f"[HITL] Named cluster {cluster_id} as '{name}', updated {frames_updated} frames"
+        )
 
         result = {
             "updated": updated,
@@ -2316,22 +2532,22 @@ JSON output:"""
     # =========================================================================
     # HITL CLUSTER MANAGEMENT ENDPOINTS (Face Sandbox)
     # =========================================================================
-    
+
     @app.post("/faces/clusters/create")
     async def create_custom_cluster(request: CreateClusterRequest):
         """Create a new empty custom cluster (Face Sandbox).
-        
+
         This allows HITL users to create clusters manually and then
         move faces into them.
         """
         import uuid
-        
+
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         # Generate unique cluster ID with manual_ prefix
         cluster_uuid = f"manual_{uuid.uuid4().hex[:12]}"
-        
+
         # Create the cluster in DB
         try:
             pipeline.db.create_empty_face_cluster(
@@ -2339,9 +2555,11 @@ JSON output:"""
                 name=request.name or "Custom Cluster",
                 source=request.type,
             )
-            
-            logger.info(f"[HITL] Created custom cluster: {cluster_uuid} (name: {request.name})")
-            
+
+            logger.info(
+                f"[HITL] Created custom cluster: {cluster_uuid} (name: {request.name})"
+            )
+
             return {
                 "success": True,
                 "cluster_id": cluster_uuid,
@@ -2353,9 +2571,11 @@ JSON output:"""
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/faces/move")
-    async def move_faces_to_cluster(request: MoveFacesRequest, background_tasks: BackgroundTasks):
+    async def move_faces_to_cluster(
+        request: MoveFacesRequest, background_tasks: BackgroundTasks
+    ):
         """Move faces to a different cluster and trigger reindex.
-        
+
         This enables HITL corrections post-processing:
         1. Updates face_id mapping in Qdrant
         2. Triggers centroid recalculation for target cluster
@@ -2363,40 +2583,48 @@ JSON output:"""
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         try:
             moved_count = 0
             for face_id in request.face_ids:
-                success = pipeline.db.move_face_to_cluster(face_id, request.target_cluster_id)
+                success = pipeline.db.move_face_to_cluster(
+                    face_id, request.target_cluster_id
+                )
                 if success:
                     moved_count += 1
-            
+
             # Trigger background reindex of affected cluster
             async def reindex_cluster():
                 try:
                     # Broadcast progress
-                    progress_tracker.broadcast({
-                        "type": "cluster_update",
-                        "status": "reindexing",
-                        "cluster_id": request.target_cluster_id,
-                    })
-                    
+                    progress_tracker.broadcast(
+                        {
+                            "type": "cluster_update",
+                            "status": "reindexing",
+                            "cluster_id": request.target_cluster_id,
+                        }
+                    )
+
                     # Recalculate cluster centroid
                     pipeline.db.recalculate_cluster_centroid(request.target_cluster_id)
-                    
+
                     # Broadcast completion
-                    progress_tracker.broadcast({
-                        "type": "cluster_update",
-                        "status": "complete",
-                        "cluster_id": request.target_cluster_id,
-                    })
+                    progress_tracker.broadcast(
+                        {
+                            "type": "cluster_update",
+                            "status": "complete",
+                            "cluster_id": request.target_cluster_id,
+                        }
+                    )
                 except Exception as e:
                     logger.error(f"[HITL] Cluster reindex failed: {e}")
-            
+
             background_tasks.add_task(reindex_cluster)
-            
-            logger.info(f"[HITL] Moved {moved_count}/{len(request.face_ids)} faces to {request.target_cluster_id}")
-            
+
+            logger.info(
+                f"[HITL] Moved {moved_count}/{len(request.face_ids)} faces to {request.target_cluster_id}"
+            )
+
             return {
                 "success": True,
                 "moved_count": moved_count,
@@ -2407,29 +2635,31 @@ JSON output:"""
             raise HTTPException(status_code=500, detail=str(e))
 
     # Uses MergeClustersRequest from module level (line ~188)
-    
+
     @app.post("/faces/clusters/merge")
-    async def merge_clusters_advanced(request: MergeClustersRequest, background_tasks: BackgroundTasks):
+    async def merge_clusters_advanced(
+        request: MergeClustersRequest, background_tasks: BackgroundTasks
+    ):
         """Merge face clusters with named cluster handling.
-        
+
         Strategy:
         - "merge_to_target": Target cluster's name wins
-        - "merge_to_source": Source cluster's name wins  
+        - "merge_to_source": Source cluster's name wins
         - "combine_names": Combine names (e.g., "Ranbir / Shiva")
-        
+
         If force=True, merges even if biometric distance suggests different people.
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         try:
             source_id = request.source_cluster_id
             target_id = request.target_cluster_id
-            
+
             # Get current cluster info
             source_name = pipeline.db.get_face_name_by_cluster(source_id)
             target_name = pipeline.db.get_face_name_by_cluster(target_id)
-            
+
             # Check biometric distance if not forcing
             if not request.force:
                 distance = pipeline.db.get_cluster_distance(source_id, target_id)
@@ -2440,7 +2670,7 @@ JSON output:"""
                         "biometric_distance": distance,
                         "suggestion": "Set force=true to override",
                     }
-            
+
             # Determine final name based on strategy
             final_name = None
             if source_name and target_name:
@@ -2457,37 +2687,43 @@ JSON output:"""
             elif target_name:
                 # Only target is named
                 final_name = target_name
-            
+
             # Perform the merge
             merged_count = pipeline.db.merge_face_clusters(
                 from_cluster=source_id,
                 to_cluster=target_id,
             )
-            
+
             # Apply final name if we have one
             if final_name:
                 pipeline.db.set_face_name(target_id, final_name)
-            
+
             # Trigger background reindex
             async def reindex_merged():
-                progress_tracker.broadcast({
-                    "type": "cluster_update",
-                    "status": "reindexing",
-                    "cluster_id": str(target_id),
-                })
-                
+                progress_tracker.broadcast(
+                    {
+                        "type": "cluster_update",
+                        "status": "reindexing",
+                        "cluster_id": str(target_id),
+                    }
+                )
+
                 pipeline.db.recalculate_cluster_centroid(target_id)
-                
-                progress_tracker.broadcast({
-                    "type": "cluster_update",
-                    "status": "complete",
-                    "cluster_id": str(target_id),
-                })
-            
+
+                progress_tracker.broadcast(
+                    {
+                        "type": "cluster_update",
+                        "status": "complete",
+                        "cluster_id": str(target_id),
+                    }
+                )
+
             background_tasks.add_task(reindex_merged)
-            
-            logger.info(f"[HITL] Merged cluster {source_id} -> {target_id} (strategy: {request.strategy}, final_name: {final_name})")
-            
+
+            logger.info(
+                f"[HITL] Merged cluster {source_id} -> {target_id} (strategy: {request.strategy}, final_name: {final_name})"
+            )
+
             return {
                 "success": True,
                 "merged_count": merged_count,
@@ -2503,11 +2739,11 @@ JSON output:"""
 
     class BulkApproveRequest(BaseModel):
         cluster_ids: list[str | int]
-    
+
     @app.post("/faces/bulk/approve")
     async def bulk_approve_clusters(request: BulkApproveRequest):
         """Mark multiple clusters as verified/approved.
-        
+
         Approved clusters:
         - Won't be auto-merged by the system
         - Are marked with verified=True
@@ -2515,7 +2751,7 @@ JSON output:"""
         """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        
+
         try:
             approved_count = 0
             for cluster_id in request.cluster_ids:
@@ -2524,9 +2760,11 @@ JSON output:"""
                     approved_count += 1
                 except Exception:
                     pass  # Skip failed ones
-            
-            logger.info(f"[HITL] Bulk approved {approved_count}/{len(request.cluster_ids)} clusters")
-            
+
+            logger.info(
+                f"[HITL] Bulk approved {approved_count}/{len(request.cluster_ids)} clusters"
+            )
+
             return {
                 "success": True,
                 "approved_count": approved_count,
@@ -2570,10 +2808,14 @@ JSON output:"""
             segments = pipeline.db.client.scroll(
                 collection_name=pipeline.db.VOICE_COLLECTION,
                 scroll_filter=models.Filter(
-                    must=[models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))]
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", match=models.MatchValue(value=cluster_id)
+                        )
+                    ]
                 ),
-                limit=50, # Limit to 50 segments to avoid timeout
-                with_payload=True
+                limit=50,  # Limit to 50 segments to avoid timeout
+                with_payload=True,
             )[0]
 
             propagated_count = 0
@@ -2596,12 +2838,17 @@ JSON output:"""
                     collection_name=pipeline.db.FACES_COLLECTION,
                     scroll_filter=models.Filter(
                         must=[
-                            models.FieldCondition(key="media_path", match=models.MatchValue(value=video_path)),
-                            models.FieldCondition(key="timestamp", range=models.Range(gte=start, lte=end))
+                            models.FieldCondition(
+                                key="media_path",
+                                match=models.MatchValue(value=video_path),
+                            ),
+                            models.FieldCondition(
+                                key="timestamp", range=models.Range(gte=start, lte=end)
+                            ),
                         ]
                     ),
                     limit=10,
-                    with_payload=True
+                    with_payload=True,
                 )[0]
 
                 for face_pt in face_points:
@@ -2610,13 +2857,17 @@ JSON output:"""
                     face_name = face_payload.get("name")
 
                     if face_cluster_id and not face_name:
-                         # Found an unnamed face during this named speech segment
-                         # Auto-label it!
-                         pipeline.db.set_face_name(face_cluster_id, name_request.name)
-                         propagated_count += 1
-                         logger.info(f"Auto-mapping Speaker Cluster {cluster_id} ('{name_request.name}') -> Face Cluster {face_cluster_id}")
+                        # Found an unnamed face during this named speech segment
+                        # Auto-label it!
+                        pipeline.db.set_face_name(face_cluster_id, name_request.name)
+                        propagated_count += 1
+                        logger.info(
+                            f"Auto-mapping Speaker Cluster {cluster_id} ('{name_request.name}') -> Face Cluster {face_cluster_id}"
+                        )
 
-            logger.info(f"Propagated speaker name to {propagated_count} overlapping face clusters")
+            logger.info(
+                f"Propagated speaker name to {propagated_count} overlapping face clusters"
+            )
 
         except Exception as e:
             logger.warning(f"Failed to auto-map face: {e}")
@@ -2625,18 +2876,25 @@ JSON output:"""
         # Voice naming changes "Speaking: Name" parts of Identity Text
         # We must find frames where this speaker is active and update them.
         try:
-             # Fully implemented re-embedding logic
-             re_embedded_count = pipeline.db.re_embed_voice_cluster_frames(
-                 cluster_id=cluster_id,
-                 new_name=name_request.name,
-                 old_name=old_name
-             )
-             logger.info(f"Re-embedded {re_embedded_count} frames for voice cluster {cluster_id}")
+            # Fully implemented re-embedding logic
+            re_embedded_count = pipeline.db.re_embed_voice_cluster_frames(
+                cluster_id=cluster_id, new_name=name_request.name, old_name=old_name
+            )
+            logger.info(
+                f"Re-embedded {re_embedded_count} frames for voice cluster {cluster_id}"
+            )
         except Exception as e:
-             logger.error(f"Failed to re-embed frames for voice cluster {cluster_id}: {e}")
-             re_embedded_count = 0
+            logger.error(
+                f"Failed to re-embed frames for voice cluster {cluster_id}: {e}"
+            )
+            re_embedded_count = 0
 
-        return {"success": True, "cluster_id": cluster_id, "name": name_request.name, "updated": updated_count}
+        return {
+            "success": True,
+            "cluster_id": cluster_id,
+            "name": name_request.name,
+            "updated": updated_count,
+        }
 
     # ========== HITL Power APIs: Merge & Link ==========
 
@@ -2660,7 +2918,9 @@ JSON output:"""
         target = request.target_cluster_id
 
         if source == target:
-            raise HTTPException(status_code=400, detail="Cannot merge cluster into itself")
+            raise HTTPException(
+                status_code=400, detail="Cannot merge cluster into itself"
+            )
 
         try:
             # Update all voice segments from source to target cluster
@@ -2670,10 +2930,11 @@ JSON output:"""
             results = pipeline.db.client.scroll(
                 collection_name=pipeline.db.VOICE_COLLECTION,
                 scroll_filter=models.Filter(
-                    must=[models.FieldCondition(
-                        key="cluster_id",
-                        match=models.MatchValue(value=source)
-                    )]
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", match=models.MatchValue(value=source)
+                        )
+                    ]
                 ),
                 limit=10000,
                 with_payload=True,
@@ -2689,7 +2950,9 @@ JSON output:"""
                 )
                 merged_count += 1
 
-            logger.info(f"[HITL] Merged voice cluster {source} → {target} ({merged_count} segments)")
+            logger.info(
+                f"[HITL] Merged voice cluster {source} → {target} ({merged_count} segments)"
+            )
             return {
                 "success": True,
                 "source_cluster_id": source,
@@ -2723,10 +2986,11 @@ JSON output:"""
             face_results = pipeline.db.client.scroll(
                 collection_name=pipeline.db.FACES_COLLECTION,
                 scroll_filter=models.Filter(
-                    must=[models.FieldCondition(
-                        key="cluster_id",
-                        match=models.MatchValue(value=face_id)
-                    )]
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", match=models.MatchValue(value=face_id)
+                        )
+                    ]
                 ),
                 limit=10000,
             )
@@ -2742,10 +3006,11 @@ JSON output:"""
             voice_results = pipeline.db.client.scroll(
                 collection_name=pipeline.db.VOICE_COLLECTION,
                 scroll_filter=models.Filter(
-                    must=[models.FieldCondition(
-                        key="cluster_id",
-                        match=models.MatchValue(value=voice_id)
-                    )]
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", match=models.MatchValue(value=voice_id)
+                        )
+                    ]
                 ),
                 limit=10000,
             )
@@ -2757,9 +3022,13 @@ JSON output:"""
                     points=[point.id],
                 )
 
-            logger.info(f"[HITL] Linked Face {face_id} ↔ Voice {voice_id}" + (f" as '{name}'" if name else ""))
+            logger.info(
+                f"[HITL] Linked Face {face_id} ↔ Voice {voice_id}"
+                + (f" as '{name}'" if name else "")
+            )
             # Job stats for analysis completeness
             from core.ingestion.jobs import job_manager
+
             all_jobs = job_manager.list_jobs(limit=1000)
             completed_jobs = len([j for j in all_jobs if j.status == "completed"])
             failed_jobs = len([j for j in all_jobs if j.status == "failed"])
@@ -2780,8 +3049,10 @@ JSON output:"""
                     "completed": completed_jobs,
                     "failed": failed_jobs,
                     "processing": processing_jobs,
-                    "completeness_percent": int((completed_jobs / len(all_jobs) * 100)) if all_jobs else 0
-                }
+                    "completeness_percent": int((completed_jobs / len(all_jobs) * 100))
+                    if all_jobs
+                    else 0,
+                },
             }
         except Exception as e:
             logger.error(f"Identity link failed: {e}")
@@ -2801,45 +3072,45 @@ JSON output:"""
         # Reuse single name logic for consistency (handling merges etc)
         # But optimize? No, safe reuse is better.
         for cid in request.cluster_ids:
-             try:
-                 # We call the logic directly or reuse endpoint function?
-                 # Calling endpoint function requires building request object.
-                 # Let's invoke db logic directly but maintain consistency.
-                 # Actually, name_face_cluster endpoint logic is complex (merging, updating frames).
-                 # Ideally we should refactor that logic into pipeline or db.
-                 # For now, let's call the logic locally.
+            try:
+                # We call the logic directly or reuse endpoint function?
+                # Calling endpoint function requires building request object.
+                # Let's invoke db logic directly but maintain consistency.
+                # Actually, name_face_cluster endpoint logic is complex (merging, updating frames).
+                # Ideally we should refactor that logic into pipeline or db.
+                # For now, let's call the logic locally.
 
-                 name = request.name.strip()
-                 pipeline.db.set_face_name(cid, name)
+                name = request.name.strip()
+                pipeline.db.set_face_name(cid, name)
 
-                 # This part is a simplified version of what `name_face_cluster` does.
-                 # For a full replication, one would need to call `pipeline.db.re_embed_face_cluster_frames`
-                 # or similar logic that updates the identity text in frames.
-                 # For now, we'll just update the cluster name.
-                 # If `update_face_name` also handles frame updates, then this is sufficient.
-                 # Assuming `update_face_name` only updates the cluster's metadata,
-                 # and `re_embed_face_cluster_frames` (or similar) handles frame identity text.
-                 # The instruction implies a hypothetical `pipeline.db.update_frames_with_face_name(cid, name)`
-                 # but then comments it out.
-                 # For a bulk operation, directly updating the cluster name and then potentially
-                 # triggering a re-embedding job for all affected frames might be more efficient
-                 # than frame-by-frame updates within the loop.
+                # This part is a simplified version of what `name_face_cluster` does.
+                # For a full replication, one would need to call `pipeline.db.re_embed_face_cluster_frames`
+                # or similar logic that updates the identity text in frames.
+                # For now, we'll just update the cluster name.
+                # If `update_face_name` also handles frame updates, then this is sufficient.
+                # Assuming `update_face_name` only updates the cluster's metadata,
+                # and `re_embed_face_cluster_frames` (or similar) handles frame identity text.
+                # The instruction implies a hypothetical `pipeline.db.update_frames_with_face_name(cid, name)`
+                # but then comments it out.
+                # For a bulk operation, directly updating the cluster name and then potentially
+                # triggering a re-embedding job for all affected frames might be more efficient
+                # than frame-by-frame updates within the loop.
 
-                 # For now, we'll just update the cluster name in the DB.
-                 # The `name_face_cluster` endpoint has more complex logic for re-embedding.
-                 # This bulk endpoint is simplified.
+                # For now, we'll just update the cluster name in the DB.
+                # The `name_face_cluster` endpoint has more complex logic for re-embedding.
+                # This bulk endpoint is simplified.
 
-                 # frames = pipeline.db.get_frames_by_face_cluster(cid)
-                 # cnt = 0
-                 # for frame in frames:
-                 #     # Update identity text...
-                 #     # This is slow for bulk. But necessary.
-                 #     # Actually, reusing the client-side loop is okay for < 100 clusters.
-                 #     pass
+                # frames = pipeline.db.get_frames_by_face_cluster(cid)
+                # cnt = 0
+                # for frame in frames:
+                #     # Update identity text...
+                #     # This is slow for bulk. But necessary.
+                #     # Actually, reusing the client-side loop is okay for < 100 clusters.
+                #     pass
 
-                 results.append({"cluster_id": cid, "status": "updated", "name": name})
-             except Exception as e:
-                 results.append({"cluster_id": cid, "error": str(e)})
+                results.append({"cluster_id": cid, "status": "updated", "name": name})
+            except Exception as e:
+                results.append({"cluster_id": cid, "error": str(e)})
 
         return {"results": results, "bulk_count": len(request.cluster_ids)}
 
@@ -2851,6 +3122,7 @@ JSON output:"""
 
         try:
             from core.processing.identity_linker import get_identity_linker
+
             linker = get_identity_linker()
 
             # Get face and voice clusters
@@ -2875,14 +3147,18 @@ JSON output:"""
         clusters_raw = pipeline.db.get_face_clusters()
         result = []
         for cluster_id, faces in clusters_raw.items():
-            timestamps = [(f.get("timestamp", 0), f.get("timestamp", 0) + 1) for f in faces]
+            timestamps = [
+                (f.get("timestamp", 0), f.get("timestamp", 0) + 1) for f in faces
+            ]
             name = faces[0].get("name") if faces else None
-            result.append({
-                "cluster_id": cluster_id,
-                "name": name,
-                "timestamps": timestamps,
-                "count": len(faces),
-            })
+            result.append(
+                {
+                    "cluster_id": cluster_id,
+                    "name": name,
+                    "timestamps": timestamps,
+                    "count": len(faces),
+                }
+            )
         return result
 
     async def _get_voice_clusters_internal() -> list[dict]:
@@ -2897,14 +3173,18 @@ JSON output:"""
 
         result = []
         for cid, segments in clusters.items():
-            timestamps = [(s.get("start_time", 0), s.get("end_time", 0)) for s in segments]
+            timestamps = [
+                (s.get("start_time", 0), s.get("end_time", 0)) for s in segments
+            ]
             name = segments[0].get("speaker_name") if segments else None
-            result.append({
-                "cluster_id": cid,
-                "name": name,
-                "timestamps": timestamps,
-                "count": len(segments),
-            })
+            result.append(
+                {
+                    "cluster_id": cid,
+                    "name": name,
+                    "timestamps": timestamps,
+                    "count": len(segments),
+                }
+            )
         return result
 
     @app.delete("/voices/{segment_id}")
@@ -2930,10 +3210,11 @@ JSON output:"""
 
         # Add identity graph stats
         from core.storage.identity_graph import identity_graph
+
         try:
-             identity_stats = identity_graph.get_stats()
+            identity_stats = identity_graph.get_stats()
         except Exception:
-             identity_stats = {"identities": 0, "tracks": 0}
+            identity_stats = {"identities": 0, "tracks": 0}
 
         return {
             "collections": stats,
@@ -2949,15 +3230,30 @@ JSON output:"""
     # Face Clustering Endpoints
     @app.post("/faces/cluster")
     async def trigger_face_clustering(
-        threshold: float = Query(None, description="Cross-video cosine distance threshold (default 0.35 = 65% similarity)"),
-        intra_video_threshold: float = Query(0.50, description="Same-video threshold (0.50 = 50% similarity, balanced for pose)"),
-        algorithm: str = Query("chinese_whispers", description="Algorithm: chinese_whispers, connected_components, or agglomerative"),
-        min_bbox_size: int = Query(None, description="Min face size in pixels (default from config)"),
-        min_det_score: float = Query(None, description="Min detection confidence (default from config)"),
-        temporal_boost: bool = Query(True, description="Apply temporal boost for same-video faces"),
+        threshold: float = Query(
+            None,
+            description="Cross-video cosine distance threshold (default 0.35 = 65% similarity)",
+        ),
+        intra_video_threshold: float = Query(
+            0.50,
+            description="Same-video threshold (0.50 = 50% similarity, balanced for pose)",
+        ),
+        algorithm: str = Query(
+            "chinese_whispers",
+            description="Algorithm: chinese_whispers, connected_components, or agglomerative",
+        ),
+        min_bbox_size: int = Query(
+            None, description="Min face size in pixels (default from config)"
+        ),
+        min_det_score: float = Query(
+            None, description="Min detection confidence (default from config)"
+        ),
+        temporal_boost: bool = Query(
+            True, description="Apply temporal boost for same-video faces"
+        ),
     ):
         """Run production-grade face clustering with BALANCED intra-video grouping.
-        
+
         Key features:
         - **Balanced same-video clustering**: Uses 0.50 threshold (50% similarity) for faces
           in the same video - handles moderate pose variations without over-merging
@@ -2988,8 +3284,12 @@ JSON output:"""
         quality_faces = []
         filtered_count = 0
         for f in all_faces:
-            bbox_ok = f.get("bbox_size") is None or f.get("bbox_size", 100) >= min_bbox_size
-            det_ok = f.get("det_score") is None or f.get("det_score", 1.0) >= min_det_score
+            bbox_ok = (
+                f.get("bbox_size") is None or f.get("bbox_size", 100) >= min_bbox_size
+            )
+            det_ok = (
+                f.get("det_score") is None or f.get("det_score", 1.0) >= min_det_score
+            )
             if bbox_ok and det_ok:
                 quality_faces.append(f)
             else:
@@ -3012,7 +3312,9 @@ JSON output:"""
             if tail_energy < 1e-3:
                 is_sface = True
                 embeddings = embeddings[:, :128]
-                logger.warning("Using SFace (128d) fallback. Install InsightFace for better quality!")
+                logger.warning(
+                    "Using SFace (128d) fallback. Install InsightFace for better quality!"
+                )
                 # SFace needs STRICTER threshold (less discriminative embeddings)
                 threshold = min(threshold, 0.28)
 
@@ -3025,9 +3327,11 @@ JSON output:"""
         dist_matrix = cosine_distances(embeddings_norm)
 
         start_time_cluster = time.perf_counter()
-        logger.info(f"Face Clustering: {len(quality_faces)} faces (filtered {filtered_count}) | "
-                   f"Model={'SFace' if is_sface else 'InsightFace'} | "
-                   f"Algo={algorithm} | Threshold={threshold:.2f}")
+        logger.info(
+            f"Face Clustering: {len(quality_faces)} faces (filtered {filtered_count}) | "
+            f"Model={'SFace' if is_sface else 'InsightFace'} | "
+            f"Algo={algorithm} | Threshold={threshold:.2f}"
+        )
 
         if algorithm == "chinese_whispers":
             labels = _chinese_whispers_cluster(
@@ -3041,14 +3345,23 @@ JSON output:"""
             try:
                 import networkx as nx
             except ImportError:
-                logger.warning("NetworkX not installed, falling back to chinese_whispers")
-                labels = _chinese_whispers_cluster(dist_matrix, threshold, quality_faces if temporal_boost else None, intra_video_threshold)
+                logger.warning(
+                    "NetworkX not installed, falling back to chinese_whispers"
+                )
+                labels = _chinese_whispers_cluster(
+                    dist_matrix,
+                    threshold,
+                    quality_faces if temporal_boost else None,
+                    intra_video_threshold,
+                )
             else:
                 G = nx.Graph()
                 G.add_nodes_from(range(len(quality_faces)))
                 for i in range(len(quality_faces)):
                     for j in range(i + 1, len(quality_faces)):
-                        same_video = quality_faces[i].get("media_path") == quality_faces[j].get("media_path")
+                        same_video = quality_faces[i].get(
+                            "media_path"
+                        ) == quality_faces[j].get("media_path")
 
                         if same_video and temporal_boost:
                             # AGGRESSIVE same-video clustering
@@ -3060,11 +3373,11 @@ JSON output:"""
                             ts_j = quality_faces[j].get("timestamp", 0) or 0
                             time_diff = abs(ts_i - ts_j)
 
-                            if time_diff < 5.0:       # Within 5 seconds
+                            if time_diff < 5.0:  # Within 5 seconds
                                 effective_threshold += 0.12
-                            elif time_diff < 30.0:    # Within 30 seconds
+                            elif time_diff < 30.0:  # Within 30 seconds
                                 effective_threshold += 0.08
-                            elif time_diff < 120.0:   # Within 2 minutes
+                            elif time_diff < 120.0:  # Within 2 minutes
                                 effective_threshold += 0.05
                         else:
                             # Cross-video: use stricter threshold
@@ -3081,6 +3394,7 @@ JSON output:"""
         else:
             # Fallback to Agglomerative
             from sklearn.cluster import AgglomerativeClustering
+
             clusterer = AgglomerativeClustering(
                 n_clusters=None,
                 metric="precomputed",
@@ -3100,6 +3414,7 @@ JSON output:"""
 
         # Log cluster size distribution
         from collections import Counter
+
         cluster_sizes = Counter(labels)
         size_dist = dict(sorted(Counter(cluster_sizes.values()).items()))
 
@@ -3107,9 +3422,11 @@ JSON output:"""
         largest = cluster_sizes.most_common(5)
 
         duration = time.perf_counter() - start_time_cluster
-        logger.info(f"Face Clustering complete: {n_clusters} clusters | "
-                   f"Largest: {largest[0][1] if largest else 0} | "
-                   f"Duration={duration:.3f}s")
+        logger.info(
+            f"Face Clustering complete: {n_clusters} clusters | "
+            f"Largest: {largest[0][1] if largest else 0} | "
+            f"Duration={duration:.3f}s"
+        )
 
         return {
             "status": "clustered",
@@ -3121,9 +3438,9 @@ JSON output:"""
             "algorithm": algorithm,
             "model_type": "SFace (128d)" if is_sface else "InsightFace (512d)",
             "cross_video_threshold": threshold,
-            "cross_video_similarity": f"{(1-threshold)*100:.0f}%",
+            "cross_video_similarity": f"{(1 - threshold) * 100:.0f}%",
             "intra_video_threshold": intra_video_threshold,
-            "intra_video_similarity": f"{(1-intra_video_threshold)*100:.0f}%",
+            "intra_video_similarity": f"{(1 - intra_video_threshold) * 100:.0f}%",
             "temporal_boost": temporal_boost,
             "cluster_size_distribution": size_dist,
             "largest_clusters": largest,
@@ -3136,17 +3453,17 @@ JSON output:"""
         intra_video_threshold: float = 0.55,
     ) -> list[int]:
         """Chinese Whispers clustering algorithm with aggressive intra-video clustering.
-        
+
         This is the same algorithm used by dlib/face_recognition library.
         It's a graph-based clustering that naturally handles:
         - Varying cluster sizes
         - Transitive relationships (A~B, B~C → A,B,C same cluster)
         - No need to specify number of clusters
-        
+
         If faces metadata is provided, applies aggressive same-video clustering:
         - Uses intra_video_threshold (0.55) for any same-video faces
         - Additional boost: +0.25 for <5s, +0.15 for <30s, +0.10 for <2min
-        
+
         Algorithm:
         1. Build similarity graph where edge exists if distance < threshold
         2. Each node starts with unique label
@@ -3164,7 +3481,9 @@ JSON output:"""
             for j in range(i + 1, n):
                 same_video = False
                 if faces is not None:
-                    same_video = faces[i].get("media_path") == faces[j].get("media_path")
+                    same_video = faces[i].get("media_path") == faces[j].get(
+                        "media_path"
+                    )
 
                 if same_video and faces is not None:
                     # AGGRESSIVE same-video clustering
@@ -3174,11 +3493,11 @@ JSON output:"""
                     ts_j = faces[j].get("timestamp", 0) or 0
                     time_diff = abs(ts_i - ts_j)
 
-                    if time_diff < 5.0:       # Within 5 seconds
+                    if time_diff < 5.0:  # Within 5 seconds
                         effective_threshold += 0.12
-                    elif time_diff < 30.0:    # Within 30 seconds
+                    elif time_diff < 30.0:  # Within 30 seconds
                         effective_threshold += 0.08
-                    elif time_diff < 120.0:   # Within 2 minutes
+                    elif time_diff < 120.0:  # Within 2 minutes
                         effective_threshold += 0.05
                 else:
                     effective_threshold = threshold
@@ -3189,7 +3508,9 @@ JSON output:"""
 
         # Log connectivity
         edges = sum(len(adj) for adj in adjacency) // 2
-        logger.info(f"  Chinese Whispers: {n} nodes, {edges} edges (threshold={threshold:.2f}, intra_video={intra_video_threshold:.2f})")
+        logger.info(
+            f"  Chinese Whispers: {n} nodes, {edges} edges (threshold={threshold:.2f}, intra_video={intra_video_threshold:.2f})"
+        )
 
         # Initialize each node with unique label
         labels = list(range(n))
@@ -3209,6 +3530,7 @@ JSON output:"""
                 # Count neighbor labels
                 neighbor_labels = [labels[neighbor] for neighbor in adjacency[node]]
                 from collections import Counter
+
                 label_counts = Counter(neighbor_labels)
 
                 # Adopt most common neighbor label
@@ -3244,14 +3566,16 @@ JSON output:"""
             # Check if any face in the cluster is marked as main
             is_main = any(f.get("is_main", False) for f in faces)
 
-            result.append({
-                "cluster_id": cluster_id,
-                "name": faces[0].get("name") if faces else None,
-                "face_count": len(faces),
-                "representative": representative,
-                "faces": faces,
-                "is_main": is_main,
-            })
+            result.append(
+                {
+                    "cluster_id": cluster_id,
+                    "name": faces[0].get("name") if faces else None,
+                    "face_count": len(faces),
+                    "representative": representative,
+                    "faces": faces,
+                    "is_main": is_main,
+                }
+            )
 
         # Sort by is_main (desc) -> face_count (desc)
         result.sort(key=lambda x: (x["is_main"], x["face_count"]), reverse=True)
@@ -3260,7 +3584,7 @@ JSON output:"""
     @app.get("/identity/suggestions")
     async def get_identity_suggestions_simple():
         """Get AI-powered identity linking suggestions (Face-Voice, TMDB, Merge).
-        
+
         NOTE: Alternative endpoint. Main endpoint is /identities/suggestions at line ~2875.
         """
         if not pipeline:
@@ -3272,11 +3596,13 @@ JSON output:"""
             face_clusters_raw = pipeline.db.get_faces_grouped_by_cluster()
             face_clusters = []
             for cluster_id, faces in face_clusters_raw.items():
-                face_clusters.append({
-                    "cluster_id": cluster_id,
-                    "name": faces[0].get("name") if faces else None,
-                    "timestamps": [f.get("timestamp", 0) for f in faces],
-                })
+                face_clusters.append(
+                    {
+                        "cluster_id": cluster_id,
+                        "name": faces[0].get("name") if faces else None,
+                        "timestamps": [f.get("timestamp", 0) for f in faces],
+                    }
+                )
 
             voice_clusters = []
             try:
@@ -3286,13 +3612,19 @@ JSON output:"""
                     cid = v.get("speaker_cluster_id", -1)
                     if cid not in cluster_map:
                         cluster_map[cid] = []
-                    cluster_map[cid].append({"start": v.get("start", 0), "end": v.get("end", 0)})
+                    cluster_map[cid].append(
+                        {"start": v.get("start", 0), "end": v.get("end", 0)}
+                    )
                 for cid, segments in cluster_map.items():
-                    voice_clusters.append({
-                        "cluster_id": cid,
-                        "name": segments[0].get("speaker_name") if segments else None,
-                        "timestamps": segments,
-                    })
+                    voice_clusters.append(
+                        {
+                            "cluster_id": cid,
+                            "name": segments[0].get("speaker_name")
+                            if segments
+                            else None,
+                            "timestamps": segments,
+                        }
+                    )
             except Exception:
                 pass
 
@@ -3306,7 +3638,7 @@ JSON output:"""
     @app.post("/faces/merge")
     async def merge_face_clusters_direct(from_cluster: int, to_cluster: int):
         """Merge two face clusters into one.
-        
+
         NOTE: Direct query params API. Advanced merge is at /faces/clusters/merge.
         """
         if not pipeline:
@@ -3317,16 +3649,21 @@ JSON output:"""
     # Voice Clustering and HITL Endpoints
     @app.post("/voices/cluster")
     async def trigger_voice_clustering(
-        threshold: float = Query(0.5, description="Cosine distance threshold (0.5 = 50% similarity)"),
-        algorithm: str = Query("chinese_whispers", description="Algorithm: chinese_whispers (best), hdbscan, agglomerative"),
+        threshold: float = Query(
+            0.5, description="Cosine distance threshold (0.5 = 50% similarity)"
+        ),
+        algorithm: str = Query(
+            "chinese_whispers",
+            description="Algorithm: chinese_whispers (best), hdbscan, agglomerative",
+        ),
     ):
         """Run production-grade voice clustering.
-        
+
         Algorithms:
         - chinese_whispers: Graph-based, handles transitive relationships (RECOMMENDED)
         - hdbscan: Density-based, good for varying cluster densities
         - agglomerative: Hierarchical, good fallback for small datasets
-        
+
         Chinese Whispers is the industry standard (used by dlib, face_recognition).
         Default threshold 0.5 = 50% cosine similarity needed to consider same speaker.
         """
@@ -3341,7 +3678,11 @@ JSON output:"""
             return {"status": "no_voices", "clusters": 0}
 
         if len(voices) < 2:
-            return {"status": "insufficient_voices", "clusters": 1, "message": "Need at least 2 voice segments"}
+            return {
+                "status": "insufficient_voices",
+                "clusters": 1,
+                "message": "Need at least 2 voice segments",
+            }
 
         embeddings = np.array([v["embedding"] for v in voices])
 
@@ -3354,7 +3695,9 @@ JSON output:"""
         dist_matrix = cosine_distances(embeddings_norm)
 
         start_time_voice = time.perf_counter()
-        logger.info(f"Voice Clustering: {len(voices)} segments | Algo={algorithm} | Threshold={threshold:.2f}")
+        logger.info(
+            f"Voice Clustering: {len(voices)} segments | Algo={algorithm} | Threshold={threshold:.2f}"
+        )
 
         if algorithm == "chinese_whispers":
             # Use same proven algorithm as face clustering
@@ -3363,18 +3706,21 @@ JSON output:"""
             import hdbscan
 
             from config import settings
+
             # Use precomputed distance matrix with HDBSCAN (configurable)
             clusterer = hdbscan.HDBSCAN(
                 min_cluster_size=settings.hdbscan_min_cluster_size,
                 min_samples=settings.hdbscan_min_samples,
                 metric="precomputed",
-                cluster_selection_epsilon=settings.hdbscan_cluster_selection_epsilon * threshold,
+                cluster_selection_epsilon=settings.hdbscan_cluster_selection_epsilon
+                * threshold,
                 cluster_selection_method="leaf",
             )
             labels = clusterer.fit_predict(dist_matrix)
         else:
             # Fallback: Agglomerative with single linkage (friends-of-friends)
             from sklearn.cluster import AgglomerativeClustering
+
             clusterer = AgglomerativeClustering(
                 n_clusters=None,
                 metric="precomputed",
@@ -3394,16 +3740,19 @@ JSON output:"""
             updated += 1
 
         n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-        n_noise = list(labels).count(-1) if hasattr(labels, '__iter__') else 0
+        n_noise = list(labels).count(-1) if hasattr(labels, "__iter__") else 0
 
         # Log cluster size distribution
         from collections import Counter
+
         cluster_sizes = Counter(labels)
         size_dist = dict(sorted(Counter(cluster_sizes.values()).items()))
         largest = cluster_sizes.most_common(5)
 
         duration = time.perf_counter() - start_time_voice
-        logger.info(f"Voice Clustering complete: {n_clusters} clusters | Largest cluster size: {largest[0][1] if largest else 0} | Duration={duration:.3f}s")
+        logger.info(
+            f"Voice Clustering complete: {n_clusters} clusters | Largest cluster size: {largest[0][1] if largest else 0} | Duration={duration:.3f}s"
+        )
 
         return {
             "status": "clustered",
@@ -3413,7 +3762,7 @@ JSON output:"""
             "updated": updated,
             "algorithm": algorithm,
             "distance_threshold": threshold,
-            "similarity_threshold": f"{(1-threshold)*100:.0f}%",
+            "similarity_threshold": f"{(1 - threshold) * 100:.0f}%",
             "cluster_size_distribution": size_dist,
             "largest_clusters": largest,
         }
@@ -3428,13 +3777,17 @@ JSON output:"""
         result = []
         for cluster_id, segments in clusters.items():
             representative = segments[0] if segments else None
-            result.append({
-                "cluster_id": cluster_id,
-                "speaker_name": segments[0].get("speaker_name") if segments else None,
-                "segment_count": len(segments),
-                "representative": representative,
-                "segments": segments,
-            })
+            result.append(
+                {
+                    "cluster_id": cluster_id,
+                    "speaker_name": segments[0].get("speaker_name")
+                    if segments
+                    else None,
+                    "segment_count": len(segments),
+                    "representative": representative,
+                    "segments": segments,
+                }
+            )
 
         result.sort(key=lambda x: x["segment_count"], reverse=True)
         return {"clusters": result}
@@ -3474,12 +3827,17 @@ JSON output:"""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         import time
+
         new_cluster_id = int(time.time() * 1000) % 10000000
         updated = 0
         for face_id in face_ids:
             if pipeline.db.update_face_cluster_id(face_id, new_cluster_id):
                 updated += 1
-        return {"success": True, "new_cluster_id": new_cluster_id, "faces_moved": updated}
+        return {
+            "success": True,
+            "new_cluster_id": new_cluster_id,
+            "faces_moved": updated,
+        }
 
     @app.put("/voices/{segment_id}/cluster")
     async def move_voice_to_cluster(segment_id: str, cluster_id: int):
@@ -3497,12 +3855,17 @@ JSON output:"""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         import time
+
         new_cluster_id = int(time.time() * 1000) % 10000000
         updated = 0
         for seg_id in segment_ids:
             if pipeline.db.update_voice_cluster_id(seg_id, new_cluster_id):
                 updated += 1
-        return {"success": True, "new_cluster_id": new_cluster_id, "segments_moved": updated}
+        return {
+            "success": True,
+            "new_cluster_id": new_cluster_id,
+            "segments_moved": updated,
+        }
 
     # Name-Based Search
     @app.get("/search/by-name")
@@ -3521,14 +3884,16 @@ JSON output:"""
                 for face in faces:
                     face_name = face.get("name") or ""
                     if name_lower in face_name.lower():
-                        results.append({
-                            "type": "face",
-                            "name": face_name,
-                            "media_path": face.get("media_path"),
-                            "timestamp": face.get("timestamp"),
-                            "thumbnail_path": face.get("thumbnail_path"),
-                            "cluster_id": cluster_id,
-                        })
+                        results.append(
+                            {
+                                "type": "face",
+                                "name": face_name,
+                                "media_path": face.get("media_path"),
+                                "timestamp": face.get("timestamp"),
+                                "thumbnail_path": face.get("thumbnail_path"),
+                                "cluster_id": cluster_id,
+                            }
+                        )
         except Exception:
             pass
 
@@ -3539,15 +3904,17 @@ JSON output:"""
                 for seg in segments:
                     speaker_name = seg.get("speaker_name") or ""
                     if name_lower in speaker_name.lower():
-                        results.append({
-                            "type": "voice",
-                            "name": speaker_name,
-                            "media_path": seg.get("media_path"),
-                            "start": seg.get("start"),
-                            "end": seg.get("end"),
-                            "audio_path": seg.get("audio_path"),
-                            "cluster_id": cluster_id,
-                        })
+                        results.append(
+                            {
+                                "type": "voice",
+                                "name": speaker_name,
+                                "media_path": seg.get("media_path"),
+                                "start": seg.get("start"),
+                                "end": seg.get("end"),
+                                "audio_path": seg.get("audio_path"),
+                                "cluster_id": cluster_id,
+                            }
+                        )
         except Exception:
             pass
 
@@ -3556,7 +3923,7 @@ JSON output:"""
     @app.get("/debug/frames")
     async def debug_frame_descriptions(limit: int = 50):
         """Debug endpoint to inspect stored frame descriptions.
-        
+
         Helps diagnose why different queries might return identical results
         by showing what descriptions are actually stored in the database.
         """
@@ -3575,13 +3942,15 @@ JSON output:"""
             frames = []
             for point in resp[0]:
                 payload = point.payload or {}
-                frames.append({
-                    "id": str(point.id),
-                    "video_path": payload.get("video_path"),
-                    "timestamp": payload.get("timestamp"),
-                    "description": payload.get("action"),
-                    "type": payload.get("type"),
-                })
+                frames.append(
+                    {
+                        "id": str(point.id),
+                        "video_path": payload.get("video_path"),
+                        "timestamp": payload.get("timestamp"),
+                        "description": payload.get("action"),
+                        "type": payload.get("type"),
+                    }
+                )
 
             # Analyze description diversity
             descriptions = [f["description"] or "" for f in frames]
@@ -3589,6 +3958,7 @@ JSON output:"""
 
             # Check for identical descriptions
             from collections import Counter
+
             desc_counts = Counter(descriptions)
             duplicates = {k: v for k, v in desc_counts.items() if v > 1}
 
@@ -3607,7 +3977,10 @@ JSON output:"""
     app.mount("/thumbnails", StaticFiles(directory=str(thumb_path)), name="thumbnails")
 
     @app.get("/stream")
-    async def stream_video(path: str = Query(..., description="Absolute path to media file"), range: str = Header(None)):
+    async def stream_video(
+        path: str = Query(..., description="Absolute path to media file"),
+        range: str = Header(None),
+    ):
         """Stream video content with Range header support for seeking."""
         video_path = Path(path)
         if not video_path.exists():
@@ -3628,7 +4001,7 @@ JSON output:"""
             except ValueError:
                 pass
 
-        chunk_size = 1024 * 64 # 64KB chunks
+        chunk_size = 1024 * 64  # 64KB chunks
         content_length = end - start + 1
 
         headers = {

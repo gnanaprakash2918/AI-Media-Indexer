@@ -2,6 +2,7 @@
 
 Runs test queries, evaluates results using an LLM, and reports accuracy score.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,11 +19,20 @@ from config import settings
 from llm.factory import LLMFactory
 
 TEST_SET = [
-    {"query": "person bowling", "expected_keywords": ["bowl", "lane", "strike", "ball"]},
+    {
+        "query": "person bowling",
+        "expected_keywords": ["bowl", "lane", "strike", "ball"],
+    },
     {"query": "red car", "expected_keywords": ["car", "red", "vehicle"]},
     {"query": "person speaking", "expected_keywords": ["speak", "talk", "dialogue"]},
-    {"query": "outdoor scene", "expected_keywords": ["outdoor", "outside", "sky", "tree"]},
-    {"query": "group of people", "expected_keywords": ["people", "group", "crowd", "together"]},
+    {
+        "query": "outdoor scene",
+        "expected_keywords": ["outdoor", "outside", "sky", "tree"],
+    },
+    {
+        "query": "group of people",
+        "expected_keywords": ["people", "group", "crowd", "together"],
+    },
 ]
 
 JUDGE_PROMPT = """You are a search quality evaluator. Given a search query and the returned result description, rate the relevance on a scale of 0-10.
@@ -51,8 +61,7 @@ class QualityEvaluator:
     async def search(self, query: str, limit: int = 5) -> list[dict]:
         try:
             resp = await self.client.get(
-                f"{self.base_url}/search",
-                params={"q": query, "limit": limit}
+                f"{self.base_url}/search", params={"q": query, "limit": limit}
             )
             resp.raise_for_status()
             data = resp.json()
@@ -68,7 +77,12 @@ class QualityEvaluator:
     async def judge_result(self, query: str, result: dict) -> dict:
         self._ensure_llm()
 
-        description = result.get("action") or result.get("description") or result.get("text") or ""
+        description = (
+            result.get("action")
+            or result.get("description")
+            or result.get("text")
+            or ""
+        )
         if not description:
             return {"score": 0, "reason": "No description available"}
 
@@ -96,7 +110,10 @@ class QualityEvaluator:
             desc_lower = description.lower()
             matches = sum(1 for kw in keywords if kw in desc_lower)
             fallback_score = min(10, matches * 2.5)
-            return {"score": fallback_score, "reason": f"LLM failed ({e}), keyword fallback"}
+            return {
+                "score": fallback_score,
+                "reason": f"LLM failed ({e}), keyword fallback",
+            }
 
     async def evaluate_test_set(self, test_set: list[dict] = None) -> dict:
         tests = test_set or TEST_SET
@@ -109,17 +126,19 @@ class QualityEvaluator:
 
         for i, test in enumerate(tests, 1):
             query = test["query"]
-            print(f"\n[{i}/{len(tests)}] Query: \"{query}\"")
+            print(f'\n[{i}/{len(tests)}] Query: "{query}"')
 
             search_results = await self.search(query, limit=3)
 
             if not search_results:
                 print("  ❌ No results found")
-                results.append({
-                    "query": query,
-                    "score": 0,
-                    "reason": "No results",
-                })
+                results.append(
+                    {
+                        "query": query,
+                        "score": 0,
+                        "reason": "No results",
+                    }
+                )
                 continue
 
             top_result = search_results[0]
@@ -129,14 +148,20 @@ class QualityEvaluator:
 
             emoji = "✅" if score >= 7 else "⚠️" if score >= 4 else "❌"
             print(f"  {emoji} Score: {score}/10 | {reason}")
-            print(f"     Result: {(top_result.get('action') or top_result.get('description', ''))[:80]}...")
+            print(
+                f"     Result: {(top_result.get('action') or top_result.get('description', ''))[:80]}..."
+            )
 
-            results.append({
-                "query": query,
-                "score": score,
-                "reason": reason,
-                "result_preview": (top_result.get("action") or top_result.get("description", ""))[:100],
-            })
+            results.append(
+                {
+                    "query": query,
+                    "score": score,
+                    "reason": reason,
+                    "result_preview": (
+                        top_result.get("action") or top_result.get("description", "")
+                    )[:100],
+                }
+            )
             total_score += score
 
         avg_score = total_score / len(tests) if tests else 0

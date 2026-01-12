@@ -47,10 +47,14 @@ class VideoRedactor:
 
         target_embedding = self._get_identity_embedding(target_identity_id)
         if target_embedding is None:
-            return RedactionResult(False, "", 0, 0, "Identity not found or no embeddings")
+            return RedactionResult(
+                False, "", 0, 0, "Identity not found or no embeddings"
+            )
 
         if output_path is None:
-            output_path = video_path.parent / f"{video_path.stem}_redacted{video_path.suffix}"
+            output_path = (
+                video_path.parent / f"{video_path.stem}_redacted{video_path.suffix}"
+            )
         output_path = Path(output_path)
 
         cap = cv2.VideoCapture(str(video_path))
@@ -62,8 +66,8 @@ class VideoRedactor:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v') # type: ignore
-        temp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
+        temp_video = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         writer = cv2.VideoWriter(temp_video.name, fourcc, fps, (width, height))
 
         frames_processed = 0
@@ -102,8 +106,12 @@ class VideoRedactor:
             pass
 
         if success:
-            return RedactionResult(True, str(output_path), frames_processed, faces_blurred)
-        return RedactionResult(False, "", frames_processed, faces_blurred, "Audio mux failed")
+            return RedactionResult(
+                True, str(output_path), frames_processed, faces_blurred
+            )
+        return RedactionResult(
+            False, "", frames_processed, faces_blurred, "Audio mux failed"
+        )
 
     async def redact_all_faces(
         self,
@@ -112,12 +120,12 @@ class VideoRedactor:
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> RedactionResult:
         """Blur ALL faces in a video for complete privacy.
-        
+
         Args:
             video_path: Input video file.
             output_path: Output path (default: {stem}_redacted.{ext}).
             progress_callback: Progress callback(current_frame, total_frames).
-            
+
         Returns:
             RedactionResult with success status and stats.
         """
@@ -126,7 +134,9 @@ class VideoRedactor:
             return RedactionResult(False, "", 0, 0, "Video not found")
 
         if output_path is None:
-            output_path = video_path.parent / f"{video_path.stem}_redacted{video_path.suffix}"
+            output_path = (
+                video_path.parent / f"{video_path.stem}_redacted{video_path.suffix}"
+            )
         output_path = Path(output_path)
 
         cap = cv2.VideoCapture(str(video_path))
@@ -138,8 +148,8 @@ class VideoRedactor:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
-        temp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
+        temp_video = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         writer = cv2.VideoWriter(temp_video.name, fourcc, fps, (width, height))
 
         frames_processed = 0
@@ -178,13 +188,20 @@ class VideoRedactor:
             pass
 
         if success:
-            return RedactionResult(True, str(output_path), frames_processed, faces_blurred)
-        return RedactionResult(False, "", frames_processed, faces_blurred, "Audio mux failed")
+            return RedactionResult(
+                True, str(output_path), frames_processed, faces_blurred
+            )
+        return RedactionResult(
+            False, "", frames_processed, faces_blurred, "Audio mux failed"
+        )
 
-    async def _detect_all_faces(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+    async def _detect_all_faces(
+        self, frame: np.ndarray
+    ) -> list[tuple[int, int, int, int]]:
         """Detect all faces in a frame without identity matching."""
         import tempfile
-        temp_path = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+
+        temp_path = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         cv2.imwrite(temp_path.name, frame)
 
         try:
@@ -226,7 +243,8 @@ class VideoRedactor:
         target_embedding: np.ndarray,
     ) -> list[tuple[int, int, int, int]]:
         import tempfile
-        temp_path = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+
+        temp_path = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         cv2.imwrite(temp_path.name, frame)
 
         try:
@@ -253,7 +271,9 @@ class VideoRedactor:
 
         return matched_boxes
 
-    def _apply_blur(self, frame: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
+    def _apply_blur(
+        self, frame: np.ndarray, box: tuple[int, int, int, int]
+    ) -> np.ndarray:
         top, right, bottom, left = box
         h, w = frame.shape[:2]
 
@@ -273,13 +293,20 @@ class VideoRedactor:
 
     def _mux_audio(self, original: Path, video_only: Path, output: Path) -> bool:
         cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video_only),
-            "-i", str(original),
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-map", "0:v:0",
-            "-map", "1:a:0?",
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_only),
+            "-i",
+            str(original),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0?",
             "-shortest",
             str(output),
         ]

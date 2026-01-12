@@ -20,10 +20,7 @@ def main() -> None:
     )
     parser.add_argument("video_path", type=str, help="Path to input video")
     parser.add_argument(
-        "--task",
-        type=str,
-        default="analyze",
-        help="Natural language task description"
+        "--task", type=str, default="analyze", help="Natural language task description"
     )
 
     args = parser.parse_args()
@@ -51,10 +48,10 @@ def main() -> None:
     print(f"Transcript: {result['transcript_length']} chars")
     print(f"Masks: {result['masks_count']}")
 
-    if result['output_path']:
+    if result["output_path"]:
         print(f"Output: {result['output_path']}")
 
-    if result['errors']:
+    if result["errors"]:
         print(f"Errors: {result['errors']}")
 
 

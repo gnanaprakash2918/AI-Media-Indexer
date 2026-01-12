@@ -17,6 +17,7 @@ from core.utils.logger import log
 
 class BraveSearchResult(BaseModel):
     """Single result from Brave Search."""
+
     title: str
     url: str
     description: str
@@ -25,10 +26,10 @@ class BraveSearchResult(BaseModel):
 
 class BraveSearchClient:
     """Async client for Brave Search API.
-    
+
     Provides web search for enriching unknown entities with external knowledge.
     Gracefully handles missing API keys by returning empty results.
-    
+
     Usage:
         client = BraveSearchClient()
         if client.is_available:
@@ -37,11 +38,11 @@ class BraveSearchClient:
 
     def __init__(self, api_key: str | None = None):
         """Initialize Brave Search client.
-        
+
         Args:
             api_key: Brave Search API key. Falls back to settings.brave_api_key.
         """
-        self.api_key = api_key or getattr(settings, 'brave_api_key', None)
+        self.api_key = api_key or getattr(settings, "brave_api_key", None)
         self._client = None
 
     @property
@@ -56,12 +57,12 @@ class BraveSearchClient:
         search_type: str = "web",
     ) -> list[BraveSearchResult]:
         """Perform a web search using Brave Search API.
-        
+
         Args:
             query: Search query string.
             count: Number of results to return (max 20).
             search_type: Type of search (web, news, images).
-            
+
         Returns:
             List of search results. Empty if API unavailable.
         """
@@ -78,25 +79,29 @@ class BraveSearchClient:
             # Run sync client in thread pool
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
-                None,
-                lambda: client.search(query, count=min(count, 20))
+                None, lambda: client.search(query, count=min(count, 20))
             )
 
             results = []
             web_results = response.get("web", {}).get("results", [])
 
             for item in web_results[:count]:
-                results.append(BraveSearchResult(
-                    title=item.get("title", ""),
-                    url=item.get("url", ""),
-                    description=item.get("description", ""),
-                    age=item.get("age"),
-                ))
+                results.append(
+                    BraveSearchResult(
+                        title=item.get("title", ""),
+                        url=item.get("url", ""),
+                        description=item.get("description", ""),
+                        age=item.get("age"),
+                    )
+                )
 
             return results
 
         except ImportError:
-            log("brave-search package not installed. Run: pip install brave-search", level="WARNING")
+            log(
+                "brave-search package not installed. Run: pip install brave-search",
+                level="WARNING",
+            )
             return []
         except Exception as e:
             log(f"Brave Search error: {e}", level="ERROR")
@@ -105,12 +110,12 @@ class BraveSearchClient:
 
 class EntityEnricher:
     """Enriches unknown entities with external knowledge.
-    
+
     Uses Brave Search (or other providers) to:
     - Identify unknown faces by context
     - Get information about locations
     - Expand topic context for better search
-    
+
     PRIVACY: Personal media blocks external search unless HITL approved.
     """
 
@@ -122,12 +127,12 @@ class EntityEnricher:
     @property
     def is_available(self) -> bool:
         """Check if external enrichment is available."""
-        enabled = getattr(settings, 'enable_external_search', False)
+        enabled = getattr(settings, "enable_external_search", False)
         return enabled and self.brave.is_available
 
     def check_privacy(self, media_type: str | None = None) -> tuple[bool, str]:
         """Check if external search is allowed for this media type.
-        
+
         Returns:
             Tuple of (allowed, reason).
         """
@@ -136,7 +141,10 @@ class EntityEnricher:
 
         # Personal content requires HITL approval
         if media_type and media_type.lower() == "personal":
-            return False, "Personal content - external search blocked (requires HITL approval)"
+            return (
+                False,
+                "Personal content - external search blocked (requires HITL approval)",
+            )
 
         return True, "External search allowed"
 
@@ -147,12 +155,12 @@ class EntityEnricher:
         media_path: str | None = None,
     ) -> dict[str, Any]:
         """Queue an entity for HITL approval before external search.
-        
+
         Args:
             entity_type: Type of entity (face, location, topic).
             context: Contextual information about the entity.
             media_path: Path to the media file.
-            
+
         Returns:
             Pending approval record.
         """
@@ -174,10 +182,10 @@ class EntityEnricher:
 
     async def process_approved(self, indices: list[int]) -> list[dict[str, Any]]:
         """Process approved entities with external search.
-        
+
         Args:
             indices: List of pending approval indices to process.
-            
+
         Returns:
             List of enrichment results.
         """
@@ -219,13 +227,13 @@ class EntityEnricher:
         skip_privacy_check: bool = False,
     ) -> dict[str, Any]:
         """Attempt to identify an unknown face using context.
-        
+
         Args:
             context: Contextual information (video title, scene description).
             image_description: Visual description of the person.
             media_type: Type of media (personal blocks search).
             skip_privacy_check: True if HITL approved.
-            
+
         Returns:
             Dict with possible_matches and confidence.
         """
@@ -233,7 +241,12 @@ class EntityEnricher:
         if not skip_privacy_check:
             allowed, reason = self.check_privacy(media_type)
             if not allowed:
-                return {"possible_matches": [], "confidence": 0.0, "blocked": True, "reason": reason}
+                return {
+                    "possible_matches": [],
+                    "confidence": 0.0,
+                    "blocked": True,
+                    "reason": reason,
+                }
 
         if not self.is_available:
             return {"possible_matches": [], "confidence": 0.0, "source": "unavailable"}
@@ -273,6 +286,7 @@ class EntityEnricher:
 
         # Deduplicate and rank by frequency
         from collections import Counter
+
         name_counts = Counter(possible_matches)
         top_matches = [name for name, _ in name_counts.most_common(3)]
 
@@ -293,10 +307,10 @@ class EntityEnricher:
         location_hint: str,
     ) -> dict[str, Any]:
         """Get additional context about a location.
-        
+
         Args:
             location_hint: Location name or description.
-            
+
         Returns:
             Dict with location info.
         """
@@ -323,10 +337,10 @@ class EntityEnricher:
         topic: str,
     ) -> dict[str, Any]:
         """Get external context about a topic for better search.
-        
+
         Args:
             topic: Topic or subject to research.
-            
+
         Returns:
             Dict with topic context.
         """

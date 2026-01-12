@@ -14,19 +14,14 @@ class ManipulationEngine(ABC):
     """Base class for video manipulation engines."""
 
     @abstractmethod
-    def inpaint(
-        self,
-        video_path: Path,
-        mask_data: dict,
-        output_path: Path
-    ) -> bool:
+    def inpaint(self, video_path: Path, mask_data: dict, output_path: Path) -> bool:
         """Perform inpainting on video.
-        
+
         Args:
             video_path: Input video path.
             mask_data: Dict with mask frames or mask video path.
             output_path: Where to save result.
-            
+
         Returns:
             True if successful.
         """
@@ -50,12 +45,7 @@ class ProPainterEngine(ManipulationEngine):
             log("[ProPainter] Not installed. Run: pip install propainter")
             return False
 
-    def inpaint(
-        self,
-        video_path: Path,
-        mask_data: dict,
-        output_path: Path
-    ) -> bool:
+    def inpaint(self, video_path: Path, mask_data: dict, output_path: Path) -> bool:
         if not self.load_model():
             return False
 
@@ -87,12 +77,7 @@ class WanVideoEngine(ManipulationEngine):
             log("[Wan] Not installed")
             return False
 
-    def inpaint(
-        self,
-        video_path: Path,
-        mask_data: dict,
-        output_path: Path
-    ) -> bool:
+    def inpaint(self, video_path: Path, mask_data: dict, output_path: Path) -> bool:
         if not self.load_model():
             return False
 
@@ -116,17 +101,13 @@ class PrivacyBlur:
         self.blur_type = blur_type
         self.kernel_size = kernel_size
 
-    def apply(
-        self,
-        frame: "np.ndarray",
-        mask: "np.ndarray"
-    ) -> "np.ndarray":
+    def apply(self, frame: "np.ndarray", mask: "np.ndarray") -> "np.ndarray":
         """Apply blur to masked region of frame.
-        
+
         Args:
             frame: BGR image.
             mask: Binary mask of region to blur.
-            
+
         Returns:
             Frame with blurred region.
         """
@@ -136,7 +117,9 @@ class PrivacyBlur:
             blurred = cv2.GaussianBlur(frame, (self.kernel_size, self.kernel_size), 0)
         elif self.blur_type == "pixelate":
             h, w = frame.shape[:2]
-            small = cv2.resize(frame, (w // 16, h // 16), interpolation=cv2.INTER_LINEAR)
+            small = cv2.resize(
+                frame, (w // 16, h // 16), interpolation=cv2.INTER_LINEAR
+            )
             blurred = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
         else:
             blurred = cv2.blur(frame, (self.kernel_size, self.kernel_size))

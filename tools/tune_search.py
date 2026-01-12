@@ -1,4 +1,3 @@
-
 """Search Weight Tuner.
 
 Optimizes the boosting weights for hybrid search by running synthetic queries
@@ -28,19 +27,16 @@ DATASET = [
     {
         "query": "Prakash bowling",
         "expected_in_payload": ["bowling", "Prakash"],
-        "min_rank": 5
+        "min_rank": 5,
     },
-    {
-        "query": "red car",
-        "expected_in_payload": ["red", "car"],
-        "min_rank": 5
-    },
+    {"query": "red car", "expected_in_payload": ["red", "car"], "min_rank": 5},
     {
         "query": "someone eating",
         "expected_in_payload": ["eating", "food"],
-        "min_rank": 10
-    }
+        "min_rank": 10,
+    },
 ]
+
 
 class WeightConfig(NamedTuple):
     face_match: float
@@ -50,6 +46,7 @@ class WeightConfig(NamedTuple):
     scene_match: float
     action_match: float
 
+
 def calculate_mrr(results: list, expected_keywords: list[str]) -> float:
     """Calculate Reciprocal Rank for a single query result set."""
     for rank, hit in enumerate(results, 1):
@@ -58,6 +55,7 @@ def calculate_mrr(results: list, expected_keywords: list[str]) -> float:
         if all(k.lower() in payload_str for k in expected_keywords):
             return 1.0 / rank
     return 0.0
+
 
 def main():
     print("🚀 Starting Search Tuner...")
@@ -90,11 +88,9 @@ def main():
 
     for fw, ew, aw in combinations:
         current_weights = base_config.copy()
-        current_weights.update({
-            "face_match": fw,
-            "entity_match": ew,
-            "action_match": aw
-        })
+        current_weights.update(
+            {"face_match": fw, "entity_match": ew, "action_match": aw}
+        )
 
         total_mrr = 0.0
 
@@ -104,9 +100,7 @@ def main():
 
             try:
                 results = db.search_frames_hybrid(
-                    query=query,
-                    limit=case["min_rank"],
-                    weights=current_weights
+                    query=query, limit=case["min_rank"], weights=current_weights
                 )
                 mrr = calculate_mrr(results, expected)
                 total_mrr += mrr
@@ -129,6 +123,7 @@ def main():
     # Recommendation
     print("\nRecommended Action:")
     print("Update core/storage/db.py default weights with these values.")
+
 
 if __name__ == "__main__":
     main()

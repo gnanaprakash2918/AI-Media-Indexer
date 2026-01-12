@@ -2,6 +2,7 @@
 
 Uses LLM reasoning to route queries to appropriate agents based on their capability cards.
 """
+
 import json
 from typing import Any
 
@@ -55,8 +56,7 @@ class MultiAgentOrchestrator:
             return self._fallback_route(query)
 
         prompt = ROUTER_PROMPT.format(
-            tools_json=json.dumps(self.tool_schemas, indent=2),
-            query=query
+            tools_json=json.dumps(self.tool_schemas, indent=2), query=query
         )
 
         try:
@@ -73,14 +73,31 @@ class MultiAgentOrchestrator:
         """Rule-based fallback when LLM unavailable."""
         q = query.lower()
 
-        if any(w in q for w in ["transcribe", "speech", "audio", "speaker", "dialogue"]):
-            return {"agent": "audio", "tool": "transcribe_audio", "parameters": {"audio_path": ""}, "reasoning": "Audio-related query"}
+        if any(
+            w in q for w in ["transcribe", "speech", "audio", "speaker", "dialogue"]
+        ):
+            return {
+                "agent": "audio",
+                "tool": "transcribe_audio",
+                "parameters": {"audio_path": ""},
+                "reasoning": "Audio-related query",
+            }
 
         if any(w in q for w in ["face", "person", "detect", "track", "segment"]):
-            return {"agent": "vision", "tool": "analyze_frame", "parameters": {}, "reasoning": "Vision-related query"}
+            return {
+                "agent": "vision",
+                "tool": "analyze_frame",
+                "parameters": {},
+                "reasoning": "Vision-related query",
+            }
 
         # Default to search
-        return {"agent": "search", "tool": "search_scenes", "parameters": {"query": query}, "reasoning": "Default to scene search"}
+        return {
+            "agent": "search",
+            "tool": "search_scenes",
+            "parameters": {"query": query},
+            "reasoning": "Default to scene search",
+        }
 
     async def execute(self, query: str) -> dict[str, Any]:
         """Route and execute query through appropriate agent."""
@@ -94,22 +111,32 @@ class MultiAgentOrchestrator:
         if agent_type == "search":
             from core.retrieval.agentic_search import SearchAgent
             from core.storage.db import VectorDB
+
             db = VectorDB()
             agent = SearchAgent(db=db)
             results = await agent.search(params.get("query", query))
             return {"route": route_result, "results": results}
 
         elif agent_type == "vision":
-            return {"route": route_result, "results": [], "message": "Vision agent execution placeholder"}
+            return {
+                "route": route_result,
+                "results": [],
+                "message": "Vision agent execution placeholder",
+            }
 
         elif agent_type == "audio":
-            return {"route": route_result, "results": [], "message": "Audio agent execution placeholder"}
+            return {
+                "route": route_result,
+                "results": [],
+                "message": "Audio agent execution placeholder",
+            }
 
         return {"route": route_result, "results": []}
 
 
 # Singleton instance
 _orchestrator: MultiAgentOrchestrator | None = None
+
 
 def get_orchestrator(llm=None) -> MultiAgentOrchestrator:
     global _orchestrator

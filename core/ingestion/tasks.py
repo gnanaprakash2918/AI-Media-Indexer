@@ -10,6 +10,7 @@ from core.utils.logger import bind_context, clear_context
 
 logger = get_task_logger(__name__)
 
+
 @shared_task(bind=True, name="core.ingestion.tasks.ingest_video_task")
 def ingest_video_task(self, video_path: str, job_id: str):
     """Celery task to ingest a video file."""
@@ -34,8 +35,8 @@ def ingest_video_task(self, video_path: str, job_id: str):
 
         loop = asyncio.get_event_loop()
         if loop.is_closed():
-             loop = asyncio.new_event_loop()
-             asyncio.set_event_loop(loop)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
         # We assume pipeline has a way to process by path.
         # But wait, `pipeline.py` currently has `start_ingest` which spawns background task.

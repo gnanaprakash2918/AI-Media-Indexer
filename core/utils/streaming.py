@@ -4,19 +4,16 @@ from typing import BinaryIO, Generator
 
 
 def range_generator(
-    file_obj: BinaryIO,
-    start: int,
-    end: int,
-    chunk_size: int = 64 * 1024
+    file_obj: BinaryIO, start: int, end: int, chunk_size: int = 64 * 1024
 ) -> Generator[bytes, None, None]:
     """Yield file chunks for range request.
-    
+
     Args:
         file_obj: Opened file object (binary mode).
         start: Start byte position.
         end: End byte position (inclusive).
         chunk_size: Chunk size in bytes.
-        
+
     Yields:
         Bytes chunks.
     """

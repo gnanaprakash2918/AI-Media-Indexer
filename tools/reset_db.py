@@ -16,7 +16,7 @@ def reset():
             VectorDB.MEDIA_SEGMENTS_COLLECTION,
             VectorDB.MEDIA_COLLECTION,
             VectorDB.FACES_COLLECTION,
-            VectorDB.VOICE_COLLECTION
+            VectorDB.VOICE_COLLECTION,
         ]
 
         for name in collections:
@@ -29,6 +29,7 @@ def reset():
         print("Reset complete.")
     except Exception as e:
         print(f"Connection failed: {e}")
+
 
 if __name__ == "__main__":
     reset()

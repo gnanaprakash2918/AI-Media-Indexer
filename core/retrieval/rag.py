@@ -77,10 +77,10 @@ ANSWER:"""
 
 class QueryDecoupler:
     """Decomposes complex queries into structured multi-modal components.
-    
+
     Uses LLM to parse natural language queries like:
     "Prakash bowling at night wearing blue"
-    
+
     Into structured queries with:
     - visual_cues: ["bowling alley", "night", "blue clothing"]
     - identities: ["Prakash"]
@@ -92,10 +92,10 @@ class QueryDecoupler:
 
     async def decompose(self, query: str) -> StructuredQuery:
         """Decompose a natural language query into structured components.
-        
+
         Args:
             query: Natural language search query.
-            
+
         Returns:
             StructuredQuery with decomposed components.
         """
@@ -105,12 +105,12 @@ class QueryDecoupler:
         try:
             prompt = QUERY_DECOMPOSITION_PROMPT.format(query=query)
             response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.llm.generate(prompt, max_tokens=800)
+                None, lambda: self.llm.generate(prompt, max_tokens=800)
             )
 
             # Parse JSON response
             import json
+
             # Find JSON in response (handle markdown code blocks)
             text = response.strip()
             if "```json" in text:
@@ -129,7 +129,9 @@ class QueryDecoupler:
                 identities=data.get("identities", []),
                 temporal_cues=data.get("temporal_cues", []),
                 is_question=data.get("is_question", False),
-                requires_external_knowledge=data.get("requires_external_knowledge", False),
+                requires_external_knowledge=data.get(
+                    "requires_external_knowledge", False
+                ),
                 scene_description=data.get("scene_description", query),
                 decomposition_confidence=0.9,
             )
@@ -147,7 +149,9 @@ class QueryDecoupler:
 
             structured.modalities = modalities or [QueryModality.VISUAL]
 
-            log(f"Query decomposed in {(time.time() - start)*1000:.0f}ms: {len(modalities)} modalities")
+            log(
+                f"Query decomposed in {(time.time() - start) * 1000:.0f}ms: {len(modalities)} modalities"
+            )
             return structured
 
         except Exception as e:
@@ -164,7 +168,7 @@ class QueryDecoupler:
 
 class VideoRAGOrchestrator:
     """Main orchestrator for cognitive video search.
-    
+
     Implements the full VideoRAG pipeline:
     1. Decompose query into structured components
     2. Enrich with external knowledge if needed
@@ -191,14 +195,14 @@ class VideoRAGOrchestrator:
         enable_answer_generation: bool = True,
     ) -> VideoRAGResponse:
         """Perform a full VideoRAG search.
-        
+
         Args:
             query: Natural language query.
             limit: Maximum results to return.
             video_path: Optional filter to specific video.
             enable_enrichment: Whether to use external knowledge.
             enable_answer_generation: Whether to generate text answer for questions.
-            
+
         Returns:
             VideoRAGResponse with results and optional answer.
         """
@@ -211,7 +215,11 @@ class VideoRAGOrchestrator:
 
         # Step 2: External enrichment (if needed and enabled)
         external_context: dict[str, Any] = {}
-        if enable_enrichment and structured.requires_external_knowledge and enricher.is_available:
+        if (
+            enable_enrichment
+            and structured.requires_external_knowledge
+            and enricher.is_available
+        ):
             try:
                 # Enrich identities we don't know
                 for identity in structured.identities:
@@ -246,9 +254,11 @@ class VideoRAGOrchestrator:
 
         if enable_answer_generation and structured.is_question and results:
             try:
-                answer, answer_citations, answer_confidence = await self._generate_answer(
-                    query, results[:5]
-                )
+                (
+                    answer,
+                    answer_citations,
+                    answer_confidence,
+                ) = await self._generate_answer(query, results[:5])
             except Exception as e:
                 log(f"Answer generation failed: {e}", level="WARNING")
 
@@ -274,7 +284,7 @@ class VideoRAGOrchestrator:
         video_path: str | None,
     ) -> list[SearchResultItem]:
         """Search across modalities and fuse results.
-        
+
         Uses RRF (Reciprocal Rank Fusion) or Strict Intersection:
         - If query has clear Audio vs Visual split, we intersect results.
         - Otherwise we use hybrid search.
@@ -292,7 +302,9 @@ class VideoRAGOrchestrator:
         has_audio = bool(structured.audio_cues)
 
         if has_visual and has_audio:
-            log(f"[VideoRAG] Performing Strict Intersection: Audio({structured.audio_cues}) ∩ Visual({structured.visual_cues})")
+            log(
+                f"[VideoRAG] Performing Strict Intersection: Audio({structured.audio_cues}) ∩ Visual({structured.visual_cues})"
+            )
 
             # 1. Search Visual
             visual_query = " ".join(structured.visual_cues)
@@ -301,7 +313,7 @@ class VideoRAGOrchestrator:
                 query=visual_query,
                 limit=limit * 2,
                 video_paths=video_path,
-                face_cluster_ids=face_cluster_ids or None
+                face_cluster_ids=face_cluster_ids or None,
             )
 
             # 2. Search Audio
@@ -311,12 +323,14 @@ class VideoRAGOrchestrator:
                 query=audio_query,
                 limit=limit * 2,
                 video_paths=video_path,
-                face_cluster_ids=face_cluster_ids or None
+                face_cluster_ids=face_cluster_ids or None,
             )
 
             # 3. Intersect
             intersections = self._intersect_results(visual_results, audio_results)
-            log(f"[VideoRAG] Intersection found {len(intersections)} overlapping segments.")
+            log(
+                f"[VideoRAG] Intersection found {len(intersections)} overlapping segments."
+            )
             return intersections[:limit]
 
         # FALLBACK / STANDARD HYBRID SEARCH (Single Query)
@@ -335,10 +349,7 @@ class VideoRAGOrchestrator:
         return self._convert_to_items(raw_results)
 
     def _intersect_results(
-        self,
-        visual_hits: list[dict],
-        audio_hits: list[dict],
-        window: float = 5.0
+        self, visual_hits: list[dict], audio_hits: list[dict], window: float = 5.0
     ) -> list[SearchResultItem]:
         """Find overlapping timestamps between two result sets."""
         matches = []
@@ -371,13 +382,20 @@ class VideoRAGOrchestrator:
                     item = SearchResultItem(
                         id=f"{a_hit['id']}_{v_hit['id']}",
                         video_path=vid,
-                        timestamp=(a_time + v_time) / 2, # Midpoint
-                        score=combined_score * 1.2, # Boost intersection
+                        timestamp=(a_time + v_time) / 2,  # Midpoint
+                        score=combined_score * 1.2,  # Boost intersection
                         match_reasons=["strict_intersection"],
-                        matched_entities=list(set(a_hit.get("entities", []) + v_hit.get("entities", []))),
+                        matched_entities=list(
+                            set(a_hit.get("entities", []) + v_hit.get("entities", []))
+                        ),
                         action=v_hit.get("action"),
                         dialogue=a_hit.get("dialogue") or v_hit.get("dialogue"),
-                        face_names=list(set(a_hit.get("face_names", []) + v_hit.get("face_names", []))),
+                        face_names=list(
+                            set(
+                                a_hit.get("face_names", [])
+                                + v_hit.get("face_names", [])
+                            )
+                        ),
                         visual_score=v_hit.get("score"),
                     )
                     matches.append(item)
@@ -424,11 +442,7 @@ class VideoRAGOrchestrator:
             # Search for named faces
             results = self.db.client.scroll(
                 collection_name=self.db.FACES_COLLECTION,
-                scroll_filter={
-                    "must": [
-                        {"key": "name", "match": {"value": name}}
-                    ]
-                },
+                scroll_filter={"must": [{"key": "name", "match": {"value": name}}]},
                 limit=1,
                 with_payload=["cluster_id"],
             )
@@ -447,11 +461,11 @@ class VideoRAGOrchestrator:
         results: list[SearchResultItem],
     ) -> tuple[str, list[str], float]:
         """Generate a text answer from retrieved clips.
-        
+
         Args:
             question: User's question.
             results: Retrieved video clips.
-            
+
         Returns:
             Tuple of (answer, citations, confidence).
         """
@@ -465,11 +479,11 @@ class VideoRAGOrchestrator:
             citation = f"[{video_name} @ {time_str}]"
             citations.append(citation)
 
-            clip_info = f"Clip {i+1} {citation}:"
+            clip_info = f"Clip {i + 1} {citation}:"
             if r.action:
                 clip_info += f" Action: {r.action}"
             if r.dialogue:
-                clip_info += f" Dialogue: \"{r.dialogue}\""
+                clip_info += f' Dialogue: "{r.dialogue}"'
             if r.entities:
                 clip_info += f" Entities: {', '.join(r.entities[:5])}"
 
@@ -484,8 +498,7 @@ class VideoRAGOrchestrator:
         )
 
         answer = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: self.llm.generate(prompt, max_tokens=500)
+            None, lambda: self.llm.generate(prompt, max_tokens=500)
         )
 
         # Simple confidence based on result relevance

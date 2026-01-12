@@ -3,6 +3,7 @@
 This module provides the `VectorDB` class, which handles interactions with Qdrant
 for storing and retrieving media segments, frames, faces, and voice embeddings.
 """
+
 from __future__ import annotations
 
 import time
@@ -25,6 +26,7 @@ from core.utils.observe import observe
 
 def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
     """Decorator to retry Qdrant operations on connection errors (WinError 10053, etc.)."""
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -35,14 +37,20 @@ def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
                 except (OSError, ConnectionError, ConnectionResetError) as e:
                     last_error = e
                     if attempt < max_retries - 1:
-                        log(f"Qdrant connection error (attempt {attempt + 1}): {e}, retrying...")
+                        log(
+                            f"Qdrant connection error (attempt {attempt + 1}): {e}, retrying..."
+                        )
                         time.sleep(delay * (attempt + 1))
                     else:
-                        log(f"Qdrant connection failed after {max_retries} attempts: {e}")
+                        log(
+                            f"Qdrant connection failed after {max_retries} attempts: {e}"
+                        )
             if last_error:
                 raise last_error
             raise RuntimeError("Qdrant retry failed")
+
         return wrapper
+
     return decorator
 
 
@@ -114,7 +122,9 @@ class VectorDB:
         self._encoder_last_used: float = 0.0
         self._idle_unload_seconds = 300  # Unload after 5 min idle
 
-        log(f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use.")
+        log(
+            f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
+        )
         self._ensure_collections()
 
     def _load_encoder(self) -> SentenceTransformer:
@@ -175,9 +185,9 @@ class VectorDB:
 
     def encoder_to_cpu(self) -> None:
         """Move encoder to CPU to free GPU VRAM for Ollama."""
-        if hasattr(self, 'encoder') and self.encoder is not None:
+        if hasattr(self, "encoder") and self.encoder is not None:
             try:
-                self.encoder = self.encoder.to('cpu')
+                self.encoder = self.encoder.to("cpu")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
@@ -188,7 +198,7 @@ class VectorDB:
     def encoder_to_gpu(self) -> None:
         """Move encoder back to GPU for fast embedding."""
         device = settings.device or "cuda"
-        if device != "cpu" and hasattr(self, 'encoder') and self.encoder is not None:
+        if device != "cpu" and hasattr(self, "encoder") and self.encoder is not None:
             try:
                 self.encoder = self.encoder.to(device)
                 log(f"Encoder moved back to {device}")
@@ -213,6 +223,7 @@ class VectorDB:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             import gc
+
             gc.collect()
             return True
         return False
@@ -294,10 +305,12 @@ class VectorDB:
             results, offset = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
                 scroll_filter=models.Filter(
-                    must=[models.FieldCondition(
-                        key="video_path",
-                        match=models.MatchValue(value=video_path),
-                    )]
+                    must=[
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchValue(value=video_path),
+                        )
+                    ]
                 ),
                 limit=500,
                 offset=offset,
@@ -326,7 +339,10 @@ class VectorDB:
                 info = self.client.get_collection(self.MEDIA_COLLECTION)
                 existing_size = info.config.params.vectors.size
                 if existing_size != self.MEDIA_VECTOR_SIZE:
-                    log(f"media_frames dimension mismatch: {existing_size} vs {self.MEDIA_VECTOR_SIZE}. Recreating.", level="WARNING")
+                    log(
+                        f"media_frames dimension mismatch: {existing_size} vs {self.MEDIA_VECTOR_SIZE}. Recreating.",
+                        level="WARNING",
+                    )
                     self.client.delete_collection(self.MEDIA_COLLECTION)
             except Exception as e:
                 log(f"Failed to check media_frames dimension: {e}")
@@ -547,7 +563,10 @@ class VectorDB:
         try:
             # Check dimension match
             if len(vector) != self.MEDIA_VECTOR_SIZE:
-                log(f"Vector dim mismatch: {len(vector)} vs {self.MEDIA_VECTOR_SIZE}", level="ERROR")
+                log(
+                    f"Vector dim mismatch: {len(vector)} vs {self.MEDIA_VECTOR_SIZE}",
+                    level="ERROR",
+                )
                 return
 
             self.client.upsert(
@@ -590,7 +609,7 @@ class VectorDB:
             final_payload.update(payload)
 
         try:
-             self.client.upsert(
+            self.client.upsert(
                 collection_name="masklets",
                 points=[
                     models.PointStruct(
@@ -651,11 +670,11 @@ class VectorDB:
         threshold: float = 0.5,
     ) -> tuple[str, float] | None:
         """Find matching global speaker for an embedding.
-        
+
         Args:
             embedding: Voice embedding vector.
             threshold: Cosine similarity threshold (0.5 = generous).
-            
+
         Returns:
             Tuple of (speaker_id, score) or None.
         """
@@ -689,6 +708,7 @@ class VectorDB:
     ) -> None:
         """Store a voice segment embedding linked to a global speaker ID."""
         import uuid
+
         point_id = str(uuid.uuid4())
 
         self.client.upsert(
@@ -703,12 +723,10 @@ class VectorDB:
                         "start": start,
                         "end": end,
                         "type": "voice_sample",
-                    }
+                    },
                 )
-            ]
+            ],
         )
-
-
 
     @observe("db_search_frames_filtered")
     def search_frames_filtered(
@@ -779,10 +797,10 @@ class VectorDB:
 
     def get_recent_frames(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get most recently indexed frames as fallback for empty search results.
-        
+
         Args:
             limit: Maximum number of results.
-            
+
         Returns:
             List of recent frames with payload data.
         """
@@ -796,12 +814,14 @@ class VectorDB:
             results = []
             for point in resp[0]:
                 payload = point.payload or {}
-                results.append({
-                    "id": str(point.id),
-                    "score": 0.5,  # Default score for fallback results
-                    "fallback": True,
-                    **payload,
-                })
+                results.append(
+                    {
+                        "id": str(point.id),
+                        "score": 0.5,  # Default score for fallback results
+                        "fallback": True,
+                        **payload,
+                    }
+                )
             return results
         except Exception:
             return []
@@ -816,15 +836,15 @@ class VectorDB:
         rrf_k: int = 60,
     ) -> list[dict[str, Any]]:
         """Hybrid search with Reciprocal Rank Fusion (RRF).
-        
+
         Combines:
         1. Vector semantic search (visual/action descriptions)
         2. Keyword/text matching (entities, visible_text, scene)
         3. Identity filtering (face names, speaker names)
-        
+
         RRF Formula: score = sum(1 / (k + rank_i)) for each retrieval method.
         Default k=60 balances fusion (standard in SIGIR papers).
-        
+
         Returns explainable results with match_reasons.
         """
         from collections import defaultdict
@@ -917,9 +937,15 @@ class VectorDB:
                     str(payload.get("action", "")),
                     str(payload.get("dialogue", "")),
                     str(payload.get("scene_type", "")),
-                    " ".join(payload.get("entities", [])) if isinstance(payload.get("entities"), list) else "",
-                    " ".join(payload.get("visible_text", [])) if isinstance(payload.get("visible_text"), list) else "",
-                    " ".join(payload.get("face_names", [])) if isinstance(payload.get("face_names", []), list) else "",
+                    " ".join(payload.get("entities", []))
+                    if isinstance(payload.get("entities"), list)
+                    else "",
+                    " ".join(payload.get("visible_text", []))
+                    if isinstance(payload.get("visible_text"), list)
+                    else "",
+                    " ".join(payload.get("face_names", []))
+                    if isinstance(payload.get("face_names", []), list)
+                    else "",
                 ]
                 combined_text = " ".join(text_fields).lower()
 
@@ -942,18 +968,17 @@ class VectorDB:
                 # Check for concept match
                 concept_matches = []
                 for word in query_words:
-                    if len(word) > 3: # Ignore short words
+                    if len(word) > 3:  # Ignore short words
                         concept_matches.append(
                             models.FieldCondition(
-                                key="concept",
-                                match=models.MatchValue(value=word)
+                                key="concept", match=models.MatchValue(value=word)
                             )
                         )
 
                 if concept_matches:
                     masklet_filter = models.Filter(
                         must=masklet_conditions,
-                        should=concept_matches, # Match ANY concept word
+                        should=concept_matches,  # Match ANY concept word
                     )
 
                     mask_resp = self.client.scroll(
@@ -965,18 +990,18 @@ class VectorDB:
 
                     for point in mask_resp[0]:
                         payload = point.payload or {}
-                        point_id = str(point.id) # Use unique ID
+                        point_id = str(point.id)  # Use unique ID
 
                         # Create a synthetic result from masklet
                         # Masklet has start/end. We map to start time.
 
-                        rank_lists["keyword"][point_id] = 1 # High rank
+                        rank_lists["keyword"][point_id] = 1  # High rank
 
                         if point_id not in results_by_id:
                             results_by_id[point_id] = {
                                 "id": point_id,
                                 "score": 0.0,
-                                "keyword_score": 0.9, # High confidence
+                                "keyword_score": 0.9,  # High confidence
                                 "match_reasons": [],
                                 "timestamp": payload.get("start_time", 0.0),
                                 "video_path": payload.get("video_path"),
@@ -990,7 +1015,9 @@ class VectorDB:
                 log(f"Masklet search failed: {e}")
 
             keyword_matches.sort(key=lambda x: x[1], reverse=True)
-            for rank, (point_id, score, payload) in enumerate(keyword_matches[:limit * 2]):
+            for rank, (point_id, score, payload) in enumerate(
+                keyword_matches[: limit * 2]
+            ):
                 rank_lists["keyword"][point_id] = rank + 1
                 if point_id not in results_by_id:
                     results_by_id[point_id] = {
@@ -1137,18 +1164,20 @@ class VectorDB:
         except Exception:
             return None
 
-    def fuzzy_get_cluster_id_by_name(self, name: str, threshold: float = 0.7) -> int | None:
+    def fuzzy_get_cluster_id_by_name(
+        self, name: str, threshold: float = 0.7
+    ) -> int | None:
         """Resolve a person's name to cluster ID using fuzzy matching.
-        
+
         Handles:
         - Case-insensitive matching ("John" == "john")
         - Partial names ("Prakash" matches "Gnana Prakash")
         - Common variations ("Bob" might match "Robert")
-        
+
         Args:
             name: The search name (can be partial or different case).
             threshold: Minimum similarity ratio (0.0-1.0) for a match.
-            
+
         Returns:
             Best matching cluster_id, or None if no good match.
         """
@@ -1460,7 +1489,9 @@ class VectorDB:
             ],
         )
 
-        log(f"Stored scene {start_time:.1f}-{end_time:.1f}s for {Path(media_path).name}")
+        log(
+            f"Stored scene {start_time:.1f}-{end_time:.1f}s for {Path(media_path).name}"
+        )
         return scene_id
 
     @observe("db_search_scenes")
@@ -1613,12 +1644,14 @@ class VectorDB:
                         query_filter=query_filter,
                     )
                     for hit in resp.points:
-                        results.append({
-                            "score": hit.score,
-                            "id": str(hit.id),
-                            "vector_type": vector_name,
-                            **(hit.payload or {}),
-                        })
+                        results.append(
+                            {
+                                "score": hit.score,
+                                "id": str(hit.id),
+                                "vector_type": vector_name,
+                                **(hit.payload or {}),
+                            }
+                        )
                 except Exception as e:
                     log(f"Scene search ({vector_name}) error: {e}")
 
@@ -1643,12 +1676,14 @@ class VectorDB:
                     query_filter=query_filter,
                 )
                 for hit in resp.points:
-                    results.append({
-                        "score": hit.score,
-                        "id": str(hit.id),
-                        "vector_type": search_mode,
-                        **(hit.payload or {}),
-                    })
+                    results.append(
+                        {
+                            "score": hit.score,
+                            "id": str(hit.id),
+                            "vector_type": search_mode,
+                            **(hit.payload or {}),
+                        }
+                    )
             except Exception as e:
                 log(f"Scene search ({search_mode}) error: {e}")
 
@@ -1658,7 +1693,9 @@ class VectorDB:
             query_name_lower = person_name.lower()
             for result in results:
                 # Check if result has face_names or person_names that match
-                face_names = result.get("face_names", []) or result.get("person_names", [])
+                face_names = result.get("face_names", []) or result.get(
+                    "person_names", []
+                )
                 if face_names:
                     for name in face_names:
                         if name and query_name_lower in name.lower():
@@ -1681,19 +1718,19 @@ class VectorDB:
         score_threshold: float = 0.3,
     ) -> list[dict[str, Any]]:
         """Search with explainable results - returns reasoning for each match.
-        
+
         This is the SOTA search method that provides:
         - Matched entities with individual confidence scores
         - Reasoning for why the result was selected
         - Face/voice identification with names
         - Timestamp accuracy justification
-        
+
         Args:
             query_text: The search query text.
             parsed_query: Optional DynamicParsedQuery with extracted entities.
             limit: Maximum results to return.
             score_threshold: Minimum similarity score.
-        
+
         Returns:
             List of results with explainable metadata:
             [
@@ -1745,11 +1782,15 @@ class VectorDB:
                             "face_id": face_ids[i] if i < len(face_ids) else None,
                         }
                         evidence.append("face_match")
-                        reasoning_parts.append(f"Identified {name} via face recognition")
+                        reasoning_parts.append(
+                            f"Identified {name} via face recognition"
+                        )
                         break
 
             # Check for voice matches
-            voice_names = result.get("voice_names", []) or result.get("speaker_names", [])
+            voice_names = result.get("voice_names", []) or result.get(
+                "speaker_names", []
+            )
             voice_ids = result.get("voice_ids", [])
             if voice_names:
                 for i, name in enumerate(voice_names):
@@ -1798,25 +1839,31 @@ class VectorDB:
                 reasoning_parts.append(f"Actions: {', '.join(actions[:3])}")
 
             # Get description for additional context
-            description = result.get("description", "") or result.get("dense_caption", "")
+            description = result.get("description", "") or result.get(
+                "dense_caption", ""
+            )
 
             # Build reasoning string
-            reasoning = "; ".join(reasoning_parts) if reasoning_parts else description[:200]
+            reasoning = (
+                "; ".join(reasoning_parts) if reasoning_parts else description[:200]
+            )
 
             # Build explainable result
-            explainable_results.append({
-                "id": result.get("id"),
-                "score": result.get("score", 0),
-                "timestamp": result.get("start_time") or result.get("timestamp", 0),
-                "end_time": result.get("end_time"),
-                "media_path": result.get("media_path"),
-                "matched_entities": matched_entities,
-                "reasoning": reasoning,
-                "evidence": evidence,
-                "hitl_boost": result.get("hitl_boost", False),
-                # Include raw data for debugging
-                "raw_description": description[:500] if description else None,
-            })
+            explainable_results.append(
+                {
+                    "id": result.get("id"),
+                    "score": result.get("score", 0),
+                    "timestamp": result.get("start_time") or result.get("timestamp", 0),
+                    "end_time": result.get("end_time"),
+                    "media_path": result.get("media_path"),
+                    "matched_entities": matched_entities,
+                    "reasoning": reasoning,
+                    "evidence": evidence,
+                    "hitl_boost": result.get("hitl_boost", False),
+                    # Include raw data for debugging
+                    "raw_description": description[:500] if description else None,
+                }
+            )
 
         return explainable_results
 
@@ -1871,10 +1918,12 @@ class VectorDB:
             )
             scenes = []
             for point in resp[0]:
-                scenes.append({
-                    "id": str(point.id),
-                    **(point.payload or {}),
-                })
+                scenes.append(
+                    {
+                        "id": str(point.id),
+                        **(point.payload or {}),
+                    }
+                )
             # Sort by start_time
             scenes.sort(key=lambda x: x.get("start_time", 0))
             return scenes
@@ -1906,9 +1955,7 @@ class VectorDB:
                 collection_name=self.FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
-                        models.IsNullCondition(
-                            is_null=models.PayloadField(key="name")
-                        )
+                        models.IsNullCondition(is_null=models.PayloadField(key="name"))
                     ]
                 ),
                 limit=limit,
@@ -1921,18 +1968,25 @@ class VectorDB:
                 cluster_id = payload.get("cluster_id")
                 if cluster_id is None:
                     cluster_id = abs(hash(str(point.id))) % (10**9)
-                results.append({
-                    "id": point.id,
-                    "cluster_id": cluster_id,
-                    "name": payload.get("name"),
-                    "media_path": payload.get("media_path"),
-                    "timestamp": payload.get("timestamp"),
-                    "thumbnail_path": payload.get("thumbnail_path"),
-                    "is_main": payload.get("is_main", False),
-                    "appearance_count": payload.get("appearance_count", 1),
-                })
+                results.append(
+                    {
+                        "id": point.id,
+                        "cluster_id": cluster_id,
+                        "name": payload.get("name"),
+                        "media_path": payload.get("media_path"),
+                        "timestamp": payload.get("timestamp"),
+                        "thumbnail_path": payload.get("thumbnail_path"),
+                        "is_main": payload.get("is_main", False),
+                        "appearance_count": payload.get("appearance_count", 1),
+                    }
+                )
             # Sort: main characters first, then by appearance count
-            results.sort(key=lambda x: (not x.get("is_main", False), -x.get("appearance_count", 1)))
+            results.sort(
+                key=lambda x: (
+                    not x.get("is_main", False),
+                    -x.get("appearance_count", 1),
+                )
+            )
             return results
         except Exception:
             return []
@@ -1981,11 +2035,11 @@ class VectorDB:
     @observe("db_update_face_cluster_id")
     def update_face_cluster_id(self, face_id: str, cluster_id: int) -> bool:
         """Update the cluster ID for a single face.
-        
+
         Args:
             face_id: The ID of the face to update.
             cluster_id: The new cluster ID.
-            
+
         Returns:
             True if updated successfully.
         """
@@ -2001,13 +2055,15 @@ class VectorDB:
             return False
 
     @observe("db_merge_face_clusters")
-    def merge_face_clusters(self, from_cluster: str | int, to_cluster: str | int) -> int:
+    def merge_face_clusters(
+        self, from_cluster: str | int, to_cluster: str | int
+    ) -> int:
         """Merge all faces from one cluster into another.
-        
+
         Args:
             from_cluster: Source cluster ID.
             to_cluster: Target cluster ID.
-            
+
         Returns:
             Number of faces moved.
         """
@@ -2090,7 +2146,7 @@ class VectorDB:
                         )
                     ]
                 ),
-                limit=10000, # Assume reasonable max frames per video for update
+                limit=10000,  # Assume reasonable max frames per video for update
                 with_payload=False,
                 with_vectors=False,
             )
@@ -2108,20 +2164,21 @@ class VectorDB:
             return len(point_ids)
         except Exception as e:
             from core.utils.logger import get_logger
+
             log = get_logger(__name__)
             log.error(f"Failed to update video metadata: {e}")
             return 0
 
     def set_face_main(self, cluster_id: int, is_main: bool = True) -> bool:
         """Set a face cluster as main character.
-        
+
         This updates all faces in the cluster with is_main_character flag.
         Used by HITL to mark important recurring characters.
-        
+
         Args:
             cluster_id: The face cluster ID to mark.
             is_main: Whether this is a main character.
-            
+
         Returns:
             Success status.
         """
@@ -2141,18 +2198,23 @@ class VectorDB:
                 with_payload=False,
             )
             face_ids = [p.id for p in resp[0]]
-            
+
             if not face_ids:
                 log(f"[HITL] No faces found in cluster {cluster_id}")
                 return False
-                
+
             # Update all faces in cluster with PointIdsList (correct API usage)
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
-                payload={"is_main_character": is_main, "is_main": is_main},  # Both keys for compat
+                payload={
+                    "is_main_character": is_main,
+                    "is_main": is_main,
+                },  # Both keys for compat
                 points=models.PointIdsList(points=face_ids),
             )
-            log(f"[HITL] Set {len(face_ids)} faces in cluster {cluster_id} as main character: {is_main}")
+            log(
+                f"[HITL] Set {len(face_ids)} faces in cluster {cluster_id} as main character: {is_main}"
+            )
             return True
         except Exception as e:
             log(f"[HITL] Failed to set main character: {e}")
@@ -2170,9 +2232,7 @@ class VectorDB:
                 collection_name=self.FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must_not=[
-                        models.IsNullCondition(
-                            is_null=models.PayloadField(key="name")
-                        )
+                        models.IsNullCondition(is_null=models.PayloadField(key="name"))
                     ]
                 ),
                 limit=500,
@@ -2182,14 +2242,16 @@ class VectorDB:
             results = []
             for point in resp[0]:
                 payload = point.payload or {}
-                results.append({
-                    "id": point.id,
-                    "name": payload.get("name"),
-                    "cluster_id": payload.get("cluster_id"),
-                    "media_path": payload.get("media_path"),
-                    "timestamp": payload.get("timestamp"),
-                    "thumbnail_path": payload.get("thumbnail_path"),
-                })
+                results.append(
+                    {
+                        "id": point.id,
+                        "name": payload.get("name"),
+                        "cluster_id": payload.get("cluster_id"),
+                        "media_path": payload.get("media_path"),
+                        "timestamp": payload.get("timestamp"),
+                        "thumbnail_path": payload.get("thumbnail_path"),
+                    }
+                )
             return results
         except Exception:
             return []
@@ -2234,13 +2296,15 @@ class VectorDB:
         except Exception:
             return False
 
-    def get_faces_by_media(self, media_path: str, limit: int = 1000) -> list[dict[str, Any]]:
+    def get_faces_by_media(
+        self, media_path: str, limit: int = 1000
+    ) -> list[dict[str, Any]]:
         """Get all faces for a specific media file.
-        
+
         Args:
             media_path: Path to the media file.
             limit: Maximum number of results.
-            
+
         Returns:
             List of face data dicts.
         """
@@ -2262,19 +2326,19 @@ class VectorDB:
             results = []
             for point in resp[0]:
                 payload = point.payload or {}
-                results.append({
-                    "id": point.id,
-                    "media_path": payload.get("media_path"),
-                    "timestamp": payload.get("timestamp"),
-                    "name": payload.get("name"),
-                    "cluster_id": payload.get("cluster_id"),
-                    "thumbnail_path": payload.get("thumbnail_path"),
-                })
+                results.append(
+                    {
+                        "id": point.id,
+                        "media_path": payload.get("media_path"),
+                        "timestamp": payload.get("timestamp"),
+                        "name": payload.get("name"),
+                        "cluster_id": payload.get("cluster_id"),
+                        "thumbnail_path": payload.get("thumbnail_path"),
+                    }
+                )
             return results
         except Exception:
             return []
-
-
 
     @observe("db_get_indexed_media")
     def get_indexed_media(self, limit: int = 1000) -> list[dict[str, Any]]:
@@ -2359,14 +2423,16 @@ class VectorDB:
             results = []
             for point in resp[0]:
                 payload = point.payload or {}
-                results.append({
-                    "id": point.id,
-                    "media_path": payload.get("media_path"),
-                    "start": payload.get("start"),
-                    "end": payload.get("end"),
-                    "speaker_label": payload.get("speaker_label"),
-                    "audio_path": payload.get("audio_path"),
-                })
+                results.append(
+                    {
+                        "id": point.id,
+                        "media_path": payload.get("media_path"),
+                        "start": payload.get("start"),
+                        "end": payload.get("end"),
+                        "speaker_label": payload.get("speaker_label"),
+                        "audio_path": payload.get("audio_path"),
+                    }
+                )
             return results
         except Exception:
             return []
@@ -2410,17 +2476,28 @@ class VectorDB:
         # Cleanup Faces
         try:
             # 1. Get Faces to delete files
-            face_filter = models.Filter(must=[models.FieldCondition(key="media_path", match=models.MatchValue(value=video_path))])
-            face_points = self.client.scroll(self.FACES_COLLECTION, scroll_filter=face_filter, limit=10000, with_payload=True)[0]
+            face_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="media_path", match=models.MatchValue(value=video_path)
+                    )
+                ]
+            )
+            face_points = self.client.scroll(
+                self.FACES_COLLECTION,
+                scroll_filter=face_filter,
+                limit=10000,
+                with_payload=True,
+            )[0]
             for pt in face_points:
                 payload = pt.payload or {}
                 thumb = payload.get("thumbnail_path")
                 if thumb:
                     try:
                         if thumb.startswith("/thumbnails"):
-                             path = settings.cache_dir / thumb.lstrip("/")
-                             if path.exists():
-                                 path.unlink()
+                            path = settings.cache_dir / thumb.lstrip("/")
+                            if path.exists():
+                                path.unlink()
                     except Exception:
                         pass
         except Exception:
@@ -2428,17 +2505,28 @@ class VectorDB:
 
         # Cleanup Voice Segments
         try:
-            voice_filter = models.Filter(must=[models.FieldCondition(key="media_path", match=models.MatchValue(value=video_path))])
-            voice_points = self.client.scroll(self.VOICE_COLLECTION, scroll_filter=voice_filter, limit=10000, with_payload=True)[0]
+            voice_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="media_path", match=models.MatchValue(value=video_path)
+                    )
+                ]
+            )
+            voice_points = self.client.scroll(
+                self.VOICE_COLLECTION,
+                scroll_filter=voice_filter,
+                limit=10000,
+                with_payload=True,
+            )[0]
             for pt in voice_points:
                 payload = pt.payload or {}
                 audio = payload.get("audio_path")
                 if audio:
                     try:
                         if audio.startswith("/thumbnails"):
-                             path = settings.cache_dir / audio.lstrip("/")
-                             if path.exists():
-                                 path.unlink()
+                            path = settings.cache_dir / audio.lstrip("/")
+                            if path.exists():
+                                path.unlink()
                     except Exception:
                         pass
         except Exception:
@@ -2452,7 +2540,12 @@ class VectorDB:
         ]:
             try:
                 # For faces and voices, we need to match media_path
-                key = "video_path" if collection in [self.MEDIA_SEGMENTS_COLLECTION, self.MEDIA_COLLECTION] else "media_path"
+                key = (
+                    "video_path"
+                    if collection
+                    in [self.MEDIA_SEGMENTS_COLLECTION, self.MEDIA_COLLECTION]
+                    else "media_path"
+                )
 
                 self.client.delete(
                     collection_name=collection,
@@ -2496,9 +2589,9 @@ class VectorDB:
                 if audio:
                     try:
                         if audio.startswith("/thumbnails"):
-                             path = settings.cache_dir / audio.lstrip("/")
-                             if path.exists():
-                                 path.unlink()
+                            path = settings.cache_dir / audio.lstrip("/")
+                            if path.exists():
+                                path.unlink()
                     except Exception:
                         pass
 
@@ -2528,17 +2621,23 @@ class VectorDB:
             results = []
             for point in resp[0]:
                 if point.vector:
-                    results.append({
-                        "id": point.id,
-                        "embedding": list(point.vector) if isinstance(point.vector, (list, tuple)) else point.vector,
-                        "payload": point.payload or {},
-                    })
+                    results.append(
+                        {
+                            "id": point.id,
+                            "embedding": list(point.vector)
+                            if isinstance(point.vector, (list, tuple))
+                            else point.vector,
+                            "payload": point.payload or {},
+                        }
+                    )
             return results
         except Exception:
             return []
 
     @observe("db_get_faces_grouped_by_cluster")
-    def get_faces_grouped_by_cluster(self, limit: int = 500) -> dict[int, list[dict[str, Any]]]:
+    def get_faces_grouped_by_cluster(
+        self, limit: int = 500
+    ) -> dict[int, list[dict[str, Any]]]:
         """Get all faces grouped by cluster_id.
 
         Args:
@@ -2560,14 +2659,16 @@ class VectorDB:
                 cluster_id = payload.get("cluster_id", -1)
                 if cluster_id not in clusters:
                     clusters[cluster_id] = []
-                clusters[cluster_id].append({
-                    "id": point.id,
-                    "name": payload.get("name"),
-                    "cluster_id": cluster_id,
-                    "media_path": payload.get("media_path"),
-                    "timestamp": payload.get("timestamp"),
-                    "thumbnail_path": payload.get("thumbnail_path"),
-                })
+                clusters[cluster_id].append(
+                    {
+                        "id": point.id,
+                        "name": payload.get("name"),
+                        "cluster_id": cluster_id,
+                        "media_path": payload.get("media_path"),
+                        "timestamp": payload.get("timestamp"),
+                        "thumbnail_path": payload.get("thumbnail_path"),
+                    }
+                )
             return clusters
         except Exception:
             return {}
@@ -2575,10 +2676,10 @@ class VectorDB:
     @observe("db_get_all_cluster_centroids")
     def get_all_cluster_centroids(self) -> dict[int, list[float]]:
         """Get cluster centroids for global identity matching.
-        
+
         Returns ONE embedding per cluster_id (the mean of all faces in that cluster).
         This is O(1) per match instead of O(N) when matching new faces.
-        
+
         Only returns clusters with at least one named face (HITL verified).
         """
         try:
@@ -2609,13 +2710,14 @@ class VectorDB:
 
                 if isinstance(point.vector, list):
                     cluster_embeddings[cluster_id].append(point.vector)
-                elif hasattr(point.vector, 'tolist'):
+                elif hasattr(point.vector, "tolist"):
                     cluster_embeddings[cluster_id].append(point.vector.tolist())
 
             centroids: dict[int, list[float]] = {}
             for cluster_id, embeddings in cluster_embeddings.items():
                 if embeddings:
                     import numpy as np
+
                     arr = np.array(embeddings, dtype=np.float64)
                     centroid = np.mean(arr, axis=0)
                     centroid = centroid / (np.linalg.norm(centroid) + 1e-9)
@@ -2630,13 +2732,10 @@ class VectorDB:
 
     @observe("db_update_cluster_centroid")
     def update_cluster_centroid(
-        self,
-        cluster_id: int,
-        new_embedding: list[float],
-        alpha: float = 0.3
+        self, cluster_id: int, new_embedding: list[float], alpha: float = 0.3
     ) -> bool:
         """Update cluster centroid with exponential moving average.
-        
+
         Args:
             cluster_id: Cluster to update.
             new_embedding: New face embedding to incorporate.
@@ -2682,11 +2781,15 @@ class VectorDB:
             results = []
             for point in resp[0]:
                 if point.vector:
-                    results.append({
-                        "id": point.id,
-                        "embedding": list(point.vector) if isinstance(point.vector, (list, tuple)) else point.vector,
-                        "payload": point.payload or {},
-                    })
+                    results.append(
+                        {
+                            "id": point.id,
+                            "embedding": list(point.vector)
+                            if isinstance(point.vector, (list, tuple))
+                            else point.vector,
+                            "payload": point.payload or {},
+                        }
+                    )
             return results
         except Exception:
             return []
@@ -2713,7 +2816,9 @@ class VectorDB:
             return False
 
     @observe("db_get_voices_grouped_by_cluster")
-    def get_voices_grouped_by_cluster(self, limit: int = 500) -> dict[int, list[dict[str, Any]]]:
+    def get_voices_grouped_by_cluster(
+        self, limit: int = 500
+    ) -> dict[int, list[dict[str, Any]]]:
         """Get all voice segments grouped by voice_cluster_id.
 
         Args:
@@ -2735,16 +2840,18 @@ class VectorDB:
                 cluster_id = payload.get("voice_cluster_id", -1)
                 if cluster_id not in clusters:
                     clusters[cluster_id] = []
-                clusters[cluster_id].append({
-                    "id": point.id,
-                    "media_path": payload.get("media_path"),
-                    "start": payload.get("start"),
-                    "end": payload.get("end"),
-                    "speaker_label": payload.get("speaker_label"),
-                    "speaker_name": payload.get("speaker_name"),
-                    "audio_path": payload.get("audio_path"),
-                    "voice_cluster_id": cluster_id,
-                })
+                clusters[cluster_id].append(
+                    {
+                        "id": point.id,
+                        "media_path": payload.get("media_path"),
+                        "start": payload.get("start"),
+                        "end": payload.get("end"),
+                        "speaker_label": payload.get("speaker_label"),
+                        "speaker_name": payload.get("speaker_name"),
+                        "audio_path": payload.get("audio_path"),
+                        "voice_cluster_id": cluster_id,
+                    }
+                )
             return clusters
         except Exception:
             return {}
@@ -2789,10 +2896,10 @@ class VectorDB:
 
     def get_face_by_thumbnail(self, thumbnail_path: str) -> dict[str, Any] | None:
         """Look up a face by its thumbnail_path.
-        
+
         Args:
             thumbnail_path: The thumbnail path stored in the database.
-            
+
         Returns:
             Face data dict or None if not found.
         """
@@ -2829,10 +2936,10 @@ class VectorDB:
 
     def get_voice_by_audio_path(self, audio_path: str) -> dict[str, Any] | None:
         """Look up a voice segment by its audio_path.
-        
+
         Args:
             audio_path: The audio clip path stored in the database.
-            
+
         Returns:
             Voice segment data dict or None if not found.
         """
@@ -2870,13 +2977,13 @@ class VectorDB:
 
     def get_voice_segments_for_media(self, media_path: str) -> list[dict[str, Any]]:
         """Get all voice segments for a specific media file.
-        
+
         Used for face-audio temporal mapping to find who is speaking
         at a given timestamp.
-        
+
         Args:
             media_path: Path to the media file.
-            
+
         Returns:
             List of voice segment dicts with start, end, cluster_id, speaker_name.
         """
@@ -2898,14 +3005,16 @@ class VectorDB:
             results = []
             for point in resp[0]:
                 payload = point.payload or {}
-                results.append({
-                    "id": str(point.id),
-                    "start": payload.get("start", 0),
-                    "end": payload.get("end", 0),
-                    "cluster_id": payload.get("cluster_id"),
-                    "speaker_label": payload.get("speaker_label"),
-                    "speaker_name": payload.get("speaker_name"),
-                })
+                results.append(
+                    {
+                        "id": str(point.id),
+                        "start": payload.get("start", 0),
+                        "end": payload.get("end", 0),
+                        "cluster_id": payload.get("cluster_id"),
+                        "speaker_label": payload.get("speaker_label"),
+                        "speaker_name": payload.get("speaker_name"),
+                    }
+                )
             return results
         except Exception as e:
             log(f"get_voice_segments_for_media error: {e}")
@@ -2917,7 +3026,7 @@ class VectorDB:
 
     def get_all_hitl_names(self) -> list[str]:
         """Get all HITL-assigned names (faces and speakers).
-        
+
         Returns:
             List of unique names from face clusters and speaker clusters.
         """
@@ -2929,9 +3038,7 @@ class VectorDB:
                 collection_name=self.FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must_not=[
-                        models.IsNullCondition(
-                            is_null=models.PayloadField(key="name")
-                        )
+                        models.IsNullCondition(is_null=models.PayloadField(key="name"))
                     ]
                 ),
                 limit=1000,
@@ -2969,10 +3076,10 @@ class VectorDB:
 
     def get_face_name_by_cluster(self, cluster_id: str | int) -> str | None:
         """Get HITL-assigned name for a face cluster.
-        
+
         Args:
             cluster_id: The face cluster ID.
-            
+
         Returns:
             Name if assigned, None otherwise.
         """
@@ -2998,12 +3105,12 @@ class VectorDB:
 
     def get_face_cluster_by_name(self, name: str) -> int | None:
         """Find face cluster ID by HITL-assigned name.
-        
+
         Used for auto-merging when naming a new cluster with an existing name.
-        
+
         Args:
             name: The HITL-assigned name to search for.
-            
+
         Returns:
             Cluster ID if found, None otherwise.
         """
@@ -3029,14 +3136,14 @@ class VectorDB:
 
     def set_face_name(self, cluster_id: str | int, name: str) -> int:
         """Set name for a face cluster (and all its points).
-        
+
         Also propagates the name to all frames containing this cluster
         for proper search and display.
-        
+
         Args:
             cluster_id: The face cluster ID (str or int).
             name: The name to assign.
-            
+
         Returns:
             Number of updated face points.
         """
@@ -3044,28 +3151,34 @@ class VectorDB:
             # Get all face point IDs in this cluster
             resp = self.client.scroll(
                 collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", match=models.MatchValue(value=cluster_id)
+                        )
+                    ]
+                ),
                 limit=500,
             )
             point_ids = [str(p.id) for p in resp[0]]
-            
+
             if not point_ids:
                 log(f"set_face_name: No faces found for cluster {cluster_id}")
                 return 0
-                
+
             # Update all face points with the name
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
                 payload={"name": name},
                 points=point_ids,
             )
-            
+
             # Propagate name to frames for proper search
             self._propagate_face_name_to_frames(cluster_id, name)
-            
-            log(f"[HITL] Set name '{name}' on {len(point_ids)} faces in cluster {cluster_id}")
+
+            log(
+                f"[HITL] Set name '{name}' on {len(point_ids)} faces in cluster {cluster_id}"
+            )
             return len(point_ids)
         except Exception as e:
             log(f"set_face_name failed: {e}")
@@ -3083,7 +3196,9 @@ class VectorDB:
                 speaker_names = payload.get("speaker_names", [])
                 if self.update_frame_identity_text(frame_id, face_names, speaker_names):
                     updated += 1
-            log(f"Re-embedded {updated} frames for face cluster {cluster_id} -> {new_name}")
+            log(
+                f"Re-embedded {updated} frames for face cluster {cluster_id} -> {new_name}"
+            )
             return updated
         except Exception as e:
             log(f"re_embed_face_cluster_frames error: {e}")
@@ -3091,10 +3206,10 @@ class VectorDB:
 
     def get_speaker_name_by_cluster(self, cluster_id: int) -> str | None:
         """Get HITL-assigned name for a speaker cluster.
-        
+
         Args:
             cluster_id: The speaker cluster ID.
-            
+
         Returns:
             Name if assigned, None otherwise.
         """
@@ -3120,11 +3235,11 @@ class VectorDB:
 
     def set_speaker_name(self, cluster_id: int, name: str) -> int:
         """Set name for a speaker cluster.
-        
+
         Args:
             cluster_id: The speaker cluster ID.
             name: The name to assign.
-            
+
         Returns:
             Number of updated segments.
         """
@@ -3142,17 +3257,19 @@ class VectorDB:
                     ]
                 ),
             )
-            return 1 # Return 1 to indicate success (Qdrant doesn't return count directly here easily)
+            return 1  # Return 1 to indicate success (Qdrant doesn't return count directly here easily)
         except Exception:
             return 0
 
-    def get_frames_by_face_cluster(self, cluster_id: int, limit: int = 1000) -> list[dict]:
+    def get_frames_by_face_cluster(
+        self, cluster_id: int, limit: int = 1000
+    ) -> list[dict]:
         """Get all frames containing a specific face cluster.
-        
+
         Args:
             cluster_id: The face cluster ID to search for.
             limit: Maximum results.
-            
+
         Returns:
             List of frame data dicts.
         """
@@ -3173,11 +3290,13 @@ class VectorDB:
             )
             results = []
             for point in resp[0]:
-                results.append({
-                    "id": str(point.id),
-                    "payload": point.payload or {},
-                    "vector": point.vector,
-                })
+                results.append(
+                    {
+                        "id": str(point.id),
+                        "payload": point.payload or {},
+                        "vector": point.vector,
+                    }
+                )
             return results
         except Exception as e:
             log(f"get_frames_by_face_cluster error: {e}")
@@ -3192,16 +3311,16 @@ class VectorDB:
         weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Legacy hybrid search with keyword boosting.
-        
+
         NOTE: Main search_frames_hybrid is at line ~826 using RRF algorithm.
         This version uses simpler keyword boosting approach.
-        
+
         Args:
             query: Natural language search query.
             video_paths: Optional filter to specific video(s).
             limit: Maximum results to return.
             weights: Optional dictionary of boosting weights.
-            
+
         Returns:
             Ranked list of matching frames with scores.
         """
@@ -3240,7 +3359,9 @@ class VectorDB:
                         )
                     ]
                 )
-                log(f"[HybridSearch] Identity filter: {matched_names} → clusters {cluster_ids}")
+                log(
+                    f"[HybridSearch] Identity filter: {matched_names} → clusters {cluster_ids}"
+                )
 
         # 2. Build video path filter
         video_filter = None
@@ -3275,7 +3396,18 @@ class VectorDB:
         # 4. Extract keywords for boosting
         query_words = set(w.lower() for w in query.split() if len(w) > 2)
         # Remove common words
-        stopwords = {"the", "and", "for", "with", "that", "this", "from", "are", "was", "were"}
+        stopwords = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "this",
+            "from",
+            "are",
+            "was",
+            "were",
+        }
         query_words -= stopwords
 
         # 5. Score and boost results
@@ -3317,18 +3449,22 @@ class VectorDB:
             if any(w in action.lower() for w in query_words):
                 boost += w["action_match"]
 
-            results.append({
-                "id": str(hit.id),
-                "score": score + boost,
-                "base_score": score,
-                "keyword_boost": boost,
-                **payload,
-            })
+            results.append(
+                {
+                    "id": str(hit.id),
+                    "score": score + boost,
+                    "base_score": score,
+                    "keyword_boost": boost,
+                    **payload,
+                }
+            )
 
         # 6. Sort by final score
         results.sort(key=lambda x: x["score"], reverse=True)
 
-        log(f"[HybridSearch] Query: '{query}' | Identity filter: {bool(identity_filter)} | Results: {len(results)}")
+        log(
+            f"[HybridSearch] Query: '{query}' | Identity filter: {bool(identity_filter)} | Results: {len(results)}"
+        )
 
         return results[:limit]
 
@@ -3340,7 +3476,7 @@ class VectorDB:
                 collection_name=self.MEDIA_COLLECTION,
                 ids=[frame_id],
                 with_payload=True,
-                with_vectors=False
+                with_vectors=False,
             )
             if not resp:
                 log(f"Frame {frame_id} not found")
@@ -3352,13 +3488,17 @@ class VectorDB:
             payload["is_hitl_corrected"] = True
 
             identity_text = payload.get("identity_text", "")
-            full_text = f"{description}. {identity_text}" if identity_text else description
+            full_text = (
+                f"{description}. {identity_text}" if identity_text else description
+            )
 
             new_vector = self.encode_texts(full_text, is_query=False)[0]
 
             self.client.upsert(
                 collection_name=self.MEDIA_COLLECTION,
-                points=[models.PointStruct(id=frame_id, vector=new_vector, payload=payload)],
+                points=[
+                    models.PointStruct(id=frame_id, vector=new_vector, payload=payload)
+                ],
             )
             log(f"HITL: Re-embedded frame {frame_id} with: '{description[:50]}...'")
             return True
@@ -3373,16 +3513,16 @@ class VectorDB:
         speaker_names: list[str],
     ) -> bool:
         """Update a frame's identity text AND re-embed the vector.
-        
+
         Called when HITL names are assigned to update searchability.
         Crucial: This combines the original visual description with the new names
         and re-generates the embedding vector so the names are searchable.
-        
+
         Args:
             frame_id: The frame point ID.
             face_names: List of visible person names.
             speaker_names: List of speaking person names.
-            
+
         Returns:
             Success status.
         """
@@ -3392,7 +3532,7 @@ class VectorDB:
                 collection_name=self.MEDIA_COLLECTION,
                 ids=[frame_id],
                 with_payload=True,
-                with_vectors=False # Don't need old vector
+                with_vectors=False,  # Don't need old vector
             )
             if not resp:
                 return False
@@ -3414,7 +3554,9 @@ class VectorDB:
 
             # 3. Create NEW combined text for embedding
             # "A man walking. Visible: John. Speaking: John"
-            full_text = f"{description}. {identity_text}" if identity_text else description
+            full_text = (
+                f"{description}. {identity_text}" if identity_text else description
+            )
 
             if not full_text.strip():
                 return False
@@ -3438,24 +3580,30 @@ class VectorDB:
                     )
                 ],
             )
-            log(f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}")
+            log(
+                f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}"
+            )
             return True
 
-            log(f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}")
+            log(
+                f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}"
+            )
             return True
 
         except Exception as e:
             log(f"Failed to update frame identity: {e}")
             return False
 
-    def re_embed_voice_cluster_frames(self, cluster_id: int, new_name: str, old_name: str | None = None) -> int:
+    def re_embed_voice_cluster_frames(
+        self, cluster_id: int, new_name: str, old_name: str | None = None
+    ) -> int:
         """Update and re-embed all frames associated with a voice cluster.
-        
+
         Args:
             cluster_id: The voice cluster ID being renamed.
             new_name: The new speaker name.
             old_name: The previous speaker name (to remove from lists).
-            
+
         Returns:
             Number of frames updated.
         """
@@ -3463,10 +3611,15 @@ class VectorDB:
             # 1. Get all voice segments for this cluster
             resp = self.client.scroll(
                 collection_name=self.VOICE_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="voice_cluster_id", match=models.MatchValue(value=cluster_id))
-                ]),
-                limit=10000, # Assume reasonable limit for single cluster
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+                limit=10000,  # Assume reasonable limit for single cluster
                 with_payload=True,
             )
             segments = resp[0]
@@ -3475,7 +3628,7 @@ class VectorDB:
                 return 0
 
             updated_count = 0
-            processed_frames = set() # Avoid double processing same frame
+            processed_frames = set()  # Avoid double processing same frame
 
             # 2. Iterate segments and find frames
             for seg in segments:
@@ -3490,12 +3643,19 @@ class VectorDB:
                 # Find frames in this time range for this video
                 frames_resp = self.client.scroll(
                     collection_name=self.MEDIA_COLLECTION,
-                    scroll_filter=models.Filter(must=[
-                         models.FieldCondition(key="media_path", match=models.MatchValue(value=media_path)),
-                         models.FieldCondition(key="timestamp", range=models.Range(gte=start, lte=end))
-                    ]),
+                    scroll_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="media_path",
+                                match=models.MatchValue(value=media_path),
+                            ),
+                            models.FieldCondition(
+                                key="timestamp", range=models.Range(gte=start, lte=end)
+                            ),
+                        ]
+                    ),
                     with_payload=True,
-                    limit=100 # usually a few frames per segment
+                    limit=100,  # usually a few frames per segment
                 )
                 frames = frames_resp[0]
 
@@ -3517,7 +3677,9 @@ class VectorDB:
                         speaker_names.append(new_name)
 
                     # 3. Call update_frame_identity_text to re-embed
-                    if self.update_frame_identity_text(str(frame.id), face_names, speaker_names):
+                    if self.update_frame_identity_text(
+                        str(frame.id), face_names, speaker_names
+                    ):
                         updated_count += 1
 
                     processed_frames.add(frame.id)
@@ -3535,7 +3697,7 @@ class VectorDB:
             self.MEDIA_SEGMENTS_COLLECTION,
             self.MEDIA_COLLECTION,
             self.FACES_COLLECTION,
-            self.VOICE_COLLECTION
+            self.VOICE_COLLECTION,
         ]:
             try:
                 # Try with "media_path" key
@@ -3546,11 +3708,11 @@ class VectorDB:
                             must=[
                                 models.FieldCondition(
                                     key="media_path",
-                                    match=models.MatchValue(value=media_path)
+                                    match=models.MatchValue(value=media_path),
                                 )
                             ]
                         )
-                    )
+                    ),
                 )
                 # Try with "video_path" key (legacy/mixed usage)
                 self.client.delete(
@@ -3560,11 +3722,11 @@ class VectorDB:
                             must=[
                                 models.FieldCondition(
                                     key="video_path",
-                                    match=models.MatchValue(value=media_path)
+                                    match=models.MatchValue(value=media_path),
                                 )
                             ]
                         )
-                    )
+                    ),
                 )
             except Exception as e:
                 log(f"Failed to delete from {collection}: {e}")
@@ -3572,24 +3734,29 @@ class VectorDB:
     def store_scene_metadata(self, media_path: str, scenes: list[dict]) -> None:
         log(f"Received {len(scenes)} scenes for {media_path} (Storage not implemented)")
 
-    def create_empty_face_cluster(self, cluster_id: str, name: str = "", source: str = "manual") -> bool:
+    def create_empty_face_cluster(
+        self, cluster_id: str, name: str = "", source: str = "manual"
+    ) -> bool:
         import numpy as np
+
         dummy_vector = np.zeros(512).tolist()
         point_id = str(uuid.uuid4())
         try:
             self.client.upsert(
                 collection_name=self.FACES_COLLECTION,
-                points=[models.PointStruct(
-                    id=point_id,
-                    vector=dummy_vector,
-                    payload={
-                        "cluster_id": cluster_id,
-                        "name": name,
-                        "source": source,
-                        "verified": False,
-                        "is_placeholder": True,
-                    }
-                )]
+                points=[
+                    models.PointStruct(
+                        id=point_id,
+                        vector=dummy_vector,
+                        payload={
+                            "cluster_id": cluster_id,
+                            "name": name,
+                            "source": source,
+                            "verified": False,
+                            "is_placeholder": True,
+                        },
+                    )
+                ],
             )
             return True
         except Exception as e:
@@ -3610,18 +3777,27 @@ class VectorDB:
 
     def recalculate_cluster_centroid(self, cluster_id: str | int) -> list[float] | None:
         import numpy as np
+
         try:
             resp = self.client.scroll(
                 collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", match=models.MatchValue(value=cluster_id)
+                        )
+                    ]
+                ),
                 limit=100,
                 with_vectors=True,
             )
             if not resp[0]:
                 return None
-            vectors = [p.vector for p in resp[0] if p.vector and not (p.payload or {}).get("is_placeholder")]
+            vectors = [
+                p.vector
+                for p in resp[0]
+                if p.vector and not (p.payload or {}).get("is_placeholder")
+            ]
             if not vectors:
                 return None
             centroid = np.mean(vectors, axis=0).tolist()
@@ -3630,8 +3806,11 @@ class VectorDB:
             log(f"recalculate_cluster_centroid failed: {e}")
             return None
 
-    def get_cluster_distance(self, source_id: str | int, target_id: str | int) -> float | None:
+    def get_cluster_distance(
+        self, source_id: str | int, target_id: str | int
+    ) -> float | None:
         import numpy as np
+
         try:
             src_centroid = self.recalculate_cluster_centroid(source_id)
             tgt_centroid = self.recalculate_cluster_centroid(target_id)
@@ -3639,20 +3818,27 @@ class VectorDB:
                 return None
             src_arr = np.array(src_centroid)
             tgt_arr = np.array(tgt_centroid)
-            dist = 1.0 - np.dot(src_arr, tgt_arr) / (np.linalg.norm(src_arr) * np.linalg.norm(tgt_arr) + 1e-8)
+            dist = 1.0 - np.dot(src_arr, tgt_arr) / (
+                np.linalg.norm(src_arr) * np.linalg.norm(tgt_arr) + 1e-8
+            )
             return float(dist)
         except Exception:
             return None
 
-
-
-    def _update_frames_cluster_rename(self, old_cluster: str | int, new_cluster: str | int) -> int:
+    def _update_frames_cluster_rename(
+        self, old_cluster: str | int, new_cluster: str | int
+    ) -> int:
         try:
             resp = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="face_cluster_ids", match=models.MatchAny(any=[old_cluster]))
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="face_cluster_ids",
+                            match=models.MatchAny(any=[old_cluster]),
+                        )
+                    ]
+                ),
                 limit=1000,
                 with_payload=True,
             )
@@ -3660,7 +3846,9 @@ class VectorDB:
             for p in resp[0]:
                 payload = p.payload or {}
                 clusters = payload.get("face_cluster_ids", [])
-                new_clusters = [new_cluster if c == old_cluster else c for c in clusters]
+                new_clusters = [
+                    new_cluster if c == old_cluster else c for c in clusters
+                ]
                 self.client.set_payload(
                     collection_name=self.MEDIA_COLLECTION,
                     payload={"face_cluster_ids": new_clusters},
@@ -3671,18 +3859,19 @@ class VectorDB:
         except Exception:
             return 0
 
-
-
-
-
-
-    def set_cluster_verified(self, cluster_id: str | int, verified: bool = True) -> bool:
+    def set_cluster_verified(
+        self, cluster_id: str | int, verified: bool = True
+    ) -> bool:
         try:
             resp = self.client.scroll(
                 collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", match=models.MatchValue(value=cluster_id)
+                        )
+                    ]
+                ),
                 limit=500,
             )
             point_ids = [str(p.id) for p in resp[0]]
@@ -3700,9 +3889,14 @@ class VectorDB:
         try:
             resp = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="face_cluster_ids", match=models.MatchAny(any=[cluster_id]))
-                ]),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="face_cluster_ids",
+                            match=models.MatchAny(any=[cluster_id]),
+                        )
+                    ]
+                ),
                 limit=1000,
                 with_payload=True,
             )
@@ -3719,4 +3913,3 @@ class VectorDB:
             return updated
         except Exception:
             return 0
-

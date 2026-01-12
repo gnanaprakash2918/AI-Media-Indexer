@@ -3,6 +3,7 @@
 Aggregates frame-level analysis into scene-level data AND generates
 video-level global context for long-term understanding (18-hour problem).
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -162,11 +163,15 @@ class SceneAggregator:
                             for fid in face_ids:
                                 all_accessories[fid].add(name)
 
-            location = frame.get("scene_location") or structured.get("scene", {}).get("location", "")
+            location = frame.get("scene_location") or structured.get("scene", {}).get(
+                "location", ""
+            )
             if location:
                 location_votes[location] += 1
 
-            cultural = frame.get("scene_cultural") or structured.get("scene", {}).get("cultural_context", "")
+            cultural = frame.get("scene_cultural") or structured.get("scene", {}).get(
+                "cultural_context", ""
+            )
             if cultural:
                 cultural_votes[cultural] += 1
 
@@ -205,7 +210,9 @@ class SceneAggregator:
                     if seg.get("speaker_name"):
                         speaker_names.add(seg["speaker_name"])
 
-        visual_summary = self._build_visual_summary(unique_actions, all_entities, all_person_names)
+        visual_summary = self._build_visual_summary(
+            unique_actions, all_entities, all_person_names
+        )
 
         scene_data = {
             "start_time": start_time,
@@ -235,9 +242,27 @@ class SceneAggregator:
 
     def _extract_color(self, text: str) -> str:
         colors = [
-            "red", "blue", "green", "yellow", "orange", "purple", "pink",
-            "black", "white", "gray", "grey", "brown", "navy", "azure",
-            "maroon", "beige", "cream", "gold", "silver", "teal", "cyan",
+            "red",
+            "blue",
+            "green",
+            "yellow",
+            "orange",
+            "purple",
+            "pink",
+            "black",
+            "white",
+            "gray",
+            "grey",
+            "brown",
+            "navy",
+            "azure",
+            "maroon",
+            "beige",
+            "cream",
+            "gold",
+            "silver",
+            "teal",
+            "cyan",
         ]
         text_lower = text.lower()
         for color in colors:

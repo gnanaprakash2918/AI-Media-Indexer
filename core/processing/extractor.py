@@ -52,7 +52,7 @@ class FrameExtractor:
             interval: Time interval in seconds between extracted frames. 0.0 = every frame.
             start_time: Optional start time in seconds for partial extraction.
             end_time: Optional end time in seconds for partial extraction.
-        
+
         Returns:
             An async generator yielding Paths to the extracted frame images.
         """
@@ -108,11 +108,15 @@ class FrameExtractor:
                 if video_filters:
                     args_to_ffmpeg.extend(["-vf", ",".join(video_filters)])
 
-                args_to_ffmpeg.extend([
-                    "-q:v", "2",  # High quality JPEG
-                    "-f", "image2",
-                    str(output_pattern),
-                ])
+                args_to_ffmpeg.extend(
+                    [
+                        "-q:v",
+                        "2",  # High quality JPEG
+                        "-f",
+                        "image2",
+                        str(output_pattern),
+                    ]
+                )
 
                 log(f"Starting async ffmpeg process for {path_obj.name}")
 

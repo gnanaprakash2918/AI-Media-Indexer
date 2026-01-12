@@ -134,7 +134,7 @@ class VisionAnalyzer:
     Supports two modes:
     1. describe() - Unstructured text description (legacy)
     2. analyze_frame() - Structured FrameAnalysis for search (preferred)
-    
+
     LAZY LOADING: LLM is only loaded on first analyze call to prevent OOM.
     """
 
@@ -171,7 +171,6 @@ class VisionAnalyzer:
         self._ensure_llm_loaded()
         assert self._llm is not None
         return self._llm
-
 
     @observe("vision_analyze_frame")
     async def analyze_frame(
@@ -211,7 +210,7 @@ class VisionAnalyzer:
         # Build enhanced prompt with multimodal context
         # CRITICAL: Add video context FIRST to ground VLM and prevent hallucinations
         prompt_parts = []
-        
+
         if video_context:
             prompt_parts.append(f"""## VIDEO CONTEXT (USE THIS TO GROUND YOUR ANALYSIS)
 {video_context}
@@ -222,17 +221,23 @@ IMPORTANT RULES:
 3. If this is a song/music video, describe choreography/visuals - NOT imaginary conversations
 4. If filename suggests content type (song, trailer, etc), use that to interpret ambiguous visuals
 """)
-        
+
         prompt_parts.append(STRUCTURED_ANALYSIS_PROMPT)
 
         if identity_context:
-            prompt_parts.append(f"\n\n## KNOWN IDENTITIES IN FRAME\n{identity_context}\nUse these names when describing the people.")
+            prompt_parts.append(
+                f"\n\n## KNOWN IDENTITIES IN FRAME\n{identity_context}\nUse these names when describing the people."
+            )
 
         if audio_context:
-            prompt_parts.append(f"\n\n## AUDIO CONTEXT (what's being said)\n{audio_context}\nThis shows dialogue at this moment. Use it to understand the scene.")
+            prompt_parts.append(
+                f"\n\n## AUDIO CONTEXT (what's being said)\n{audio_context}\nThis shows dialogue at this moment. Use it to understand the scene."
+            )
 
         if temporal_context:
-            prompt_parts.append(f"\n\n## PREVIOUS FRAMES (temporal context)\n{temporal_context}\nThis shows what happened before. Use it to understand continuing actions and narrative flow.")
+            prompt_parts.append(
+                f"\n\n## PREVIOUS FRAMES (temporal context)\n{temporal_context}\nThis shows what happened before. Use it to understand continuing actions and narrative flow."
+            )
 
         enhanced_prompt = "\n".join(prompt_parts)
 
@@ -242,11 +247,15 @@ IMPORTANT RULES:
                 prompt=enhanced_prompt,
                 image_path=image_path,
             )
-            log(f"[Vision] Structured analysis: {analysis.action[:50] if analysis.action else 'no action'}...")
+            log(
+                f"[Vision] Structured analysis: {analysis.action[:50] if analysis.action else 'no action'}..."
+            )
             return analysis
         except Exception as e:
             log(f"[Vision] Structured analysis failed for {image_path}: {e}")
-            log(f"[Vision] Falling back to unstructured description for {image_path.name}")
+            log(
+                f"[Vision] Falling back to unstructured description for {image_path.name}"
+            )
             return None
 
     @observe("vision_describe")

@@ -149,7 +149,7 @@ class SearchAgent:
 
     def _resolve_identity(self, person_name: str) -> int | None:
         """Resolve person name to cluster ID via HITL database.
-        
+
         Uses exact match first, then fuzzy matching for:
         - Typos ("prakash" → "Prakash")
         - Partial names ("Gnana" → "Gnana Prakash")
@@ -248,7 +248,9 @@ class SearchAgent:
                 accessories=parsed.accessories if parsed.accessories else None,
                 location=parsed.location,
                 visible_text=parsed.text_to_find if parsed.text_to_find else None,
-                action_keywords=parsed.action_keywords if parsed.action_keywords else None,
+                action_keywords=parsed.action_keywords
+                if parsed.action_keywords
+                else None,
                 video_path=video_path,
                 search_mode="hybrid",
             )
@@ -305,7 +307,9 @@ class SearchAgent:
             if cluster_id is not None:
                 face_ids = self._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
-                log(f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id} ({len(face_ids)} faces)")
+                log(
+                    f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id} ({len(face_ids)} faces)"
+                )
 
         # 3. Build search query from expanded keywords
         search_text = parsed.to_search_text()
@@ -389,14 +393,18 @@ class SearchAgent:
 
         # 5. Execute HYBRID search (Vector + Filters)
         try:
-            query_vector = self.db.encode_texts(search_text or "scene activity", is_query=True)[0]
+            query_vector = self.db.encode_texts(
+                search_text or "scene activity", is_query=True
+            )[0]
 
             if filters:
                 conditions: list[models.Condition] = list(filters)
                 results = self.db.client.query_points(
                     collection_name=self.db.MEDIA_COLLECTION,
                     query=query_vector,
-                    query_filter=models.Filter(should=conditions) if len(conditions) > 1 else models.Filter(must=conditions),
+                    query_filter=models.Filter(should=conditions)
+                    if len(conditions) > 1
+                    else models.Filter(must=conditions),
                     limit=limit,
                 ).points
                 results = [
@@ -466,18 +474,18 @@ class SearchAgent:
         top_k: int = 10,
     ) -> list[dict]:
         """Re-rank candidates using LLM to verify ALL query constraints.
-        
+
         This is the SOTA re-ranking stage that:
         1. Takes candidate results from vector search
         2. Uses LLM to verify each constraint from query is satisfied
         3. Scores based on number of matched constraints
         4. Provides chain-of-thought reasoning for each decision
-        
+
         Args:
             query: Original user query.
             candidates: List of search results to re-rank.
             top_k: Number of top results to return.
-        
+
         Returns:
             Re-ranked list with LLM verification scores and reasoning.
         """
@@ -519,11 +527,11 @@ Return JSON:
 
         reranked = []
 
-        for candidate in candidates[:top_k * 2]:  # Check more candidates than needed
+        for candidate in candidates[: top_k * 2]:  # Check more candidates than needed
             description = (
-                candidate.get("description", "") or
-                candidate.get("dense_caption", "") or
-                candidate.get("raw_description", "")
+                candidate.get("description", "")
+                or candidate.get("dense_caption", "")
+                or candidate.get("raw_description", "")
             )
 
             prompt = RERANK_PROMPT.format(
@@ -559,8 +567,8 @@ Return JSON:
                 ]
                 candidate["constraints_missing"] = result.missing
                 candidate["combined_score"] = (
-                    candidate.get("score", 0) * 0.4 +  # Vector similarity
-                    result.match_score * 0.6           # LLM verification
+                    candidate.get("score", 0) * 0.4  # Vector similarity
+                    + result.match_score * 0.6  # LLM verification
                 )
                 reranked.append(candidate)
 
@@ -583,19 +591,19 @@ Return JSON:
         use_reranking: bool = True,
     ) -> dict[str, Any]:
         """SOTA search pipeline with full verification.
-        
+
         This is the highest quality search method that:
         1. Parses query with dynamic entity extraction
         2. Retrieves candidates via multi-vector hybrid search
         3. Re-ranks with LLM constraint verification
         4. Returns explainable results with reasoning
-        
+
         Args:
             query: Complex natural language query.
             limit: Maximum results.
             video_path: Optional filter by video.
             use_reranking: Whether to use LLM re-ranking (slower but more accurate).
-        
+
         Returns:
             Dict with ranked results and full explainability.
         """
@@ -611,7 +619,7 @@ Return JSON:
         face_ids = []
 
         # Try new dynamic format first
-        if hasattr(parsed, 'entities') and parsed.entities:
+        if hasattr(parsed, "entities") and parsed.entities:
             for entity in parsed.entities:
                 if entity.entity_type.lower() == "person" and entity.name:
                     person_names.append(entity.name)
@@ -650,7 +658,7 @@ Return JSON:
         # 5. Build response with full explainability
         return {
             "query": query,
-            "parsed": parsed.model_dump() if hasattr(parsed, 'model_dump') else {},
+            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
             "search_text": search_text,
             "person_names_resolved": person_names,
             "face_ids_matched": len(face_ids),
@@ -668,43 +676,44 @@ Return JSON:
         limit: int = 10,
     ) -> dict:
         """Search using Scenelet temporal windows for action queries.
-        
+
         Returns results with precise start_time/end_time ranges and
         natural language reasoning.
         """
         log(f"[Scenelet Search] Query: '{query[:80]}...'")
-        
+
         parsed = await self.parse_query(query)
         search_text = parsed.to_search_text() or query
-        
+
         candidates = self.db.search_frames(query=search_text, limit=limit * 2)
-        
+
         results_with_ranges = []
         for cand in candidates:
             ts = cand.get("timestamp", 0)
             start_time = max(0, ts - 2.5)
             end_time = ts + 2.5
-            
+
             actions = cand.get("actions", [])
             entities = cand.get("entities", cand.get("entity_names", []))
-            
+
             action_str = ", ".join(actions[:3]) if actions else "activity"
             entity_str = ", ".join(entities[:3]) if entities else "scene"
-            
+
             reasoning = f"Matched Sequence: {action_str} with {entity_str} from {start_time:.1f}s to {end_time:.1f}s"
-            
-            results_with_ranges.append({
-                **cand,
-                "start_time": start_time,
-                "end_time": end_time,
-                "reasoning": reasoning,
-                "match_explanation": f"Action '{action_str}' detected at {ts:.1f}s",
-            })
-        
+
+            results_with_ranges.append(
+                {
+                    **cand,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "reasoning": reasoning,
+                    "match_explanation": f"Action '{action_str}' detected at {ts:.1f}s",
+                }
+            )
+
         return {
             "query": query,
             "search_type": "scenelet",
             "results": results_with_ranges[:limit],
             "result_count": len(results_with_ranges[:limit]),
         }
-

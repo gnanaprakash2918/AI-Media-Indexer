@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 
@@ -17,15 +16,21 @@ def inspect_data():
     resp = db.client.scroll(
         collection_name=db.FACES_COLLECTION,
         scroll_filter=models.Filter(
-            must=[models.FieldCondition(key="cluster_id", match=models.MatchValue(value=2))]
+            must=[
+                models.FieldCondition(
+                    key="cluster_id", match=models.MatchValue(value=2)
+                )
+            ]
         ),
         limit=5,
-        with_payload=True
+        with_payload=True,
     )
     faces = resp[0]
     output.append(f"Faces in Cluster 2: {len(faces)}")
     for face in faces:
-        output.append(f"ID: {face.id}, Name: {face.payload.get('name')}, Media: {face.payload.get('media_path')}")
+        output.append(
+            f"ID: {face.id}, Name: {face.payload.get('name')}, Media: {face.payload.get('media_path')}"
+        )
 
     output.append("\n--- Searching Frames with Cluster 2 ---")
     resp = db.client.scroll(
@@ -33,13 +38,12 @@ def inspect_data():
         scroll_filter=models.Filter(
             must=[
                 models.FieldCondition(
-                    key="face_cluster_ids",
-                    match=models.MatchAny(any=[2])
+                    key="face_cluster_ids", match=models.MatchAny(any=[2])
                 )
             ]
         ),
         limit=5,
-        with_payload=True
+        with_payload=True,
     )
     frames = resp[0]
     output.append(f"Frames with Cluster 2: {len(frames)}")
@@ -59,20 +63,24 @@ def inspect_data():
             must=[
                 models.FieldCondition(
                     key="video_path",
-                    match=models.MatchText(text="BRAHMASTRA") # Loose match to find the video
+                    match=models.MatchText(
+                        text="BRAHMASTRA"
+                    ),  # Loose match to find the video
                 )
             ]
         ),
         limit=5,
-        with_payload=True
+        with_payload=True,
     )
     frames = resp[0]
     output.append(f"Frames from Brahmastra: {len(frames)}")
     if not frames:
-         output.append("No frames found with text match 'BRAHMASTRA'. Trying to list all videos...")
-         media = db.get_indexed_media()
-         for m in media:
-             output.append(f"Indexed Media: {m['video_path']}")
+        output.append(
+            "No frames found with text match 'BRAHMASTRA'. Trying to list all videos..."
+        )
+        media = db.get_indexed_media()
+        for m in media:
+            output.append(f"Indexed Media: {m['video_path']}")
 
     for frame in frames:
         payload = frame.payload or {}
@@ -86,6 +94,7 @@ def inspect_data():
         f.write("\n".join(output))
 
     print("Debug output written to debug_output.txt")
+
 
 if __name__ == "__main__":
     inspect_data()

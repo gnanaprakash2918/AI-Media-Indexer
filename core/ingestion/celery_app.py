@@ -3,13 +3,15 @@ from celery import Celery
 from config import settings
 
 # Redis URL from environment or settings
-REDIS_URL = f"redis://:{settings.redis_auth}@{settings.redis_host}:{settings.redis_port}/0"
+REDIS_URL = (
+    f"redis://:{settings.redis_auth}@{settings.redis_host}:{settings.redis_port}/0"
+)
 
 celery_app = Celery(
     "ai_media_indexer",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["core.ingestion.tasks"]
+    include=["core.ingestion.tasks"],
 )
 
 celery_app.conf.update(

@@ -3,6 +3,7 @@
 Calculates temporal co-occurrence between Face and Voice clusters,
 fuzzy matches against TMDB cast, and generates merge suggestions.
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,8 +68,9 @@ class IdentityLinker:
 
     def fuzzy_match(self, name1: str, name2: str) -> float:
         """Fuzzy name matching using token overlap (Jaccard similarity)."""
+
         def normalize(s: str) -> set[str]:
-            s = re.sub(r'[^\w\s]', '', s.lower())
+            s = re.sub(r"[^\w\s]", "", s.lower())
             return set(s.split())
 
         tokens1 = normalize(name1)
@@ -98,7 +100,9 @@ class IdentityLinker:
             if not face_times:
                 continue
 
-            face_ranges = [(t - 1.0, t + 1.0) for t in face_times if isinstance(t, (int, float))]
+            face_ranges = [
+                (t - 1.0, t + 1.0) for t in face_times if isinstance(t, (int, float))
+            ]
 
             for voice in voice_clusters:
                 voice_id = voice.get("cluster_id")
@@ -111,22 +115,26 @@ class IdentityLinker:
                 voice_ranges = []
                 for segment in voice_times:
                     if isinstance(segment, dict):
-                        voice_ranges.append((segment.get("start", 0), segment.get("end", 0)))
+                        voice_ranges.append(
+                            (segment.get("start", 0), segment.get("end", 0))
+                        )
                     elif isinstance(segment, (int, float)):
                         voice_ranges.append((segment - 1.0, segment + 1.0))
 
                 overlap = self.calculate_temporal_overlap(face_ranges, voice_ranges)
 
                 if overlap >= self.overlap_threshold:
-                    suggestions.append(IdentitySuggestion(
-                        type="merge_face_voice",
-                        source=face_name,
-                        target=voice_name,
-                        reason=f"High temporal overlap ({overlap:.0%})",
-                        confidence=overlap,
-                        source_id=face_id,
-                        target_id=voice_id,
-                    ))
+                    suggestions.append(
+                        IdentitySuggestion(
+                            type="merge_face_voice",
+                            source=face_name,
+                            target=voice_name,
+                            reason=f"High temporal overlap ({overlap:.0%})",
+                            confidence=overlap,
+                            source_id=face_id,
+                            target_id=voice_id,
+                        )
+                    )
 
         suggestions.sort(key=lambda x: -x.confidence)
         return suggestions[:10]
@@ -155,14 +163,16 @@ class IdentityLinker:
                 best_score = max(score, char_score)
 
                 if best_score >= self.fuzzy_threshold:
-                    suggestions.append(IdentitySuggestion(
-                        type="tmdb_match",
-                        source=f"Cluster '{cluster_name}'",
-                        target=f"{cast_name} as {character}",
-                        reason=f"Fuzzy match ({best_score:.0%})",
-                        confidence=best_score,
-                        source_id=cluster_id,
-                    ))
+                    suggestions.append(
+                        IdentitySuggestion(
+                            type="tmdb_match",
+                            source=f"Cluster '{cluster_name}'",
+                            target=f"{cast_name} as {character}",
+                            reason=f"Fuzzy match ({best_score:.0%})",
+                            confidence=best_score,
+                            source_id=cluster_id,
+                        )
+                    )
 
         suggestions.sort(key=lambda x: -x.confidence)
         return suggestions[:10]
@@ -195,15 +205,17 @@ class IdentityLinker:
 
                 score = self.fuzzy_match(name1, name2)
                 if score >= self.fuzzy_threshold:
-                    suggestions.append(IdentitySuggestion(
-                        type="merge_face_face",
-                        source=f"Face #{c1.get('cluster_id')} ({name1})",
-                        target=f"Face #{c2.get('cluster_id')} ({name2})",
-                        reason=f"Similar names ({score:.0%})",
-                        confidence=score,
-                        source_id=c1.get("cluster_id"),
-                        target_id=c2.get("cluster_id"),
-                    ))
+                    suggestions.append(
+                        IdentitySuggestion(
+                            type="merge_face_face",
+                            source=f"Face #{c1.get('cluster_id')} ({name1})",
+                            target=f"Face #{c2.get('cluster_id')} ({name2})",
+                            reason=f"Similar names ({score:.0%})",
+                            confidence=score,
+                            source_id=c1.get("cluster_id"),
+                            target_id=c2.get("cluster_id"),
+                        )
+                    )
 
         return suggestions[:5]
 
@@ -216,7 +228,9 @@ class IdentityLinker:
         """Get all identity suggestions across all types."""
         all_suggestions = []
 
-        all_suggestions.extend(self.suggest_face_voice_links(face_clusters, voice_clusters))
+        all_suggestions.extend(
+            self.suggest_face_voice_links(face_clusters, voice_clusters)
+        )
         all_suggestions.extend(self.suggest_face_merges(face_clusters))
 
         if tmdb_cast:
@@ -228,6 +242,7 @@ class IdentityLinker:
 
 
 _linker: Optional[IdentityLinker] = None
+
 
 def get_identity_linker() -> IdentityLinker:
     global _linker

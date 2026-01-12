@@ -19,10 +19,8 @@ OBSOLETE_FILES = [
     "agent_cli.py",
     "agent_main.py",
     "search_cli.py",
-
     # Dangerous reset scripts replaced by documented procedures
     "nuke.bat",
-
     # Deprecated test files (if any)
     "test_*.tmp",
 ]
@@ -97,11 +95,19 @@ def remove_path(path: Path, dry_run: bool = True) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Clean up obsolete files from the codebase")
+    parser = argparse.ArgumentParser(
+        description="Clean up obsolete files from the codebase"
+    )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--dry-run", action="store_true", help="Preview changes without deleting")
+    group.add_argument(
+        "--dry-run", action="store_true", help="Preview changes without deleting"
+    )
     group.add_argument("--execute", action="store_true", help="Actually delete files")
-    parser.add_argument("--include-cache", action="store_true", help="Also remove __pycache__ directories")
+    parser.add_argument(
+        "--include-cache",
+        action="store_true",
+        help="Also remove __pycache__ directories",
+    )
 
     args = parser.parse_args()
     dry_run = args.dry_run
@@ -110,12 +116,14 @@ def main():
     script_dir = Path(__file__).resolve().parent
     root = script_dir.parent
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("AI-Media-Indexer Cleanup Script")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Project root: {root}")
-    print(f"Mode: {'DRY-RUN (no changes)' if dry_run else 'EXECUTE (will delete files)'}")
-    print(f"{'='*60}\n")
+    print(
+        f"Mode: {'DRY-RUN (no changes)' if dry_run else 'EXECUTE (will delete files)'}"
+    )
+    print(f"{'=' * 60}\n")
 
     # Find obsolete files
     obsolete = find_obsolete_files(root)
@@ -136,13 +144,13 @@ def main():
             if remove_path(path, dry_run):
                 deleted_count += 1
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     if dry_run:
         print(f"DRY-RUN complete. {deleted_count} items would be deleted.")
         print("Run with --execute to actually delete files.")
     else:
         print(f"Cleanup complete. {deleted_count} items deleted.")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 Tests agent routing logic without requiring full model loading.
 """
+
 import os
 import sys
 

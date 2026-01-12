@@ -2,10 +2,11 @@
 
 STRATEGY: SOTA Quality Always - Never downgrade models, only throttle resources.
 - Batch sizes reduce on low VRAM
-- Concurrency reduces on low VRAM  
+- Concurrency reduces on low VRAM
 - Lazy unload enables on low VRAM
 - Model selection stays SOTA unless user explicitly overrides
 """
+
 from __future__ import annotations
 
 import gc
@@ -21,6 +22,7 @@ from core.utils.logger import log
 @dataclass
 class SystemProfile:
     """Dynamic resource profile based on hardware detection."""
+
     vram_gb: float
     ram_gb: float
     tier: Literal["low", "medium", "high"]
@@ -70,6 +72,7 @@ def get_available_ram() -> float:
     """Get total system RAM in GB."""
     try:
         import psutil
+
         return psutil.virtual_memory().total / (1024**3)
     except ImportError:
         return 16.0
@@ -109,15 +112,19 @@ def get_system_profile(
     vision_override: Optional[str] = None,
 ) -> SystemProfile:
     """Create dynamic resource profile based on hardware.
-    
+
     STRATEGY: SOTA models always, throttle resources for low VRAM.
     """
     vram = get_available_vram()
     ram = get_available_ram()
     tier = get_vram_tier(vram)
 
-    embedding_model = embedding_override or os.getenv("EMBEDDING_MODEL_OVERRIDE") or "BAAI/bge-m3"
-    vision_model = vision_override or os.getenv("OLLAMA_VISION_MODEL") or "moondream:latest"
+    embedding_model = (
+        embedding_override or os.getenv("EMBEDDING_MODEL_OVERRIDE") or "BAAI/bge-m3"
+    )
+    vision_model = (
+        vision_override or os.getenv("OLLAMA_VISION_MODEL") or "moondream:latest"
+    )
 
     if "bge-m3" in embedding_model or "large" in embedding_model:
         embedding_dim = 1024
@@ -169,7 +176,9 @@ def get_system_profile(
             aggressive_cleanup=True,
         )
 
-    log(f"SystemProfile: {tier} tier | VRAM={vram:.1f}GB | Batch={profile.batch_size} | Concurrency={profile.max_concurrent_jobs}")
+    log(
+        f"SystemProfile: {tier} tier | VRAM={vram:.1f}GB | Batch={profile.batch_size} | Concurrency={profile.max_concurrent_jobs}"
+    )
     return profile
 
 
@@ -251,12 +260,12 @@ class VRAMManager:
     def unload(self, name: str) -> None:
         if name in self._models:
             model = self._models.pop(name)
-            if hasattr(model, 'to'):
+            if hasattr(model, "to"):
                 try:
-                    model.to('cpu')
+                    model.to("cpu")
                 except Exception:
                     pass
-            if hasattr(model, 'unload'):
+            if hasattr(model, "unload"):
                 try:
                     model.unload()
                 except Exception:

@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 
@@ -20,9 +19,9 @@ def inspect_data():
     media = db.get_indexed_media()
     brahmastra_path = None
     for m in media:
-        if "BRAHM" in m['video_path']:
-             brahmastra_path = m['video_path']
-             break
+        if "BRAHM" in m["video_path"]:
+            brahmastra_path = m["video_path"]
+            break
 
     if brahmastra_path:
         output.append(f"Found Brahmastra path: {brahmastra_path}")
@@ -33,13 +32,12 @@ def inspect_data():
             scroll_filter=models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="video_path",
-                        match=models.MatchValue(value=brahmastra_path)
+                        key="video_path", match=models.MatchValue(value=brahmastra_path)
                     )
                 ]
             ),
             limit=5,
-            with_payload=True
+            with_payload=True,
         )
         frames = resp[0]
         output.append(f"Frames with Exact Path Match: {len(frames)}")
@@ -55,6 +53,7 @@ def inspect_data():
         f.write("\n".join(output))
 
     print("Debug output written to debug_output_2.txt")
+
 
 if __name__ == "__main__":
     inspect_data()

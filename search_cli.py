@@ -20,10 +20,10 @@ async def run_search(query: str, use_rerank: bool, limit: int, as_json: bool) ->
             print(json.dumps(output, indent=2))
             return
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Query: {query}")
         print(f"Results: {len(results)}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         for i, r in enumerate(results, 1):
             print(f"[{i}] {r.file_path}")
@@ -33,7 +33,11 @@ async def run_search(query: str, use_rerank: bool, limit: int, as_json: bool) ->
             if r.matched_identities:
                 print(f"    Identities: {', '.join(r.matched_identities)}")
             if r.dense_context:
-                ctx = r.dense_context[:100] + "..." if len(r.dense_context) > 100 else r.dense_context
+                ctx = (
+                    r.dense_context[:100] + "..."
+                    if len(r.dense_context) > 100
+                    else r.dense_context
+                )
                 print(f"    Context: {ctx}")
             if r.explanation:
                 print(f"    Explanation: {r.explanation}")
@@ -51,7 +55,9 @@ def main():
     args = parser.parse_args()
 
     if not args.query:
-        print('Usage: python search_cli.py "your search query" [--rerank] [--limit N] [--json]')
+        print(
+            'Usage: python search_cli.py "your search query" [--rerank] [--limit N] [--json]'
+        )
         sys.exit(1)
 
     asyncio.run(run_search(args.query, args.rerank, args.limit, args.json))

@@ -36,7 +36,11 @@ def init_langfuse() -> None:
     backend = settings.langfuse_backend
 
     # Auto-enable cloud if keys are present and backend is disabled (default)
-    if backend == "disabled" and settings.langfuse_public_key and settings.langfuse_secret_key:
+    if (
+        backend == "disabled"
+        and settings.langfuse_public_key
+        and settings.langfuse_secret_key
+    ):
         backend = "cloud"
         logger.info("Langfuse: Auto-enabling cloud mode (keys detected)")
 
@@ -67,7 +71,11 @@ def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:
     """Send a raw ingestion event to Langfuse API."""
     try:
         # Resolving config with fallback to settings
-        host = os.environ.get("LANGFUSE_HOST") or settings.langfuse_docker_host or "http://localhost:3300"
+        host = (
+            os.environ.get("LANGFUSE_HOST")
+            or settings.langfuse_docker_host
+            or "http://localhost:3300"
+        )
         pk = os.environ.get("LANGFUSE_PUBLIC_KEY") or settings.langfuse_public_key
         sk = os.environ.get("LANGFUSE_SECRET_KEY") or settings.langfuse_secret_key
 
@@ -81,7 +89,7 @@ def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:
         url = f"{host}/api/public/ingestion"
         headers = {
             "Authorization": f"Basic {b64_auth}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         payload = {
@@ -90,7 +98,7 @@ def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:
                     "id": str(uuid4()),
                     "type": event_type,
                     "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "body": body
+                    "body": body,
                 }
             ]
         }
@@ -98,16 +106,16 @@ def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:
         # logger.info(f"Langfuse Sending {event_type} to {url}...")
 
         try:
-             resp = requests.post(url, headers=headers, json=payload, timeout=2.0)
-             if resp.status_code not in (200, 201, 207):
-                 logger.warning(f"Langfuse API Error {resp.status_code}: {resp.text}")
-             # else:
-             #    logger.info(f"Langfuse Sent {event_type}: {resp.status_code}")
+            resp = requests.post(url, headers=headers, json=payload, timeout=2.0)
+            if resp.status_code not in (200, 201, 207):
+                logger.warning(f"Langfuse API Error {resp.status_code}: {resp.text}")
+            # else:
+            #    logger.info(f"Langfuse Sent {event_type}: {resp.status_code}")
 
         except requests.exceptions.ReadTimeout:
-             logger.warning(f"Langfuse timeout sending {event_type}")
+            logger.warning(f"Langfuse timeout sending {event_type}")
         except Exception as e:
-             logger.warning(f"Langfuse ingestion error: {e}")
+            logger.warning(f"Langfuse ingestion error: {e}")
 
     except Exception as e:
         logger.warning(f"Langfuse raw send failed: {e}")
@@ -122,13 +130,16 @@ def start_trace(name: str, metadata: dict[str, Any] | None = None) -> str:
     bind_context(trace_id=trace_id)
 
     # Send trace-create
-    _send_ingestion_event("trace-create", {
-        "id": trace_id,
-        "name": name,
-        "userId": "system",
-        "metadata": metadata or {},
-        # "timestamp": datetime.utcnow().isoformat() + "Z"  # Let server set timestamp to avoid 'delayed' queue
-    })
+    _send_ingestion_event(
+        "trace-create",
+        {
+            "id": trace_id,
+            "name": name,
+            "userId": "system",
+            "metadata": metadata or {},
+            # "timestamp": datetime.utcnow().isoformat() + "Z"  # Let server set timestamp to avoid 'delayed' queue
+        },
+    )
 
     logger.info("trace_start", trace=name)
     return trace_id
@@ -147,7 +158,7 @@ def start_span(name: str, metadata: dict[str, Any] | None = None) -> None:
     """Start a new span using raw API."""
     trace_id = trace_id_ctx.get()
     if not trace_id:
-        return # Cannot start span without trace
+        return  # Cannot start span without trace
 
     stack = span_stack_ctx.get() or []
 
@@ -168,7 +179,7 @@ def start_span(name: str, metadata: dict[str, Any] | None = None) -> None:
         "name": name,
         # "startTime": datetime.utcfromtimestamp(start_time).isoformat() + "Z", # Let server set start
         "metadata": metadata or {},
-        "type": "span"
+        "type": "span",
     }
     if parent_id:
         body["parentObservationId"] = parent_id
@@ -205,7 +216,7 @@ def end_span(status: str = "success", error: str | None = None) -> None:
             "name": name,
             "startTime": datetime.utcfromtimestamp(start_time).isoformat() + "Z",
             "endTime": datetime.utcfromtimestamp(end_time).isoformat() + "Z",
-            "type": "span"
+            "type": "span",
         }
 
         if status == "error":

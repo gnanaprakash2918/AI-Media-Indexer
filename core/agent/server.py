@@ -86,6 +86,7 @@ def _get_agentic_search() -> "SearchAgent":
     global _agentic_search
     if _agentic_search is None:
         from core.retrieval.agentic_search import SearchAgent
+
         _agentic_search = SearchAgent(db=_get_vector_db())
     assert _agentic_search is not None
     return _agentic_search
@@ -157,21 +158,22 @@ async def query_video_rag(
     ] = 10,
 ) -> dict:
     """Cognitive VideoRAG search with query decomposition and answer generation.
-    
+
     This is the "High IQ" search that:
     1. Decomposes queries into visual/audio/identity components
     2. Searches across multiple modalities
     3. Generates text answers for questions with citations
     4. Uses external knowledge (Brave Search) when needed
-    
+
     Args:
         query: Natural language query or question.
         limit: Maximum results to retrieve.
-        
+
     Returns:
         Dict with structured query, results, and optional answer.
     """
     from core.retrieval.rag import get_orchestrator
+
     orchestrator = get_orchestrator()
     response = await orchestrator.search(query, limit=limit)
     return response.model_dump()
@@ -193,21 +195,22 @@ async def get_video_summary(
     ] = False,
 ) -> dict:
     """Get or generate hierarchical summaries for a video.
-    
+
     Returns two levels of summaries:
     - L1: Full video summary (plot, themes, main events)
     - L2: Scene summaries (5-minute chunks)
-    
+
     Useful for answering "What is this video about?" questions.
-    
+
     Args:
         video_path: Path to the video file.
         force_regenerate: If True, regenerate even if summaries exist.
-        
+
     Returns:
         Dict with l1_summary, l2_summaries, and scene_count.
     """
     from core.processing.summarizer import summarizer
+
     return await summarizer.summarize_video(video_path, force=force_regenerate)
 
 
@@ -228,16 +231,16 @@ async def enrich_identity(
     ] = "face",
 ) -> dict:
     """Enrich an unknown identity using external knowledge (Brave Search).
-    
+
     This tool queries the web to identify unknown people, locations, or topics.
     Useful when a face is detected but not recognized.
-    
+
     Note: Requires BRAVE_API_KEY to be configured. Returns empty results otherwise.
-    
+
     Args:
         context: Contextual description of the entity.
         entity_type: Type of entity to enrich.
-        
+
     Returns:
         Dict with possible_matches and confidence.
     """

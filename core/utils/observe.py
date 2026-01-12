@@ -20,7 +20,10 @@ def observe(name: str) -> Callable[[F], F]:
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             start = time.perf_counter()
             # Capture args safely (concise)
-            metadata = {"args": [str(a)[:200] for a in args], "kwargs": {k: str(v)[:200] for k, v in kwargs.items()}}
+            metadata = {
+                "args": [str(a)[:200] for a in args],
+                "kwargs": {k: str(v)[:200] for k, v in kwargs.items()},
+            }
             start_span(name, metadata=metadata)
             try:
                 result = await func(*args, **kwargs)
@@ -36,7 +39,10 @@ def observe(name: str) -> Callable[[F], F]:
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             start = time.perf_counter()
             # Capture args safely (concise)
-            metadata = {"args": [str(a)[:200] for a in args], "kwargs": {k: str(v)[:200] for k, v in kwargs.items()}}
+            metadata = {
+                "args": [str(a)[:200] for a in args],
+                "kwargs": {k: str(v)[:200] for k, v in kwargs.items()},
+            }
             start_span(name, metadata=metadata)
             try:
                 result = func(*args, **kwargs)

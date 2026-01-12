@@ -34,6 +34,7 @@ class SearchEngine:
     def db(self):
         if self._db is None:
             from core.storage.db import VectorDB
+
             self._db = VectorDB()
         return self._db
 
@@ -116,13 +117,15 @@ class SearchEngine:
             video_path = payload.get("video_path", payload.get("media_path", ""))
             timestamp = payload.get("timestamp", 0.0)
 
-            candidates.append(SearchCandidate(
-                video_path=video_path,
-                start_time=max(0, timestamp - 2.0),
-                end_time=timestamp + 5.0,
-                score=float(score),
-                payload=payload,
-            ))
+            candidates.append(
+                SearchCandidate(
+                    video_path=video_path,
+                    start_time=max(0, timestamp - 2.0),
+                    end_time=timestamp + 5.0,
+                    score=float(score),
+                    payload=payload,
+                )
+            )
 
         return candidates
 
@@ -146,17 +149,19 @@ class SearchEngine:
 
             normalized_score = normalize_vector_score(c.score)
 
-            results.append(SearchResultDetail(
-                video_id=self._generate_video_id(c.video_path),
-                file_path=c.video_path,
-                start_time=c.start_time,
-                end_time=c.end_time,
-                score=normalized_score,
-                match_reasons=reasons,
-                thumbnail_url=generate_thumbnail_url(c.video_path, c.start_time),
-                dense_context=c.payload.get("action", ""),
-                matched_identities=intent.identity_names,
-            ))
+            results.append(
+                SearchResultDetail(
+                    video_id=self._generate_video_id(c.video_path),
+                    file_path=c.video_path,
+                    start_time=c.start_time,
+                    end_time=c.end_time,
+                    score=normalized_score,
+                    match_reasons=reasons,
+                    thumbnail_url=generate_thumbnail_url(c.video_path, c.start_time),
+                    dense_context=c.payload.get("action", ""),
+                    matched_identities=intent.identity_names,
+                )
+            )
 
         return results
 
@@ -178,18 +183,22 @@ class SearchEngine:
 
             combined_score = combine_scores(r.candidate.score, r.vlm_confidence)
 
-            results.append(SearchResultDetail(
-                video_id=self._generate_video_id(r.candidate.video_path),
-                file_path=r.candidate.video_path,
-                start_time=r.candidate.start_time,
-                end_time=r.candidate.end_time,
-                score=combined_score,
-                match_reasons=reasons,
-                explanation=r.vlm_reason,
-                thumbnail_url=generate_thumbnail_url(r.candidate.video_path, r.candidate.start_time),
-                dense_context=r.candidate.payload.get("action", ""),
-                matched_identities=intent.identity_names,
-            ))
+            results.append(
+                SearchResultDetail(
+                    video_id=self._generate_video_id(r.candidate.video_path),
+                    file_path=r.candidate.video_path,
+                    start_time=r.candidate.start_time,
+                    end_time=r.candidate.end_time,
+                    score=combined_score,
+                    match_reasons=reasons,
+                    explanation=r.vlm_reason,
+                    thumbnail_url=generate_thumbnail_url(
+                        r.candidate.video_path, r.candidate.start_time
+                    ),
+                    dense_context=r.candidate.payload.get("action", ""),
+                    matched_identities=intent.identity_names,
+                )
+            )
 
         return results
 

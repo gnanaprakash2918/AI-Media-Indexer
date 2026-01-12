@@ -56,16 +56,20 @@ class VLMReranker:
 
         for candidate in candidates[:max_candidates]:
             score = self._score_candidate(candidate, prompt)
-            results.append(RankedResult(
-                candidate=candidate,
-                vlm_confidence=score.confidence,
-                vlm_reason=score.reason,
-            ))
+            results.append(
+                RankedResult(
+                    candidate=candidate,
+                    vlm_confidence=score.confidence,
+                    vlm_reason=score.reason,
+                )
+            )
 
         results.sort(key=lambda r: r.vlm_confidence, reverse=True)
         return results
 
-    def _score_candidate(self, candidate: "SearchCandidate", prompt: str) -> RerankScore:
+    def _score_candidate(
+        self, candidate: "SearchCandidate", prompt: str
+    ) -> RerankScore:
         frames = self._extract_keyframes(candidate)
         if not frames:
             return RerankScore(confidence=0, reason="No frames extracted")
@@ -90,7 +94,9 @@ class VLMReranker:
                 end = raw.rfind("}") + 1
                 if start >= 0 and end > start:
                     return RerankScore.model_validate_json(raw[start:end])
-                return RerankScore(confidence=30, reason="Parse failed, assuming partial match")
+                return RerankScore(
+                    confidence=30, reason="Parse failed, assuming partial match"
+                )
         except Exception as e:
             log(f"VLM rerank error: {e}")
             return RerankScore(confidence=0, reason=str(e)[:50])

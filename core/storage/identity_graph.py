@@ -26,6 +26,7 @@ from core.utils.logger import log
 
 class TrackType(str, Enum):
     """Type of identity track."""
+
     FACE = "face"
     VOICE = "voice"
 
@@ -33,6 +34,7 @@ class TrackType(str, Enum):
 @dataclass
 class Identity:
     """A named person in the system."""
+
     id: str
     name: str | None = None
     is_verified: bool = False
@@ -47,10 +49,11 @@ class Identity:
 @dataclass
 class FaceTrack:
     """A sequence of face detections within a single video.
-    
+
     Temporal continuity: Faces are grouped if they appear in consecutive
     frames with high IoU overlap and embedding similarity.
     """
+
     id: str
     media_id: str  # video_path or hash
     start_frame: int
@@ -69,6 +72,7 @@ class FaceTrack:
 @dataclass
 class VoiceTrack:
     """A sequence of voice segments within a single video."""
+
     id: str
     media_id: str
     start_time: float
@@ -83,7 +87,7 @@ class VoiceTrack:
 
 class IdentityGraphManager:
     """SQLite-backed Identity Graph for robust person tracking.
-    
+
     Key features:
     - Track-level clustering (within video) before global identity linking
     - Merge/split identities via HITL
@@ -94,7 +98,7 @@ class IdentityGraphManager:
 
     def __init__(self, db_path: str | None = None) -> None:
         """Initialize the Identity Graph manager.
-        
+
         Args:
             db_path: Path to SQLite database. Defaults to project root.
         """
@@ -156,11 +160,21 @@ class IdentityGraphManager:
             """)
 
             # Indexes for fast lookups
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_face_tracks_media ON face_tracks(media_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_face_tracks_identity ON face_tracks(identity_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_voice_tracks_media ON voice_tracks(media_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_voice_tracks_identity ON voice_tracks(identity_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_identities_name ON identities(name)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_face_tracks_media ON face_tracks(media_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_face_tracks_identity ON face_tracks(identity_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_voice_tracks_media ON voice_tracks(media_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_voice_tracks_identity ON voice_tracks(identity_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_identities_name ON identities(name)"
+            )
 
             conn.commit()
             conn.commit()
@@ -186,13 +200,15 @@ class IdentityGraphManager:
     # IDENTITY OPERATIONS
     # =========================================================================
 
-    def create_identity(self, name: str | None = None, is_verified: bool = False) -> Identity:
+    def create_identity(
+        self, name: str | None = None, is_verified: bool = False
+    ) -> Identity:
         """Create a new identity (person).
-        
+
         Args:
             name: Optional name for the person.
             is_verified: Whether the identity has been verified by HITL.
-            
+
         Returns:
             The created Identity object.
         """
@@ -202,18 +218,22 @@ class IdentityGraphManager:
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO identities (id, name, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (identity_id, name, int(is_verified), now, now)
+                (identity_id, name, int(is_verified), now, now),
             )
             conn.commit()
 
         log(f"Created identity: {identity_id} (name={name})")
-        return Identity(id=identity_id, name=name, is_verified=is_verified, created_at=now)
+        return Identity(
+            id=identity_id, name=name, is_verified=is_verified, created_at=now
+        )
 
     def get_identity(self, identity_id: str) -> Identity | None:
         """Get an identity by ID."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM identities WHERE id = ?", (identity_id,))
+            cursor = conn.execute(
+                "SELECT * FROM identities WHERE id = ?", (identity_id,)
+            )
             row = cursor.fetchone()
             if not row:
                 return None
@@ -224,8 +244,7 @@ class IdentityGraphManager:
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
-                "SELECT * FROM identities WHERE LOWER(name) = LOWER(?)",
-                (name,)
+                "SELECT * FROM identities WHERE LOWER(name) = LOWER(?)", (name,)
             )
             row = cursor.fetchone()
             if not row:
@@ -236,7 +255,8 @@ class IdentityGraphManager:
         """Get all identities, enriched with track counts."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT 
                     i.*,
                     (SELECT COUNT(*) FROM face_tracks WHERE identity_id = i.id) as face_count,
@@ -244,7 +264,9 @@ class IdentityGraphManager:
                 FROM identities i
                 ORDER BY i.created_at DESC
                 LIMIT ?
-            """, (limit,))
+            """,
+                (limit,),
+            )
 
             results = []
             for row in cursor.fetchall():
@@ -259,21 +281,21 @@ class IdentityGraphManager:
         with self._lock, sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "UPDATE identities SET name = ?, is_verified = 1, updated_at = ? WHERE id = ?",
-                (name, time.time(), identity_id)
+                (name, time.time(), identity_id),
             )
             conn.commit()
             return cursor.rowcount > 0
 
     def merge_identities(self, from_id: str, to_id: str) -> int:
         """Merge one identity into another (HITL merge operation).
-        
+
         All face/voice tracks from `from_id` are moved to `to_id`,
         then `from_id` is deleted.
-        
+
         Args:
             from_id: Source identity to merge from.
             to_id: Target identity to merge into.
-            
+
         Returns:
             Number of tracks moved.
         """
@@ -282,14 +304,14 @@ class IdentityGraphManager:
             # Move face tracks
             cursor = conn.execute(
                 "UPDATE face_tracks SET identity_id = ? WHERE identity_id = ?",
-                (to_id, from_id)
+                (to_id, from_id),
             )
             moved += cursor.rowcount
 
             # Move voice tracks
             cursor = conn.execute(
                 "UPDATE voice_tracks SET identity_id = ? WHERE identity_id = ?",
-                (to_id, from_id)
+                (to_id, from_id),
             )
             moved += cursor.rowcount
 
@@ -304,8 +326,14 @@ class IdentityGraphManager:
         """Delete an identity. Tracks are unlinked (not deleted)."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             # Unlink tracks first (FK will SET NULL, but explicit is clearer)
-            conn.execute("UPDATE face_tracks SET identity_id = NULL WHERE identity_id = ?", (identity_id,))
-            conn.execute("UPDATE voice_tracks SET identity_id = NULL WHERE identity_id = ?", (identity_id,))
+            conn.execute(
+                "UPDATE face_tracks SET identity_id = NULL WHERE identity_id = ?",
+                (identity_id,),
+            )
+            conn.execute(
+                "UPDATE voice_tracks SET identity_id = NULL WHERE identity_id = ?",
+                (identity_id,),
+            )
             cursor = conn.execute("DELETE FROM identities WHERE id = ?", (identity_id,))
             conn.commit()
             return cursor.rowcount > 0
@@ -332,15 +360,27 @@ class IdentityGraphManager:
         embedding_blob = np.array(avg_embedding, dtype=np.float32).tobytes()
 
         with self._lock, sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO face_tracks 
                 (id, media_id, start_frame, end_frame, start_time, end_time, 
                  avg_embedding, identity_id, best_thumbnail_path, avg_confidence, frame_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                track_id, media_id, start_frame, end_frame, start_time, end_time,
-                embedding_blob, identity_id, best_thumbnail_path, avg_confidence, frame_count
-            ))
+            """,
+                (
+                    track_id,
+                    media_id,
+                    start_frame,
+                    end_frame,
+                    start_time,
+                    end_time,
+                    embedding_blob,
+                    identity_id,
+                    best_thumbnail_path,
+                    avg_confidence,
+                    frame_count,
+                ),
+            )
             conn.commit()
 
         return FaceTrack(
@@ -363,7 +403,7 @@ class IdentityGraphManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM face_tracks WHERE media_id = ? ORDER BY start_time",
-                (media_id,)
+                (media_id,),
             )
             return [self._row_to_face_track(row) for row in cursor.fetchall()]
 
@@ -373,7 +413,7 @@ class IdentityGraphManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM face_tracks WHERE identity_id = ? ORDER BY created_at",
-                (identity_id,)
+                (identity_id,),
             )
             return [self._row_to_face_track(row) for row in cursor.fetchall()]
 
@@ -383,7 +423,7 @@ class IdentityGraphManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM face_tracks WHERE identity_id IS NULL ORDER BY created_at DESC LIMIT ?",
-                (limit,)
+                (limit,),
             )
             return [self._row_to_face_track(row) for row in cursor.fetchall()]
 
@@ -392,7 +432,7 @@ class IdentityGraphManager:
         with self._lock, sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "UPDATE face_tracks SET identity_id = ? WHERE id = ?",
-                (identity_id, track_id)
+                (identity_id, track_id),
             )
             conn.commit()
             return cursor.rowcount > 0
@@ -400,7 +440,9 @@ class IdentityGraphManager:
     def delete_face_tracks_for_media(self, media_id: str) -> int:
         """Delete all face tracks for a media file (cascade on delete)."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("DELETE FROM face_tracks WHERE media_id = ?", (media_id,))
+            cursor = conn.execute(
+                "DELETE FROM face_tracks WHERE media_id = ?", (media_id,)
+            )
             conn.commit()
             return cursor.rowcount
 
@@ -423,14 +465,23 @@ class IdentityGraphManager:
         total_duration = end_time - start_time
 
         with self._lock, sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO voice_tracks 
                 (id, media_id, start_time, end_time, embedding, identity_id, speaker_label, total_duration)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                track_id, media_id, start_time, end_time,
-                embedding_blob, identity_id, speaker_label, total_duration
-            ))
+            """,
+                (
+                    track_id,
+                    media_id,
+                    start_time,
+                    end_time,
+                    embedding_blob,
+                    identity_id,
+                    speaker_label,
+                    total_duration,
+                ),
+            )
             conn.commit()
 
         return VoiceTrack(
@@ -450,7 +501,7 @@ class IdentityGraphManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM voice_tracks WHERE media_id = ? ORDER BY start_time",
-                (media_id,)
+                (media_id,),
             )
             return [self._row_to_voice_track(row) for row in cursor.fetchall()]
 
@@ -460,7 +511,7 @@ class IdentityGraphManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM voice_tracks WHERE identity_id = ? ORDER BY created_at",
-                (identity_id,)
+                (identity_id,),
             )
             return [self._row_to_voice_track(row) for row in cursor.fetchall()]
 
@@ -469,7 +520,7 @@ class IdentityGraphManager:
         with self._lock, sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "UPDATE voice_tracks SET identity_id = ? WHERE id = ?",
-                (identity_id, track_id)
+                (identity_id, track_id),
             )
             conn.commit()
             return cursor.rowcount > 0
@@ -477,7 +528,9 @@ class IdentityGraphManager:
     def delete_voice_tracks_for_media(self, media_id: str) -> int:
         """Delete all voice tracks for a media file."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("DELETE FROM voice_tracks WHERE media_id = ?", (media_id,))
+            cursor = conn.execute(
+                "DELETE FROM voice_tracks WHERE media_id = ?", (media_id,)
+            )
             conn.commit()
             return cursor.rowcount
 
@@ -488,13 +541,16 @@ class IdentityGraphManager:
     def get_media_ids_for_identity(self, identity_id: str) -> list[str]:
         """Get all media IDs where an identity appears (for pre-filtering search)."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT DISTINCT media_id FROM (
                     SELECT media_id FROM face_tracks WHERE identity_id = ?
                     UNION
                     SELECT media_id FROM voice_tracks WHERE identity_id = ?
                 )
-            """, (identity_id, identity_id))
+            """,
+                (identity_id, identity_id),
+            )
             return [row[0] for row in cursor.fetchall()]
 
     def find_similar_face_tracks(
@@ -504,9 +560,9 @@ class IdentityGraphManager:
         limit: int = 10,
     ) -> list[tuple[FaceTrack, float]]:
         """Find face tracks similar to a given embedding.
-        
+
         Uses cosine similarity. Returns tracks with their similarity scores.
-        
+
         Note: For large databases, consider using Qdrant for vector search
         and SQLite only for relational data.
         """
@@ -526,7 +582,9 @@ class IdentityGraphManager:
                 if track_norm == 0:
                     continue
 
-                similarity = float(np.dot(query_vec, track_vec) / (query_norm * track_norm))
+                similarity = float(
+                    np.dot(query_vec, track_vec) / (query_norm * track_norm)
+                )
                 if similarity >= threshold:
                     results.append((self._row_to_face_track(row), similarity))
 

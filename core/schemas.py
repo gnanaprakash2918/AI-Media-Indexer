@@ -22,19 +22,20 @@ class MediaType(str, Enum):
 
 # --- UNIVERSAL PERCEPTION SCHEMAS (For FAANG-level search) ---
 
+
 class EntityDetail(BaseModel):
     """Details about ANY specific object, food, item, or tool in a frame."""
+
     name: str = Field(
         ...,
-        description="Specific name (e.g., 'Idly', 'iPhone 15 Pro', 'Katana', 'Tesla Model 3')"
+        description="Specific name (e.g., 'Idly', 'iPhone 15 Pro', 'Katana', 'Tesla Model 3')",
     )
     category: str = Field(
-        ...,
-        description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle')"
+        ..., description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle')"
     )
     visual_details: str | dict | list = Field(
         default="",
-        description="Color, state, texture - accepts string or structured data from LLM"
+        description="Color, state, texture - accepts string or structured data from LLM",
     )
 
     def details_as_string(self) -> str:
@@ -56,9 +57,12 @@ class EntityDetail(BaseModel):
 
 class SceneContext(BaseModel):
     """Contextual understanding of the scene."""
+
     location: str = Field(default="", description="Specific location")
     action_narrative: str = Field(default="", description="Precise action physics")
-    cultural_context: str | None = Field(default=None, description="Inferred cultural setting")
+    cultural_context: str | None = Field(
+        default=None, description="Inferred cultural setting"
+    )
     visible_text: list = Field(default_factory=list, description="Readable text/brands")
 
     def get_text_strings(self) -> list[str]:
@@ -76,9 +80,16 @@ class SceneContext(BaseModel):
 
 class FrameAnalysis(BaseModel):
     """Universal Structured Knowledge for ANY video frame. Accepts flexible LLM output."""
-    main_subject: str | dict | list = Field(default="", description="Main person/object in focus")
-    action: str | dict | list = Field(default="", description="Precise action occurring")
-    action_physics: str | dict | list = Field(default="", description="Physical motion details")
+
+    main_subject: str | dict | list = Field(
+        default="", description="Main person/object in focus"
+    )
+    action: str | dict | list = Field(
+        default="", description="Precise action occurring"
+    )
+    action_physics: str | dict | list = Field(
+        default="", description="Physical motion details"
+    )
     entities: list = Field(default_factory=list, description="Key objects")
     scene: SceneContext | dict = Field(default_factory=SceneContext)
 
@@ -90,7 +101,9 @@ class FrameAnalysis(BaseModel):
             return v[0]  # Extract first item if it's a list
         return v
 
-    face_cluster_ids: list[int] = Field(default_factory=list, description="Face cluster IDs")
+    face_cluster_ids: list[int] = Field(
+        default_factory=list, description="Face cluster IDs"
+    )
 
     def _to_str(self, val) -> str:
         """Convert any value to string for search indexing."""
@@ -118,19 +131,29 @@ class FrameAnalysis(BaseModel):
                 name = e.get("name", "")
                 details = e.get("visual_details", "")
                 if name:
-                    parts.append(f"{name} ({self._to_str(details)})" if details else name)
-            elif hasattr(e, 'name'):
+                    parts.append(
+                        f"{name} ({self._to_str(details)})" if details else name
+                    )
+            elif hasattr(e, "name"):
                 entity_str = e.name
-                if hasattr(e, 'details_as_string'):
+                if hasattr(e, "details_as_string"):
                     entity_str += f" ({e.details_as_string()})"
                 elif e.visual_details:
                     entity_str += f" ({self._to_str(e.visual_details)})"
                 parts.append(entity_str)
 
-        scene = self.scene if isinstance(self.scene, SceneContext) else SceneContext(**self.scene) if isinstance(self.scene, dict) else SceneContext()
+        scene = (
+            self.scene
+            if isinstance(self.scene, SceneContext)
+            else SceneContext(**self.scene)
+            if isinstance(self.scene, dict)
+            else SceneContext()
+        )
         if scene.location:
             parts.append(scene.location)
-        parts.extend(scene.get_text_strings() if hasattr(scene, 'get_text_strings') else [])
+        parts.extend(
+            scene.get_text_strings() if hasattr(scene, "get_text_strings") else []
+        )
         if scene.cultural_context:
             parts.append(scene.cultural_context)
 
@@ -139,6 +162,7 @@ class FrameAnalysis(BaseModel):
 
 class MediaMetadata(BaseModel):
     """Extracted metadata from a media file."""
+
     year: int | None = None
     media_type: MediaType = MediaType.UNKNOWN
 
@@ -186,6 +210,7 @@ class MediaAsset(BaseModel):
     file_size_bytes: int = Field(..., description="Size in bytes")
     last_modified: datetime
 
+
 class DetectedFace(BaseModel):
     """Represents a face detected in a media file."""
 
@@ -196,6 +221,7 @@ class DetectedFace(BaseModel):
         default=None, exclude=True, description="128-dimensional face vector"
     )
     person_id: str | None = None
+
 
 class TranscriptionResult(BaseModel):
     """Result of transcribing an audio file.
@@ -260,6 +286,7 @@ class ProcessingStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+
 class SpeakerSegment(BaseModel):
     """A segment of audio attributed to a specific speaker."""
 
@@ -279,6 +306,7 @@ class DetectedVoice(BaseModel):
     label: str
     embedding_avg: list[float]
     total_duration: float
+
 
 class MediaFile(BaseModel):
     """Represents a media file in the system."""
@@ -322,7 +350,9 @@ class SearchResultDetail(BaseModel):
     file_path: str
     start_time: float
     end_time: float
-    score: float = Field(..., ge=0.0, le=1.0, description="Normalized confidence 0.0-1.0")
+    score: float = Field(
+        ..., ge=0.0, le=1.0, description="Normalized confidence 0.0-1.0"
+    )
     match_reasons: list[MatchReason]
     explanation: str = Field(default="", description="VLM-generated explanation")
     thumbnail_url: str | None = None

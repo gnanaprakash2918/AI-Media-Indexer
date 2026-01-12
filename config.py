@@ -17,7 +17,7 @@ def get_hardware_profile() -> dict:
         "batch_size": 4,
         "worker_count": 1,
         "embedding_batch_size": 4,
-        "device": "cpu"
+        "device": "cpu",
     }
 
     if not torch.cuda.is_available():
@@ -32,15 +32,15 @@ def get_hardware_profile() -> dict:
 
         logging.info(f"Detected GPU with {vram_gb:.1f}GB VRAM")
 
-        if vram_gb >= 23.0: # Workstation (e.g. 3090/4090)
+        if vram_gb >= 23.0:  # Workstation (e.g. 3090/4090)
             profile["batch_size"] = 16
             profile["worker_count"] = 4
             profile["embedding_batch_size"] = 32
-        elif vram_gb >= 11.0: # High-end Consumer (e.g. 3080 Ti)
+        elif vram_gb >= 11.0:  # High-end Consumer (e.g. 3080 Ti)
             profile["batch_size"] = 8
             profile["worker_count"] = 2
             profile["embedding_batch_size"] = 16
-        else: # Laptop / Mid-range (8GB)
+        else:  # Laptop / Mid-range (8GB)
             profile["batch_size"] = 4
             profile["worker_count"] = 1
             profile["embedding_batch_size"] = 8
@@ -49,6 +49,7 @@ def get_hardware_profile() -> dict:
         logging.warning(f"Failed to detect detailed hardware specs: {e}")
 
     return profile
+
 
 _HW_PROFILE = get_hardware_profile()
 
@@ -112,18 +113,17 @@ class Settings(BaseSettings):
 
     # --- Performance ---
     batch_size: int = Field(
-        default=_HW_PROFILE["batch_size"],
-        description="Batch size for inference"
+        default=_HW_PROFILE["batch_size"], description="Batch size for inference"
     )
 
     embedding_batch_size: int = Field(
-         default=_HW_PROFILE["embedding_batch_size"],
-         description="Batch size for embedding generation"
+        default=_HW_PROFILE["embedding_batch_size"],
+        description="Batch size for embedding generation",
     )
 
     worker_count: int = Field(
         default=_HW_PROFILE["worker_count"],
-        description="Number of parallel ingestion workers"
+        description="Number of parallel ingestion workers",
     )
 
     # device field removed to avoid conflict with computed_property 'device'
@@ -146,15 +146,23 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-1.5-flash"
 
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "moondream"  # Lightweight vision model (~2GB VRAM vs 5GB for llava)
+    ollama_model: str = (
+        "moondream"  # Lightweight vision model (~2GB VRAM vs 5GB for llava)
+    )
 
     tmdb_api_key: str | None = None
     omdb_api_key: str | None = None
-    brave_api_key: str | None = Field(default=None, description="Brave Search API key for external enrichment")
-    enable_external_search: bool = Field(default=False, description="Enable external web search for unknown entities")
+    brave_api_key: str | None = Field(
+        default=None, description="Brave Search API key for external enrichment"
+    )
+    enable_external_search: bool = Field(
+        default=False, description="Enable external web search for unknown entities"
+    )
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
-    frame_interval: float = Field(default=1.0, description="Seconds between frames (0.5=2fps, 1.0=1fps)")
+    frame_interval: float = Field(
+        default=1.0, description="Seconds between frames (0.5=2fps, 1.0=1fps)"
+    )
     batch_size: int = Field(default=24)
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
@@ -165,14 +173,14 @@ class Settings(BaseSettings):
             "openai/whisper-large-v3-turbo",
             "openai/whisper-large-v2",
             "openai/whisper-medium",  # ~1.5GB, good balance
-            "openai/whisper-small",   # ~500MB, faster and lighter
+            "openai/whisper-small",  # ~500MB, faster and lighter
         ],
         "en": [
             "openai/whisper-large-v3-turbo",
             "openai/whisper-large-v2",
             "distil-whisper/distil-large-v3",
             "distil-whisper/distil-medium.en",  # ~500MB, optimized for English
-            "openai/whisper-small",   # ~500MB, multilingual fallback
+            "openai/whisper-small",  # ~500MB, multilingual fallback
         ],
     }
 
@@ -182,31 +190,31 @@ class Settings(BaseSettings):
     # Frame Processing Settings
     frame_sample_ratio: int = Field(
         default=1,
-        description="Process every Nth extracted frame (1=all for max accuracy)"
+        description="Process every Nth extracted frame (1=all for max accuracy)",
     )
 
     # Face Detection Settings (tuned for side-facing and partial faces)
     face_detection_threshold: float = Field(
         default=0.3,
-        description="Face detection confidence threshold (0.3=more faces including side-facing, 0.5=balanced)"
+        description="Face detection confidence threshold (0.3=more faces including side-facing, 0.5=balanced)",
     )
     face_detection_resolution: int = Field(
         default=960,
-        description="Face detection input resolution (320=fast, 640=balanced, 960=accurate)"
+        description="Face detection input resolution (320=fast, 640=balanced, 960=accurate)",
     )
 
     # Face Clustering Settings (tuned for wild videos with angle/lighting variations)
     face_clustering_threshold: float = Field(
         default=0.5,
-        description="Face clustering cosine distance (0.5=50% similarity for same person across angles)"
+        description="Face clustering cosine distance (0.5=50% similarity for same person across angles)",
     )
     face_min_bbox_size: int = Field(
         default=32,
-        description="Minimum face bounding box size in pixels (32=include smaller/distant faces)"
+        description="Minimum face bounding box size in pixels (32=include smaller/distant faces)",
     )
     face_min_det_score: float = Field(
         default=0.5,
-        description="Minimum face detection confidence for clustering (0.5=include side-facing faces)"
+        description="Minimum face detection confidence for clustering (0.5=include side-facing faces)",
     )
 
     # Voice Intelligence
@@ -217,50 +225,56 @@ class Settings(BaseSettings):
     max_speakers: int | None = None
     voice_clustering_threshold: float = Field(
         default=0.3,
-        description="Voice clustering cosine distance (lower=stricter, 0.3=70% similarity required for tighter clusters)"
+        description="Voice clustering cosine distance (lower=stricter, 0.3=70% similarity required for tighter clusters)",
     )
 
     # HDBSCAN Tuning (used for clustering algorithms)
     hdbscan_min_cluster_size: int = Field(
-        default=2,
-        description="Minimum cluster size for HDBSCAN (2=pair of samples)"
+        default=2, description="Minimum cluster size for HDBSCAN (2=pair of samples)"
     )
     hdbscan_min_samples: int = Field(
-        default=1,
-        description="Min samples for core point (1=lenient, 3=stricter)"
+        default=1, description="Min samples for core point (1=lenient, 3=stricter)"
     )
     hdbscan_cluster_selection_epsilon: float = Field(
         default=0.55,
-        description="Cluster selection epsilon for HDBSCAN (0.55=balanced)"
+        description="Cluster selection epsilon for HDBSCAN (0.55=balanced)",
     )
 
     # Audio Processing
     audio_rms_silence_db: float = Field(
         default=-40.0,
-        description="RMS threshold in dB below which audio is considered silent"
+        description="RMS threshold in dB below which audio is considered silent",
     )
     whisper_language_lock: bool = Field(
-        default=True,
-        description="Lock Whisper to detected language after first 30s"
+        default=True, description="Lock Whisper to detected language after first 30s"
     )
 
     # Face Track Builder
-    face_track_iou_threshold: float = Field(default=0.3, description="Min IoU for face track continuity")
-    face_track_cosine_threshold: float = Field(default=0.5, description="Min cosine sim for face track")
-    face_track_max_missing_frames: int = Field(default=5, description="Frames before track finalization")
+    face_track_iou_threshold: float = Field(
+        default=0.3, description="Min IoU for face track continuity"
+    )
+    face_track_cosine_threshold: float = Field(
+        default=0.5, description="Min cosine sim for face track"
+    )
+    face_track_max_missing_frames: int = Field(
+        default=5, description="Frames before track finalization"
+    )
 
     # Scene Detection
-    scene_detect_threshold: float = Field(default=27.0, description="PySceneDetect threshold (lower=more scenes)")
-    scene_detect_min_length: float = Field(default=1.0, description="Min scene length in seconds")
+    scene_detect_threshold: float = Field(
+        default=27.0, description="PySceneDetect threshold (lower=more scenes)"
+    )
+    scene_detect_min_length: float = Field(
+        default=1.0, description="Min scene length in seconds"
+    )
 
     # AI Provider Strategy (runtime switchable)
     ai_provider_vision: str = Field(
         default="ollama",
-        description="VLM provider for dense captioning (ollama/gemini)"
+        description="VLM provider for dense captioning (ollama/gemini)",
     )
     ai_provider_text: str = Field(
-        default="ollama",
-        description="LLM provider for query parsing (ollama/gemini)"
+        default="ollama", description="LLM provider for query parsing (ollama/gemini)"
     )
 
     # Resource
@@ -293,103 +307,100 @@ class Settings(BaseSettings):
     enable_distributed_ingestion: bool = False
 
     # Observability (Loki)
-    enable_loki: bool = Field(default=False, description="Enable log shipping to Grafana Loki")
-    loki_url: str = Field(default="http://localhost:3100/loki/api/v1/push", description="Loki push API URL")
+    enable_loki: bool = Field(
+        default=False, description="Enable log shipping to Grafana Loki"
+    )
+    loki_url: str = Field(
+        default="http://localhost:3100/loki/api/v1/push",
+        description="Loki push API URL",
+    )
 
     # --- Antigravity Feature Flags ---
     use_indic_asr: bool = Field(
-        default=True,
-        description="Use AI4Bharat IndicConformer for Indic languages"
+        default=True, description="Use AI4Bharat IndicConformer for Indic languages"
     )
 
     use_native_nemo: bool = Field(
         default=True,
-        description="Attempt to use Native NeMo if installed (Preferred over Docker)"
+        description="Attempt to use Native NeMo if installed (Preferred over Docker)",
     )
 
     auto_detect_language: bool = Field(
-        default=True,
-        description="Auto-detect audio language before transcription"
+        default=True, description="Auto-detect audio language before transcription"
     )
 
     ai4bharat_url: str = Field(
         default="http://localhost:8001",
-        description="URL for local AI4Bharat IndicConformer Docker service"
+        description="URL for local AI4Bharat IndicConformer Docker service",
     )
 
     enable_sam3_tracking: bool = Field(
-        default=False,
-        description="Enable SAM 3 Promptable Concept Segmentation"
+        default=False, description="Enable SAM 3 Promptable Concept Segmentation"
     )
 
     manipulation_backend: Literal["disabled", "wan", "propainter", "auto"] = Field(
-        default="disabled",
-        description="Backend for video inpainting/manipulation"
+        default="disabled", description="Backend for video inpainting/manipulation"
     )
 
     # Hierarchical Summarization
     summary_scene_duration: int = Field(
         default=300,
-        description="Duration in seconds for L2 scene chunks (300=5 minutes)"
+        description="Duration in seconds for L2 scene chunks (300=5 minutes)",
     )
     auto_summarize_on_ingest: bool = Field(
         default=False,
-        description="Auto-generate hierarchical summaries after ingestion"
+        description="Auto-generate hierarchical summaries after ingestion",
     )
 
     # --- Biometrics Configuration ---
     arcface_model_path: Path = Field(
         default=Path("models/arcface/w600k_r50.onnx"),
-        description="Path to ArcFace ONNX model for twin verification"
+        description="Path to ArcFace ONNX model for twin verification",
     )
     biometric_threshold: float = Field(
-        default=0.6,
-        description="Distance threshold for ArcFace identity verification"
+        default=0.6, description="Distance threshold for ArcFace identity verification"
     )
 
     # Advanced Overrides - SOTA Embeddings for 100% accuracy
     embedding_model_override: str = Field(
         default="BAAI/bge-m3",
-        description="Text embedding model (BGE-M3 = 1024d, SOTA multilingual)"
+        description="Text embedding model (BGE-M3 = 1024d, SOTA multilingual)",
     )
     text_embedding_dim: int = Field(
-        default=1024,
-        description="Dimension of text embeddings (must match model)"
+        default=1024, description="Dimension of text embeddings (must match model)"
     )
     visual_embedding_dim: int = Field(
         default=1024,
-        description="Dimension of visual embeddings (SigLIP=768, BGE-Visual=1024)"
+        description="Dimension of visual embeddings (SigLIP=768, BGE-Visual=1024)",
     )
 
     siglip_model: str = Field(
         default="google/siglip-so400m-patch14-384",
-        description="Visual embedding model for cross-modal search"
+        description="Visual embedding model for cross-modal search",
     )
 
     enable_visual_embeddings: bool = Field(
         default=True,
-        description="Store SigLIP visual embeddings for cross-modal retrieval"
+        description="Store SigLIP visual embeddings for cross-modal retrieval",
     )
 
     enable_hybrid_search: bool = Field(
-        default=True,
-        description="Use hybrid search (vector + keyword + identity)"
+        default=True, description="Use hybrid search (vector + keyword + identity)"
     )
 
     # Memory Management - STRATEGY: SOTA Always, Throttle Resources
     high_performance_mode: bool = Field(
         default=True,
-        description="Enable parallel processing. If False, sequential processing with aggressive cleanup."
+        description="Enable parallel processing. If False, sequential processing with aggressive cleanup.",
     )
 
     max_concurrent_jobs: int = Field(
         default=1,
-        description="Max parallel ingestion jobs. Auto-set by SystemProfile if not overridden."
+        description="Max parallel ingestion jobs. Auto-set by SystemProfile if not overridden.",
     )
 
     lazy_unload: bool = Field(
-        default=True,
-        description="Unload models after use to free VRAM."
+        default=True, description="Unload models after use to free VRAM."
     )
 
     @model_validator(mode="after")
@@ -400,9 +411,13 @@ class Settings(BaseSettings):
         if "nv-embed-v2" in model:
             # NV-Embed-v2 is 4096 dim
             if self.text_embedding_dim != 4096:
-                logging.info("Auto-adjusting text_embedding_dim to 4096 for NV-Embed-v2")
+                logging.info(
+                    "Auto-adjusting text_embedding_dim to 4096 for NV-Embed-v2"
+                )
                 self.text_embedding_dim = 4096
-                self.visual_embedding_dim = 4096 # If using for both (likely not, usually SigLIP is separate)
+                self.visual_embedding_dim = (
+                    4096  # If using for both (likely not, usually SigLIP is separate)
+                )
                 # But VectorDB.MEDIA_VECTOR_SIZE uses visual_embedding_dim.
                 # If we use LLM for vision, SigLIP is still 768 or 1024.
                 # Wait, visual_embedding_dim configures Media Collection.
@@ -412,7 +427,7 @@ class Settings(BaseSettings):
             if self.text_embedding_dim != 1024:
                 self.text_embedding_dim = 1024
         elif "mxbai" in model:
-             if self.text_embedding_dim != 1024:
+            if self.text_embedding_dim != 1024:
                 self.text_embedding_dim = 1024
 
         return self
@@ -422,8 +437,6 @@ class Settings(BaseSettings):
     def effective_embedding_model(self) -> str:
         """ALWAYS use SOTA embedding model. Never downgrade for quality."""
         return self.embedding_model_override  # BAAI/bge-m3 (1024d) always
-
-
 
     @computed_field
     @property

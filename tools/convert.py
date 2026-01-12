@@ -21,10 +21,14 @@ def get_video_duration(path: Path) -> float | None:
     """Get video duration in seconds using ffprobe."""
     try:
         cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(path)
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
@@ -36,7 +40,7 @@ def get_video_duration(path: Path) -> float | None:
 
 def recommend_preset(file_size_mb: float, duration_seconds: float | None) -> str:
     """Recommend a preset based on file size and duration.
-    
+
     Returns:
         Recommended preset name
     """
@@ -77,9 +81,9 @@ def estimate_conversion_time(duration_seconds: float, preset: str) -> str:
     # Rough multipliers (conversion time as fraction of video duration)
     multipliers = {
         "ultrafast": 0.3,  # ~30% of video duration
-        "fast": 0.5,       # ~50% of video duration
-        "medium": 1.0,     # ~100% of video duration
-        "slow": 2.0,       # ~200% of video duration
+        "fast": 0.5,  # ~50% of video duration
+        "medium": 1.0,  # ~100% of video duration
+        "slow": 2.0,  # ~200% of video duration
     }
     mult = multipliers.get(preset, 0.5)
     est_seconds = duration_seconds * mult
@@ -92,23 +96,47 @@ def prompt_preset_choice(file_path: Path, recommended: str) -> str:
     duration = get_video_duration(file_path)
     duration_str = format_duration(duration) if duration else "Unknown"
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  File: {file_path.name}")
     print(f"  Size: {file_size_mb:.1f} MB | Duration: {duration_str}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print()
     print("Choose encoding preset:")
     print()
 
     presets = [
-        ("1", "ultrafast", "Fastest encoding, larger file size",
-         estimate_conversion_time(duration or 600, "ultrafast") if duration else "~30% of video length"),
-        ("2", "fast", "Good balance of speed and quality (RECOMMENDED for most)",
-         estimate_conversion_time(duration or 600, "fast") if duration else "~50% of video length"),
-        ("3", "medium", "Better quality, slower encoding",
-         estimate_conversion_time(duration or 600, "medium") if duration else "~100% of video length"),
-        ("4", "slow", "Best quality, slowest encoding (not recommended for long videos)",
-         estimate_conversion_time(duration or 600, "slow") if duration else "~200% of video length"),
+        (
+            "1",
+            "ultrafast",
+            "Fastest encoding, larger file size",
+            estimate_conversion_time(duration or 600, "ultrafast")
+            if duration
+            else "~30% of video length",
+        ),
+        (
+            "2",
+            "fast",
+            "Good balance of speed and quality (RECOMMENDED for most)",
+            estimate_conversion_time(duration or 600, "fast")
+            if duration
+            else "~50% of video length",
+        ),
+        (
+            "3",
+            "medium",
+            "Better quality, slower encoding",
+            estimate_conversion_time(duration or 600, "medium")
+            if duration
+            else "~100% of video length",
+        ),
+        (
+            "4",
+            "slow",
+            "Best quality, slowest encoding (not recommended for long videos)",
+            estimate_conversion_time(duration or 600, "slow")
+            if duration
+            else "~200% of video length",
+        ),
     ]
 
     for num, name, desc, est_time in presets:
@@ -122,7 +150,9 @@ def prompt_preset_choice(file_path: Path, recommended: str) -> str:
     print()
 
     try:
-        choice = input(f"Enter choice [1-4] or press Enter for '{recommended}': ").strip()
+        choice = input(
+            f"Enter choice [1-4] or press Enter for '{recommended}': "
+        ).strip()
     except (EOFError, KeyboardInterrupt):
         print("\nUsing default preset.")
         return recommended
@@ -138,42 +168,55 @@ def prompt_preset_choice(file_path: Path, recommended: str) -> str:
         return recommended
 
 
-def convert_to_mp4(input_path: Path, output_path: Path | None = None, preset: str = "fast") -> bool:
+def convert_to_mp4(
+    input_path: Path, output_path: Path | None = None, preset: str = "fast"
+) -> bool:
     """Convert a video file to MP4 with faststart for instant seeking.
-    
+
     Args:
         input_path: Path to input video file
         output_path: Output path (default: same name with .mp4 extension)
         preset: FFmpeg preset (ultrafast, fast, medium, slow)
-    
+
     Returns:
         True if conversion succeeded
     """
     if output_path is None:
-        output_path = input_path.with_suffix('.mp4')
+        output_path = input_path.with_suffix(".mp4")
 
     if output_path.exists():
         print(f"  ⏭ Skipping {input_path.name} - output already exists")
         return True
 
     cmd = [
-        "ffmpeg", "-y",
-        "-i", str(input_path),
-        "-c:v", "libx264",
-        "-preset", preset,
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        "-progress", "pipe:1",
-        str(output_path)
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        "-progress",
+        "pipe:1",
+        str(output_path),
     ]
 
     print(f"  🔄 Converting: {input_path.name}")
     print(f"     Preset: {preset}")
 
     try:
-        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=7200)  # 2hr timeout
+        result = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=7200
+        )  # 2hr timeout
 
         if result.returncode == 0 and output_path.exists():
             out_size = get_file_size_mb(output_path)
@@ -191,17 +234,22 @@ def convert_to_mp4(input_path: Path, output_path: Path | None = None, preset: st
         return False
 
 
-def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".avi"],
-                  workers: int = 2, preset: str = "fast", interactive: bool = True) -> tuple[int, int]:
+def batch_convert(
+    directory: Path,
+    extensions: list[str] = [".webm", ".mkv", ".avi"],
+    workers: int = 2,
+    preset: str = "fast",
+    interactive: bool = True,
+) -> tuple[int, int]:
     """Convert all videos in directory to MP4.
-    
+
     Args:
         directory: Directory containing videos
         extensions: File extensions to convert
         workers: Number of parallel conversions
         preset: FFmpeg preset
         interactive: Whether to prompt for preset
-    
+
     Returns:
         Tuple of (successful, failed) counts
     """
@@ -217,11 +265,11 @@ def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".a
     # Calculate total size
     total_size_mb = sum(get_file_size_mb(f) for f in files)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Found {len(files)} files to convert")
     print(f"  Total size: {total_size_mb:.1f} MB")
     print(f"  Workers: {workers}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     if interactive and len(files) > 0:
         # Recommend based on largest file
@@ -242,7 +290,9 @@ def batch_convert(directory: Path, extensions: list[str] = [".webm", ".mkv", ".a
                 failed += 1
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(convert_to_mp4, f, None, preset): f for f in files}
+            futures = {
+                executor.submit(convert_to_mp4, f, None, preset): f for f in files
+            }
 
             for future in as_completed(futures):
                 if future.result():
@@ -287,17 +337,34 @@ WHY CONVERT?
   WebM files (VP9 codec) have poor seek performance in browsers.
   Converting to MP4 with -movflags +faststart enables instant seeking
   for video segment playback in the AI-Media-Indexer search results.
-        """
+        """,
     )
     parser.add_argument("path", help="File or directory to convert")
-    parser.add_argument("--preset", choices=["ultrafast", "fast", "medium", "slow"],
-                        help="Encoding preset: ultrafast|fast|medium|slow (skips menu)")
-    parser.add_argument("--workers", "-w", type=int, default=2,
-                        help="Parallel workers for batch conversion (default: 2)")
-    parser.add_argument("--extensions", "-e", nargs="+", default=[".webm", ".mkv", ".avi"],
-                        help="File extensions to convert (default: .webm .mkv .avi)")
-    parser.add_argument("--no-interactive", "-y", action="store_true",
-                        help="Skip interactive prompts, use smart defaults")
+    parser.add_argument(
+        "--preset",
+        choices=["ultrafast", "fast", "medium", "slow"],
+        help="Encoding preset: ultrafast|fast|medium|slow (skips menu)",
+    )
+    parser.add_argument(
+        "--workers",
+        "-w",
+        type=int,
+        default=2,
+        help="Parallel workers for batch conversion (default: 2)",
+    )
+    parser.add_argument(
+        "--extensions",
+        "-e",
+        nargs="+",
+        default=[".webm", ".mkv", ".avi"],
+        help="File extensions to convert (default: .webm .mkv .avi)",
+    )
+    parser.add_argument(
+        "--no-interactive",
+        "-y",
+        action="store_true",
+        help="Skip interactive prompts, use smart defaults",
+    )
 
     args = parser.parse_args()
     path = Path(args.path)
@@ -310,7 +377,7 @@ WHY CONVERT?
 
     if path.is_file():
         # Single file conversion
-        if path.suffix.lower() == '.mp4':
+        if path.suffix.lower() == ".mp4":
             print(f"File is already MP4: {path.name}")
             sys.exit(0)
 
@@ -333,12 +400,11 @@ WHY CONVERT?
     else:
         # Batch conversion
         success, failed = batch_convert(
-            path, args.extensions, args.workers,
-            args.preset or "fast", interactive
+            path, args.extensions, args.workers, args.preset or "fast", interactive
         )
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  Completed: {success} succeeded, {failed} failed")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
         sys.exit(0 if failed == 0 else 1)
 
 

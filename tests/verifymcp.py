@@ -1,4 +1,3 @@
-
 import asyncio
 import os
 import sys
@@ -20,9 +19,7 @@ async def verify_mcp_server():
     server_script = os.path.join(project_root, "core", "agent", "server.py")
 
     server_params = StdioServerParameters(
-        command=sys.executable,
-        args=[server_script],
-        env=os.environ.copy()
+        command=sys.executable, args=[server_script], env=os.environ.copy()
     )
 
     try:
@@ -39,8 +36,15 @@ async def verify_mcp_server():
                     print(f"  - {tool.name}: {tool.description[:50]}...")
 
                 # Check for required tools
-                required = ["query_video_rag", "get_video_summary", "enrich_identity", "search_media"]
-                missing = [t for t in required if not any(x.name == t for x in tools.tools)]
+                required = [
+                    "query_video_rag",
+                    "get_video_summary",
+                    "enrich_identity",
+                    "search_media",
+                ]
+                missing = [
+                    t for t in required if not any(x.name == t for x in tools.tools)
+                ]
 
                 if missing:
                     print(f"❌ Missing expected tools: {missing}")
@@ -54,6 +58,7 @@ async def verify_mcp_server():
     except Exception as e:
         print(f"❌ Verification Failed: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     asyncio.run(verify_mcp_server())

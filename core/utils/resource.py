@@ -38,7 +38,7 @@ class ResourceManager:
 
         # We assume network tasks (API calls) don't heat up the CPU
         # But we still check RAM to prevent OOM crashes
-        check_thermal = (task_type == "compute")
+        check_thermal = task_type == "compute"
 
         while not self._is_safe(check_thermal=check_thermal):
             log.warning(
@@ -57,6 +57,7 @@ class ResourceManager:
         # 2. Check VRAM (GPU memory) if available
         try:
             from core.utils.hardware import get_vram_usage_percent
+
             vram_percent = get_vram_usage_percent()
             # Use 75% threshold for VRAM to leave headroom
             if vram_percent > 75.0:
@@ -91,6 +92,7 @@ class ResourceManager:
         """Get NVIDIA GPU temperature using pynvml (cross-platform)."""
         try:
             import pynvml
+
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
@@ -138,6 +140,7 @@ class ResourceManager:
         # Add VRAM if available
         try:
             from core.utils.hardware import get_available_vram, get_used_vram
+
             vram_used = get_used_vram()
             vram_total = get_available_vram()
             vram_str = f" | VRAM: {vram_used:.1f}/{vram_total:.1f}GB"
@@ -145,6 +148,7 @@ class ResourceManager:
             vram_str = ""
 
         return f"RAM: {mem}% | CPU: {cpu}% | Temp: {temp_str}{vram_str}"
+
 
 # Singleton instance
 resource_manager = ResourceManager()

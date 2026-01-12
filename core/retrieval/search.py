@@ -80,13 +80,15 @@ class SearchEngine:
         # Format results
         formatted = []
         for hit in results:
-            formatted.append({
-                "score": f"{hit.get('score', 0):.2f}",
-                "time": f"{hit.get('timestamp', 0):.2f}s",
-                "file": hit.get("video_path"),
-                "content": hit.get("action"),
-                "details": hit.get("structured_data"),
-            })
+            formatted.append(
+                {
+                    "score": f"{hit.get('score', 0):.2f}",
+                    "time": f"{hit.get('timestamp', 0):.2f}s",
+                    "file": hit.get("video_path"),
+                    "content": hit.get("action"),
+                    "details": hit.get("structured_data"),
+                }
+            )
 
         return {
             "query": user_query,
@@ -124,8 +126,8 @@ Return ONLY JSON, no explanation."""
         try:
             raw = await self.llm.generate(prompt)
             # Extract JSON from response
-            start = raw.find('{')
-            end = raw.rfind('}') + 1
+            start = raw.find("{")
+            end = raw.rfind("}") + 1
             if start >= 0 and end > start:
                 return json.loads(raw[start:end])
         except Exception as e:

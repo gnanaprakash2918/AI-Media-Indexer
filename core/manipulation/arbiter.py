@@ -15,18 +15,15 @@ class InpaintingArbiter:
     MOTION_THRESHOLD = 2.0
 
     def analyze_scene(
-        self,
-        video_path: Path,
-        mask_path: Path | None = None,
-        sample_frames: int = 30
+        self, video_path: Path, mask_path: Path | None = None, sample_frames: int = 30
     ) -> Literal["propainter", "wan"]:
         """Analyze video motion to decide inpainting backend.
-        
+
         Args:
             video_path: Path to video file.
             mask_path: Optional path to mask video.
             sample_frames: Number of frames to analyze.
-            
+
         Returns:
             'propainter' for static backgrounds, 'wan' for dynamic.
         """
@@ -49,8 +46,16 @@ class InpaintingArbiter:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             flow = cv2.calcOpticalFlowFarneback(
-                prev_gray, gray, None,  # type: ignore
-                0.5, 3, 15, 3, 5, 1.2, 0
+                prev_gray,
+                gray,
+                None,  # type: ignore
+                0.5,
+                3,
+                15,
+                3,
+                5,
+                1.2,
+                0,
             )
             mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
             total_motion += np.mean(mag)
@@ -71,18 +76,15 @@ class InpaintingArbiter:
             return "wan"
 
     def check_occlusion_recovery(
-        self,
-        video_path: Path,
-        mask_frames: list[np.ndarray],
-        threshold: float = 0.8
+        self, video_path: Path, mask_frames: list[np.ndarray], threshold: float = 0.8
     ) -> bool:
         """Check if masked region is revealed in other frames.
-        
+
         Args:
             video_path: Path to video.
             mask_frames: List of binary masks per frame.
             threshold: Fraction of frames where region must be visible.
-            
+
         Returns:
             True if region is recoverable via propagation.
         """

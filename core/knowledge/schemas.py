@@ -14,12 +14,13 @@ from pydantic import BaseModel, Field, field_validator
 # DYNAMIC ENTITY SYSTEM (NO HARDCODING - UNLIMITED COMPLEXITY)
 # =============================================================================
 
+
 class DynamicEntity(BaseModel):
     """Fully flexible entity that can represent ANYTHING in a video.
-    
+
     This replaces hardcoded classes like ClothingItem, VehicleInQuery, etc.
     The LLM dynamically determines the entity type and attributes.
-    
+
     Examples:
     - {entity_type: "person", name: "Prakash", attributes: {position: "center"}}
     - {entity_type: "vehicle", name: "Ferrari", attributes: {color: "red", model: "488"}}
@@ -33,35 +34,29 @@ class DynamicEntity(BaseModel):
     entity_type: str = Field(
         ...,
         description="LLM-determined type: person/vehicle/clothing/accessory/brand/"
-                    "object/action/sound/text/emotion/location/food/animal/etc"
+        "object/action/sound/text/emotion/location/food/animal/etc",
     )
-    name: str = Field(
-        ...,
-        description="Entity name or identifier"
-    )
+    name: str = Field(..., description="Entity name or identifier")
     attributes: dict[str, Any] = Field(
         default_factory=dict,
         description="Dynamic key-value attributes - NO FIXED SCHEMA. "
-                    "Can include: color, size, brand, position, state, material, "
-                    "body_part, intensity, speed, direction, model, etc."
+        "Can include: color, size, brand, position, state, material, "
+        "body_part, intensity, speed, direction, model, etc.",
     )
     relationships: list[dict[str, str]] = Field(
         default_factory=list,
         description="Relations to other entities: "
-                    "[{relation: 'wears', target: 'blue shirt'}, "
-                    "{relation: 'driving', target: 'red ferrari'}]"
+        "[{relation: 'wears', target: 'blue shirt'}, "
+        "{relation: 'driving', target: 'red ferrari'}]",
     )
-    confidence: float = Field(
-        default=1.0,
-        description="Detection confidence 0.0-1.0"
-    )
+    confidence: float = Field(default=1.0, description="Detection confidence 0.0-1.0")
     temporal_info: dict[str, Any] = Field(
         default_factory=dict,
-        description="Time-related info: {appears_at: 5.2, duration: 3.1, sequence: 'first'}"
+        description="Time-related info: {appears_at: 5.2, duration: 3.1, sequence: 'first'}",
     )
     spatial_info: dict[str, Any] = Field(
         default_factory=dict,
-        description="Position info: {position: 'left', bbox: [x,y,w,h], depth: 'foreground'}"
+        description="Position info: {position: 'left', bbox: [x,y,w,h], depth: 'foreground'}",
     )
 
     def to_search_text(self) -> str:
@@ -78,47 +73,47 @@ class DynamicEntity(BaseModel):
 
 class DynamicParsedQuery(BaseModel):
     """Unlimited complexity query parser - extracts EVERYTHING dynamically.
-    
+
     This is the production-grade query parser that handles queries like:
-    - "Prakash wearing blue t-shirt with John Jacobs spectacles and red shoe 
-       on left foot with green shoe on right foot playing ten-pin bowling at 
+    - "Prakash wearing blue t-shirt with John Jacobs spectacles and red shoe
+       on left foot with green shoe on right foot playing ten-pin bowling at
        Brunswick sports hitting a strike where all pins fell down fastly"
-    - "red ferrari and yellow lamborghini hurricane passing red signal while 
+    - "red ferrari and yellow lamborghini hurricane passing red signal while
        a guy with nike blue shoes, vr headset, balenciaga bag gets into accident"
     - "scene where someone says 'I love you' while rain is falling and sad music plays"
-    
+
     NO PREDEFINED CATEGORIES - the LLM determines entity types dynamically.
     """
 
     # All entities extracted from the query
     entities: list[DynamicEntity] = Field(
         default_factory=list,
-        description="ALL entities from query - unlimited types and attributes"
+        description="ALL entities from query - unlimited types and attributes",
     )
 
     # Entity relationships as graph edges
     relationships: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Entity-entity relationships: "
-                    "[{source: 'Prakash', relation: 'wearing', target: 'blue shirt'}]"
+        "[{source: 'Prakash', relation: 'wearing', target: 'blue shirt'}]",
     )
 
     # LLM-generated dense search text
     scene_description: str = Field(
         default="",
-        description="LLM-generated comprehensive scene description for semantic search"
+        description="LLM-generated comprehensive scene description for semantic search",
     )
 
     # Temporal constraints
     temporal_constraints: list[str] = Field(
         default_factory=list,
-        description="Time constraints: ['at the end', 'takes a moment', 'slowly']"
+        description="Time constraints: ['at the end', 'takes a moment', 'slowly']",
     )
 
     # Audio/dialogue constraints
     audio_constraints: list[str] = Field(
         default_factory=list,
-        description="Audio requirements: ['says I love you', 'sad music', 'engine sound']"
+        description="Audio requirements: ['says I love you', 'sad music', 'engine sound']",
     )
 
     # The original query
@@ -127,7 +122,7 @@ class DynamicParsedQuery(BaseModel):
     # Search modality hints
     modalities: list[str] = Field(
         default_factory=list,
-        description="Which modalities to search: ['visual', 'audio', 'dialogue', 'text']"
+        description="Which modalities to search: ['visual', 'audio', 'dialogue', 'text']",
     )
 
     def to_search_text(self) -> str:
@@ -152,7 +147,9 @@ class DynamicParsedQuery(BaseModel):
 
     def get_entities_by_type(self, entity_type: str) -> list[DynamicEntity]:
         """Get all entities of a specific type."""
-        return [e for e in self.entities if e.entity_type.lower() == entity_type.lower()]
+        return [
+            e for e in self.entities if e.entity_type.lower() == entity_type.lower()
+        ]
 
     def get_person_names(self) -> list[str]:
         """Get all person names for identity search."""
@@ -180,7 +177,7 @@ class EntityDetail(BaseModel):
         description="Color, texture, state (e.g., 'Steaming hot', 'Worn out', 'Bright red')",
     )
 
-    @field_validator('visual_details', mode='before')
+    @field_validator("visual_details", mode="before")
     @classmethod
     def convert_dict_to_string(cls, v):
         """Convert dict/list visual_details to string (Ollama sometimes returns structured data)."""
@@ -258,7 +255,7 @@ class FrameAnalysis(BaseModel):
     )
 
     # Validators to handle Ollama returning lists instead of strings
-    @field_validator('main_subject', 'action', 'action_physics', mode='before')
+    @field_validator("main_subject", "action", "action_physics", mode="before")
     @classmethod
     def coerce_list_to_string(cls, v):
         """Convert list to string (Ollama sometimes returns lists)."""
@@ -268,6 +265,7 @@ class FrameAnalysis(BaseModel):
         if v is None:
             return ""
         return str(v)
+
     person_names: list[str] = Field(
         default_factory=list,
         description="Names resolved from HITL naming",
@@ -345,8 +343,12 @@ class PersonAttribute(BaseModel):
     face_id: str = Field(default="", description="Face cluster ID")
     name: str | None = Field(default=None, description="Resolved name from HITL")
     clothing_color: str = Field(default="", description="Primary clothing color")
-    clothing_type: str = Field(default="", description="Clothing type (shirt, saree, etc.)")
-    accessories: list[str] = Field(default_factory=list, description="Glasses, watch, jewelry, etc.")
+    clothing_type: str = Field(
+        default="", description="Clothing type (shirt, saree, etc.)"
+    )
+    accessories: list[str] = Field(
+        default_factory=list, description="Glasses, watch, jewelry, etc."
+    )
     position: str = Field(default="", description="left/center/right in frame")
 
 
@@ -416,13 +418,17 @@ class SceneData(BaseModel):
 
     # Scene context
     location: str = Field(default="", description="Where the scene takes place")
-    cultural_context: str = Field(default="", description="Cultural setting if relevant")
+    cultural_context: str = Field(
+        default="", description="Cultural setting if relevant"
+    )
     time_of_day: str = Field(default="", description="Morning/afternoon/evening/night")
 
     # Source
     media_path: str = Field(default="", description="Path to source video")
     frame_count: int = Field(default=0, description="Number of frames in scene")
-    thumbnail_path: str = Field(default="", description="Representative frame thumbnail")
+    thumbnail_path: str = Field(
+        default="", description="Representative frame thumbnail"
+    )
 
     def to_search_content(self) -> str:
         """Generate rich searchable text optimized for semantic search."""
@@ -493,9 +499,15 @@ class SceneData(BaseModel):
             # Identity (indexed for filtering)
             "face_cluster_ids": self.face_cluster_ids,
             "person_names": self.person_names,
-            "clothing_colors": [a.clothing_color for a in self.person_attributes if a.clothing_color],
-            "clothing_types": [a.clothing_type for a in self.person_attributes if a.clothing_type],
-            "accessories": [acc for a in self.person_attributes for acc in a.accessories],
+            "clothing_colors": [
+                a.clothing_color for a in self.person_attributes if a.clothing_color
+            ],
+            "clothing_types": [
+                a.clothing_type for a in self.person_attributes if a.clothing_type
+            ],
+            "accessories": [
+                acc for a in self.person_attributes for acc in a.accessories
+            ],
             # Audio
             "speaker_ids": self.speaker_ids,
             "speaker_names": self.speaker_names,
@@ -516,23 +528,19 @@ class ClothingItem(BaseModel):
 
     body_part: str = Field(
         default="",
-        description="Body location (e.g., 'upper body', 'left foot', 'right foot', 'head')"
+        description="Body location (e.g., 'upper body', 'left foot', 'right foot', 'head')",
     )
     item_type: str = Field(
-        default="",
-        description="Type (e.g., 't-shirt', 'shoe', 'spectacles', 'watch')"
+        default="", description="Type (e.g., 't-shirt', 'shoe', 'spectacles', 'watch')"
     )
-    color: str = Field(
-        default="",
-        description="Color (e.g., 'blue', 'red and white')"
-    )
+    color: str = Field(default="", description="Color (e.g., 'blue', 'red and white')")
     brand: str = Field(
         default="",
-        description="Brand name if mentioned (e.g., 'Nike', 'John Jacobs', 'Balenciaga')"
+        description="Brand name if mentioned (e.g., 'Nike', 'John Jacobs', 'Balenciaga')",
     )
     details: str = Field(
         default="",
-        description="Additional details (e.g., 'VR headset', 'running shoes')"
+        description="Additional details (e.g., 'VR headset', 'running shoes')",
     )
 
 
@@ -541,19 +549,18 @@ class PersonInQuery(BaseModel):
 
     name: str | None = Field(
         default=None,
-        description="Person name if known (e.g., 'Prakash', 'a guy', 'everyone')"
+        description="Person name if known (e.g., 'Prakash', 'a guy', 'everyone')",
     )
     clothing_items: list[ClothingItem] = Field(
-        default_factory=list,
-        description="All clothing/accessories worn by this person"
+        default_factory=list, description="All clothing/accessories worn by this person"
     )
     actions: list[str] = Field(
         default_factory=list,
-        description="Actions this person is doing (e.g., 'bowling', 'running', 'gets into accident')"
+        description="Actions this person is doing (e.g., 'bowling', 'running', 'gets into accident')",
     )
     action_results: list[str] = Field(
         default_factory=list,
-        description="Results of actions (e.g., 'hitting a strike', 'all pins fell')"
+        description="Results of actions (e.g., 'hitting a strike', 'all pins fell')",
     )
 
 
@@ -561,24 +568,16 @@ class VehicleInQuery(BaseModel):
     """A vehicle mentioned in the query."""
 
     vehicle_type: str = Field(
-        default="",
-        description="Type (e.g., 'car', 'ferrari', 'lamborghini')"
+        default="", description="Type (e.g., 'car', 'ferrari', 'lamborghini')"
     )
-    brand: str = Field(
-        default="",
-        description="Brand (e.g., 'Ferrari', 'Lamborghini')"
-    )
+    brand: str = Field(default="", description="Brand (e.g., 'Ferrari', 'Lamborghini')")
     model: str = Field(
-        default="",
-        description="Model if mentioned (e.g., 'Hurricane', 'Model 3')"
+        default="", description="Model if mentioned (e.g., 'Hurricane', 'Model 3')"
     )
-    color: str = Field(
-        default="",
-        description="Color (e.g., 'red', 'yellow')"
-    )
+    color: str = Field(default="", description="Color (e.g., 'red', 'yellow')")
     actions: list[str] = Field(
         default_factory=list,
-        description="What vehicle is doing (e.g., 'passes by', 'crashes')"
+        description="What vehicle is doing (e.g., 'passes by', 'crashes')",
     )
 
 
@@ -587,29 +586,28 @@ class ParsedQuery(BaseModel):
 
     Designed to handle paragraph-length queries with:
     - Multiple people with different attributes
-    - Body-part specific clothing/accessories  
+    - Body-part specific clothing/accessories
     - Multiple vehicles with brands/colors
     - Temporal descriptions
     - NO hardcoding - all extracted dynamically by LLM
-    
+
     Example queries this handles:
-    - "Prakash wearing blue t-shirt with John Jacobs spectacles and red shoe on left foot, 
-       green shoe on right foot playing ten-pin bowling hitting a strike where last pin 
+    - "Prakash wearing blue t-shirt with John Jacobs spectacles and red shoe on left foot,
+       green shoe on right foot playing ten-pin bowling hitting a strike where last pin
        takes a moment to fall"
-    - "Red Ferrari and yellow Lamborghini Hurricane passing a red signal while a guy 
+    - "Red Ferrari and yellow Lamborghini Hurricane passing a red signal while a guy
        with Nike blue shoes and VR headset gets into accident"
     """
 
     # Multiple people with full attributes
     people: list[PersonInQuery] = Field(
         default_factory=list,
-        description="All people mentioned with their clothing and actions"
+        description="All people mentioned with their clothing and actions",
     )
 
     # Legacy single-person fields (for backwards compatibility)
     person_name: str | None = Field(
-        default=None,
-        description="Primary person name (use people[] for multiple)"
+        default=None, description="Primary person name (use people[] for multiple)"
     )
     clothing_color: str | None = Field(default=None)
     clothing_type: str | None = Field(default=None)
@@ -618,56 +616,52 @@ class ParsedQuery(BaseModel):
     # Multiple vehicles
     vehicles: list[VehicleInQuery] = Field(
         default_factory=list,
-        description="All vehicles mentioned with their brands/colors/actions"
+        description="All vehicles mentioned with their brands/colors/actions",
     )
 
     # Visual elements (expanded by LLM)
     visual_keywords: list[str] = Field(
         default_factory=list,
-        description="Expanded visual keywords (e.g., 'South Indian breakfast' -> ['idli', 'dosa'])"
+        description="Expanded visual keywords (e.g., 'South Indian breakfast' -> ['idli', 'dosa'])",
     )
 
     # Actions (scene-level)
     action_keywords: list[str] = Field(
-        default_factory=list,
-        description="All action keywords from query"
+        default_factory=list, description="All action keywords from query"
     )
     action_result: str | None = Field(
-        default=None,
-        description="Primary expected outcome"
+        default=None, description="Primary expected outcome"
     )
 
     # Objects/Brands
     text_to_find: list[str] = Field(
-        default_factory=list,
-        description="All brand names and visible text to search"
+        default_factory=list, description="All brand names and visible text to search"
     )
     objects: list[str] = Field(
         default_factory=list,
-        description="Specific objects (e.g., 'bowling pins', 'red signal')"
+        description="Specific objects (e.g., 'bowling pins', 'red signal')",
     )
 
     # Temporal descriptors
     temporal_hints: list[str] = Field(
         default_factory=list,
-        description="Time descriptions (e.g., 'fastly', 'takes a moment', 'at the end')"
+        description="Time descriptions (e.g., 'fastly', 'takes a moment', 'at the end')",
     )
 
     # Location
     location: str | None = Field(
         default=None,
-        description="Location (e.g., 'Brunswick sports', 'red signal intersection')"
+        description="Location (e.g., 'Brunswick sports', 'red signal intersection')",
     )
 
     # Scene description for very complex queries
     scene_description: str = Field(
-        default="",
-        description="LLM-generated summary of what to search for"
+        default="", description="LLM-generated summary of what to search for"
     )
 
     def to_search_text(self) -> str:
         """Generate dense search text from all parsed components.
-        
+
         Creates a rich text representation that captures all query semantics
         for vector similarity search.
         """
@@ -686,8 +680,15 @@ class ParsedQuery(BaseModel):
                     parts.append(item.item_type)
                 if item.details:
                     parts.append(item.details)
-                if item.body_part and item.body_part not in ["upper body", "lower body"]:
-                    parts.append(f"{item.color} {item.body_part}" if item.color else item.body_part)
+                if item.body_part and item.body_part not in [
+                    "upper body",
+                    "lower body",
+                ]:
+                    parts.append(
+                        f"{item.color} {item.body_part}"
+                        if item.color
+                        else item.body_part
+                    )
             parts.extend(person.actions)
             parts.extend(person.action_results)
 
@@ -736,4 +737,3 @@ class ParsedQuery(BaseModel):
         parts.extend(self.temporal_hints)
 
         return " ".join(filter(None, parts))
-

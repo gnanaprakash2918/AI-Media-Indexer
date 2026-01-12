@@ -26,6 +26,7 @@ try:
         AutoProcessor,
         pipeline as hf_pipeline,
     )
+
     HAS_HF_TRANSFORMERS = True
 except ImportError:
     AutoModelForSpeechSeq2Seq = None
@@ -37,6 +38,7 @@ except ImportError:
 try:
     import nemo.collections.asr as nemo_asr  # type: ignore
     from huggingface_hub import hf_hub_download
+
     HAS_NEMO = True
 except ImportError:
     nemo_asr = None
@@ -45,6 +47,7 @@ except ImportError:
 
 try:
     import torchaudio
+
     HAS_TORCHAUDIO = True
 except ImportError:
     torchaudio = None
@@ -55,17 +58,19 @@ from core.utils.logger import log
 
 # Log NeMo availability at module load
 if not HAS_NEMO:
-    log("[IndicASR] NVIDIA NeMo not installed. For SOTA Indic ASR, run: pip install nemo_toolkit[asr]")
+    log(
+        "[IndicASR] NVIDIA NeMo not installed. For SOTA Indic ASR, run: pip install nemo_toolkit[asr]"
+    )
     log("[IndicASR] Falling back to HuggingFace Whisper for transcription.")
 
 
 class IndicASRPipeline:
     """IndicConformer ASR with two backend options.
-    
+
     Backend Selection (automatic):
     1. HuggingFace Transformers (~600MB) - default, cross-platform
     2. NeMo Toolkit (5GB+) - only if USE_NEMO_ASR=true, Linux preferred
-    
+
     The HF backend uses ai4bharat/indic-conformer-600m-multilingual which
     supports all major Indic languages without separate model downloads.
     """
@@ -87,7 +92,7 @@ class IndicASRPipeline:
 
     def __init__(self, lang: str = "ta", backend: str = "auto"):
         """Initialize the Indic ASR pipeline.
-        
+
         Args:
             lang: Language code (ta, hi, te, ml, kn, bn, etc.)
             backend: 'auto' (prefer HF), 'hf', or 'nemo'
@@ -129,7 +134,7 @@ class IndicASRPipeline:
 
     def _load_hf_model(self) -> None:
         """Load HuggingFace Transformers pipeline for speech recognition.
-        
+
         Uses whisper-large-v3-turbo for best quality Indic transcription.
         Falls back to smaller models if OOM occurs.
         """
@@ -142,13 +147,17 @@ class IndicASRPipeline:
                 "automatic-speech-recognition",
                 model=model_id,
                 device=0 if self.device.type == "cuda" else -1,
-                torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+                torch_dtype=torch.float16
+                if self.device.type == "cuda"
+                else torch.float32,
                 token=settings.hf_token,
             )
             self.model = True
             log(f"[IndicASR] HF Whisper pipeline loaded on {self.device}")
         except Exception as e:
-            log(f"[IndicASR] Whisper large-v3-turbo failed: {e}. Trying smaller model...")
+            log(
+                f"[IndicASR] Whisper large-v3-turbo failed: {e}. Trying smaller model..."
+            )
 
             # Cleanup before fallback
             if torch.cuda.is_available():
@@ -161,7 +170,9 @@ class IndicASRPipeline:
                     "automatic-speech-recognition",
                     model="openai/whisper-small",
                     device=0 if self.device.type == "cuda" else -1,
-                    torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+                    torch_dtype=torch.float16
+                    if self.device.type == "cuda"
+                    else torch.float32,
                 )
                 self.model = True
                 log("[IndicASR] Whisper-small fallback loaded (Tamil supported)")
@@ -180,27 +191,30 @@ class IndicASRPipeline:
                 cache_dir=str(settings.model_cache_dir / "nemo_models"),
                 token=settings.hf_token,
             )
-            
-            from omegaconf import OmegaConf, open_dict
+
+            from omegaconf import open_dict
+
             model_cfg = nemo_asr.models.ASRModel.restore_from(
                 restore_path=nemo_ckpt_path,
                 return_config=True,
             )
-            
+
             with open_dict(model_cfg):
-                if hasattr(model_cfg, 'tokenizer'):
-                    if 'dir' not in model_cfg.tokenizer:
+                if hasattr(model_cfg, "tokenizer"):
+                    if "dir" not in model_cfg.tokenizer:
                         model_cfg.tokenizer.dir = "tokenizers"
-                    if 'type' not in model_cfg.tokenizer:
+                    if "type" not in model_cfg.tokenizer:
                         model_cfg.tokenizer.type = "bpe"
-                if hasattr(model_cfg, 'decoding'):
+                if hasattr(model_cfg, "decoding"):
                     model_cfg.decoding.preserve_alignments = False
-            
-            self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.from_config_dict(model_cfg)
+
+            self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.from_config_dict(
+                model_cfg
+            )
             state_dict = torch.load(nemo_ckpt_path, map_location=self.device)
-            if 'state_dict' in state_dict:
-                self.model.load_state_dict(state_dict['state_dict'], strict=False)
-            
+            if "state_dict" in state_dict:
+                self.model.load_state_dict(state_dict["state_dict"], strict=False)
+
             self.model.to(self.device)
             self.model.freeze()
             log(f"[IndicASR] NeMo model loaded on {self.device} (config patched)")
@@ -223,11 +237,18 @@ class IndicASRPipeline:
             raise RuntimeError("FFmpeg not found. Please install it.")
 
         cmd = [
-            ffmpeg_cmd, "-y", "-v", "error",
-            "-i", str(media_path),
-            "-ar", "16000",  # 16kHz for ASR
-            "-ac", "1",      # Mono
-            "-map", "0:a:0", # First audio stream
+            ffmpeg_cmd,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(media_path),
+            "-ar",
+            "16000",  # 16kHz for ASR
+            "-ac",
+            "1",  # Mono
+            "-map",
+            "0:a:0",  # First audio stream
             str(wav_path),
         ]
 
@@ -235,12 +256,16 @@ class IndicASRPipeline:
         try:
             subprocess.run(cmd, check=True, stderr=subprocess.PIPE, timeout=300)
             if wav_path.exists() and wav_path.stat().st_size > 0:
-                log(f"[IndicASR] Audio extracted: {wav_path.stat().st_size / 1024:.1f}KB")
+                log(
+                    f"[IndicASR] Audio extracted: {wav_path.stat().st_size / 1024:.1f}KB"
+                )
                 return wav_path
             else:
                 raise RuntimeError("Audio extraction produced empty file")
         except subprocess.CalledProcessError as e:
-            log(f"[IndicASR] FFmpeg failed: {e.stderr.decode() if e.stderr else 'unknown error'}")
+            log(
+                f"[IndicASR] FFmpeg failed: {e.stderr.decode() if e.stderr else 'unknown error'}"
+            )
             raise
 
     def transcribe(
@@ -273,7 +298,9 @@ class IndicASRPipeline:
                 self.load_model()
                 native_success = True
             except Exception as e:
-                log(f"[IndicASR] Native NeMo failed ({e}). Falling back to next option.")
+                log(
+                    f"[IndicASR] Native NeMo failed ({e}). Falling back to next option."
+                )
                 native_success = False
 
         # 2. Attempt Remote Docker (If Native failed or disabled)
@@ -287,7 +314,7 @@ class IndicASRPipeline:
                         url,
                         files={"file": f},
                         data={"language": language or self.lang},
-                        timeout=300.0
+                        timeout=300.0,
                     )
 
                 if response.status_code == 200:
@@ -295,10 +322,12 @@ class IndicASRPipeline:
                     segments = data.get("segments", [])
                     log(f"[IndicASR] Remote SUCCESS: {len(segments)} segments")
                     if output_srt:
-                         self.write_srt(segments, output_srt)
+                        self.write_srt(segments, output_srt)
                     return segments
             except Exception as e:
-                log(f"[IndicASR] Remote Docker failed ({e}). Falling back to Local Whisper.")
+                log(
+                    f"[IndicASR] Remote Docker failed ({e}). Falling back to Local Whisper."
+                )
 
         # 3. Final Fallback: Local Whisper (via HF)
         # If we are here, either Native execution is set up (native_success=True)
@@ -342,7 +371,9 @@ class IndicASRPipeline:
             if output_srt:
                 self.write_srt(segments, output_srt)
 
-            log(f"[IndicASR] Transcription complete: {len(raw_text)} chars, {len(segments)} segments")
+            log(
+                f"[IndicASR] Transcription complete: {len(raw_text)} chars, {len(segments)} segments"
+            )
             return segments
 
         except Exception as e:
@@ -359,7 +390,7 @@ class IndicASRPipeline:
 
     def _transcribe_hf(self, audio_path: Path) -> str:
         """Transcribe using HuggingFace Whisper pipeline with explicit language."""
-        if not hasattr(self, 'pipe') or self.pipe is None:
+        if not hasattr(self, "pipe") or self.pipe is None:
             raise RuntimeError("HF pipeline not loaded")
 
         # Pass explicit language for better Indic transcription
@@ -385,7 +416,7 @@ class IndicASRPipeline:
 
     def _transcribe_nemo(self, audio_path: Path) -> str:
         """Transcribe using NeMo backend with chunked processing to prevent OOM.
-        
+
         For long audio (>30s), process in 30-second chunks with VRAM cleanup
         between chunks. This prevents OOM on 8GB GPUs like RTX 4060.
         """
@@ -406,7 +437,9 @@ class IndicASRPipeline:
             return self._extract_text(transcriptions)
 
         # Long audio: chunked processing with VRAM cleanup
-        log(f"[IndicASR] Long audio ({duration:.1f}s), processing in {CHUNK_DURATION_SEC}s chunks")
+        log(
+            f"[IndicASR] Long audio ({duration:.1f}s), processing in {CHUNK_DURATION_SEC}s chunks"
+        )
         texts: list[str] = []
 
         for start in range(0, int(duration), CHUNK_DURATION_SEC):
@@ -445,7 +478,9 @@ class IndicASRPipeline:
 
         return " ".join(texts)
 
-    def _slice_audio_chunk(self, audio_path: Path, start: float, end: float) -> Path | None:
+    def _slice_audio_chunk(
+        self, audio_path: Path, start: float, end: float
+    ) -> Path | None:
         """Extract a time slice from audio file using FFmpeg."""
         from tempfile import NamedTemporaryFile
 
@@ -457,12 +492,20 @@ class IndicASRPipeline:
             chunk_path = Path(tmp.name)
 
         cmd = [
-            ffmpeg_cmd, "-y", "-v", "error",
-            "-i", str(audio_path),
-            "-ss", str(start),
-            "-to", str(end),
-            "-ar", "16000",
-            "-ac", "1",
+            ffmpeg_cmd,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(audio_path),
+            "-ss",
+            str(start),
+            "-to",
+            str(end),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
             str(chunk_path),
         ]
 
@@ -564,7 +607,8 @@ class IndicASRPipeline:
         for w in words:
             wlen = len(w)
             if (
-                current_chars + wlen + (1 if current_words else 0) > max_chars_per_segment
+                current_chars + wlen + (1 if current_words else 0)
+                > max_chars_per_segment
                 and current_words
             ):
                 seg_text = " ".join(current_words)
@@ -591,14 +635,16 @@ class IndicASRPipeline:
             if end_t - start_t < 1.5:
                 end_t = min(start_t + 1.5, duration)
 
-            result.append({
-                "text": seg_text,
-                "timestamp": (start_t, end_t),
-                "start": start_t,
-                "end": end_t,
-                "type": "indic_transcription",
-                "language": self.lang,
-            })
+            result.append(
+                {
+                    "text": seg_text,
+                    "timestamp": (start_t, end_t),
+                    "start": start_t,
+                    "end": end_t,
+                    "type": "indic_transcription",
+                    "language": self.lang,
+                }
+            )
 
         return result
 
@@ -633,7 +679,7 @@ class IndicASRPipeline:
 
     def unload_model(self) -> None:
         """Unload model and free VRAM."""
-        if hasattr(self, 'pipe') and self.pipe is not None:
+        if hasattr(self, "pipe") and self.pipe is not None:
             del self.pipe
             self.pipe = None
         if self.model is not None:
@@ -641,4 +687,3 @@ class IndicASRPipeline:
             self.model = None
         self._cleanup()
         log("[IndicASR] Model unloaded - VRAM freed")
-
