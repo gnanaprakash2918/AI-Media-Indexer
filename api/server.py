@@ -1187,8 +1187,6 @@ JSON output:"""
                  raise HTTPException(status_code=500, detail=f"Distributed dispatch failed: {e}")
 
         async def run_pipeline():
-            # Start a new trace for the background task
-            trace_name = f"ingest_{file_path.name}"
             start_trace(name="background_ingest", metadata={"file": str(file_path), "job_id": job_id})
             try:
                 assert pipeline is not None
@@ -1570,7 +1568,7 @@ JSON output:"""
         job_manager.update_job(job_id, status=JobStatus.PAUSED)
         return {"status": "paused", "job_id": job_id}
 
-    # NOTE: resume_job is defined earlier at line ~1291 with comprehensive checkpoint handling
+
 
     @app.delete("/jobs/{job_id}")
     async def delete_job(job_id: str, background_tasks: BackgroundTasks):
@@ -1785,7 +1783,6 @@ JSON output:"""
             for hit in frame_results:
                 video = hit.get("video_path")
                 ts = hit.get("timestamp", 0)
-                score = hit.get("score", 0)
 
                 # Track all occurrences for stats
                 if video:
@@ -1986,12 +1983,7 @@ JSON output:"""
                 "results": pipeline.db.search_frames(query=q, limit=limit),
             }
 
-    # NOTE: /search/hybrid is defined earlier at line ~1377 using SOTA search with LLM reranking
-    # This duplicate was removed to prevent override. The SOTA version provides:
-    # - LLM query expansion and parsing
-    # - Identity resolution (face cluster lookup)  
-    # - LLM constraint verification and reranking
-    # - Full explainability (match_reason, matched_constraints)
+
 
     @app.post("/search/hybrid")
     async def hybrid_search_post(request: AdvancedSearchRequest):
@@ -2344,7 +2336,7 @@ JSON output:"""
         try:
             pipeline.db.create_empty_face_cluster(
                 cluster_id=cluster_uuid,
-                name=request.name or f"Custom Cluster",
+                name=request.name or "Custom Cluster",
                 source=request.type,
             )
             
@@ -3501,8 +3493,8 @@ JSON output:"""
         """Move faces to a new cluster (generates new cluster ID)."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        import random
-        new_cluster_id = random.randint(100000, 999999)
+        import time
+        new_cluster_id = int(time.time() * 1000) % 10000000
         updated = 0
         for face_id in face_ids:
             if pipeline.db.update_face_cluster_id(face_id, new_cluster_id):
@@ -3524,8 +3516,8 @@ JSON output:"""
         """Move voice segments to a new cluster."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
-        import random
-        new_cluster_id = random.randint(100000, 999999)
+        import time
+        new_cluster_id = int(time.time() * 1000) % 10000000
         updated = 0
         for seg_id in segment_ids:
             if pipeline.db.update_voice_cluster_id(seg_id, new_cluster_id):

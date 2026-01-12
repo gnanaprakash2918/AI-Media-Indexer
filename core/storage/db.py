@@ -708,7 +708,7 @@ class VectorDB:
             ]
         )
 
-    # NOTE: get_voice_by_audio_path is defined at line ~2846 with full implementation
+
 
     @observe("db_search_frames_filtered")
     def search_frames_filtered(
@@ -2274,7 +2274,7 @@ class VectorDB:
         except Exception:
             return []
 
-    # NOTE: set_face_main is defined earlier at line ~2131 with proper docstring and logging
+
 
     @observe("db_get_indexed_media")
     def get_indexed_media(self, limit: int = 1000) -> list[dict[str, Any]]:
@@ -3644,7 +3644,7 @@ class VectorDB:
         except Exception:
             return None
 
-    # NOTE: merge_face_clusters is defined earlier at line ~2020 with @observe and docstring
+
 
     def _update_frames_cluster_rename(self, old_cluster: str | int, new_cluster: str | int) -> int:
         try:
@@ -3671,9 +3671,9 @@ class VectorDB:
         except Exception:
             return 0
 
-    # NOTE: set_face_name is defined earlier at line ~3046 with proper docstring and logging
 
-    # NOTE: get_face_name_by_cluster is defined earlier at line ~2986 with docstring
+
+
 
 
     def set_cluster_verified(self, cluster_id: str | int, verified: bool = True) -> bool:
