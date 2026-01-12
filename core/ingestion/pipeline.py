@@ -101,8 +101,8 @@ class IngestionPipeline:
         start_time: float | None = None,
         end_time: float | None = None,
         job_id: str | None = None,
+        content_type_hint: str = "auto",
     ):
-        """Initialize the media ingestion pipeline."""
         resume = False
         if job_id:
             resume = True
@@ -111,9 +111,10 @@ class IngestionPipeline:
 
         bind_context(component="pipeline")
 
-        # Store time range for use in processing methods
         self._start_time = start_time
         self._end_time = end_time
+        self._hitl_content_type = content_type_hint if content_type_hint != "auto" else None
+        self._audio_classification = None
 
         path = Path(video_path)
         progress_tracker.start(
@@ -323,6 +324,26 @@ class IngestionPipeline:
             prepared = self._prepare_segments_for_db(path=path, chunks=audio_segments)
             self.db.insert_media_segments(str(path), prepared)
             log(f"[Audio] Stored {len(prepared)} dialogue segments in DB")
+            
+            try:
+                probed = self.prober.probe(path)
+                total_duration = float(probed.get("format", {}).get("duration", 0.0))
+                if total_duration > 0:
+                    speech_duration = sum(
+                        (s.get("end", 0) - s.get("start", 0))
+                        for s in audio_segments
+                        if s.get("text", "").strip() and "[No speech" not in s.get("text", "")
+                    )
+                    speech_pct = (speech_duration / total_duration) * 100
+                    music_pct = 100 - speech_pct
+                    self._audio_classification = {
+                        "speech_percentage": min(speech_pct, 100),
+                        "music_percentage": max(music_pct, 0),
+                        "total_duration": total_duration,
+                    }
+                    log(f"[Audio] Classification: {speech_pct:.0f}% speech, {music_pct:.0f}% music/ambience")
+            except Exception:
+                pass
 
         self._cleanup_memory()
 
@@ -977,20 +998,47 @@ class IngestionPipeline:
             cleanup_vram()
             log_vram_status("before_ollama")
 
-            # Build video context to prevent VLM hallucinations (Brahmastra bug fix)
-            video_name = video_path.stem
+            # Build video context to prevent VLM hallucinations
+            # CRITICAL: No hardcoded filename patterns - purely content-based
+            # Content type is determined by:
+            # 1. HITL override (user explicitly set via ingestion param)
+            # 2. Audio classification (music % vs speech %)
+            # 3. Fallback to neutral context
             video_context_parts = [
-                f"Filename: {video_name}",
-                f"File: {video_path.name}",
+                f"Filename: {video_path.stem}",
             ]
-            # Infer content type from filename patterns
-            name_lower = video_name.lower()
-            if any(kw in name_lower for kw in ['song', 'video', 'lyric', 'music', 'audio']):
-                video_context_parts.append("Content Type: MUSIC VIDEO / SONG - Describe choreography and visuals, NOT conversations")
-            elif any(kw in name_lower for kw in ['trailer', 'teaser', 'promo']):
-                video_context_parts.append("Content Type: TRAILER - Fast cuts, dramatic scenes expected")
-            elif any(kw in name_lower for kw in ['interview', 'talk', 'podcast']):
-                video_context_parts.append("Content Type: INTERVIEW/TALK - Conversational content expected")
+            
+            # Check for HITL content type override (set via ingestion API)
+            hitl_content_type = getattr(self, '_hitl_content_type', None)
+            audio_classification = getattr(self, '_audio_classification', None)
+            
+            if hitl_content_type:
+                # User explicitly set content type during ingestion
+                video_context_parts.append(f"Content Type (User Override): {hitl_content_type}")
+                if hitl_content_type.lower() in ('song', 'music', 'music_video'):
+                    video_context_parts.append("INSTRUCTION: This is a music video. Describe choreography and visuals, NOT imaginary conversations.")
+                elif hitl_content_type.lower() in ('interview', 'podcast', 'talk'):
+                    video_context_parts.append("INSTRUCTION: This is conversational content. Describe the speakers and their expressions.")
+            elif audio_classification:
+                # Content-based detection from audio analysis
+                music_pct = audio_classification.get('music_percentage', 0)
+                speech_pct = audio_classification.get('speech_percentage', 0)
+                
+                if music_pct > 70:
+                    video_context_parts.append(f"Audio Analysis: {music_pct:.0f}% music, {speech_pct:.0f}% speech")
+                    video_context_parts.append("INSTRUCTION: High music content detected. Focus on visuals and movement, not dialogue.")
+                elif speech_pct > 70:
+                    video_context_parts.append(f"Audio Analysis: {speech_pct:.0f}% speech, {music_pct:.0f}% music")
+                    video_context_parts.append("INSTRUCTION: High speech content detected. Describe speakers and context.")
+                else:
+                    video_context_parts.append(f"Audio Analysis: Mixed content ({music_pct:.0f}% music, {speech_pct:.0f}% speech)")
+            
+            # Always add grounding rules regardless of content type
+            video_context_parts.append("")
+            video_context_parts.append("GROUNDING RULES (ALWAYS FOLLOW):")
+            video_context_parts.append("1. Describe ONLY what you SEE in the frame")
+            video_context_parts.append("2. Do NOT hallucinate conversations, events, or contexts not visible")
+            video_context_parts.append("3. Be specific about actions, clothing, and objects visible")
             
             video_context = "\n".join(video_context_parts)
 

@@ -3527,12 +3527,208 @@ class VectorDB:
                 log(f"Failed to delete from {collection}: {e}")
 
     def store_scene_metadata(self, media_path: str, scenes: list[dict]) -> None:
-        """Store scene captions (Placeholder).
-        
-        Args:
-            media_path: Path to the media file.
-            scenes: List of scene dictionaries with context.
-        """
-        # TODO: Implement scene storage if needed.
-        # Currently just a stub to satisfy Pylance/Pipeline.
         log(f"Received {len(scenes)} scenes for {media_path} (Storage not implemented)")
+
+    def create_empty_face_cluster(self, cluster_id: str, name: str = "", source: str = "manual") -> bool:
+        import numpy as np
+        dummy_vector = np.zeros(512).tolist()
+        point_id = str(uuid.uuid4())
+        try:
+            self.client.upsert(
+                collection_name=self.FACES_COLLECTION,
+                points=[models.PointStruct(
+                    id=point_id,
+                    vector=dummy_vector,
+                    payload={
+                        "cluster_id": cluster_id,
+                        "name": name,
+                        "source": source,
+                        "verified": False,
+                        "is_placeholder": True,
+                    }
+                )]
+            )
+            return True
+        except Exception as e:
+            log(f"create_empty_face_cluster failed: {e}")
+            return False
+
+    def move_face_to_cluster(self, face_id: str, target_cluster_id: str) -> bool:
+        try:
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"cluster_id": target_cluster_id},
+                points=[face_id],
+            )
+            return True
+        except Exception as e:
+            log(f"move_face_to_cluster failed: {e}")
+            return False
+
+    def recalculate_cluster_centroid(self, cluster_id: str | int) -> list[float] | None:
+        import numpy as np
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
+                ]),
+                limit=100,
+                with_vectors=True,
+            )
+            if not resp[0]:
+                return None
+            vectors = [p.vector for p in resp[0] if p.vector and not (p.payload or {}).get("is_placeholder")]
+            if not vectors:
+                return None
+            centroid = np.mean(vectors, axis=0).tolist()
+            return centroid
+        except Exception as e:
+            log(f"recalculate_cluster_centroid failed: {e}")
+            return None
+
+    def get_cluster_distance(self, source_id: str | int, target_id: str | int) -> float | None:
+        import numpy as np
+        try:
+            src_centroid = self.recalculate_cluster_centroid(source_id)
+            tgt_centroid = self.recalculate_cluster_centroid(target_id)
+            if src_centroid is None or tgt_centroid is None:
+                return None
+            src_arr = np.array(src_centroid)
+            tgt_arr = np.array(tgt_centroid)
+            dist = 1.0 - np.dot(src_arr, tgt_arr) / (np.linalg.norm(src_arr) * np.linalg.norm(tgt_arr) + 1e-8)
+            return float(dist)
+        except Exception:
+            return None
+
+    def merge_face_clusters(self, source_cluster_id: str | int, target_cluster_id: str | int) -> int:
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=source_cluster_id))
+                ]),
+                limit=500,
+                with_payload=True,
+            )
+            point_ids = [str(p.id) for p in resp[0]]
+            if not point_ids:
+                return 0
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"cluster_id": target_cluster_id},
+                points=point_ids,
+            )
+            self._update_frames_cluster_rename(source_cluster_id, target_cluster_id)
+            return len(point_ids)
+        except Exception as e:
+            log(f"merge_face_clusters failed: {e}")
+            return 0
+
+    def _update_frames_cluster_rename(self, old_cluster: str | int, new_cluster: str | int) -> int:
+        try:
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="face_cluster_ids", match=models.MatchAny(any=[old_cluster]))
+                ]),
+                limit=1000,
+                with_payload=True,
+            )
+            updated = 0
+            for p in resp[0]:
+                payload = p.payload or {}
+                clusters = payload.get("face_cluster_ids", [])
+                new_clusters = [new_cluster if c == old_cluster else c for c in clusters]
+                self.client.set_payload(
+                    collection_name=self.MEDIA_COLLECTION,
+                    payload={"face_cluster_ids": new_clusters},
+                    points=[str(p.id)],
+                )
+                updated += 1
+            return updated
+        except Exception:
+            return 0
+
+    def set_face_name(self, cluster_id: str | int, name: str) -> int:
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
+                ]),
+                limit=500,
+            )
+            point_ids = [str(p.id) for p in resp[0]]
+            if point_ids:
+                self.client.set_payload(
+                    collection_name=self.FACES_COLLECTION,
+                    payload={"name": name},
+                    points=point_ids,
+                )
+            self._propagate_face_name_to_frames(cluster_id, name)
+            return len(point_ids)
+        except Exception as e:
+            log(f"set_face_name failed: {e}")
+            return 0
+
+    def get_face_name_by_cluster(self, cluster_id: str | int) -> str | None:
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
+                ]),
+                limit=1,
+                with_payload=True,
+            )
+            if resp[0]:
+                return (resp[0][0].payload or {}).get("name")
+            return None
+        except Exception:
+            return None
+
+    def set_cluster_verified(self, cluster_id: str | int, verified: bool = True) -> bool:
+        try:
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
+                ]),
+                limit=500,
+            )
+            point_ids = [str(p.id) for p in resp[0]]
+            if point_ids:
+                self.client.set_payload(
+                    collection_name=self.FACES_COLLECTION,
+                    payload={"verified": verified},
+                    points=point_ids,
+                )
+            return True
+        except Exception:
+            return False
+
+    def _propagate_face_name_to_frames(self, cluster_id: str | int, name: str) -> int:
+        try:
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="face_cluster_ids", match=models.MatchAny(any=[cluster_id]))
+                ]),
+                limit=1000,
+                with_payload=True,
+            )
+            updated = 0
+            for p in resp[0]:
+                payload = p.payload or {}
+                names = list(set(payload.get("face_names", []) + [name]))
+                self.client.set_payload(
+                    collection_name=self.MEDIA_COLLECTION,
+                    payload={"face_names": names},
+                    points=[str(p.id)],
+                )
+                updated += 1
+            return updated
+        except Exception:
+            return 0
+

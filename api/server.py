@@ -118,6 +118,7 @@ class IngestRequest(BaseModel):
     """Request body for ingestion."""
     path: str
     media_type_hint: str = "unknown"
+    content_type_hint: str = "auto"  # movie, personal, song, interview, auto
     start_time: float | None = None  # Seconds (e.g., 600 = 10:00)
     end_time: float | None = None    # Seconds (e.g., 1200 = 20:00)
 
@@ -1160,6 +1161,7 @@ JSON output:"""
                     start_time=ingest_request.start_time,
                     end_time=ingest_request.end_time,
                     job_id=job_id,
+                    content_type_hint=ingest_request.content_type_hint,
                 )
                 end_trace("success")
             except Exception as e:
@@ -2321,6 +2323,242 @@ Expanded terms:"""
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         success = pipeline.db.set_face_main(cluster_id, is_main)
         return {"success": success, "cluster_id": cluster_id, "is_main": is_main}
+
+    # =========================================================================
+    # HITL CLUSTER MANAGEMENT ENDPOINTS (Face Sandbox)
+    # =========================================================================
+    
+    class CreateClusterRequest(BaseModel):
+        name: str = ""
+        type: str = "manual"  # "manual" or "imported"
+    
+    @app.post("/faces/clusters/create")
+    async def create_custom_cluster(request: CreateClusterRequest):
+        """Create a new empty custom cluster (Face Sandbox).
+        
+        This allows HITL users to create clusters manually and then
+        move faces into them.
+        """
+        import uuid
+        
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        # Generate unique cluster ID with manual_ prefix
+        cluster_uuid = f"manual_{uuid.uuid4().hex[:12]}"
+        
+        # Create the cluster in DB
+        try:
+            pipeline.db.create_empty_face_cluster(
+                cluster_id=cluster_uuid,
+                name=request.name or f"Custom Cluster",
+                source=request.type,
+            )
+            
+            logger.info(f"[HITL] Created custom cluster: {cluster_uuid} (name: {request.name})")
+            
+            return {
+                "success": True,
+                "cluster_id": cluster_uuid,
+                "name": request.name,
+                "type": request.type,
+            }
+        except Exception as e:
+            logger.error(f"[HITL] Failed to create cluster: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    class MoveFacesRequest(BaseModel):
+        face_ids: list[str]
+        target_cluster_id: str
+    
+    @app.post("/faces/move")
+    async def move_faces_to_cluster(request: MoveFacesRequest, background_tasks: BackgroundTasks):
+        """Move faces to a different cluster and trigger reindex.
+        
+        This enables HITL corrections post-processing:
+        1. Updates face_id mapping in Qdrant
+        2. Triggers centroid recalculation for target cluster
+        3. Streams progress via WebSocket
+        """
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        try:
+            moved_count = 0
+            for face_id in request.face_ids:
+                success = pipeline.db.move_face_to_cluster(face_id, request.target_cluster_id)
+                if success:
+                    moved_count += 1
+            
+            # Trigger background reindex of affected cluster
+            async def reindex_cluster():
+                try:
+                    # Broadcast progress
+                    progress_tracker.broadcast({
+                        "type": "cluster_update",
+                        "status": "reindexing",
+                        "cluster_id": request.target_cluster_id,
+                    })
+                    
+                    # Recalculate cluster centroid
+                    pipeline.db.recalculate_cluster_centroid(request.target_cluster_id)
+                    
+                    # Broadcast completion
+                    progress_tracker.broadcast({
+                        "type": "cluster_update",
+                        "status": "complete",
+                        "cluster_id": request.target_cluster_id,
+                    })
+                except Exception as e:
+                    logger.error(f"[HITL] Cluster reindex failed: {e}")
+            
+            background_tasks.add_task(reindex_cluster)
+            
+            logger.info(f"[HITL] Moved {moved_count}/{len(request.face_ids)} faces to {request.target_cluster_id}")
+            
+            return {
+                "success": True,
+                "moved_count": moved_count,
+                "target_cluster_id": request.target_cluster_id,
+                "reindex_triggered": True,
+            }
+        except Exception as e:
+            logger.error(f"[HITL] Move faces failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    class MergeClustersRequest(BaseModel):
+        source_cluster_id: str | int
+        target_cluster_id: str | int
+        strategy: str = "merge_to_target"  # "merge_to_target", "merge_to_source", "combine_names"
+        force: bool = False  # Force merge even if biometric distance is high
+    
+    @app.post("/faces/clusters/merge")
+    async def merge_clusters_advanced(request: MergeClustersRequest, background_tasks: BackgroundTasks):
+        """Merge face clusters with named cluster handling.
+        
+        Strategy:
+        - "merge_to_target": Target cluster's name wins
+        - "merge_to_source": Source cluster's name wins  
+        - "combine_names": Combine names (e.g., "Ranbir / Shiva")
+        
+        If force=True, merges even if biometric distance suggests different people.
+        """
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        try:
+            source_id = request.source_cluster_id
+            target_id = request.target_cluster_id
+            
+            # Get current cluster info
+            source_name = pipeline.db.get_face_name_by_cluster(source_id)
+            target_name = pipeline.db.get_face_name_by_cluster(target_id)
+            
+            # Check biometric distance if not forcing
+            if not request.force:
+                distance = pipeline.db.get_cluster_distance(source_id, target_id)
+                if distance and distance > 0.7:  # High dissimilarity threshold
+                    return {
+                        "success": False,
+                        "error": "Clusters appear to be different people",
+                        "biometric_distance": distance,
+                        "suggestion": "Set force=true to override",
+                    }
+            
+            # Determine final name based on strategy
+            final_name = None
+            if source_name and target_name:
+                # Both are named - apply strategy
+                if request.strategy == "merge_to_target":
+                    final_name = target_name
+                elif request.strategy == "merge_to_source":
+                    final_name = source_name
+                elif request.strategy == "combine_names":
+                    final_name = f"{target_name} / {source_name}"
+            elif source_name:
+                # Only source is named
+                final_name = source_name
+            elif target_name:
+                # Only target is named
+                final_name = target_name
+            
+            # Perform the merge
+            merged_count = pipeline.db.merge_face_clusters(
+                source_cluster_id=source_id,
+                target_cluster_id=target_id,
+            )
+            
+            # Apply final name if we have one
+            if final_name:
+                pipeline.db.set_face_name(target_id, final_name)
+            
+            # Trigger background reindex
+            async def reindex_merged():
+                progress_tracker.broadcast({
+                    "type": "cluster_update",
+                    "status": "reindexing",
+                    "cluster_id": str(target_id),
+                })
+                
+                pipeline.db.recalculate_cluster_centroid(target_id)
+                
+                progress_tracker.broadcast({
+                    "type": "cluster_update",
+                    "status": "complete",
+                    "cluster_id": str(target_id),
+                })
+            
+            background_tasks.add_task(reindex_merged)
+            
+            logger.info(f"[HITL] Merged cluster {source_id} -> {target_id} (strategy: {request.strategy}, final_name: {final_name})")
+            
+            return {
+                "success": True,
+                "merged_count": merged_count,
+                "source_cluster_id": source_id,
+                "target_cluster_id": target_id,
+                "final_name": final_name,
+                "strategy": request.strategy,
+                "reindex_triggered": True,
+            }
+        except Exception as e:
+            logger.error(f"[HITL] Merge failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    class BulkApproveRequest(BaseModel):
+        cluster_ids: list[str | int]
+    
+    @app.post("/faces/bulk/approve")
+    async def bulk_approve_clusters(request: BulkApproveRequest):
+        """Mark multiple clusters as verified/approved.
+        
+        Approved clusters:
+        - Won't be auto-merged by the system
+        - Are marked with verified=True
+        - Appear in HITL UI as confirmed identities
+        """
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        try:
+            approved_count = 0
+            for cluster_id in request.cluster_ids:
+                try:
+                    pipeline.db.set_cluster_verified(cluster_id, verified=True)
+                    approved_count += 1
+                except Exception:
+                    pass  # Skip failed ones
+            
+            logger.info(f"[HITL] Bulk approved {approved_count}/{len(request.cluster_ids)} clusters")
+            
+            return {
+                "success": True,
+                "approved_count": approved_count,
+                "total_requested": len(request.cluster_ids),
+            }
+        except Exception as e:
+            logger.error(f"[HITL] Bulk approve failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/voices")
     async def get_voice_segments(
