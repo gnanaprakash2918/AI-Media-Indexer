@@ -708,23 +708,7 @@ class VectorDB:
             ]
         )
 
-    def get_voice_by_audio_path(self, path: str) -> dict[str, Any] | None:
-        """Retrieve voice segment by 'audio_path' suffix (used for thumbnails)."""
-        # path format: /thumbnails/voices/{hash}_{start}_{end}.mp3
-        # We need to find the segment that generated this.
-        # This is tricky without exact ID.
-        # Actually logic in server.py parses filename to get start/end/media.
-        # But server.py calls this method.
-        # Wait, server.py tries to find segment by EXACT thumbnail path match?
-        # NO, server.py extracts start/end from filename if this fails?
-        # Actually server.py line 318 calls get_voice_by_audio_path.
-        # We'll implement a simple scroll search if needed or just return None and let helper logic work.
-        # But server.py relies on this to confirm media_path.
-
-        # Actually, let's implement searching by ID since filename contains hash?
-        # No, filename is {filename}_{start}_{end}.
-        # Let's rely on server.py parsing logic mostly, but if we need DB look up:
-        return None  # Placeholder, server logic needs refinement or this needs complex query.
+    # NOTE: get_voice_by_audio_path is defined at line ~2846 with full implementation
 
     @observe("db_search_frames_filtered")
     def search_frames_filtered(
@@ -2017,7 +2001,7 @@ class VectorDB:
             return False
 
     @observe("db_merge_face_clusters")
-    def merge_face_clusters(self, from_cluster: int, to_cluster: int) -> int:
+    def merge_face_clusters(self, from_cluster: str | int, to_cluster: str | int) -> int:
         """Merge all faces from one cluster into another.
         
         Args:
@@ -2131,6 +2115,9 @@ class VectorDB:
     def set_face_main(self, cluster_id: int, is_main: bool = True) -> bool:
         """Set a face cluster as main character.
         
+        This updates all faces in the cluster with is_main_character flag.
+        Used by HITL to mark important recurring characters.
+        
         Args:
             cluster_id: The face cluster ID to mark.
             is_main: Whether this is a main character.
@@ -2139,10 +2126,10 @@ class VectorDB:
             Success status.
         """
         try:
-            self.client.set_payload(
+            # First get all face IDs in this cluster
+            resp = self.client.scroll(
                 collection_name=self.FACES_COLLECTION,
-                payload={"is_main_character": is_main},
-                points=models.Filter(
+                scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
                             key="cluster_id",
@@ -2150,8 +2137,22 @@ class VectorDB:
                         )
                     ]
                 ),
+                limit=1000,
+                with_payload=False,
             )
-            log(f"[HITL] Set face cluster {cluster_id} as main character: {is_main}")
+            face_ids = [p.id for p in resp[0]]
+            
+            if not face_ids:
+                log(f"[HITL] No faces found in cluster {cluster_id}")
+                return False
+                
+            # Update all faces in cluster with PointIdsList (correct API usage)
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"is_main_character": is_main, "is_main": is_main},  # Both keys for compat
+                points=models.PointIdsList(points=face_ids),
+            )
+            log(f"[HITL] Set {len(face_ids)} faces in cluster {cluster_id} as main character: {is_main}")
             return True
         except Exception as e:
             log(f"[HITL] Failed to set main character: {e}")
@@ -2273,31 +2274,7 @@ class VectorDB:
         except Exception:
             return []
 
-    def set_face_main(self, cluster_id: int, is_main: bool = True) -> bool:
-        try:
-            resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="cluster_id",
-                            match=models.MatchValue(value=cluster_id),
-                        )
-                    ]
-                ),
-                limit=1000,
-                with_payload=False,
-            )
-            face_ids = [p.id for p in resp[0]]
-            if face_ids:
-                self.client.set_payload(
-                    collection_name=self.FACES_COLLECTION,
-                    payload={"is_main": is_main},
-                    points=models.PointIdsList(points=face_ids),
-                )
-            return True
-        except Exception:
-            return False
+    # NOTE: set_face_main is defined earlier at line ~2131 with proper docstring and logging
 
     @observe("db_get_indexed_media")
     def get_indexed_media(self, limit: int = 1000) -> list[dict[str, Any]]:
@@ -2990,7 +2967,7 @@ class VectorDB:
 
         return list(names)
 
-    def get_face_name_by_cluster(self, cluster_id: int) -> str | None:
+    def get_face_name_by_cluster(self, cluster_id: str | int) -> str | None:
         """Get HITL-assigned name for a face cluster.
         
         Args:
@@ -3050,31 +3027,48 @@ class VectorDB:
         except Exception:
             return None
 
-    def set_face_name(self, cluster_id: int, name: str) -> int:
+    def set_face_name(self, cluster_id: str | int, name: str) -> int:
         """Set name for a face cluster (and all its points).
         
+        Also propagates the name to all frames containing this cluster
+        for proper search and display.
+        
         Args:
-            cluster_id: The face cluster ID.
+            cluster_id: The face cluster ID (str or int).
             name: The name to assign.
             
         Returns:
-            Number of updated points (always 1 or 0 as we don't count updates).
+            Number of updated face points.
         """
         try:
+            # Get all face point IDs in this cluster
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(must=[
+                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
+                ]),
+                limit=500,
+            )
+            point_ids = [str(p.id) for p in resp[0]]
+            
+            if not point_ids:
+                log(f"set_face_name: No faces found for cluster {cluster_id}")
+                return 0
+                
+            # Update all face points with the name
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
                 payload={"name": name},
-                points=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="cluster_id",
-                            match=models.MatchValue(value=cluster_id),
-                        )
-                    ]
-                ),
+                points=point_ids,
             )
-            return 1
-        except Exception:
+            
+            # Propagate name to frames for proper search
+            self._propagate_face_name_to_frames(cluster_id, name)
+            
+            log(f"[HITL] Set name '{name}' on {len(point_ids)} faces in cluster {cluster_id}")
+            return len(point_ids)
+        except Exception as e:
+            log(f"set_face_name failed: {e}")
             return 0
 
     def re_embed_face_cluster_frames(self, cluster_id: int, new_name: str) -> int:
@@ -3189,15 +3183,18 @@ class VectorDB:
             log(f"get_frames_by_face_cluster error: {e}")
             return []
 
-    @observe("db_search_hybrid")
-    def search_frames_hybrid(
+    @observe("db_search_hybrid_legacy")
+    def search_frames_hybrid_legacy(
         self,
         query: str,
         video_paths: str | list[str] | None = None,
         limit: int = 20,
         weights: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
-        """SOTA hybrid search combining vector + keyword + identity.
+        """Legacy hybrid search with keyword boosting.
+        
+        NOTE: Main search_frames_hybrid is at line ~826 using RRF algorithm.
+        This version uses simpler keyword boosting approach.
         
         Args:
             query: Natural language search query.
@@ -3647,29 +3644,7 @@ class VectorDB:
         except Exception:
             return None
 
-    def merge_face_clusters(self, source_cluster_id: str | int, target_cluster_id: str | int) -> int:
-        try:
-            resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=source_cluster_id))
-                ]),
-                limit=500,
-                with_payload=True,
-            )
-            point_ids = [str(p.id) for p in resp[0]]
-            if not point_ids:
-                return 0
-            self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
-                payload={"cluster_id": target_cluster_id},
-                points=point_ids,
-            )
-            self._update_frames_cluster_rename(source_cluster_id, target_cluster_id)
-            return len(point_ids)
-        except Exception as e:
-            log(f"merge_face_clusters failed: {e}")
-            return 0
+    # NOTE: merge_face_clusters is defined earlier at line ~2020 with @observe and docstring
 
     def _update_frames_cluster_rename(self, old_cluster: str | int, new_cluster: str | int) -> int:
         try:
@@ -3696,43 +3671,10 @@ class VectorDB:
         except Exception:
             return 0
 
-    def set_face_name(self, cluster_id: str | int, name: str) -> int:
-        try:
-            resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
-                ]),
-                limit=500,
-            )
-            point_ids = [str(p.id) for p in resp[0]]
-            if point_ids:
-                self.client.set_payload(
-                    collection_name=self.FACES_COLLECTION,
-                    payload={"name": name},
-                    points=point_ids,
-                )
-            self._propagate_face_name_to_frames(cluster_id, name)
-            return len(point_ids)
-        except Exception as e:
-            log(f"set_face_name failed: {e}")
-            return 0
+    # NOTE: set_face_name is defined earlier at line ~3046 with proper docstring and logging
 
-    def get_face_name_by_cluster(self, cluster_id: str | int) -> str | None:
-        try:
-            resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(must=[
-                    models.FieldCondition(key="cluster_id", match=models.MatchValue(value=cluster_id))
-                ]),
-                limit=1,
-                with_payload=True,
-            )
-            if resp[0]:
-                return (resp[0][0].payload or {}).get("name")
-            return None
-        except Exception:
-            return None
+    # NOTE: get_face_name_by_cluster is defined earlier at line ~2986 with docstring
+
 
     def set_cluster_verified(self, cluster_id: str | int, verified: bool = True) -> bool:
         try:

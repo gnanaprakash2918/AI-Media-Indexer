@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Final, cast
+from typing import Any, Final, cast
 
 import numpy as np
 import torch

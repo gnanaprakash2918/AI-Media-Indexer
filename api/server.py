@@ -368,7 +368,7 @@ def create_app() -> FastAPI:
                 "-map", "a",
                 str(file_path)
             ]
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _ = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             if file_path.exists():
                 return FileResponse(file_path, media_type="audio/mpeg")
@@ -1287,8 +1287,28 @@ JSON output:"""
             )
         return {"status": "cancelled", "job_id": job_id}
 
-
-
+    @app.post("/jobs/{job_id}/resume")
+    async def resume_job(job_id: str, background_tasks: BackgroundTasks):
+        """Resume a paused/failed job from checkpoint.
+        
+        Resumes processing from the last saved checkpoint timestamp.
+        If no checkpoint data, starts from beginning.
+        """
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+            
+        # 1. Get job from manager
+        job = job_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+            
+        # 2. Check job state
+        if job.status not in ["paused", "failed", "cancelled"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot resume job with status: {job.status}"
+            )
+        
         # 3. Determine resume point
         start_time = 0.0
         if job.checkpoint_data and "timestamp" in job.checkpoint_data:
@@ -1296,9 +1316,8 @@ JSON output:"""
 
         logger.info(f"Resuming job {job_id} ({job.file_path}) from {start_time:.1f}s")
 
-        # 4. Respawn pipeline
+        # 4. Respawn pipeline in background
         async def run_pipeline_resume():
-            # Start trace
             start_trace(name="resume_ingest", metadata={"file": job.file_path, "job_id": job_id})
             try:
                 assert pipeline is not None
@@ -1551,14 +1570,7 @@ JSON output:"""
         job_manager.update_job(job_id, status=JobStatus.PAUSED)
         return {"status": "paused", "job_id": job_id}
 
-    @app.post("/jobs/{job_id}/resume")
-    async def resume_job(job_id: str):
-        from core.ingestion.jobs import JobStatus
-        job = job_manager.get_job(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
-        job_manager.update_job(job_id, status=JobStatus.PENDING)
-        return {"status": "resumed", "job_id": job_id}
+    # NOTE: resume_job is defined earlier at line ~1291 with comprehensive checkpoint handling
 
     @app.delete("/jobs/{job_id}")
     async def delete_job(job_id: str, background_tasks: BackgroundTasks):
@@ -1974,124 +1986,22 @@ JSON output:"""
                 "results": pipeline.db.search_frames(query=q, limit=limit),
             }
 
-    @app.get("/search/hybrid")
-    async def hybrid_search(
-        q: str,
-        limit: int = 20,
-        video_path: str | None = Query(None, description="Filter to specific video"),
-    ):
-        """100% accuracy hybrid search with HITL identity integration.
-        
-        This endpoint provides the highest retrieval accuracy by:
-        1. Detecting HITL names in query → automatic identity filtering
-        2. Vector search with BGE-M3 embeddings
-        3. Keyword boost on structured fields (entities, visible_text, scene)
-        4. Face names and speaker names in results
-        
-        Example queries:
-        - "Prakash eating idly" → filters to frames with "Prakash" face
-        - "bowling at Brunswick" → matches scene location and action
-        - "tilak on forehead" → matches entity descriptions
-        
-        Args:
-            q: Natural language query
-            limit: Maximum results
-            video_path: Optional filter to specific video
-            
-        Returns:
-            High-precision search results with identity metadata
-        """
-        if not pipeline:
-            return {"error": "Pipeline not initialized", "results": []}
-
-        from urllib.parse import quote
-
-        start_time_search = time.perf_counter()
-        logger.info(f"[AgenticSearch] Query: '{q}' | video_filter: {video_path}")
-
-        # === AGENTIC ENHANCEMENT: LLM Query Expansion ===
-        expanded_query = q
-        expansion_used = False
-        expansion_terms = []
-        
-        try:
-            import ollama
-            
-            # Use LLM to expand query with related terms
-            expansion_prompt = f"""Expand this search query with related terms. Return ONLY a comma-separated list of search terms, no explanations.
-
-Query: "{q}"
-
-Examples:
-- "South Indian food" -> "idli, dosa, sambar, rasam, South Indian food"
-- "Alia dancing" -> "Alia Bhatt, dancing, dance sequence, choreography"
-- "red car" -> "red car, red vehicle, automobile, sedan"
-
-Expanded terms:"""
-
-            response = ollama.chat(
-                model="llama3.2:3b",
-                messages=[{"role": "user", "content": expansion_prompt}],
-                options={"temperature": 0.3}
-            )
-            
-            expanded_text = response.get("message", {}).get("content", "").strip()
-            if expanded_text and expanded_text != q:
-                # Parse comma-separated terms
-                terms = [t.strip() for t in expanded_text.split(",") if t.strip()]
-                if terms:
-                    expansion_terms = terms[:5]  # Limit to 5 terms
-                    expanded_query = " ".join(expansion_terms)
-                    expansion_used = True
-                    logger.info(f"[AgenticSearch] Expanded: '{q}' -> '{expanded_query}'")
-        except Exception as e:
-            logger.debug(f"[AgenticSearch] LLM expansion skipped: {e}")
-            # Continue with original query
-
-        try:
-            # Use expanded query for search
-            results = pipeline.db.search_frames_hybrid(
-                query=expanded_query,
-                video_paths=[video_path] if video_path else None,
-                limit=limit,
-            )
-
-            # Enrich results with URLs
-            for hit in results:
-                video = hit.get("video_path")
-                ts = hit.get("timestamp", 0)
-                if video:
-                    safe_path = quote(str(video))
-                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
-                    hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts-3)}"
-
-            duration = time.perf_counter() - start_time_search
-            logger.info(f"[AgenticSearch] Returned {len(results)} results in {duration:.3f}s")
-
-            return {
-                "query": q,
-                "expanded_query": expanded_query if expansion_used else None,
-                "expansion_terms": expansion_terms if expansion_used else None,
-                "video_filter": video_path,
-                "results": results,
-                "stats": {
-                    "total": len(results),
-                    "duration_seconds": duration,
-                    "agentic": expansion_used,
-                },
-            }
-
-        except Exception as e:
-            logger.error(f"[HybridSearch] Error: {e}")
-            return {"error": str(e), "results": []}
+    # NOTE: /search/hybrid is defined earlier at line ~1377 using SOTA search with LLM reranking
+    # This duplicate was removed to prevent override. The SOTA version provides:
+    # - LLM query expansion and parsing
+    # - Identity resolution (face cluster lookup)  
+    # - LLM constraint verification and reranking
+    # - Full explainability (match_reason, matched_constraints)
 
     @app.post("/search/hybrid")
     async def hybrid_search_post(request: AdvancedSearchRequest):
         """POST version of hybrid search for complex filters."""
+        # Call the GET handler defined at line ~1377
         return await hybrid_search(
             q=request.query,
             limit=request.limit,
             video_path=request.video_path,
+            use_reranking=request.use_rerank,
         )
 
     @app.post("/admin/reprocess-scenelets")
@@ -2502,14 +2412,9 @@ Expanded terms:"""
                 "reindex_triggered": True,
             }
         except Exception as e:
-            logger.error(f"[HITL] Move faces failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    class MergeClustersRequest(BaseModel):
-        source_cluster_id: str | int
-        target_cluster_id: str | int
-        strategy: str = "merge_to_target"  # "merge_to_target", "merge_to_source", "combine_names"
-        force: bool = False  # Force merge even if biometric distance is high
+    # Uses MergeClustersRequest from module level (line ~188)
     
     @app.post("/faces/clusters/merge")
     async def merge_clusters_advanced(request: MergeClustersRequest, background_tasks: BackgroundTasks):
@@ -2751,9 +2656,7 @@ Expanded terms:"""
 
     # ========== HITL Power APIs: Merge & Link ==========
 
-    class MergeClustersRequest(BaseModel):
-        source_cluster_id: int
-        target_cluster_id: int
+    # Uses MergeClustersRequest from module level (line ~188)
 
     class LinkIdentitiesRequest(BaseModel):
         face_cluster_id: int
@@ -3383,8 +3286,11 @@ Expanded terms:"""
         return {"clusters": result}
 
     @app.get("/identity/suggestions")
-    async def get_identity_suggestions():
-        """Get AI-powered identity linking suggestions (Face-Voice, TMDB, Merge)."""
+    async def get_identity_suggestions_simple():
+        """Get AI-powered identity linking suggestions (Face-Voice, TMDB, Merge).
+        
+        NOTE: Alternative endpoint. Main endpoint is /identities/suggestions at line ~2875.
+        """
         if not pipeline:
             return {"suggestions": [], "error": "Pipeline not initialized"}
 
@@ -3426,8 +3332,11 @@ Expanded terms:"""
             return {"suggestions": [], "error": str(e)}
 
     @app.post("/faces/merge")
-    async def merge_face_clusters(from_cluster: int, to_cluster: int):
-        """Merge two face clusters into one."""
+    async def merge_face_clusters_direct(from_cluster: int, to_cluster: int):
+        """Merge two face clusters into one.
+        
+        NOTE: Direct query params API. Advanced merge is at /faces/clusters/merge.
+        """
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         updated = pipeline.db.merge_face_clusters(from_cluster, to_cluster)
@@ -3569,8 +3478,8 @@ Expanded terms:"""
         return {"success": True, "segment_id": segment_id, "name": name_request.name}
 
     @app.post("/voices/merge")
-    async def merge_voice_clusters(from_cluster: int, to_cluster: int):
-        """Merge two voice clusters into one."""
+    async def merge_voice_clusters_direct(from_cluster: int, to_cluster: int):
+        """Merge two voice clusters into one (via query params)."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
         updated = pipeline.db.merge_voice_clusters(from_cluster, to_cluster)
