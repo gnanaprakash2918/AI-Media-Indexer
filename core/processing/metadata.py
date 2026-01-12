@@ -229,19 +229,29 @@ def match_cast_to_clusters(
 
 
 def create_placeholder_clusters_from_cast(cast_list: list[CastMember]) -> list[dict]:
-    """Create placeholder face cluster entries from TMDB cast."""
+    """Create placeholder face cluster entries from TMDB cast.
+    
+    Uses String UUIDs with 'tmdb_' prefix instead of negative integers
+    to prevent the 'Voice Cluster #-1' bug and enable proper HITL naming.
+    """
+    import uuid
+    
     placeholders = []
     for i, cast in enumerate(cast_list[:10]):
+        # Generate a unique cluster ID that won't collide with real clusters
+        # Format: "tmdb_<tmdb_person_id>_<uuid_suffix>" for traceability
+        cluster_uuid = f"tmdb_{cast.tmdb_id}_{uuid.uuid4().hex[:8]}"
         placeholders.append({
-            "cluster_id": -(i + 1),
+            "cluster_id": cluster_uuid,  # String UUID instead of negative int
             "name": cast.name,
             "character": cast.character,
             "verified": False,
-            "source": "tmdb",
+            "source": "tmdb_placeholder",  # Mark as unverified placeholder
             "tmdb_id": cast.tmdb_id,
             "profile_url": f"https://image.tmdb.org/t/p/w185{cast.profile_path}" if cast.profile_path else None,
         })
     return placeholders
+
 
 
 _engine: Optional[MetadataEngine] = None

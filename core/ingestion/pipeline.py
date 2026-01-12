@@ -970,16 +970,33 @@ class IngestionPipeline:
         identity_context = "\n".join(identity_parts) if identity_parts else None
 
         try:
-            # GPU-first: Unload all GPU models before Ollama vision call
-            # Models will auto-reload on next use
+            # GPU-first: Unload GPU models before Ollama vision call to prevent OOM
             from core.utils.hardware import cleanup_vram, log_vram_status
             if self.faces:
                 self.faces.unload_gpu()
             cleanup_vram()
             log_vram_status("before_ollama")
 
+            # Build video context to prevent VLM hallucinations (Brahmastra bug fix)
+            video_name = video_path.stem
+            video_context_parts = [
+                f"Filename: {video_name}",
+                f"File: {video_path.name}",
+            ]
+            # Infer content type from filename patterns
+            name_lower = video_name.lower()
+            if any(kw in name_lower for kw in ['song', 'video', 'lyric', 'music', 'audio']):
+                video_context_parts.append("Content Type: MUSIC VIDEO / SONG - Describe choreography and visuals, NOT conversations")
+            elif any(kw in name_lower for kw in ['trailer', 'teaser', 'promo']):
+                video_context_parts.append("Content Type: TRAILER - Fast cuts, dramatic scenes expected")
+            elif any(kw in name_lower for kw in ['interview', 'talk', 'podcast']):
+                video_context_parts.append("Content Type: INTERVIEW/TALK - Conversational content expected")
+            
+            video_context = "\n".join(video_context_parts)
+
             analysis = await self.vision.analyze_frame(
                 frame_path,
+                video_context=video_context,
                 identity_context=identity_context,
                 temporal_context=context,
             )

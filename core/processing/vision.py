@@ -178,6 +178,7 @@ class VisionAnalyzer:
         self,
         image_path: Path,
         *,
+        video_context: str | None = None,
         identity_context: str | None = None,
         audio_context: str | None = None,
         temporal_context: str | None = None,
@@ -192,9 +193,10 @@ class VisionAnalyzer:
 
         Args:
             image_path: Path to the frame image.
-            identity_context: Known face identities detected in frame (e.g., "Person in center: John, Person on left: Unknown")
-            audio_context: Transcript from audio at this timestamp (e.g., "John: 'Let's go bowling'")
-            temporal_context: Summary from previous frames (e.g., "[0.5s] Walking to bowling lane -> [1.0s] Picking up ball")
+            video_context: Filename and metadata context to ground analysis (prevents VLM hallucinations).
+            identity_context: Known face identities detected in frame.
+            audio_context: Transcript from audio at this timestamp.
+            temporal_context: Summary from previous frames.
 
         Returns:
             FrameAnalysis object or None if analysis fails.
@@ -207,7 +209,21 @@ class VisionAnalyzer:
             return None
 
         # Build enhanced prompt with multimodal context
-        prompt_parts = [STRUCTURED_ANALYSIS_PROMPT]
+        # CRITICAL: Add video context FIRST to ground VLM and prevent hallucinations
+        prompt_parts = []
+        
+        if video_context:
+            prompt_parts.append(f"""## VIDEO CONTEXT (USE THIS TO GROUND YOUR ANALYSIS)
+{video_context}
+
+IMPORTANT RULES:
+1. Base your description ONLY on what you SEE in the frame
+2. Do NOT hallucinate conversations, events, or contexts not visible
+3. If this is a song/music video, describe choreography/visuals - NOT imaginary conversations
+4. If filename suggests content type (song, trailer, etc), use that to interpret ambiguous visuals
+""")
+        
+        prompt_parts.append(STRUCTURED_ANALYSIS_PROMPT)
 
         if identity_context:
             prompt_parts.append(f"\n\n## KNOWN IDENTITIES IN FRAME\n{identity_context}\nUse these names when describing the people.")
@@ -218,7 +234,7 @@ class VisionAnalyzer:
         if temporal_context:
             prompt_parts.append(f"\n\n## PREVIOUS FRAMES (temporal context)\n{temporal_context}\nThis shows what happened before. Use it to understand continuing actions and narrative flow.")
 
-        enhanced_prompt = "".join(prompt_parts)
+        enhanced_prompt = "\n".join(prompt_parts)
 
         try:
             analysis = await self.llm.describe_image_structured(

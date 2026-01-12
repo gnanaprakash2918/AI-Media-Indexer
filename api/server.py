@@ -1335,6 +1335,106 @@ JSON output:"""
             "results": [r.model_dump() for r in filtered],
         }
 
+    @app.get("/search/hybrid")
+    async def hybrid_search(
+        q: str = Query(..., description="Search query"),
+        video_path: str | None = Query(None, description="Optional video filter"),
+        limit: int = Query(20, description="Maximum results"),
+        use_reranking: bool = Query(True, description="Use LLM re-ranking for higher accuracy"),
+    ):
+        """SOTA hybrid search with reasoning and identity resolution.
+        
+        This is the primary search endpoint that:
+        1. Uses LLM to expand queries dynamically
+        2. Resolves HITL person names to face clusters
+        3. Searches with multi-vector hybrid approach
+        4. Re-ranks with LLM constraint verification
+        5. Returns reasoning for each match
+        
+        Returns match_reason and matched_constraints for frontend explainability.
+        """
+        start_time = time.perf_counter()
+        logger.info(f"[Search] Hybrid search: '{q}' (reranking: {use_reranking})")
+        
+        if not pipeline or not pipeline.db:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        try:
+            # Use SOTA search with full reasoning
+            agent = _get_agentic_search()
+            if agent:
+                result = await agent.sota_search(
+                    query=q,
+                    limit=limit,
+                    video_path=video_path,
+                    use_reranking=use_reranking,
+                )
+                
+                # Transform results for frontend compatibility
+                # Ensure each result has the fields MediaCard expects
+                transformed_results = []
+                for r in result.get("results", []):
+                    # Map SOTA search fields to MediaCard expected fields
+                    transformed = {
+                        **r,  # Keep all original fields
+                        # Map reasoning fields to what MediaCard expects
+                        "match_reason": r.get("llm_reasoning", r.get("reasoning", "")),
+                        "agent_thought": r.get("llm_reasoning", ""),
+                        "matched_constraints": [
+                            c.get("constraint", "") for c in r.get("constraints_satisfied", [])
+                        ] if r.get("constraints_satisfied") else [],
+                        # Ensure score is present
+                        "score": r.get("combined_score", r.get("score", 0.5)),
+                        # Ensure timestamp is present (fix 0:00 bug)
+                        "timestamp": r.get("timestamp") or r.get("start_time") or r.get("start", 0),
+                    }
+                    transformed_results.append(transformed)
+                
+                duration = time.perf_counter() - start_time
+                logger.info(f"[Search] SOTA search completed in {duration:.2f}s with {len(transformed_results)} results")
+                
+                return {
+                    "query": q,
+                    "video_filter": video_path,
+                    "results": transformed_results,
+                    "stats": {
+                        "total": len(transformed_results),
+                        "duration_seconds": duration,
+                    },
+                    "parsed": result.get("parsed", {}),
+                    "search_type": "sota",
+                }
+            else:
+                # Fallback to basic DB search
+                logger.warning("[Search] SearchAgent unavailable, using basic search")
+                results = pipeline.db.search_frames(query=q, limit=limit)
+                duration = time.perf_counter() - start_time
+                return {
+                    "query": q,
+                    "video_filter": video_path,
+                    "results": results,
+                    "stats": {
+                        "total": len(results),
+                        "duration_seconds": duration,
+                    },
+                    "search_type": "basic_fallback",
+                }
+                
+        except Exception as e:
+            logger.error(f"[Search] Hybrid search failed: {e}")
+            # Last resort fallback
+            try:
+                results = pipeline.db.search_frames(query=q, limit=limit)
+                return {
+                    "query": q,
+                    "results": results,
+                    "stats": {"total": len(results), "duration_seconds": 0},
+                    "error": str(e),
+                    "search_type": "error_fallback",
+                }
+            except Exception:
+                raise HTTPException(status_code=500, detail=f"Search failed: {e}")
+
     @app.get("/api/media/thumbnail")
     async def get_video_thumbnail(path: str = Query(...), time: float = Query(0.0)):
         import subprocess
