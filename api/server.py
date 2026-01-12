@@ -115,12 +115,12 @@ ALLOWED_MEDIA_EXTENSIONS = {
 
 # Models
 class IngestRequest(BaseModel):
-    """Request body for ingestion."""
-    path: str
+    path: str = ""
+    encoded_path: str | None = None  # Base64-encoded path for Unicode preservation
     media_type_hint: str = "unknown"
-    content_type_hint: str = "auto"  # movie, personal, song, interview, auto
-    start_time: float | None = None  # Seconds (e.g., 600 = 10:00)
-    end_time: float | None = None    # Seconds (e.g., 1200 = 20:00)
+    content_type_hint: str = "auto"
+    start_time: float | None = None
+    end_time: float | None = None
 
 class ScanRequest(BaseModel):
     """Request body for folder scanning."""
@@ -176,6 +176,23 @@ class VoiceMergeRequest(BaseModel):
 
 class FrameDescriptionRequest(BaseModel):
     description: str
+
+class CreateClusterRequest(BaseModel):
+    name: str = ""
+    type: str = "manual"
+
+class MoveFacesRequest(BaseModel):
+    face_ids: list[str]
+    target_cluster_id: str
+
+class MergeClustersRequest(BaseModel):
+    source_cluster_id: str | int
+    target_cluster_id: str | int
+    strategy: str = "merge_to_target"
+    force: bool = False
+
+class BulkApproveRequest(BaseModel):
+    cluster_ids: list[str | int]
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -1094,16 +1111,36 @@ JSON output:"""
         ingest_request: IngestRequest,
         background_tasks: BackgroundTasks
     ):
-        """Trigger processing of a local file in the background."""
         if not pipeline:
             raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
-        file_path = Path(ingest_request.path)
+        import base64
+        from urllib.parse import unquote
+        
+        if ingest_request.encoded_path:
+            try:
+                raw_path = base64.b64decode(ingest_request.encoded_path).decode('utf-8')
+                logger.info(f"[Ingest] Base64 decoded: {repr(raw_path)}")
+            except Exception as e:
+                logger.warning(f"[Ingest] Base64 decode failed: {e}, falling back to path")
+                raw_path = ingest_request.path.strip().strip('"').strip("'")
+        else:
+            raw_path = ingest_request.path.strip().strip('"').strip("'")
+        
+        file_path = Path(raw_path).resolve()
+        logger.info(f"[Ingest] Resolved: {file_path}, Exists: {file_path.exists()}")
+        
         if not file_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"File not found on server: {ingest_request.path}"
-            )
+            decoded_path = Path(unquote(raw_path)).resolve()
+            if decoded_path.exists():
+                file_path = decoded_path
+                logger.info(f"[Ingest] URL-decoded path worked: {file_path}")
+            else:
+                logger.warning(f"[Ingest] File not found. Raw: {repr(raw_path)}")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"File not found: {raw_path}"
+                )
 
         # Validate media file extension
         ext = file_path.suffix.lower()
@@ -2048,6 +2085,56 @@ Expanded terms:"""
             logger.error(f"[HybridSearch] Error: {e}")
             return {"error": str(e), "results": []}
 
+    @app.post("/search/hybrid")
+    async def hybrid_search_post(request: AdvancedSearchRequest):
+        """POST version of hybrid search for complex filters."""
+        return await hybrid_search(
+            q=request.query,
+            limit=request.limit,
+            video_path=request.video_path,
+        )
+
+    @app.post("/admin/reprocess-scenelets")
+    async def reprocess_scenelets(
+        video_path: str | None = None,
+        background_tasks: BackgroundTasks = None,
+    ):
+        """Retroactively generate Scenelet embeddings for existing videos."""
+        if not pipeline:
+            raise HTTPException(status_code=503, detail="Pipeline not initialized")
+        
+        try:
+            from core.processing.temporal_context import SceneletBuilder, TemporalContext
+            
+            if video_path:
+                videos = [video_path]
+            else:
+                videos = pipeline.db.get_indexed_videos()
+            
+            processed = 0
+            for vid_path in videos:
+                frames = pipeline.db.get_frames_for_video(vid_path)
+                if not frames:
+                    continue
+                    
+                builder = SceneletBuilder(window_seconds=5.0, stride_seconds=2.5)
+                for frame in frames:
+                    builder.add_frame(TemporalContext(
+                        timestamp=frame.get("timestamp", 0),
+                        description=frame.get("description", ""),
+                        entities=frame.get("entities", []),
+                        actions=frame.get("actions", []),
+                    ))
+                
+                scenelets = builder.build_scenelets()
+                logger.info(f"[Reprocess] Generated {len(scenelets)} scenelets for {vid_path}")
+                processed += 1
+            
+            return {"success": True, "videos_processed": processed}
+        except Exception as e:
+            logger.error(f"[Reprocess] Error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.get("/library")
     async def get_library():
         """Get list of all indexed media files."""
@@ -2328,10 +2415,6 @@ Expanded terms:"""
     # HITL CLUSTER MANAGEMENT ENDPOINTS (Face Sandbox)
     # =========================================================================
     
-    class CreateClusterRequest(BaseModel):
-        name: str = ""
-        type: str = "manual"  # "manual" or "imported"
-    
     @app.post("/faces/clusters/create")
     async def create_custom_cluster(request: CreateClusterRequest):
         """Create a new empty custom cluster (Face Sandbox).
@@ -2367,10 +2450,6 @@ Expanded terms:"""
             logger.error(f"[HITL] Failed to create cluster: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    class MoveFacesRequest(BaseModel):
-        face_ids: list[str]
-        target_cluster_id: str
-    
     @app.post("/faces/move")
     async def move_faces_to_cluster(request: MoveFacesRequest, background_tasks: BackgroundTasks):
         """Move faces to a different cluster and trigger reindex.

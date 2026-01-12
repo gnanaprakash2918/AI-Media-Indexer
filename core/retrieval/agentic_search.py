@@ -659,3 +659,52 @@ Return JSON:
             "search_type": "sota",
             "reranking_used": use_reranking,
         }
+
+    @observe("scenelet_search")
+    async def scenelet_search(
+        self,
+        query: str,
+        video_path: str | None = None,
+        limit: int = 10,
+    ) -> dict:
+        """Search using Scenelet temporal windows for action queries.
+        
+        Returns results with precise start_time/end_time ranges and
+        natural language reasoning.
+        """
+        log(f"[Scenelet Search] Query: '{query[:80]}...'")
+        
+        parsed = await self.parse_query(query)
+        search_text = parsed.to_search_text() or query
+        
+        candidates = self.db.search_frames(query=search_text, limit=limit * 2)
+        
+        results_with_ranges = []
+        for cand in candidates:
+            ts = cand.get("timestamp", 0)
+            start_time = max(0, ts - 2.5)
+            end_time = ts + 2.5
+            
+            actions = cand.get("actions", [])
+            entities = cand.get("entities", cand.get("entity_names", []))
+            
+            action_str = ", ".join(actions[:3]) if actions else "activity"
+            entity_str = ", ".join(entities[:3]) if entities else "scene"
+            
+            reasoning = f"Matched Sequence: {action_str} with {entity_str} from {start_time:.1f}s to {end_time:.1f}s"
+            
+            results_with_ranges.append({
+                **cand,
+                "start_time": start_time,
+                "end_time": end_time,
+                "reasoning": reasoning,
+                "match_explanation": f"Action '{action_str}' detected at {ts:.1f}s",
+            })
+        
+        return {
+            "query": query,
+            "search_type": "scenelet",
+            "results": results_with_ranges[:limit],
+            "result_count": len(results_with_ranges[:limit]),
+        }
+

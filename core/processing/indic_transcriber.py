@@ -170,7 +170,6 @@ class IndicASRPipeline:
                 raise
 
     def _load_nemo_model(self) -> None:
-        """Load NeMo model (heavier, better quality)."""
         model_info = self.NEMO_MODEL_MAP.get(self.lang, self.NEMO_MODEL_MAP.get("ta"))
         log(f"[IndicASR] Loading NeMo model: {model_info['repo_id']}")
 
@@ -181,13 +180,30 @@ class IndicASRPipeline:
                 cache_dir=str(settings.model_cache_dir / "nemo_models"),
                 token=settings.hf_token,
             )
-            self.model = nemo_asr.models.ASRModel.restore_from(
+            
+            from omegaconf import OmegaConf, open_dict
+            model_cfg = nemo_asr.models.ASRModel.restore_from(
                 restore_path=nemo_ckpt_path,
-                map_location=self.device,
+                return_config=True,
             )
+            
+            with open_dict(model_cfg):
+                if hasattr(model_cfg, 'tokenizer'):
+                    if 'dir' not in model_cfg.tokenizer:
+                        model_cfg.tokenizer.dir = "tokenizers"
+                    if 'type' not in model_cfg.tokenizer:
+                        model_cfg.tokenizer.type = "bpe"
+                if hasattr(model_cfg, 'decoding'):
+                    model_cfg.decoding.preserve_alignments = False
+            
+            self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.from_config_dict(model_cfg)
+            state_dict = torch.load(nemo_ckpt_path, map_location=self.device)
+            if 'state_dict' in state_dict:
+                self.model.load_state_dict(state_dict['state_dict'], strict=False)
+            
             self.model.to(self.device)
             self.model.freeze()
-            log(f"[IndicASR] NeMo model loaded on {self.device}")
+            log(f"[IndicASR] NeMo model loaded on {self.device} (config patched)")
         except Exception as e:
             log(f"[IndicASR] Failed to load NeMo model: {e}")
             raise

@@ -264,6 +264,52 @@ class VectorDB:
         )
         return [list(e) for e in embeddings]
 
+    def get_embedding(self, text: str) -> list[float]:
+        embeddings = self.encode_texts(text, is_query=True)
+        return embeddings[0] if embeddings else []
+
+    def get_indexed_videos(self) -> list[str]:
+        video_paths = set()
+        offset = None
+        while True:
+            results, offset = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                limit=500,
+                offset=offset,
+                with_payload=["video_path"],
+                with_vectors=False,
+            )
+            for point in results:
+                path = point.payload.get("video_path")
+                if path:
+                    video_paths.add(path)
+            if offset is None:
+                break
+        return list(video_paths)
+
+    def get_frames_for_video(self, video_path: str) -> list[dict]:
+        frames = []
+        offset = None
+        while True:
+            results, offset = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="video_path",
+                        match=models.MatchValue(value=video_path),
+                    )]
+                ),
+                limit=500,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in results:
+                frames.append(point.payload)
+            if offset is None:
+                break
+        return frames
+
     def _ensure_collections(self) -> None:
         if not self.client.collection_exists(self.MEDIA_SEGMENTS_COLLECTION):
             self.client.create_collection(

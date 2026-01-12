@@ -549,13 +549,13 @@ class IngestionPipeline:
                         ))
 
                 if job_id:
-                    # Check for PAUSE functionality
                     if progress_tracker.is_paused(job_id):
                         logger.info(f"Job {job_id} paused. Stopping frame loop.")
-                        break # Exit loop (checkpoint saved in update_granular)
+                        break
 
                     if progress_tracker.is_cancelled(job_id):
-                        break
+                        logger.warning(f"Job {job_id} cancelled. Aborting pipeline.")
+                        return
 
                     # Update Granular Stats
                     # Use provided duration for 100% accuracy, fallback to metadata
