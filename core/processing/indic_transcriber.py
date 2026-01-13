@@ -98,10 +98,12 @@ class IndicASRPipeline:
             backend: 'auto' (prefer HF), 'hf', or 'nemo'
         """
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = None
+        self.model: Any = None
+        self.pipe: Any = None
         self.processor = None
         self.lang = lang
         self._backend = self._select_backend(backend)
+        self._is_loaded = False
         log(f"[IndicASR] Using backend: {self._backend}")
 
     def _select_backend(self, preference: str) -> str:
@@ -124,13 +126,15 @@ class IndicASRPipeline:
         )
 
     def load_model(self) -> None:
-        if self.model is not None:
+        if self._is_loaded:
             return
 
         if self._backend == "hf":
             self._load_hf_model()
         else:
             self._load_nemo_model()
+        
+        self._is_loaded = True
 
     def _load_hf_model(self) -> None:
         """Load HuggingFace Transformers pipeline for speech recognition.
@@ -152,7 +156,7 @@ class IndicASRPipeline:
                 else torch.float32,
                 token=settings.hf_token,
             )
-            self.model = True
+            # self.model remains None for HF, we use self.pipe
             log(f"[IndicASR] HF Whisper pipeline loaded on {self.device}")
         except Exception as e:
             log(
@@ -174,7 +178,7 @@ class IndicASRPipeline:
                     if self.device.type == "cuda"
                     else torch.float32,
                 )
-                self.model = True
+                # self.model remains None for HF
                 log("[IndicASR] Whisper-small fallback loaded (Tamil supported)")
             except Exception as e2:
                 log(f"[IndicASR] All HF models failed: {e2}")
@@ -346,6 +350,10 @@ class IndicASRPipeline:
             return []
 
         log(f"[IndicASR] Transcribing {audio_path.name} with {self._backend}...")
+
+        # For NeMo, ensure model is loaded
+        if self._backend == "nemo" and self.model is None:
+             raise RuntimeError("NeMo model not initialized")
 
         # Extract audio from video if needed
         wav_path = None
@@ -679,11 +687,8 @@ class IndicASRPipeline:
 
     def unload_model(self) -> None:
         """Unload model and free VRAM."""
-        if hasattr(self, "pipe") and self.pipe is not None:
-            del self.pipe
-            self.pipe = None
-        if self.model is not None:
-            del self.model
-            self.model = None
+        self.pipe = None
+        self.model = None
+        self._is_loaded = False
         self._cleanup()
         log("[IndicASR] Model unloaded - VRAM freed")

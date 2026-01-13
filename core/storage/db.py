@@ -3020,6 +3020,75 @@ class VectorDB:
             log(f"get_voice_segments_for_media error: {e}")
             return []
 
+    @observe("db_get_recent_frames")
+    def get_recent_frames(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Get the most recently indexed frames.
+
+        Args:
+            limit: Maximum number of frames to retrieve.
+
+        Returns:
+            List of frame result dicts.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                results.append(
+                    {
+                        "score": 1.0,  # Implicitly high relevance for recent
+                        "id": str(point.id),
+                        **payload,
+                    }
+                )
+            return results
+        except Exception as e:
+            log(f"get_recent_frames error: {e}")
+            return []
+
+    @observe("db_get_all_voice_segments")
+    def get_all_voice_segments(self, limit: int = 1000) -> list[dict[str, Any]]:
+        """Retrieve all voice segments for listing/management.
+
+        Args:
+            limit: Maximum number of segments to return.
+
+        Returns:
+            List of voice segments.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                cluster_id = payload.get("voice_cluster_id", -1)
+                results.append(
+                    {
+                        "id": point.id,
+                        "media_path": payload.get("media_path"),
+                        "start": payload.get("start"),
+                        "end": payload.get("end"),
+                        "speaker_label": payload.get("speaker_label"),
+                        "speaker_name": payload.get("speaker_name"),
+                        "voice_cluster_id": cluster_id,
+                    }
+                )
+            return results
+        except Exception as e:
+            log(f"get_all_voice_segments error: {e}")
+            return []
+
     # =========================================================================
     # HITL IDENTITY INTEGRATION & HYBRID SEARCH
     # =========================================================================
