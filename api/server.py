@@ -80,6 +80,7 @@ from fastapi.staticfiles import StaticFiles
 from api.routes import (
     agent,
     councils,
+    events,
     identities,
     ingest,
     media,
@@ -176,6 +177,7 @@ def create_app() -> FastAPI:
     app.include_router(agent.router, tags=["Agent"])
     app.include_router(identities.router, tags=["Identities"])
     app.include_router(councils.router, tags=["Councils"])
+    app.include_router(events.router, tags=["Events"])
 
     # Mount static files for default thumbnails/assets
     thumb_dir = settings.cache_dir / "thumbnails"
