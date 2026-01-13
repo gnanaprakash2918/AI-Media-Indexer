@@ -20,7 +20,13 @@ if TYPE_CHECKING:
 class BiometricArbitrator:
     """ArcFace-based biometric verification for twin disambiguation."""
 
-    def __init__(self, model_path: Path | None = None):
+    def __init__(self, model_path: Path | None = None) -> None:
+        """Initializes the BiometricArbitrator.
+
+        Args:
+            model_path: Optional path to the ArcFace ONNX model. If None,
+                it is loaded from system settings.
+        """
         from config import settings
 
         self.model_path = model_path or settings.arcface_model_path
@@ -29,6 +35,7 @@ class BiometricArbitrator:
         self._initialized = False
 
     def _lazy_load(self) -> bool:
+        """Loads the ArcFace ONNX session only when first required."""
         if self._initialized:
             return self.session is not None
         self._initialized = True
@@ -55,6 +62,14 @@ class BiometricArbitrator:
     def get_embedding(
         self, face_crop: "NDArray[np.uint8]"
     ) -> "NDArray[np.float32] | None":
+        """Extracts a 128/512D ArcFace embedding from a face crop.
+
+        Args:
+            face_crop: Normalized face image (BGR).
+
+        Returns:
+            The L2-normalized feature vector, or None if extraction fails.
+        """
         if not self._lazy_load() or self.session is None:
             return None
 
@@ -65,7 +80,9 @@ class BiometricArbitrator:
             img = np.expand_dims(img, 0)
             img = (img.astype(np.float32) - 127.5) / 128.0
 
-            outputs = self.session.run(None, {self.session.get_inputs()[0].name: img})
+            outputs = self.session.run(
+                None, {self.session.get_inputs()[0].name: img}
+            )
             embedding = outputs[0][0]
 
             norm = np.linalg.norm(embedding)
@@ -79,14 +96,34 @@ class BiometricArbitrator:
     def compute_similarity(
         self, emb1: "NDArray[np.float32]", emb2: "NDArray[np.float32]"
     ) -> float:
+        """Calculates the cosine similarity between two embeddings.
+
+        Args:
+            emb1: First feature vector.
+            emb2: Second feature vector.
+
+        Returns:
+            Similarity score between 0.0 and 1.0.
+        """
         norm1, norm2 = np.linalg.norm(emb1), np.linalg.norm(emb2)
         if norm1 < 1e-6 or norm2 < 1e-6:
             return 0.0
         return float(np.dot(emb1, emb2) / (norm1 * norm2))
 
     def verify_identity(
-        self, emb1: "NDArray[np.float32] | None", emb2: "NDArray[np.float32] | None"
+        self,
+        emb1: "NDArray[np.float32] | None",
+        emb2: "NDArray[np.float32] | None",
     ) -> bool:
+        """Verifies if two embeddings belong to the same identity.
+
+        Args:
+            emb1: Query embedding.
+            emb2: Reference embedding.
+
+        Returns:
+            True if the similarity exceeds the configured threshold.
+        """
         if emb1 is None or emb2 is None:
             return False
         similarity = self.compute_similarity(emb1, emb2)
@@ -97,6 +134,15 @@ class BiometricArbitrator:
         query_embedding: "NDArray[np.float32]",
         known_identities: dict[int, "NDArray[np.float32]"],
     ) -> int | None:
+        """Finds the best matching identity from a set of known embeddings.
+
+        Args:
+            query_embedding: The embedding to match.
+            known_identities: A dictionary mapping cluster IDs to embeddings.
+
+        Returns:
+            The cluster ID of the best match, or None if no match meets the threshold.
+        """
         best_match_id = None
         best_similarity = 0.0
         threshold = 1.0 - self.threshold
@@ -114,6 +160,11 @@ _arbitrator: BiometricArbitrator | None = None
 
 
 def get_biometric_arbitrator() -> BiometricArbitrator:
+    """Retrieves the singleton BiometricArbitrator instance.
+
+    Returns:
+        The initialized BiometricArbitrator.
+    """
     global _arbitrator
     if _arbitrator is None:
         _arbitrator = BiometricArbitrator()

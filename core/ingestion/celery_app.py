@@ -1,11 +1,11 @@
+"""Celery application configuration for distributed task processing."""
+
 from celery import Celery
 
 from config import settings
 
 # Redis URL from environment or settings
-REDIS_URL = (
-    f"redis://:{settings.redis_auth}@{settings.redis_host}:{settings.redis_port}/0"
-)
+REDIS_URL = f"redis://:{settings.redis_auth}@{settings.redis_host}:{settings.redis_port}/0"
 
 celery_app = Celery(
     "ai_media_indexer",

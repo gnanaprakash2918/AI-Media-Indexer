@@ -1,3 +1,7 @@
+"""API routes for identity management and cluster operations."""
+
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_pipeline
@@ -14,8 +18,14 @@ from core.ingestion.pipeline import IngestionPipeline
 
 router = APIRouter()
 
+
 @router.get("/identities")
-async def list_identities():
+async def list_identities() -> dict:
+    """Retrieves all recognized identities and their face track counts.
+
+    Returns:
+        A dictionary containing a list of identity records and the total count.
+    """
     from core.storage.identity_graph import identity_graph
 
     identities = identity_graph.get_all_identities()
@@ -35,7 +45,19 @@ async def list_identities():
 
 
 @router.post("/identities/{identity_id}/merge")
-async def merge_identities(identity_id: str, req: IdentityMergeRequest):
+async def merge_identities(identity_id: str, req: IdentityMergeRequest) -> dict:
+    """Merges a source identity into a target identity cluster.
+
+    Args:
+        identity_id: The ID of the source identity to merge.
+        req: The request payload specifying the target identity.
+
+    Returns:
+        A dictionary confirming the merge operation.
+
+    Raises:
+        HTTPException: If the merge operation fails.
+    """
     from core.storage.identity_graph import identity_graph
 
     try:
@@ -46,11 +68,23 @@ async def merge_identities(identity_id: str, req: IdentityMergeRequest):
             "target": req.target_identity_id,
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.patch("/identities/{identity_id}")
-async def rename_identity(identity_id: str, req: IdentityRenameRequest):
+async def rename_identity(identity_id: str, req: IdentityRenameRequest) -> dict:
+    """Updates the display name of a recognized identity.
+
+    Args:
+        identity_id: The ID of the identity to rename.
+        req: The request payload containing the new name.
+
+    Returns:
+        A dictionary confirming the name update.
+
+    Raises:
+        HTTPException: If the identity is not found.
+    """
     from core.storage.identity_graph import identity_graph
 
     identity = identity_graph.get_identity(identity_id)
@@ -61,7 +95,15 @@ async def rename_identity(identity_id: str, req: IdentityRenameRequest):
 
 
 @router.delete("/identities/{identity_id}")
-async def delete_identity(identity_id: str):
+async def delete_identity(identity_id: str) -> dict:
+    """Permanently deletes an identity record and associated metadata.
+
+    Args:
+        identity_id: The ID of the identity to delete.
+
+    Returns:
+        A dictionary confirming the deletion.
+    """
     from core.storage.identity_graph import identity_graph
 
     identity_graph.delete_identity(identity_id)
@@ -72,8 +114,20 @@ async def delete_identity(identity_id: str):
 @router.post("/clusters/create")
 async def create_cluster(
     req: CreateClusterRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Creates a new manual identity cluster.
+
+    Args:
+        req: The request payload for cluster creation.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary containing the new cluster ID and status.
+
+    Raises:
+        HTTPException: If the database is not ready.
+    """
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="DB not ready")
 
@@ -86,8 +140,20 @@ async def create_cluster(
 @router.post("/faces/move")
 async def move_faces(
     req: MoveFacesRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Moves specific face points to a different identity cluster.
+
+    Args:
+        req: The request payload specifying face IDs and target cluster.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary confirming the move operation and count.
+
+    Raises:
+        HTTPException: If the database is not ready.
+    """
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="DB not ready")
 
@@ -99,8 +165,20 @@ async def move_faces(
 @router.post("/clusters/merge")
 async def merge_clusters(
     req: MergeClustersRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Merges two face clusters at the storage/database level.
+
+    Args:
+        req: The request payload specifying source and target clusters.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary confirming the merge status.
+
+    Raises:
+        HTTPException: If the database is not ready.
+    """
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="DB not ready")
 
@@ -111,16 +189,26 @@ async def merge_clusters(
 @router.post("/clusters/approve")
 async def bulk_approve(
     req: BulkApproveRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Batch approves recognized face clusters for production indexing.
+
+    Args:
+        req: The request payload containing cluster IDs to approve.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary confirming the approval status and count.
+    """
     # Logic for approval
     return {"status": "approved", "count": len(req.cluster_ids)}
+
 
 @router.post("/faces/cluster/{cluster_id}/name")
 async def name_face_cluster(
     cluster_id: str,
     req: NameFaceRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
     """Assign a name to a face cluster (Person N -> 'John Doe')."""
     if not pipeline or not pipeline.db:

@@ -13,7 +13,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -24,41 +24,59 @@ TMDB_API_BASE = "https://api.themoviedb.org/3"
 
 @dataclass
 class CastMember:
+    """Represents a cast member fetched from an external metadata provider."""
+
     name: str
     character: str
-    profile_path: Optional[str] = None
+    profile_path: str | None = None
     order: int = 0
     tmdb_id: int = 0
 
 
 @dataclass
 class MediaMetadata:
-    """Dataclass metadata for media content (movies/TV)."""
+    """Rich metadata for media content (movies/TV sessions)."""
+
     title: str
-    year: Optional[int] = None
+    year: int | None = None
     overview: str = ""
-    poster_path: Optional[str] = None
+    poster_path: str | None = None
     tmdb_id: int = 0
     media_type: str = "movie"
     cast: list[CastMember] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initializes default values for optional fields after instantiation."""
         if self.cast is None:
             self.cast = []
 
 
 class MetadataEngine:
-    """Fetches metadata from TMDB and manages cast-to-face mapping."""
+    """Orchestrates metadata enrichment using TMDB (The Movie Database).
+
+    Identifies movies and TV shows from filenames, fetches cast information,
+    and facilitates the creation of placeholder face clusters.
+    """
 
     def __init__(
         self,
-        tmdb_api_key: Optional[str] = None,
-        api_key: Optional[str] = None,
-        tmdb_key: Optional[str] = None,
-        **kwargs,
-    ):
-        self.api_key = tmdb_api_key or api_key or tmdb_key or os.getenv("TMDB_API_KEY")
-        self._client: Optional[httpx.AsyncClient] = None
+        tmdb_api_key: str | None = None,
+        api_key: str | None = None,
+        tmdb_key: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes the MetadataEngine with a TMDB API key.
+
+        Args:
+            tmdb_api_key: Primary API key for TMDB.
+            api_key: Legacy alias for tmdb_api_key.
+            tmdb_key: Legacy alias for tmdb_api_key.
+            **kwargs: Additional parameters for backward compatibility.
+        """
+        self.api_key = (
+            tmdb_api_key or api_key or tmdb_key or os.getenv("TMDB_API_KEY")
+        )
+        self._client: httpx.AsyncClient | None = None
         self.enabled = bool(self.api_key)
 
         if not self.enabled:
@@ -79,9 +97,17 @@ class MetadataEngine:
         return self.enabled
 
     async def search_movie(
-        self, query: str, year: Optional[int] = None
+        self, query: str, year: int | None = None
     ) -> list[MediaMetadata]:
-        """Search TMDB for movies matching query."""
+        """Searches for movies on TMDB matching the query string.
+
+        Args:
+            query: The movie title or search term.
+            year: Optional release year to filter results.
+
+        Returns:
+            A list of MediaMetadata objects representing the search results.
+        """
         if not self.api_key:
             logger.warning("TMDB_API_KEY not set. Cannot search movies.")
             return []
@@ -95,7 +121,9 @@ class MetadataEngine:
             params["year"] = str(year)
 
         try:
-            resp = await self.client.get(f"{TMDB_API_BASE}/search/movie", params=params)
+            resp = await self.client.get(
+                f"{TMDB_API_BASE}/search/movie", params=params
+            )
             resp.raise_for_status()
             data = resp.json()
 
@@ -125,7 +153,15 @@ class MetadataEngine:
     async def get_cast(
         self, tmdb_id: int, media_type: str = "movie"
     ) -> list[CastMember]:
-        """Get cast list for a movie/TV show."""
+        """Retrieves the cast list for a specific movie or TV show.
+
+        Args:
+            tmdb_id: The TMDB identifier for the media.
+            media_type: Either 'movie' or 'tv'.
+
+        Returns:
+            A list of CastMember objects.
+        """
         if not self.api_key:
             return []
 
@@ -154,9 +190,17 @@ class MetadataEngine:
             return []
 
     async def get_movie_with_cast(
-        self, query: str, year: Optional[int] = None
-    ) -> Optional[MediaMetadata]:
-        """Search for movie and fetch its cast in one call."""
+        self, query: str, year: int | None = None
+    ) -> MediaMetadata | None:
+        """Searches for a movie and retrieves its cast details in a single operation.
+
+        Args:
+            query: The movie title or search term.
+            year: Optional release year filter.
+
+        Returns:
+            A MediaMetadata object with the cast list populated, or None if not found.
+        """
         results = await self.search_movie(query, year)
         if not results:
             return None
@@ -165,16 +209,27 @@ class MetadataEngine:
         movie.cast = await self.get_cast(movie.tmdb_id, "movie")
         return movie
 
-    async def close(self):
-        """Close the async HTTP client."""
+    async def close(self) -> None:
+        """Asynchronously closes the internal HTTP client."""
         if self._client:
             await self._client.aclose()
             self._client = None
 
     async def enrich_video(
         self, video_id: str | None, path: Path | str
-    ) -> Optional[MediaMetadata]:
-        """Enrich video metadata using filename parsing and TMDB (if enabled)."""
+    ) -> MediaMetadata | None:
+        """Enriches a video entry with external metadata parsed from its path.
+
+        Attempts to extract title and year from the filename and fetches
+        matching details from TMDB if available.
+
+        Args:
+            video_id: The internal database ID of the video.
+            path: The file path to the video.
+
+        Returns:
+            A MediaMetadata object if a match is found, otherwise None.
+        """
         if not self.enabled:
             return None
 
@@ -195,7 +250,9 @@ class MetadataEngine:
             if self.enabled and year:
                 found = await self.get_movie_with_cast(title, year)
                 if found:
-                    logger.info(f"[Metadata] TMDB Match: {found.title} ({found.year})")
+                    logger.info(
+                        f"[Metadata] TMDB Match: {found.title} ({found.year})"
+                    )
                     return found
 
             return MediaMetadata(
@@ -206,14 +263,25 @@ class MetadataEngine:
             return None
 
     async def identify(
-        self, path: Path | str, user_hint: Optional[Any] = None
-    ) -> Optional[MediaMetadata]:
+        self, path: Path | str, user_hint: Any | None = None
+    ) -> MediaMetadata | None:
         """Alias for enrich_video to maintain compatibility."""
         return await self.enrich_video(None, path)
 
 
 def fuzzy_match_name(name1: str, name2: str, threshold: float = 0.8) -> bool:
-    """Simple fuzzy name matching using token overlap."""
+    """Performs fuzzy matching between two names using token-based overlap.
+
+    Calculates the Jaccard similarity between sets of normalized tokens.
+
+    Args:
+        name1: The first name to compare.
+        name2: The second name to compare.
+        threshold: The similarity score threshold (0.0 to 1.0) for a match.
+
+    Returns:
+        True if the similarity meets or exceeds the threshold.
+    """
 
     def normalize(s: str) -> set[str]:
         s = re.sub(r"[^\w\s]", "", s.lower())
@@ -234,17 +302,27 @@ def fuzzy_match_name(name1: str, name2: str, threshold: float = 0.8) -> bool:
 
 def match_cast_to_clusters(
     cast_list: list[CastMember],
-    face_clusters: list[dict],
+    face_clusters: list[dict[str, Any]],
 ) -> dict[int, str]:
-    """Match TMDB cast to existing face clusters using fuzzy matching.
+    """Matches TMDB cast members to existing face clusters.
 
-    Returns mapping of cluster_id -> cast name (unverified).
+    Uses fuzzy name matching to associate cast names with detected face
+    clusters that are currently unnamed or unknown.
+
+    Args:
+        cast_list: A list of CastMember objects from TMDB.
+        face_clusters: A list of face cluster dictionaries from the database.
+
+    Returns:
+        A dictionary mapping cluster_id to the matched cast name.
     """
     matches: dict[int, str] = {}
 
     for cluster in face_clusters:
         cluster_id = cluster.get("cluster_id")
-        cluster_name = (cluster.get("name") or cluster.get("label") or "").strip()
+        cluster_name = (
+            cluster.get("name") or cluster.get("label") or ""
+        ).strip()
 
         if not cluster_name or cluster_name.lower() in ("unknown", "unnamed"):
             continue
@@ -263,16 +341,25 @@ def match_cast_to_clusters(
     return matches
 
 
-def create_placeholder_clusters_from_cast(cast_list: list[CastMember]) -> list[dict]:
-    """Create placeholder face cluster entries from TMDB cast.
+def create_placeholder_clusters_from_cast(
+    cast_list: list[CastMember],
+) -> list[dict[str, Any]]:
+    """Generates placeholder face cluster entries from a cast list.
 
-    Uses String UUIDs with 'tmdb_' prefix instead of negative integers
-    to prevent the 'Voice Cluster #-1' bug and enable proper HITL naming.
+    Creates unverified clusters using 'tmdb_' prefixed string UUIDs. This
+    provides a high-quality initial state for HITL (Human-In-The-Loop)
+    identity verification.
+
+    Args:
+        cast_list: A list of CastMember objects.
+
+    Returns:
+        A list of dictionaries representing placeholder clusters.
     """
     import uuid
 
     placeholders = []
-    for i, cast in enumerate(cast_list[:10]):
+    for _i, cast in enumerate(cast_list[:10]):
         # Generate a unique cluster ID that won't collide with real clusters
         # Format: "tmdb_<tmdb_person_id>_<uuid_suffix>" for traceability
         cluster_uuid = f"tmdb_{cast.tmdb_id}_{uuid.uuid4().hex[:8]}"
@@ -292,10 +379,15 @@ def create_placeholder_clusters_from_cast(cast_list: list[CastMember]) -> list[d
     return placeholders
 
 
-_engine: Optional[MetadataEngine] = None
+_engine: MetadataEngine | None = None
 
 
 def get_metadata_engine() -> MetadataEngine:
+    """Retrieves the singleton MetadataEngine instance.
+
+    Returns:
+        The initialized MetadataEngine.
+    """
     global _engine
     if _engine is None:
         _engine = MetadataEngine()

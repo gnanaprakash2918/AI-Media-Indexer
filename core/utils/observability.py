@@ -26,7 +26,9 @@ span_stack_ctx: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "obs_span_stack", default=None
 )
 # We no longer store SDK objects
-trace_obj_ctx: ContextVar[Any | None] = ContextVar("obs_trace_obj", default=None)
+trace_obj_ctx: ContextVar[Any | None] = ContextVar(
+    "obs_trace_obj", default=None
+)
 
 
 def init_langfuse() -> None:
@@ -76,8 +78,14 @@ def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:
             or settings.langfuse_docker_host
             or "http://localhost:3300"
         )
-        pk = os.environ.get("LANGFUSE_PUBLIC_KEY") or settings.langfuse_public_key
-        sk = os.environ.get("LANGFUSE_SECRET_KEY") or settings.langfuse_secret_key
+        pk = (
+            os.environ.get("LANGFUSE_PUBLIC_KEY")
+            or settings.langfuse_public_key
+        )
+        sk = (
+            os.environ.get("LANGFUSE_SECRET_KEY")
+            or settings.langfuse_secret_key
+        )
 
         if not pk or not sk:
             # logger.warning(f"Langfuse skipped: Missing keys (pk={bool(pk)}, sk={bool(sk)})")
@@ -106,9 +114,13 @@ def _send_ingestion_event(event_type: str, body: dict[str, Any]) -> None:
         # logger.info(f"Langfuse Sending {event_type} to {url}...")
 
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=2.0)
+            resp = requests.post(
+                url, headers=headers, json=payload, timeout=2.0
+            )
             if resp.status_code not in (200, 201, 207):
-                logger.warning(f"Langfuse API Error {resp.status_code}: {resp.text}")
+                logger.warning(
+                    f"Langfuse API Error {resp.status_code}: {resp.text}"
+                )
             # else:
             #    logger.info(f"Langfuse Sent {event_type}: {resp.status_code}")
 
@@ -188,7 +200,7 @@ def start_span(name: str, metadata: dict[str, Any] | None = None) -> None:
 
     # Push to stack
     new_item = {"name": name, "id": span_id, "start_time": start_time}
-    span_stack_ctx.set(stack + [new_item])
+    span_stack_ctx.set([*stack, new_item])
 
     logger.info("span_start", span=name)
 
@@ -214,7 +226,8 @@ def end_span(status: str = "success", error: str | None = None) -> None:
             "id": span_id,
             "traceId": trace_id,
             "name": name,
-            "startTime": datetime.utcfromtimestamp(start_time).isoformat() + "Z",
+            "startTime": datetime.utcfromtimestamp(start_time).isoformat()
+            + "Z",
             "endTime": datetime.utcfromtimestamp(end_time).isoformat() + "Z",
             "type": "span",
         }

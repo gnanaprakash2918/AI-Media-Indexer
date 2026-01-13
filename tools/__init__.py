@@ -1,1 +1,1 @@
-"""AI-Media-Indexer tools package."""
+"""External tools and utility scripts for the indexing system."""

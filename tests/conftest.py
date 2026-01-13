@@ -1,9 +1,4 @@
-"""Pytest configuration.
-
-NOTE: Do NOT import transformers or sentence_transformers here.
-The torch.__spec__ error in Python 3.12 is triggered by those packages
-when they check for torch availability. Keep this file minimal.
-"""
+"""Pytest configuration."""
 
 import os
 import sys

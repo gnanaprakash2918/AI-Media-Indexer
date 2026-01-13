@@ -184,7 +184,7 @@ class IdentityGraphManager:
         """Get graph statistics."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             row = conn.execute("""
-                SELECT 
+                SELECT
                     (SELECT COUNT(*) FROM identities) as identities,
                     (SELECT COUNT(*) FROM face_tracks) as face_tracks,
                     (SELECT COUNT(*) FROM voice_tracks) as voice_tracks
@@ -257,7 +257,7 @@ class IdentityGraphManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 """
-                SELECT 
+                SELECT
                     i.*,
                     (SELECT COUNT(*) FROM face_tracks WHERE identity_id = i.id) as face_count,
                     (SELECT COUNT(*) FROM voice_tracks WHERE identity_id = i.id) as voice_count
@@ -334,7 +334,9 @@ class IdentityGraphManager:
                 "UPDATE voice_tracks SET identity_id = NULL WHERE identity_id = ?",
                 (identity_id,),
             )
-            cursor = conn.execute("DELETE FROM identities WHERE id = ?", (identity_id,))
+            cursor = conn.execute(
+                "DELETE FROM identities WHERE id = ?", (identity_id,)
+            )
             conn.commit()
             return cursor.rowcount > 0
 
@@ -362,8 +364,8 @@ class IdentityGraphManager:
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO face_tracks 
-                (id, media_id, start_frame, end_frame, start_time, end_time, 
+                INSERT INTO face_tracks
+                (id, media_id, start_frame, end_frame, start_time, end_time,
                  avg_embedding, identity_id, best_thumbnail_path, avg_confidence, frame_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -427,7 +429,9 @@ class IdentityGraphManager:
             )
             return [self._row_to_face_track(row) for row in cursor.fetchall()]
 
-    def link_face_track_to_identity(self, track_id: str, identity_id: str) -> bool:
+    def link_face_track_to_identity(
+        self, track_id: str, identity_id: str
+    ) -> bool:
         """Link a face track to an identity."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
@@ -467,7 +471,7 @@ class IdentityGraphManager:
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO voice_tracks 
+                INSERT INTO voice_tracks
                 (id, media_id, start_time, end_time, embedding, identity_id, speaker_label, total_duration)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -505,7 +509,9 @@ class IdentityGraphManager:
             )
             return [self._row_to_voice_track(row) for row in cursor.fetchall()]
 
-    def get_voice_tracks_for_identity(self, identity_id: str) -> list[VoiceTrack]:
+    def get_voice_tracks_for_identity(
+        self, identity_id: str
+    ) -> list[VoiceTrack]:
         """Get all voice tracks linked to an identity."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -515,7 +521,9 @@ class IdentityGraphManager:
             )
             return [self._row_to_voice_track(row) for row in cursor.fetchall()]
 
-    def link_voice_track_to_identity(self, track_id: str, identity_id: str) -> bool:
+    def link_voice_track_to_identity(
+        self, track_id: str, identity_id: str
+    ) -> bool:
         """Link a voice track to an identity."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
@@ -577,7 +585,9 @@ class IdentityGraphManager:
             cursor = conn.execute("SELECT * FROM face_tracks")
 
             for row in cursor.fetchall():
-                track_vec = np.frombuffer(row["avg_embedding"], dtype=np.float32)
+                track_vec = np.frombuffer(
+                    row["avg_embedding"], dtype=np.float32
+                )
                 track_norm = np.linalg.norm(track_vec)
                 if track_norm == 0:
                     continue
@@ -607,7 +617,9 @@ class IdentityGraphManager:
 
     def _row_to_face_track(self, row: sqlite3.Row) -> FaceTrack:
         """Convert a database row to a FaceTrack object."""
-        embedding = np.frombuffer(row["avg_embedding"], dtype=np.float32).tolist()
+        embedding = np.frombuffer(
+            row["avg_embedding"], dtype=np.float32
+        ).tolist()
         return FaceTrack(
             id=row["id"],
             media_id=row["media_id"],

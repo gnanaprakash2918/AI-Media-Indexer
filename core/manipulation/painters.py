@@ -14,7 +14,9 @@ class ManipulationEngine(ABC):
     """Base class for video manipulation engines."""
 
     @abstractmethod
-    def inpaint(self, video_path: Path, mask_data: dict, output_path: Path) -> bool:
+    def inpaint(
+        self, video_path: Path, mask_data: dict, output_path: Path
+    ) -> bool:
         """Perform inpainting on video.
 
         Args:
@@ -32,9 +34,15 @@ class ProPainterEngine(ManipulationEngine):
     """Propagation-based inpainting using ProPainter."""
 
     def __init__(self):
+        """Initializes the ProPainter engine."""
         self.model = None
 
     def load_model(self) -> bool:
+        """Loads the ProPainter model if not already loaded.
+
+        Returns:
+            True if successful.
+        """
         try:
             log("[ProPainter] Loading model...")
             # Placeholder for actual ProPainter import
@@ -45,7 +53,10 @@ class ProPainterEngine(ManipulationEngine):
             log("[ProPainter] Not installed. Run: pip install propainter")
             return False
 
-    def inpaint(self, video_path: Path, mask_data: dict, output_path: Path) -> bool:
+    def inpaint(
+        self, video_path: Path, mask_data: dict, output_path: Path
+    ) -> bool:
+        """Performs video inpainting using the ProPainter engine."""
         if not self.load_model():
             return False
 
@@ -65,9 +76,15 @@ class WanVideoEngine(ManipulationEngine):
     """Generative inpainting using Wan 2.1/2.2."""
 
     def __init__(self):
+        """Initializes the Wan video engine."""
         self.model = None
 
     def load_model(self) -> bool:
+        """Loads the Wan model if not already loaded.
+
+        Returns:
+            True if successful.
+        """
         try:
             log("[Wan] Loading model...")
             # Placeholder for actual Wan import
@@ -77,7 +94,10 @@ class WanVideoEngine(ManipulationEngine):
             log("[Wan] Not installed")
             return False
 
-    def inpaint(self, video_path: Path, mask_data: dict, output_path: Path) -> bool:
+    def inpaint(
+        self, video_path: Path, mask_data: dict, output_path: Path
+    ) -> bool:
+        """Performs video inpainting using the Wan engine."""
         if not self.load_model():
             return False
 
@@ -98,6 +118,12 @@ class PrivacyBlur:
     """Lightweight GPU-accelerated blurring for privacy redaction."""
 
     def __init__(self, blur_type: str = "gaussian", kernel_size: int = 51):
+        """Initializes the privacy blur tool.
+
+        Args:
+            blur_type: Type of blur ('gaussian', 'pixelate', or 'box').
+            kernel_size: Size of the blur kernel (must be odd).
+        """
         self.blur_type = blur_type
         self.kernel_size = kernel_size
 
@@ -114,7 +140,9 @@ class PrivacyBlur:
         import numpy as np
 
         if self.blur_type == "gaussian":
-            blurred = cv2.GaussianBlur(frame, (self.kernel_size, self.kernel_size), 0)
+            blurred = cv2.GaussianBlur(
+                frame, (self.kernel_size, self.kernel_size), 0
+            )
         elif self.blur_type == "pixelate":
             h, w = frame.shape[:2]
             small = cv2.resize(

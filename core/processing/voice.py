@@ -14,22 +14,28 @@ import torch
 _original_load = torch.load
 
 
-def safe_load(*args, **kwargs):
+def safe_load(*args: Any, **kwargs: Any) -> Any:
+    """Wraps torch.load to force weights_only=False for older models.
+
+    This is necessary for compatibility with pyannote and speechbrain
+    models which may still use pickle-based serialization.
+    """
     # FORCE weights_only=False even if True was passed
-    kwargs["weights_only"] = False
+    if "weights_only" in kwargs:
+        kwargs["weights_only"] = False
     return _original_load(*args, **kwargs)
 
 
 torch.load = safe_load
 
-from huggingface_hub import snapshot_download
-from pyannote.audio import Inference, Model, Pipeline
-from pyannote.core import Segment
+from huggingface_hub import snapshot_download  # noqa: E402
+from pyannote.audio import Inference, Model, Pipeline  # noqa: E402
+from pyannote.core import Segment  # noqa: E402
 
-from config import settings
-from core.schemas import SpeakerSegment
-from core.utils.locks import GPU_SEMAPHORE
-from core.utils.logger import get_logger
+from config import settings  # noqa: E402
+from core.schemas import SpeakerSegment  # noqa: E402
+from core.utils.locks import GPU_SEMAPHORE  # noqa: E402
+from core.utils.logger import get_logger  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -38,7 +44,19 @@ MAX_SEGMENT_DURATION: Final = 30.0
 EMBEDDING_VERSION: Final = "wespeaker_resnet34_v1_l2"
 
 
-def is_audio_silent(audio_data: np.ndarray, threshold_db: float | None = None) -> bool:
+def is_audio_silent(
+    audio_data: np.ndarray, threshold_db: float | None = None
+) -> bool:
+    """Detects if an audio segment is silent based on an RMS threshold.
+
+    Args:
+        audio_data: Numpy array of audio samples.
+        threshold_db: Optional silence threshold in decibels.
+            If None, uses settings.audio_rms_silence_db.
+
+    Returns:
+        True if the audio power is below the threshold.
+    """
     if threshold_db is None:
         threshold_db = settings.audio_rms_silence_db
     if audio_data.size == 0:
@@ -54,7 +72,15 @@ class VoiceProcessor:
     """Handles speaker diarization and voice embedding extraction."""
 
     def __init__(self, db: Any = None) -> None:
-        """Initialize the voice processor with settings from config."""
+        """Initializes the voice processor.
+
+        Configuration is read from the global settings. Analysis is only
+        enabled if both enable_voice_analysis is True and a HuggingFace
+        token is provided.
+
+        Args:
+            db: Optional vector database interface for storing embeddings.
+        """
         self.db = db
         self.enabled = bool(settings.enable_voice_analysis)
         self.device = torch.device(settings.device)
@@ -75,6 +101,10 @@ class VoiceProcessor:
             self.enabled = False
 
     async def _lazy_init(self) -> None:
+        """Loads heavy pyannote models only safe-guarded by a lock.
+
+        Deals with model downloading and GPU allocation via the GPU_SEMAPHORE.
+        """
         if not self.enabled or self._initialized:
             return
 
@@ -113,7 +143,7 @@ class VoiceProcessor:
                             log.error(
                                 f"Failed to download/reload Pyannote pipeline: {dl_err}"
                             )
-                            raise pipe_err
+                            raise pipe_err from dl_err
 
                     self.pipeline.to(self.device)
 
@@ -140,7 +170,7 @@ class VoiceProcessor:
                             log.error(
                                 f"Failed to download/reload embedding model: {dl_err}"
                             )
-                            raise model_err
+                            raise model_err from dl_err
 
                     self.inference = Inference(
                         self.embedding_model,
@@ -160,7 +190,10 @@ class VoiceProcessor:
                 self.inference = None
 
     def cleanup(self) -> None:
-        """Release GPU resources."""
+        """Releases all voice models and clears GPU memory.
+
+        Moves models to CPU, deletes references, and clears the torch CUDA cache.
+        """
         if self.pipeline:
             del self.pipeline
             self.pipeline = None
@@ -179,13 +212,13 @@ class VoiceProcessor:
         log.info("Voice processor resources released")
 
     async def process(self, audio_path: Path) -> list[SpeakerSegment]:
-        """Process an audio file to extract speaker segments and embeddings.
+        """Performs speaker diarization and embedding extraction on an audio file.
 
         Args:
-            audio_path: Path to the audio file.
+            audio_path: Path to the input audio or video file.
 
         Returns:
-            List of detected speaker segments.
+            A list of SpeakerSegment objects containing timestamps and embeddings.
         """
         if not self.enabled or not audio_path.exists():
             return []
@@ -226,7 +259,9 @@ class VoiceProcessor:
                 if duration > MAX_SEGMENT_DURATION:
                     end = start + MAX_SEGMENT_DURATION
 
-                embedding = await self._extract_embedding(processing_path, start, end)
+                embedding = await self._extract_embedding(
+                    processing_path, start, end
+                )
                 if embedding is None:
                     continue
 
@@ -254,10 +289,19 @@ class VoiceProcessor:
                     pass
 
     async def _convert_to_wav(self, path: Path) -> Path | None:
-        """Convert any audio/video to a temporary 16kHz mono WAV file."""
+        """Converts an input media file to a standardized 16kHz mono WAV file.
+
+        Args:
+            path: Input file path (any media supported by ffmpeg).
+
+        Returns:
+            Path to the temporary WAV file, or None if conversion fails.
+        """
         import tempfile
 
-        fd, temp_path_str = tempfile.mkstemp(suffix=".wav", prefix="voice_temp_")
+        fd, temp_path_str = tempfile.mkstemp(
+            suffix=".wav", prefix="voice_temp_"
+        )
         os.close(fd)
         temp_path = Path(temp_path_str)
 
@@ -278,7 +322,9 @@ class VoiceProcessor:
 
         try:
             process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await process.communicate()
 
@@ -301,6 +347,16 @@ class VoiceProcessor:
         start: float,
         end: float,
     ) -> list[float] | None:
+        """Extracts a voice embedding for a specific segment of audio.
+
+        Args:
+            audio_path: Path to the standardized WAV file.
+            start: Start time in seconds.
+            end: End time in seconds.
+
+        Returns:
+            A list of float values representing the embedding, or None if extraction fails.
+        """
         if not self.inference:
             return None
 

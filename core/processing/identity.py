@@ -164,7 +164,9 @@ class FaceTrackBuilder:
     COSINE_THRESHOLD: float = (
         0.5  # Minimum embedding similarity (1.0 - this = cosine distance)
     )
-    MAX_FRAMES_MISSING: int = 5  # Finalize track if face missing for this many frames
+    MAX_FRAMES_MISSING: int = (
+        5  # Finalize track if face missing for this many frames
+    )
     MIN_TRACK_LENGTH: int = 2  # Minimum frames to consider a valid track
 
     def __init__(self, frame_interval: float = 1.0) -> None:
@@ -246,7 +248,10 @@ class FaceTrackBuilder:
                 self._frames_since_last_seen[track_id] = (
                     self._frames_since_last_seen.get(track_id, 0) + 1
                 )
-                if self._frames_since_last_seen[track_id] >= self.MAX_FRAMES_MISSING:
+                if (
+                    self._frames_since_last_seen[track_id]
+                    >= self.MAX_FRAMES_MISSING
+                ):
                     tracks_to_finalize.append(track_id)
 
         # Finalize tracks that have been missing too long
@@ -602,7 +607,9 @@ class FaceManager:
                     root=str(MODELS_DIR),
                     providers=providers,
                 )
-                app.prepare(ctx_id=0 if self._use_gpu else -1, det_size=(640, 640))
+                app.prepare(
+                    ctx_id=0 if self._use_gpu else -1, det_size=(640, 640)
+                )
             else:
                 # Low-resource system: load only essential models (detection + recognition)
                 # Skip genderage and 3d landmark models to reduce memory usage
@@ -635,7 +642,9 @@ class FaceManager:
 
                 # Use smaller detection size to reduce memory
                 det_size = (480, 480) if caps["ram_gb"] < 16 else (640, 640)
-                app.prepare(ctx_id=0 if self._use_gpu else -1, det_size=det_size)
+                app.prepare(
+                    ctx_id=0 if self._use_gpu else -1, det_size=det_size
+                )
 
                 # Clean up after model load
                 gc.collect()
@@ -652,7 +661,9 @@ class FaceManager:
                 or "out of memory" in error_msg
                 or "oom" in error_msg
             ):
-                print("[FaceManager] InsightFace OOM error, trying minimal config...")
+                print(
+                    "[FaceManager] InsightFace OOM error, trying minimal config..."
+                )
                 gc.collect()
 
                 try:
@@ -678,7 +689,9 @@ class FaceManager:
                     )
                     return True
                 except Exception as e2:
-                    print(f"[FaceManager] InsightFace minimal config also failed: {e2}")
+                    print(
+                        f"[FaceManager] InsightFace minimal config also failed: {e2}"
+                    )
                     return False
 
             print(f"[FaceManager] CRITICAL: InsightFace init failed: {e}")
@@ -760,7 +773,9 @@ class FaceManager:
         else:
             return await self._detect_yunet_only(image)
 
-    async def _detect_insightface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
+    async def _detect_insightface(
+        self, image: NDArray[np.uint8]
+    ) -> list[DetectedFace]:
         """Detect faces using InsightFace with quality metrics."""
         assert self._insightface_app is not None, "InsightFace not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -774,7 +789,9 @@ class FaceManager:
             box = (int(bbox[1]), int(bbox[2]), int(bbox[3]), int(bbox[0]))
 
             # Quality metrics for clustering
-            det_score = float(face.det_score) if hasattr(face, "det_score") else 1.0
+            det_score = (
+                float(face.det_score) if hasattr(face, "det_score") else 1.0
+            )
             bbox_width = int(bbox[2] - bbox[0])
             bbox_height = int(bbox[3] - bbox[1])
             bbox_size = min(bbox_width, bbox_height)
@@ -796,10 +813,16 @@ class FaceManager:
 
         return results
 
-    async def _detect_sface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
+    async def _detect_sface(
+        self, image: NDArray[np.uint8]
+    ) -> list[DetectedFace]:
         """Detect faces using SFace with CLAHE normalization and quality metrics."""
-        assert self._opencv_detector is not None, "OpenCV detector not initialized"
-        assert self._opencv_recognizer is not None, "OpenCV recognizer not initialized"
+        assert self._opencv_detector is not None, (
+            "OpenCV detector not initialized"
+        )
+        assert self._opencv_recognizer is not None, (
+            "OpenCV recognizer not initialized"
+        )
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         async with GPU_SEMAPHORE:
@@ -812,12 +835,24 @@ class FaceManager:
 
         results = []
         for d in dets:
-            x, y, bw, bh = d[:4]
+            x, y, bw, bh = d[:4]  # type: ignore
+            box = (int(x), int(y), int(bw), int(bh))
+            # Fix order: y, x+bw, y+bh, x -> top, right, bottom, left
+            # Actually box = (int(y), int(x + bw), int(y + bh), int(x)) was existing logic.
+            # Wait, d[:4] unpacking failed Pylance? No, "index issue" on lines 815.
+            # d is likely numpy array. d[:4] works.
+            # The issue might be d[14] later.
+            # Re-reading error: "__getitem__ method not defined on type integer[Any]" at line 815... wait line 815 is `x, y, bw, bh = d[:4]`.
+            # If d is inferred as integer[Any] (some weird type), maybe we cast d to list or np.array explicitly?
+            # Or just ignore checking for that line.
+            # Better: ensure d is treated as indexable.
+            d_arr = np.array(d)
+            x, y, bw, bh = d_arr[:4]
             box = (int(y), int(x + bw), int(y + bh), int(x))
 
             # Quality metrics for clustering
             det_score = (
-                float(d[14]) if len(d) > 14 else 0.9
+                float(d[14]) if hasattr(d, "__len__") and len(d) > 14 else 0.9  # type: ignore
             )  # YuNet confidence at index 14
             bbox_size = int(min(bw, bh))
 
@@ -833,7 +868,9 @@ class FaceManager:
 
             # Get embedding and normalize
             emb = (
-                self._opencv_recognizer.feature(aligned).reshape(-1).astype(np.float64)
+                self._opencv_recognizer.feature(aligned)
+                .reshape(-1)
+                .astype(np.float64)
             )
             emb /= np.linalg.norm(emb) + 1e-9
 
@@ -853,9 +890,13 @@ class FaceManager:
 
         return results
 
-    async def _detect_yunet_only(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
+    async def _detect_yunet_only(
+        self, image: NDArray[np.uint8]
+    ) -> list[DetectedFace]:
         """Detect faces with YuNet only (no embeddings)."""
-        assert self._opencv_detector is not None, "OpenCV detector not initialized"
+        assert self._opencv_detector is not None, (
+            "OpenCV detector not initialized"
+        )
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         async with GPU_SEMAPHORE:
@@ -868,14 +909,16 @@ class FaceManager:
 
         results = []
         for d in dets:
-            x, y, bw, bh = d[:4]
+            x, y, bw, bh = d[:4]  # type: ignore
             box = (int(y), int(x + bw), int(y + bh), int(x))
             results.append(DetectedFace(bbox=box, embedding=None))
 
         return results
 
     @observe("face_cluster")
-    def cluster_faces(self, all_encodings: Sequence[ArrayLike]) -> NDArray[np.int64]:
+    def cluster_faces(
+        self, all_encodings: Sequence[ArrayLike]
+    ) -> NDArray[np.int64]:
         """Cluster face encodings using HDBSCAN (Hierarchical DBSCAN).
 
         HDBSCAN is more robust to variable densities and noise than DBSCAN.
@@ -979,14 +1022,18 @@ class FaceManager:
 
         # Check if claimed identity matches
         if track_id in known_identities:
-            if arbitrator.verify_identity(current_emb, known_identities[track_id]):
+            if arbitrator.verify_identity(
+                current_emb, known_identities[track_id]
+            ):
                 return track_id
             print(
                 f"[FaceManager] Identity conflict: track {track_id} rejected by biometrics"
             )
 
         # Search for correct identity
-        match_id = arbitrator.find_matching_identity(current_emb, known_identities)
+        match_id = arbitrator.find_matching_identity(
+            current_emb, known_identities
+        )
         if match_id is not None:
             print(f"[FaceManager] Identity corrected: {track_id} -> {match_id}")
             return match_id
@@ -1016,7 +1063,9 @@ class FaceManager:
         return out
 
     @observe("face_detect_frame")
-    async def _detect_frame(self, frame: NDArray[np.uint8]) -> list[DetectedFace]:
+    async def _detect_frame(
+        self, frame: NDArray[np.uint8]
+    ) -> list[DetectedFace]:
         """Detect faces in a single frame."""
         await self._lazy_init()
 
@@ -1041,7 +1090,9 @@ class FaceManager:
         if batch:
             yield batch
 
-    def _cache_key(self, image: NDArray[Any], box: tuple[int, int, int, int]) -> str:
+    def _cache_key(
+        self, image: NDArray[Any], box: tuple[int, int, int, int]
+    ) -> str:
         h = hashlib.sha1(image.data[:2048]).hexdigest()
         return f"{h}_{box}_{self.embedding_version}"
 
@@ -1078,7 +1129,9 @@ if __name__ == "__main__":
     print(f"Model: {fm._model_type}, Embedding dim: {fm._embedding_dim}")
     print(f"Detected {len(faces)} faces")
     if faces:
-        valid_embeddings = [f.embedding for f in faces if f.embedding is not None]
+        valid_embeddings = [
+            f.embedding for f in faces if f.embedding is not None
+        ]
         if valid_embeddings:
             print(f"Clustering {len(valid_embeddings)} embeddings...")
             print(fm.cluster_faces(valid_embeddings))

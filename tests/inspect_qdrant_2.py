@@ -1,14 +1,17 @@
+"""Script to debug Qdrant data for specific videos."""
+
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from qdrant_client.http import models
+from qdrant_client.http import models  # noqa: E402
 
-from core.storage.db import VectorDB
+from core.storage.db import VectorDB  # noqa: E402
 
 
 def inspect_data():
+    """Inspect data for specific use cases (Brahmastra loop)."""
     db = VectorDB()
     output = []
 
@@ -32,7 +35,8 @@ def inspect_data():
             scroll_filter=models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="video_path", match=models.MatchValue(value=brahmastra_path)
+                        key="video_path",
+                        match=models.MatchValue(value=brahmastra_path),
                     )
                 ]
             ),

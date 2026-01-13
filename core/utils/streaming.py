@@ -1,6 +1,7 @@
 """Utilities for streaming file content with Range support."""
 
-from typing import BinaryIO, Generator
+from collections.abc import Generator
+from typing import BinaryIO
 
 
 def range_generator(

@@ -1,5 +1,7 @@
 """Agent API routes for LLM interaction and status checks."""
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_pipeline
@@ -9,8 +11,18 @@ from core.utils.logger import logger
 
 router = APIRouter()
 
+
 @router.get("/agent/status")
-async def get_agent_status():
+async def get_agent_status() -> dict:
+    """Retrieves the AI agent's system status and its available tool capabilities.
+
+    Checks the connectivity to the local Ollama instance and returns a list
+    of tool schemas that the agent can currently utilize.
+
+    Returns:
+        A dictionary containing the 'active' status, Ollama connection info,
+        and a list of available tool definitions.
+    """
     """Get agent system status and available tools."""
     logger.info("[Agent] Status check requested")
 
@@ -57,8 +69,24 @@ async def get_agent_status():
 @router.post("/agent/chat")
 async def agent_chat(
     request: AgentChatRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Executes a multi-turn chat interaction with the AI agent.
+
+    Processes the user's message using an LLM (Ollama) and orchestrates tool
+    usage if requested. Log messages and tool executions are recorded for
+    observability.
+
+    Args:
+        request: The chat request containing the user message and settings.
+        pipeline: The initialized ingestion pipeline for context.
+
+    Returns:
+        A dictionary containing the agent's textual response and tool usage metadata.
+
+    Raises:
+        HTTPException: If the LLM interaction or tool execution fails.
+    """
     """Send a message to the AI agent and get a response with tool usage logging."""
     logger.info(f"[Agent] RECV: '{request.message[:100]}...'")
 
@@ -97,4 +125,4 @@ Always explain what you found and why it matches the query."""
 
     except Exception as e:
         logger.error(f"[Agent] Chat failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

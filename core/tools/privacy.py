@@ -1,10 +1,16 @@
+"""Privacy redaction tools for video content.
+
+Provides functionality to blur specific faces (by identity) or all faces
+in a video, using the face detection and clustering system.
+"""
+
 from __future__ import annotations
 
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import cv2
 import numpy as np
@@ -16,6 +22,8 @@ from core.storage.identity_graph import identity_graph
 
 @dataclass
 class RedactionResult:
+    """Result of a privacy redaction operation."""
+
     success: bool
     output_path: str
     frames_processed: int
@@ -24,12 +32,22 @@ class RedactionResult:
 
 
 class VideoRedactor:
+    """Tool for redacting faces in videos."""
+
     def __init__(self, similarity_threshold: float | None = None):
-        self.threshold = similarity_threshold or settings.face_clustering_threshold
+        """Initializes the VideoRedactor.
+
+        Args:
+            similarity_threshold: Cosine similarity threshold for face matching.
+        """
+        self.threshold = (
+            similarity_threshold or settings.face_clustering_threshold
+        )
         self._face_manager: FaceManager | None = None
 
     @property
     def face_manager(self) -> FaceManager:
+        """Retrieves or initializes the FaceManager instance."""
         if self._face_manager is None:
             self._face_manager = FaceManager(use_gpu=settings.device == "cuda")
         return self._face_manager
@@ -41,6 +59,17 @@ class VideoRedactor:
         output_path: Path | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> RedactionResult:
+        """Redacts a specific identity from the video.
+
+        Args:
+            video_path: Path to the input video.
+            target_identity_id: The ID of the person to redact.
+            output_path: Optional output path.
+            progress_callback: Optional callback for progress reporting.
+
+        Returns:
+            RedactionResult with success status and stats.
+        """
         video_path = Path(video_path)
         if not video_path.exists():
             return RedactionResult(False, "", 0, 0, "Video not found")
@@ -53,7 +82,8 @@ class VideoRedactor:
 
         if output_path is None:
             output_path = (
-                video_path.parent / f"{video_path.stem}_redacted{video_path.suffix}"
+                video_path.parent
+                / f"{video_path.stem}_redacted{video_path.suffix}"
             )
         output_path = Path(output_path)
 
@@ -82,7 +112,9 @@ class VideoRedactor:
                     break
 
                 if frames_processed % process_every_n == 0:
-                    boxes = await self._detect_and_match(frame, target_embedding)
+                    boxes = await self._detect_and_match(
+                        frame, target_embedding
+                    )
                     last_boxes = boxes
 
                 for box in last_boxes:
@@ -98,7 +130,9 @@ class VideoRedactor:
             cap.release()
             writer.release()
 
-        success = self._mux_audio(video_path, Path(temp_video.name), output_path)
+        success = self._mux_audio(
+            video_path, Path(temp_video.name), output_path
+        )
 
         try:
             Path(temp_video.name).unlink()
@@ -135,7 +169,8 @@ class VideoRedactor:
 
         if output_path is None:
             output_path = (
-                video_path.parent / f"{video_path.stem}_redacted{video_path.suffix}"
+                video_path.parent
+                / f"{video_path.stem}_redacted{video_path.suffix}"
             )
         output_path = Path(output_path)
 
@@ -180,7 +215,9 @@ class VideoRedactor:
             cap.release()
             writer.release()
 
-        success = self._mux_audio(video_path, Path(temp_video.name), output_path)
+        success = self._mux_audio(
+            video_path, Path(temp_video.name), output_path
+        )
 
         try:
             Path(temp_video.name).unlink()
@@ -228,7 +265,9 @@ class VideoRedactor:
         embeddings = []
         for track in tracks:
             if track.avg_embedding is not None:
-                embeddings.append(np.array(track.avg_embedding, dtype=np.float64))
+                embeddings.append(
+                    np.array(track.avg_embedding, dtype=np.float64)
+                )
 
         if not embeddings:
             return None
@@ -291,7 +330,9 @@ class VideoRedactor:
 
         return frame
 
-    def _mux_audio(self, original: Path, video_only: Path, output: Path) -> bool:
+    def _mux_audio(
+        self, original: Path, video_only: Path, output: Path
+    ) -> bool:
         cmd = [
             "ffmpeg",
             "-y",

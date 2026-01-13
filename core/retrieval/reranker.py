@@ -1,3 +1,5 @@
+"""VLM-based search re-ranking for precise segment identification."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,13 +17,17 @@ if TYPE_CHECKING:
 
 
 class RerankScore(BaseModel):
+    """Structured output for VLM re-ranking results."""
+
     confidence: int = 0
     reason: str = ""
 
 
 @dataclass
 class RankedResult:
-    candidate: "SearchCandidate"
+    """A search result scored by the VLM reranker."""
+
+    candidate: SearchCandidate
     vlm_confidence: int
     vlm_reason: str
 
@@ -36,11 +42,19 @@ Return ONLY JSON: {{"confidence": 0-100, "reason": "brief explanation"}}"""
 
 
 class VLMReranker:
+    """Re-ranks search candidates using a Vision-Language Model."""
+
     def __init__(self, client: VLMClient | None = None):
+        """Initializes the reranker.
+
+        Args:
+            client: Optional VLM client for frame analysis.
+        """
         self._client = client
 
     @property
     def client(self) -> VLMClient:
+        """Lazy load the VLM client."""
         if self._client is None:
             self._client = get_vlm_client()
         return self._client
@@ -48,9 +62,10 @@ class VLMReranker:
     def rerank(
         self,
         query: str,
-        candidates: list["SearchCandidate"],
+        candidates: list[SearchCandidate],
         max_candidates: int = 5,
     ) -> list[RankedResult]:
+        """Re-rank candidates based on VLM visual analysis."""
         results: list[RankedResult] = []
         prompt = RERANK_PROMPT.format(query=query)
 
@@ -68,7 +83,7 @@ class VLMReranker:
         return results
 
     def _score_candidate(
-        self, candidate: "SearchCandidate", prompt: str
+        self, candidate: SearchCandidate, prompt: str
     ) -> RerankScore:
         frames = self._extract_keyframes(candidate)
         if not frames:
@@ -101,7 +116,7 @@ class VLMReranker:
             log(f"VLM rerank error: {e}")
             return RerankScore(confidence=0, reason=str(e)[:50])
 
-    def _extract_keyframes(self, candidate: "SearchCandidate") -> list[bytes]:
+    def _extract_keyframes(self, candidate: SearchCandidate) -> list[bytes]:
         frames = []
         path = Path(candidate.video_path)
         if not path.exists():

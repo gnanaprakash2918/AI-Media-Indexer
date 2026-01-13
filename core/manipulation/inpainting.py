@@ -12,7 +12,6 @@ import gc
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -21,16 +20,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class InpaintRequest:
+    """Request data for a video inpainting job."""
+
     video_path: Path
     mask_frames: dict[int, np.ndarray]  # frame_idx -> binary mask
-    output_path: Optional[Path] = None
+    output_path: Path | None = None
 
 
 @dataclass
 class InpaintResult:
+    """Result of a video inpainting job."""
+
     success: bool
-    output_path: Optional[Path] = None
-    error: Optional[str] = None
+    output_path: Path | None = None
+    error: str | None = None
     backend_used: str = ""
 
 
@@ -38,12 +41,14 @@ class VideoInpainter:
     """SOTA Video Inpainting using ProPainter or fallback methods."""
 
     def __init__(self):
+        """Initializes the VideoInpainter."""
         self._propainter_model = None
         self._initialized = False
-        self._device: Optional[str] = None
+        self._device: str | None = None
 
     @property
     def device(self) -> str:
+        """Retrieves the device (cuda or cpu) used for inpainting."""
         if self._device is None:
             import torch
 
@@ -65,7 +70,9 @@ class VideoInpainter:
             logger.info("ProPainter loaded successfully")
             return True
         except ImportError:
-            logger.warning("ProPainter not installed. Install: pip install propainter")
+            logger.warning(
+                "ProPainter not installed. Install: pip install propainter"
+            )
             return False
         except Exception as e:
             logger.error(f"ProPainter load failed: {e}")
@@ -76,7 +83,8 @@ class VideoInpainter:
         video_path = request.video_path
         output_path = (
             request.output_path
-            or video_path.parent / f"{video_path.stem}_inpainted{video_path.suffix}"
+            or video_path.parent
+            / f"{video_path.stem}_inpainted{video_path.suffix}"
         )
 
         if self._lazy_load_propainter():
@@ -89,11 +97,16 @@ class VideoInpainter:
         )
 
     def _inpaint_propainter(
-        self, video_path: Path, mask_frames: dict[int, np.ndarray], output_path: Path
+        self,
+        video_path: Path,
+        mask_frames: dict[int, np.ndarray],
+        output_path: Path,
     ) -> InpaintResult:
         """Inpaint using ProPainter propagation-based method."""
         if self._propainter_model is None:
-             return InpaintResult(success=False, error="ProPainter model not loaded")
+            return InpaintResult(
+                success=False, error="ProPainter model not loaded"
+            )
 
         try:
             import cv2
@@ -105,7 +118,9 @@ class VideoInpainter:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
-            writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+            writer = cv2.VideoWriter(
+                str(output_path), fourcc, fps, (width, height)
+            )
 
             frames = []
             masks = []
@@ -125,7 +140,8 @@ class VideoInpainter:
             cap.release()
 
             frames_tensor = (
-                torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float() / 255.0
+                torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float()
+                / 255.0
             )
             masks_tensor = (
                 torch.from_numpy(np.stack(masks)).unsqueeze(1).float() / 255.0
@@ -136,11 +152,13 @@ class VideoInpainter:
                 masks_tensor = masks_tensor.cuda()
 
             with torch.no_grad():
-                inpainted = self._propainter_model.inpaint(frames_tensor, masks_tensor)
+                inpainted = self._propainter_model.inpaint(
+                    frames_tensor, masks_tensor
+                )
 
-            inpainted = (inpainted.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(
-                np.uint8
-            )
+            inpainted = (
+                inpainted.permute(0, 2, 3, 1).cpu().numpy() * 255
+            ).astype(np.uint8)
 
             for frame in inpainted:
                 writer.write(frame)
@@ -155,10 +173,15 @@ class VideoInpainter:
 
         except Exception as e:
             logger.error(f"ProPainter inpaint failed: {e}")
-            return InpaintResult(success=False, error=str(e), backend_used="propainter")
+            return InpaintResult(
+                success=False, error=str(e), backend_used="propainter"
+            )
 
     def _inpaint_opencv_fallback(
-        self, video_path: Path, mask_frames: dict[int, np.ndarray], output_path: Path
+        self,
+        video_path: Path,
+        mask_frames: dict[int, np.ndarray],
+        output_path: Path,
     ) -> InpaintResult:
         """Fallback: OpenCV Telea inpainting (fast but lower quality)."""
         try:
@@ -170,7 +193,9 @@ class VideoInpainter:
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
-            writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+            writer = cv2.VideoWriter(
+                str(output_path), fourcc, fps, (width, height)
+            )
 
             frame_idx = 0
             while True:
@@ -192,7 +217,9 @@ class VideoInpainter:
 
             logger.info(f"OpenCV inpaint complete: {output_path}")
             return InpaintResult(
-                success=True, output_path=output_path, backend_used="opencv_telea"
+                success=True,
+                output_path=output_path,
+                backend_used="opencv_telea",
             )
 
         except Exception as e:
@@ -212,7 +239,7 @@ class VideoInpainter:
         logger.info("VideoInpainter resources released")
 
     def unload(self) -> None:
-        """Explicit unload for lazy model management."""
+        """Explicitly unloads models and frees resources."""
         self._cleanup()
         self._initialized = False
 
@@ -221,11 +248,13 @@ class WanVideoInpainter:
     """Wan-2.1 Video Inpainting (alternative backend)."""
 
     def __init__(self):
+        """Initializes the WanVideoInpainter."""
         self._model = None
-        self._device: Optional[str] = None
+        self._device: str | None = None
 
     @property
     def device(self) -> str:
+        """Retrieves the device used for inpainting."""
         if self._device is None:
             import torch
 
@@ -243,7 +272,9 @@ class WanVideoInpainter:
 
             self._model = StableDiffusionInpaintPipeline.from_pretrained(
                 "runwayml/stable-diffusion-inpainting",
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                torch_dtype=torch.float16
+                if self.device == "cuda"
+                else torch.float32,
             )
             if self.device == "cuda":
                 self._model = self._model.to("cuda")
@@ -258,13 +289,13 @@ class WanVideoInpainter:
         frame: np.ndarray,
         mask: np.ndarray,
         prompt: str = "clean background, no objects",
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Inpaint single frame using diffusion."""
         if not self._lazy_load():
             return None
-            
+
         if self._model is None:
-             return None
+            return None
 
         try:
             from PIL import Image
@@ -285,6 +316,7 @@ class WanVideoInpainter:
             return None
 
     def unload(self) -> None:
+        """Explicitly unloads models and frees resources."""
         self._model = None
         import torch
 
@@ -293,10 +325,15 @@ class WanVideoInpainter:
         gc.collect()
 
 
-_inpainter: Optional[VideoInpainter] = None
+_inpainter: VideoInpainter | None = None
 
 
 def get_inpainter() -> VideoInpainter:
+    """Retrieves the singleton instance of the VideoInpainter.
+
+    Returns:
+        The initialized VideoInpainter instance.
+    """
     global _inpainter
     if _inpainter is None:
         _inpainter = VideoInpainter()

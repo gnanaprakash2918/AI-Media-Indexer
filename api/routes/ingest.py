@@ -1,18 +1,20 @@
-from uuid import uuid4
-from pathlib import Path
-from urllib.parse import unquote
+"""API routes for media ingestion operations."""
+
 import base64
+from pathlib import Path
+from typing import Annotated
+from urllib.parse import unquote
+from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
-from config import settings
-from core.ingestion.jobs import job_manager
-from core.utils.logger import logger
-from core.utils.observability import start_trace, end_trace
-from core.utils.progress import progress_tracker
-from api.schemas import IngestRequest, ScanRequest
 from api.deps import get_pipeline
+from api.schemas import IngestRequest, ScanRequest
+from config import settings
 from core.ingestion.pipeline import IngestionPipeline
+from core.utils.logger import logger
+from core.utils.observability import end_trace, start_trace
+from core.utils.progress import progress_tracker
 
 router = APIRouter()
 
@@ -38,15 +40,35 @@ ALLOWED_MEDIA_EXTENSIONS = {
 async def ingest_media(
     ingest_request: IngestRequest,
     background_tasks: BackgroundTasks,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Initiates the media ingestion pipeline for a specific file or URL.
+
+    Validates the media type, resolves the provided path, and dispatches the
+    processing job either to a local background task or a distributed Celery
+    worker based on the system configuration.
+
+    Args:
+        ingest_request: Details of the media to ingest (path, type hints, bounds).
+        background_tasks: FastAPI background task manager.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary containing the generated 'job_id' and initial status.
+
+    Raises:
+        HTTPException: If the file is missing, the type is unsupported, or
+            the pipeline is uninitialized.
+    """
     if not pipeline:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     if ingest_request.encoded_path:
         try:
-            raw_path = base64.b64decode(ingest_request.encoded_path).decode("utf-8")
-            logger.info(f"[Ingest] Base64 decoded: {repr(raw_path)}")
+            raw_path = base64.b64decode(ingest_request.encoded_path).decode(
+                "utf-8"
+            )
+            logger.info(f"[Ingest] Base64 decoded: {raw_path!r}")
         except Exception as e:
             logger.warning(
                 f"[Ingest] Base64 decode failed: {e}, falling back to path"
@@ -64,7 +86,7 @@ async def ingest_media(
             file_path = decoded_path
             logger.info(f"[Ingest] URL-decoded path worked: {file_path}")
         else:
-            logger.warning(f"[Ingest] File not found. Raw: {repr(raw_path)}")
+            logger.warning(f"[Ingest] File not found. Raw: {raw_path!r}")
             raise HTTPException(
                 status_code=404, detail=f"File not found: {raw_path}"
             )
@@ -93,7 +115,10 @@ async def ingest_media(
                 resume=False,
             )
             progress_tracker.update(
-                job_id, 0.0, stage="queued", message="Queued for distributed worker"
+                job_id,
+                0.0,
+                stage="queued",
+                message="Queued for distributed worker",
             )
 
             # Dispatch to Celery
@@ -110,7 +135,7 @@ async def ingest_media(
             logger.error(f"Failed to dispatch to Celery: {e}")
             raise HTTPException(
                 status_code=500, detail=f"Distributed dispatch failed: {e}"
-            )
+            ) from e
 
     async def run_pipeline():
         start_trace(
@@ -147,9 +172,22 @@ async def ingest_media(
 @router.post("/scan")
 async def scan_library(
     request: ScanRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
-    """Scan directory for new media files."""
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Scans a local directory for new media files and reports discoveries.
+
+    Filters files based on the allowed media extensions defined in the system.
+
+    Args:
+        request: The scan configuration (directory, optional extensions).
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary summary of found files and their absolute paths.
+
+    Raises:
+        HTTPException: If the pipeline is invalid or the scan fails.
+    """
     if not pipeline:
         raise HTTPException(status_code=503, detail="Pipeline invalid")
 
@@ -165,7 +203,9 @@ async def scan_library(
         # Filter extensions if provided
         if request.extensions:
             # Check if file suffix is in requested extensions
-            if asset.file_path.suffix.lower() in [e.lower() for e in request.extensions]:
+            if asset.file_path.suffix.lower() in [
+                e.lower() for e in request.extensions
+            ]:
                 new_files.append(asset.file_path)
         else:
             new_files.append(asset.file_path)
@@ -178,8 +218,15 @@ async def scan_library(
 
 
 @router.get("/jobs")
-async def list_jobs():
-    """List all processing jobs with granular progress details."""
+async def list_jobs() -> dict:
+    """Lists all historical and active processing jobs with progress details.
+
+    Retrieves granular data from the global progress tracker, including
+    stage messages, frame counts, and error details.
+
+    Returns:
+        A dictionary containing a list of job state records.
+    """
     jobs = progress_tracker.get_all()
     return {
         "jobs": [
@@ -210,8 +257,19 @@ async def list_jobs():
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: str):
-    """Get details of a specific job."""
+async def get_job(job_id: str) -> dict:
+    """Retrieves full details and checkpoint data for a specific job.
+
+    Args:
+        job_id: The unique identifier of the job to retrieve.
+
+    Returns:
+        A dictionary containing the complete job state and progress statistics.
+
+    Raises:
+        HTTPException: If the job_id does not exist in the tracker.
+        HTTPException: If the job_id does not exist in the tracker.
+    """
     job = progress_tracker.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -240,11 +298,26 @@ async def get_job(job_id: str):
 
 
 @router.post("/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str):
-    """Cancel a running job."""
+async def cancel_job(job_id: str) -> dict:
+    """Triggers an immediate cancellation of a running ingestion job.
+
+    Attempts to notify the processing thread and clean up temporary assets.
+
+    Args:
+        job_id: The unique identifier of the job to cancel.
+
+    Returns:
+        A confirmation status dictionary.
+
+    Raises:
+        HTTPException: If the job cannot be found or is not in a cancellable state.
+        HTTPException: If the job cannot be found or is not in a cancellable state.
+    """
     success = progress_tracker.cancel(job_id)
     if not success:
-        raise HTTPException(status_code=404, detail="Job not found or cannot be cancelled")
+        raise HTTPException(
+            status_code=404, detail="Job not found or cannot be cancelled"
+        )
     return {"status": "cancelled", "job_id": job_id}
 
 
@@ -253,7 +326,9 @@ async def pause_job(job_id: str):
     """Pause a running job."""
     success = progress_tracker.pause(job_id)
     if not success:
-        raise HTTPException(status_code=404, detail="Job not found or cannot be paused")
+        raise HTTPException(
+            status_code=404, detail="Job not found or cannot be paused"
+        )
     return {"status": "paused", "job_id": job_id}
 
 
@@ -262,5 +337,7 @@ async def resume_job(job_id: str):
     """Resume a paused job."""
     success = progress_tracker.resume(job_id)
     if not success:
-        raise HTTPException(status_code=404, detail="Job not found or cannot be resumed")
+        raise HTTPException(
+            status_code=404, detail="Job not found or cannot be resumed"
+        )
     return {"status": "resumed", "job_id": job_id}

@@ -63,7 +63,9 @@ def extract_frames_batch(
                 "2",
                 str(out_path),
             ]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             if out_path.exists():
                 results[ts] = out_path
     else:
@@ -86,7 +88,9 @@ def extract_frames_batch(
                 "2",
                 str(out_path),
             ]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             return ts, out_path if out_path.exists() else None
 
         # Use 4 parallel workers for frame extraction
@@ -147,7 +151,9 @@ def extract_audio_clips_batch(
             "a",
             str(out_path),
         ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         return seg, out_path if out_path.exists() else None
 
     results: dict[tuple[float, float], Path] = {}
@@ -180,20 +186,26 @@ async def regenerate_media_thumbnails(
     Returns:
         Dict with counts of generated thumbnails and clips, or error string.
     """
-    from pathlib import Path as P
+    from pathlib import Path
 
-    video_path = P(media_path)
+    video_path = Path(media_path)
     if not video_path.exists():
         return {"faces": 0, "voices": 0, "error": "Video not found"}
 
-    face_output_dir = face_output_dir or settings.cache_dir / "thumbnails" / "faces"
-    voice_output_dir = voice_output_dir or settings.cache_dir / "thumbnails" / "voices"
+    face_output_dir = (
+        face_output_dir or settings.cache_dir / "thumbnails" / "faces"
+    )
+    voice_output_dir = (
+        voice_output_dir or settings.cache_dir / "thumbnails" / "voices"
+    )
 
     prefix = _get_safe_stem(video_path)
 
     # Get all faces for this media
     faces = (
-        db.get_faces_by_media(media_path) if hasattr(db, "get_faces_by_media") else []
+        db.get_faces_by_media(media_path)
+        if hasattr(db, "get_faces_by_media")
+        else []
     )
     face_timestamps = [
         f.get("timestamp", 0) for f in faces if f.get("timestamp") is not None
@@ -201,7 +213,9 @@ async def regenerate_media_thumbnails(
 
     # Get all voice segments for this media
     voices = (
-        db.get_voice_segments(media_path) if hasattr(db, "get_voice_segments") else []
+        db.get_voice_segments(media_path)
+        if hasattr(db, "get_voice_segments")
+        else []
     )
     voice_segments = [
         (v.get("start", 0), v.get("end", v.get("start", 0) + 3)) for v in voices

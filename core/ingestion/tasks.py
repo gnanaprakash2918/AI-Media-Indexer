@@ -1,3 +1,5 @@
+"""Background ingestion tasks for distributed processing via Celery."""
+
 import asyncio
 from pathlib import Path
 
@@ -15,7 +17,9 @@ logger = get_task_logger(__name__)
 def ingest_video_task(self, video_path: str, job_id: str):
     """Celery task to ingest a video file."""
     bind_context(trace_id=job_id, component="celery_worker")
-    logger.info(f"Starting distributed ingestion for {video_path} (Job {job_id})")
+    logger.info(
+        f"Starting distributed ingestion for {video_path} (Job {job_id})"
+    )
 
     # We need a dedicated pipeline instance for this worker process
     # Since Celery workers fork, we should initialize it here or use a global lazy one.
@@ -64,6 +68,6 @@ def ingest_video_task(self, video_path: str, job_id: str):
         # Job status 'failed' should be set by pipeline error handling
         # But if it crashes hard, we might need to set it here.
         job_manager.update_job(job_id, status=JobStatus.FAILED, error=str(exc))
-        raise self.retry(exc=exc, countdown=60, max_retries=3)
+        raise self.retry(exc=exc, countdown=60, max_retries=3) from exc
     finally:
         clear_context()

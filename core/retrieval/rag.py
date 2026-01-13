@@ -16,6 +16,8 @@ import asyncio
 import time
 from typing import Any
 
+from qdrant_client.http import models
+
 from core.processing.enrichment import enricher
 from core.retrieval.schemas import (
     QueryModality,
@@ -25,8 +27,8 @@ from core.retrieval.schemas import (
 )
 from core.storage.db import VectorDB
 from core.utils.logger import log
-from llm.interface import LLMInterface
 from llm.factory import LLMFactory
+from llm.interface import LLMInterface
 
 # Query Decomposition Prompt
 QUERY_DECOMPOSITION_PROMPT = """You are a VideoRAG query analyzer. Given a user query about video content,
@@ -88,17 +90,23 @@ class QueryDecoupler:
     - modalities: [VISUAL, IDENTITY]
     """
 
-    def __init__(self, llm: LLMInterface | None = None):
+    def __init__(self, llm: LLMInterface | None = None) -> None:
+        """Initializes the QueryDecoupler.
+
+        Args:
+            llm: Optional LLM interface for query decomposition. If not provided,
+                the default LLM from factory will be used.
+        """
         self.llm = llm or LLMFactory.get_default_llm()
 
     async def decompose(self, query: str) -> StructuredQuery:
-        """Decompose a natural language query into structured components.
+        """Decomposes a natural language query into structured multi-modal components.
 
         Args:
-            query: Natural language search query.
+            query: The natural language search query.
 
         Returns:
-            StructuredQuery with decomposed components.
+            A StructuredQuery object containing decomposed cues and metadata.
         """
         start = time.time()
 
@@ -155,7 +163,10 @@ class QueryDecoupler:
             return structured
 
         except Exception as e:
-            log(f"Query decomposition failed, using fallback: {e}", level="WARNING")
+            log(
+                f"Query decomposition failed, using fallback: {e}",
+                level="WARNING",
+            )
             # Fallback: use query as-is
             return StructuredQuery(
                 original_query=query,
@@ -181,7 +192,13 @@ class VideoRAGOrchestrator:
         self,
         db: VectorDB | None = None,
         llm: LLMInterface | None = None,
-    ):
+    ) -> None:
+        """Initializes the VideoRAG orchestrator.
+
+        Args:
+            db: Optional vector database interface.
+            llm: Optional LLM interface for enrichment and answer generation.
+        """
         self.db = db or VectorDB()
         self.llm = llm or LLMFactory.get_default_llm()
         self.decoupler = QueryDecoupler(self.llm)
@@ -194,17 +211,20 @@ class VideoRAGOrchestrator:
         enable_enrichment: bool = True,
         enable_answer_generation: bool = True,
     ) -> VideoRAGResponse:
-        """Perform a full VideoRAG search.
+        """Performs a comprehensive VideoRAG search.
+
+        Orchestrates query decomposition, multi-modal search, external knowledge
+        enrichment, and optional natural language answer generation.
 
         Args:
-            query: Natural language query.
-            limit: Maximum results to return.
-            video_path: Optional filter to specific video.
-            enable_enrichment: Whether to use external knowledge.
-            enable_answer_generation: Whether to generate text answer for questions.
+            query: The user's natural language query.
+            limit: Maximum number of search results to return.
+            video_path: Optional filter for a specific video.
+            enable_enrichment: Whether to fetch external context for unknown entities.
+            enable_answer_generation: Whether to generate a summary answer for questions.
 
         Returns:
-            VideoRAGResponse with results and optional answer.
+            A VideoRAGResponse containing structured results and an optional answer.
         """
         total_start = time.time()
 
@@ -283,11 +303,18 @@ class VideoRAGOrchestrator:
         limit: int,
         video_path: str | None,
     ) -> list[SearchResultItem]:
-        """Search across modalities and fuse results.
+        """Executes a multi-modal search and fuses the results.
 
-        Uses RRF (Reciprocal Rank Fusion) or Strict Intersection:
-        - If query has clear Audio vs Visual split, we intersect results.
-        - Otherwise we use hybrid search.
+        Uses either strict intersection (for queries with clear visual and audio cues)
+        or standard hybrid search (vector similarity + metadata filters).
+
+        Args:
+            structured: The decomposed structured query object.
+            limit: Maximum number of results to return.
+            video_path: Optional filter for a specific video.
+
+        Returns:
+            A list of fused search result items.
         """
         # Resolve identities to cluster IDs
         face_cluster_ids: list[int] = []
@@ -327,7 +354,9 @@ class VideoRAGOrchestrator:
             )
 
             # 3. Intersect
-            intersections = self._intersect_results(visual_results, audio_results)
+            intersections = self._intersect_results(
+                visual_results, audio_results
+            )
             log(
                 f"[VideoRAG] Intersection found {len(intersections)} overlapping segments."
             )
@@ -349,9 +378,24 @@ class VideoRAGOrchestrator:
         return self._convert_to_items(raw_results)
 
     def _intersect_results(
-        self, visual_hits: list[dict], audio_hits: list[dict], window: float = 5.0
+        self,
+        visual_hits: list[dict],
+        audio_hits: list[dict],
+        window: float = 5.0,
     ) -> list[SearchResultItem]:
-        """Find overlapping timestamps between two result sets."""
+        """Finds overlapping timestamps between visual and audio search results.
+
+        This ensures that multi-modal queries (e.g., "someone smiling while talking")
+        return segments where both events occur within a narrow time window.
+
+        Args:
+            visual_hits: Raw hits from the visual index.
+            audio_hits: Raw hits from the audio/dialogue index.
+            window: Time window in seconds for a valid intersection.
+
+        Returns:
+            A list of merged search result items.
+        """
         matches = []
 
         # Group by video for efficiency
@@ -376,7 +420,9 @@ class VideoRAGOrchestrator:
                 if abs(a_time - v_time) <= window:
                     # Found intersection!
                     # Merge info
-                    combined_score = (a_hit.get("score", 0) + v_hit.get("score", 0)) / 2
+                    combined_score = (
+                        a_hit.get("score", 0) + v_hit.get("score", 0)
+                    ) / 2
 
                     # Create synthetic intersection item
                     item = SearchResultItem(
@@ -386,7 +432,10 @@ class VideoRAGOrchestrator:
                         score=combined_score * 1.2,  # Boost intersection
                         match_reasons=["strict_intersection"],
                         matched_entities=list(
-                            set(a_hit.get("entities", []) + v_hit.get("entities", []))
+                            set(
+                                a_hit.get("entities", [])
+                                + v_hit.get("entities", [])
+                            )
                         ),
                         action=v_hit.get("action"),
                         dialogue=a_hit.get("dialogue") or v_hit.get("dialogue"),
@@ -415,8 +464,17 @@ class VideoRAGOrchestrator:
 
         return unique
 
-    def _convert_to_items(self, raw_results: list[dict]) -> list[SearchResultItem]:
-        """Helper to convert DB dicts to SearchResultItems."""
+    def _convert_to_items(
+        self, raw_results: list[dict]
+    ) -> list[SearchResultItem]:
+        """Converts raw database results into structured SearchResultItem objects.
+
+        Args:
+            raw_results: A list of result dictionaries from the vector database.
+
+        Returns:
+            A list of initialized SearchResultItem objects.
+        """
         items = []
         for r in raw_results:
             item = SearchResultItem(
@@ -437,18 +495,33 @@ class VideoRAGOrchestrator:
         return items
 
     def _resolve_identity(self, name: str) -> int | None:
-        """Resolve a person name to a face cluster ID."""
+        """Resolves a person's name to a face cluster ID.
+
+        Args:
+            name: The name of the person to look up.
+
+        Returns:
+            The cluster ID if found, otherwise None.
+        """
         try:
             # Search for named faces
             results = self.db.client.scroll(
                 collection_name=self.db.FACES_COLLECTION,
-                scroll_filter={"must": [{"key": "name", "match": {"value": name}}]},
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="name", match=models.MatchValue(value=name)
+                        )
+                    ]
+                ),
                 limit=1,
                 with_payload=["cluster_id"],
             )
 
-            if results[0]:
-                return results[0][0].payload.get("cluster_id")
+            if results and results[0]:
+                payload = results[0][0].payload or {}
+                return payload.get("cluster_id")
+            return None
 
         except Exception as e:
             log(f"Identity resolution failed: {e}", level="DEBUG")
@@ -460,14 +533,14 @@ class VideoRAGOrchestrator:
         question: str,
         results: list[SearchResultItem],
     ) -> tuple[str, list[str], float]:
-        """Generate a text answer from retrieved clips.
+        """Generates a natural language answer from top search results.
 
         Args:
-            question: User's question.
-            results: Retrieved video clips.
+            question: The user's original question.
+            results: The top retrieved search results to use as context.
 
         Returns:
-            Tuple of (answer, citations, confidence).
+            A tuple containing (answer_text, citations, confidence_score).
         """
         # Build context from results
         context_parts = []
@@ -500,7 +573,9 @@ class VideoRAGOrchestrator:
         answer = await self.llm.generate(prompt, max_tokens=500)
 
         # Simple confidence based on result relevance
-        avg_score = sum(r.score for r in results) / len(results) if results else 0
+        avg_score = (
+            sum(r.score for r in results) / len(results) if results else 0
+        )
         confidence = min(0.9, avg_score + 0.2)
 
         return answer.strip(), citations, confidence
@@ -511,7 +586,13 @@ _orchestrator: VideoRAGOrchestrator | None = None
 
 
 def get_orchestrator() -> VideoRAGOrchestrator:
-    """Get or create the global VideoRAG orchestrator."""
+    """Retrieves or creates the global VideoRAG orchestrator instance.
+
+    Uses lazy initialization to ensure the orchestrator is only created when needed.
+
+    Returns:
+        The global VideoRAGOrchestrator instance.
+    """
     global _orchestrator
     if _orchestrator is None:
         _orchestrator = VideoRAGOrchestrator()

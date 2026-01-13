@@ -98,7 +98,9 @@ class GeminiLLM(LLMInterface):
 
         except Exception as e:
             print(f"Structured generation failed: {e}")
-            full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+            full_prompt = (
+                f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+            )
             response_text = await self.generate(full_prompt)
 
             try:
@@ -150,7 +152,9 @@ class GeminiLLM(LLMInterface):
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{base64_image}"
+                        },
                     },
                 ]
             )

@@ -9,7 +9,6 @@ Inspired by RAPTOR and Ragie's Summary Index approach.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +17,8 @@ from pydantic import BaseModel, Field
 from config import settings
 from core.storage.db import VectorDB
 from core.utils.logger import log
-from llm.interface import LLMInterface
 from llm.factory import LLMFactory
+from llm.interface import LLMInterface
 
 SCENE_SUMMARY_PROMPT = """Summarize this 5-minute scene from a video.
 
@@ -60,11 +59,15 @@ SUMMARY:"""
 
 
 class SummaryLevel:
+    """Enumeration of summary levels for hierarchical indexing."""
+
     L1_VIDEO = "l1_video"
     L2_SCENE = "l2_scene"
 
 
 class VideoSummary(BaseModel):
+    """Schema for a video summary (either scene or full video)."""
+
     video_path: str
     level: str
     summary: str
@@ -89,7 +92,13 @@ class HierarchicalSummarizer:
         self,
         db: VectorDB | None = None,
         llm: LLMInterface | None = None,
-    ):
+    ) -> None:
+        """Initializes the hierarchical summarizer.
+
+        Args:
+            db: Optional vector database interface.
+            llm: Optional LLM interface for summary generation.
+        """
         self.db = db or VectorDB()
         self.llm = llm or LLMFactory.get_default_llm()
         self._scene_duration = getattr(
@@ -101,14 +110,17 @@ class HierarchicalSummarizer:
         video_path: str,
         force: bool = False,
     ) -> dict[str, Any]:
-        """Generate hierarchical summaries for a video.
+        """Generates hierarchical summaries (L1 & L2) for a video.
+
+        Processes indexed frames in 5-minute chunks to create scene summaries,
+        then aggregates them to create a full video summary.
 
         Args:
-            video_path: Path to the video file.
-            force: If True, regenerate even if summaries exist.
+            video_path: The path to the video file.
+            force: Whether to regenerate summaries even if they already exist.
 
         Returns:
-            Dict with l1_summary and l2_summaries.
+            A dictionary containing the L1 summary, L2 summaries, and scene count.
         """
         # Check if summaries already exist (lazy)
         if not force:
@@ -148,7 +160,14 @@ class HierarchicalSummarizer:
         }
 
     def _get_existing_summaries(self, video_path: str) -> dict[str, Any]:
-        """Check for existing summaries in the database."""
+        """Retrieves existing summaries for a video from the database.
+
+        Args:
+            video_path: The path to the video file.
+
+        Returns:
+            A dictionary with 'l1_summary' and 'l2_summaries'.
+        """
         try:
             from qdrant_client.http import models
 
@@ -162,7 +181,9 @@ class HierarchicalSummarizer:
                         ),
                         models.FieldCondition(
                             key="level",
-                            match=models.MatchValue(value=SummaryLevel.L1_VIDEO),
+                            match=models.MatchValue(
+                                value=SummaryLevel.L1_VIDEO
+                            ),
                         ),
                     ]
                 ),
@@ -184,7 +205,9 @@ class HierarchicalSummarizer:
                             ),
                             models.FieldCondition(
                                 key="level",
-                                match=models.MatchValue(value=SummaryLevel.L2_SCENE),
+                                match=models.MatchValue(
+                                    value=SummaryLevel.L2_SCENE
+                                ),
                             ),
                         ]
                     ),
@@ -200,7 +223,14 @@ class HierarchicalSummarizer:
         return {"l1_summary": None, "l2_summaries": []}
 
     def _get_video_frames(self, video_path: str) -> list[dict[str, Any]]:
-        """Get all indexed frames for a video."""
+        """Retrieves all indexed frames/segments for a specific video.
+
+        Args:
+            video_path: The path to the video file.
+
+        Returns:
+            A list of frame payload dictionaries.
+        """
         from qdrant_client.http import models
 
         try:
@@ -229,7 +259,16 @@ class HierarchicalSummarizer:
         frames: list[dict[str, Any]],
         duration: float,
     ) -> list[dict[str, Any]]:
-        """Generate L2 scene summaries for 5-minute chunks."""
+        """Generates L2 scene summaries for 5-minute chunks of a video.
+
+        Args:
+            video_path: The path to the video file.
+            frames: All indexed frames for the video.
+            duration: Total duration of the video.
+
+        Returns:
+            A list of dictionary summaries for each 5-minute scene.
+        """
         summaries = []
         scene_count = max(1, int(duration / self._scene_duration) + 1)
 
@@ -239,7 +278,9 @@ class HierarchicalSummarizer:
 
             # Get frames in this time range
             scene_frames = [
-                f for f in frames if start_time <= f.get("timestamp", 0) < end_time
+                f
+                for f in frames
+                if start_time <= f.get("timestamp", 0) < end_time
             ]
 
             if not scene_frames:
@@ -254,7 +295,9 @@ class HierarchicalSummarizer:
             prompt = SCENE_SUMMARY_PROMPT.format(
                 transcript=transcript or "(No dialogue)",
                 visual_descriptions=visuals or "(No visual descriptions)",
-                entities=", ".join(entities) if entities else "(None identified)",
+                entities=", ".join(entities)
+                if entities
+                else "(None identified)",
             )
 
             try:
@@ -282,7 +325,16 @@ class HierarchicalSummarizer:
         scene_summaries: list[dict[str, Any]],
         duration: float,
     ) -> dict[str, Any]:
-        """Generate L1 video summary from L2 scene summaries."""
+        """Generates a high-level L1 video summary from L2 scene summaries.
+
+        Args:
+            video_path: The path to the video file.
+            scene_summaries: The already generated L2 scene summaries.
+            duration: Total duration of the video.
+
+        Returns:
+            A dictionary containing the L1 video summary.
+        """
         if not scene_summaries:
             return {
                 "video_path": video_path,
@@ -317,10 +369,8 @@ class HierarchicalSummarizer:
 
         try:
             # Ensure self.llm.generate is compatible or wrapped properly
-            if hasattr(self.llm, "generate_sync"):
-                 summary_text = self.llm.generate_sync(prompt, max_tokens=500)
-            else:
-                 summary_text = await self.llm.generate(prompt, max_tokens=500)
+            # Generate summary (async)
+            summary_text = await self.llm.generate(prompt, max_tokens=500)
 
             return {
                 "video_path": video_path,
@@ -342,7 +392,14 @@ class HierarchicalSummarizer:
             }
 
     def _extract_transcripts(self, frames: list[dict[str, Any]]) -> str:
-        """Extract transcript text from frames."""
+        """Extracts combined transcript/dialogue text from a list of frames.
+
+        Args:
+            frames: A list of frame payload dictionaries.
+
+        Returns:
+            A concatenated string of dialogue and transcripts.
+        """
         texts = []
         for f in frames:
             if dialogue := f.get("dialogue"):
@@ -352,7 +409,14 @@ class HierarchicalSummarizer:
         return " ".join(texts)[:2000]  # Limit length
 
     def _extract_visuals(self, frames: list[dict[str, Any]]) -> str:
-        """Extract visual descriptions from frames."""
+        """Extracts and deduplicates visual descriptions from a list of frames.
+
+        Args:
+            frames: A list of frame payload dictionaries.
+
+        Returns:
+            A concatenated string of unique visual descriptions.
+        """
         visuals = []
         for f in frames:
             if desc := f.get("action"):
@@ -364,7 +428,14 @@ class HierarchicalSummarizer:
         return " | ".join(unique[:20])
 
     def _extract_entities(self, frames: list[dict[str, Any]]) -> list[str]:
-        """Extract unique entities from frames."""
+        """Extracts unique entities (names, objects) from a list of frames.
+
+        Args:
+            frames: A list of frame payload dictionaries.
+
+        Returns:
+            A list of unique entity names.
+        """
         entities = set()
         for f in frames:
             if ents := f.get("entities"):
@@ -381,7 +452,13 @@ class HierarchicalSummarizer:
         l1_summary: dict[str, Any],
         l2_summaries: list[dict[str, Any]],
     ) -> None:
-        """Store summaries in the global_summaries collection."""
+        """Stores the generated L1 and L2 summaries in the vector database.
+
+        Args:
+            video_path: The path to the video file.
+            l1_summary: The full video summary payload.
+            l2_summaries: A list of scene summary payloads.
+        """
         import uuid
 
         from qdrant_client.models import PointStruct

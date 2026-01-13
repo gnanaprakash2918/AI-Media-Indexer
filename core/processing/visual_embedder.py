@@ -23,11 +23,12 @@ from core.utils.logger import log
 class VisualEmbedder:
     """SOTA visual embeddings using SigLIP for cross-modal search."""
 
-    def __init__(self, model_name: str | None = None):
-        """Initialize SigLIP model.
+    def __init__(self, model_name: str | None = None) -> None:
+        """Initializes the VisualEmbedder with a specific SigLIP model.
 
         Args:
-            model_name: Override model name (default from config).
+            model_name: Optional override for the model to use. If None,
+                it is read from global settings.
         """
         self.model_name = model_name or settings.siglip_model
         self.device = settings.device
@@ -36,7 +37,7 @@ class VisualEmbedder:
         self._dimension: int | None = None
 
     def _load_model(self) -> None:
-        """Lazy load SigLIP model."""
+        """Loads the SigLIP model and processor into memory (Lazy Load)."""
         if self._model is not None:
             return
 
@@ -48,7 +49,9 @@ class VisualEmbedder:
             self._processor = AutoProcessor.from_pretrained(self.model_name)
             self._model = AutoModel.from_pretrained(
                 self.model_name,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                torch_dtype=torch.float16
+                if self.device == "cuda"
+                else torch.float32,
             )
             self._model.to(self.device)
             self._model.eval()
@@ -64,7 +67,9 @@ class VisualEmbedder:
                 out = self._model.get_text_features(**dummy)
                 self._dimension = out.shape[-1]
 
-            log(f"[VisualEmbedder] Loaded on {self.device}, dim={self._dimension}")
+            log(
+                f"[VisualEmbedder] Loaded on {self.device}, dim={self._dimension}"
+            )
 
         except Exception as e:
             log(f"[VisualEmbedder] Failed to load: {e}")
@@ -72,18 +77,22 @@ class VisualEmbedder:
 
     @property
     def dimension(self) -> int:
-        """Get embedding dimension."""
+        """The output dimension of the visual embeddings (e.g., 1152).
+
+        Returns:
+            The embedding dimension as an integer.
+        """
         self._load_model()
         return self._dimension or 1152  # SigLIP-SO400M default
 
     def embed_image(self, image_path: str | Path) -> list[float]:
-        """Generate visual embedding for an image.
+        """Generates a semantically rich visual embedding for an image.
 
         Args:
-            image_path: Path to image file.
+            image_path: Path to the input image file.
 
         Returns:
-            List of floats (1152-dim for SigLIP-SO400M).
+            An L2-normalized feature vector (list of floats).
         """
         self._load_model()
 
@@ -114,16 +123,15 @@ class VisualEmbedder:
             return [0.0] * self.dimension
 
     def embed_text(self, text: str) -> list[float]:
-        """Generate text embedding for cross-modal search.
+        """Generates a text embedding for cross-modal semantic search.
 
-        Use this to embed search queries that will be matched against
-        image embeddings.
+        Should be used to embed user queries to match against image embeddings.
 
         Args:
-            text: Search query text.
+            text: The search query or descriptive text.
 
         Returns:
-            List of floats (same dimension as image embeddings).
+            An L2-normalized feature vector (list of floats).
         """
         self._load_model()
 
@@ -153,14 +161,16 @@ class VisualEmbedder:
             log(f"[VisualEmbedder] Text embedding failed: {e}")
             return [0.0] * self.dimension
 
-    def embed_images_batch(self, image_paths: list[str | Path]) -> list[list[float]]:
-        """Batch embed multiple images.
+    def embed_images_batch(
+        self, image_paths: list[str | Path]
+    ) -> list[list[float]]:
+        """Processes multiple images in a single batch to improve throughput.
 
         Args:
-            image_paths: List of image paths.
+            image_paths: A list of paths to the image files.
 
         Returns:
-            List of embedding vectors.
+            A list of feature vectors, one for each successfully processed image.
         """
         self._load_model()
 
@@ -200,7 +210,7 @@ class VisualEmbedder:
         return results
 
     def unload(self) -> None:
-        """Unload model to free VRAM."""
+        """Releases the SigLIP model and processor from GPU/system memory."""
         if self._model is not None:
             del self._model
             self._model = None
@@ -220,7 +230,11 @@ _visual_embedder: VisualEmbedder | None = None
 
 
 def get_visual_embedder() -> VisualEmbedder:
-    """Get or create singleton VisualEmbedder instance."""
+    """Retrieves the singleton VisualEmbedder instance.
+
+    Returns:
+        The initialized VisualEmbedder.
+    """
     global _visual_embedder
     if _visual_embedder is None:
         _visual_embedder = VisualEmbedder()

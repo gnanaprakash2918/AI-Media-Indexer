@@ -152,12 +152,14 @@ async def run_agent() -> None:
                         else:
                             fn_args = raw_args
 
-                        print(f"[Tool] Calling '{fn_name}' with args: {fn_args}")
+                        print(
+                            f"[Tool] Calling '{fn_name}' with args: {fn_args}"
+                        )
 
                         # Call the MCP tool
                         try:
                             result = await session.call_tool(fn_name, fn_args)
-                        except Exception as exc:  # noqa: BLE001
+                        except Exception as exc:
                             print(f"[ERROR] Tool '{fn_name}' failed: {exc}")
                             tool_output_text = f"Tool '{fn_name}' failed: {exc}"
                         else:

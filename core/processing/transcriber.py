@@ -70,7 +70,12 @@ def get_transcriber(language: str | None = None):
 
 
 class AudioTranscriber:
-    """Main transcription class handling ASR lifecycle."""
+    """Orchestrates the audio-to-text transcription lifecycle.
+
+    Handles model loading (Faster-Whisper), VRAM management, subtitle
+    discovery, audio slicing, and SRT generation. Supports automatic
+    fallback to smaller models on memory-constrained systems.
+    """
 
     # Smaller fallback models for memory-constrained systems
     LOW_MEMORY_MODELS = [
@@ -80,13 +85,18 @@ class AudioTranscriber:
     ]
 
     def __init__(self) -> None:
+        """Initializes the transcriber with default compute settings."""
         self._model: WhisperModel | None = None
         self._batched_model: BatchedInferencePipeline | None = None
         self._current_model_size: str | None = None
         self.device = settings.device
-        self.compute_type: str = "int8_float16" if self.device == "cuda" else "int8"
+        self.compute_type: str = (
+            "int8_float16" if self.device == "cuda" else "int8"
+        )
         self._fallback_attempted = False
-        self._locked_language: str | None = None  # Language lock for current file
+        self._locked_language: str | None = (
+            None  # Language lock for current file
+        )
 
     def __enter__(self):
         """Called when entering the 'with' block."""
@@ -97,7 +107,11 @@ class AudioTranscriber:
         self.unload_model()
 
     def unload_model(self) -> None:
-        """Forcefully unload the Whisper model from VRAM."""
+        """Forcefully unloads the Whisper model from memory.
+
+        Performs a full cleanup of CTranslate2 objects, triggers garbage
+        collection, and clears the PyTorch CUDA cache to reclaim VRAM.
+        """
         log("[INFO] Unloading Whisper model to free VRAM...")
 
         # 1. Delete the CTranslate2 model objects
@@ -130,7 +144,9 @@ class AudioTranscriber:
         """
         cmd = shutil.which("ffmpeg")
         if not cmd:
-            raise RuntimeError("FFmpeg not found. Please install it to system PATH.")
+            raise RuntimeError(
+                "FFmpeg not found. Please install it to system PATH."
+            )
         return cmd
 
     def _find_existing_subtitles(
@@ -140,16 +156,23 @@ class AudioTranscriber:
         user_sub_path: Path | None,
         language: str,
     ) -> bool:
-        """Searches for subtitles with STRICT priority: Sidecar > Embedded > (AI later).
+        """Discovers existing subtitles with strict priority (Sidecar > Embedded > AI).
 
-        Priority Order:
-        1. User-provided subtitle file (explicit override)
-        2. Sidecar .srt files (same directory as video)
-        3. Embedded subtitle streams (FFmpeg extraction)
+        Checks for user-provided files first, then sidecar .srt files in the
+        same directory, and finally attempts to extract embedded streams.
 
-        Returns True if subtitles found, False if AI transcription needed.
+        Args:
+            input_path: Path to the source media file.
+            output_path: Destination path for the discovered/copied subtitle.
+            user_sub_path: Optional explicit override path provided by user.
+            language: Target language code for filtering sidecar/embedded subs.
+
+        Returns:
+            True if a subtitle was found and placed at output_path.
         """
-        log("[Subtitle] Checking for existing subtitles (Sidecar > Embedded > AI)...")
+        log(
+            "[Subtitle] Checking for existing subtitles (Sidecar > Embedded > AI)..."
+        )
 
         # Priority 1: Explicit user-provided subtitle
         if user_sub_path and user_sub_path.exists():
@@ -185,7 +208,10 @@ class AudioTranscriber:
         ]
         try:
             subprocess.run(
-                cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                cmd,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             if output_path.exists() and output_path.stat().st_size > 0:
                 log("[Subtitle] ✓ Using EMBEDDED subtitle stream")
@@ -193,20 +219,24 @@ class AudioTranscriber:
         except subprocess.CalledProcessError:
             pass
 
-        log("[Subtitle] ✗ No existing subtitles found. Starting AI TRANSCRIPTION...")
+        log(
+            "[Subtitle] ✗ No existing subtitles found. Starting AI TRANSCRIPTION..."
+        )
         return False
 
     @observe("transcriber_slice_audio")
-    def _slice_audio(self, input_path: Path, start: float, end: float | None) -> Path:
-        """Slice audio using ffmpeg into a temporary WAV file.
+    def _slice_audio(
+        self, input_path: Path, start: float, end: float | None
+    ) -> Path:
+        """Slices a segment of audio from a source file into a temporary WAV.
 
         Args:
-            input_path (Path): Original audio file.
-            start (float): Start time in seconds.
-            end (float | None): End time in seconds or None for full remaining audio.
+            input_path: Original audio or video file path.
+            start: Start time in seconds.
+            end: Optional end time in seconds.
 
         Returns:
-            Path: Path to the temporary sliced audio file.
+            Path to the temporary 16kHz mono WAV file.
         """
         with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             output_slice = Path(tmp.name)
@@ -224,24 +254,42 @@ class AudioTranscriber:
         if end:
             cmd.extend(["-to", str(end)])
 
-        cmd.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
+        cmd.extend(
+            ["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)]
+        )
 
         log(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
         subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
     def _convert_and_cache_model(self, model_id: str) -> str:
-        """Downloads/converts models using HF transfer and CTranslate2."""
+        """Downloads and converts a HuggingFace Whisper model to CTranslate2 format.
+
+        Implements high-speed downloads via hf_transfer and caches the converted
+        model for future use. Automatically repairs corrupted caches.
+
+        Args:
+            model_id: The HuggingFace repository ID of the model.
+
+        Returns:
+            The local directory path containing the converted model.
+        """
         sanitized_name = model_id.replace("/", "_")
-        ct2_output_dir = settings.model_cache_dir / "converted_models" / sanitized_name
+        ct2_output_dir = (
+            settings.model_cache_dir / "converted_models" / sanitized_name
+        )
         raw_model_dir = settings.model_cache_dir / "raw_models" / sanitized_name
 
         if (ct2_output_dir / "config.json").exists():
             try:
-                with open(ct2_output_dir / "config.json", "r", encoding="utf-8") as f:
+                with open(
+                    ct2_output_dir / "config.json", encoding="utf-8"
+                ) as f:
                     conf = json.load(f)
                     if "architectures" in conf or "_name_or_path" in conf:
-                        log(f"[WARN] Corrupted config in {ct2_output_dir}. Purging.")
+                        log(
+                            f"[WARN] Corrupted config in {ct2_output_dir}. Purging."
+                        )
                         shutil.rmtree(ct2_output_dir)
             except Exception:
                 shutil.rmtree(ct2_output_dir, ignore_errors=True)
@@ -254,7 +302,9 @@ class AudioTranscriber:
             for fname in needed_files:
                 if not (ct2_output_dir / fname).exists():
                     if (raw_model_dir / fname).exists():
-                        shutil.copy(raw_model_dir / fname, ct2_output_dir / fname)
+                        shutil.copy(
+                            raw_model_dir / fname, ct2_output_dir / fname
+                        )
             return str(ct2_output_dir)
 
         log(f"[INFO] Model {model_id} needs conversion.")
@@ -279,15 +329,21 @@ class AudioTranscriber:
                 log(
                     f"[INFO] Model {model_id} appears to be already converted. Skipping conversion step."
                 )
-                shutil.copytree(raw_model_dir, ct2_output_dir, dirs_exist_ok=True)
+                shutil.copytree(
+                    raw_model_dir, ct2_output_dir, dirs_exist_ok=True
+                )
                 return str(ct2_output_dir)
 
-            log(f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}...")
+            log(
+                f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}..."
+            )
 
             converter = ctranslate2.converters.TransformersConverter(
                 str(raw_model_dir), load_as_float16=True
             )
-            converter.convert(str(ct2_output_dir), quantization="float16", force=True)
+            converter.convert(
+                str(ct2_output_dir), quantization="float16", force=True
+            )
 
             for file_name in [
                 "preprocessor_config.json",
@@ -307,9 +363,13 @@ class AudioTranscriber:
 
     @observe("transcriber_load_model")
     def _load_model(self, model_key: str) -> None:
-        """Loads the Faster-Whisper model with memory-efficient settings.
+        """Loads a Whisper model with optimized settings for the current device.
 
-        Falls back to smaller models if memory allocation fails.
+        Attempts to load the requested model; falls back to smaller models in
+        the LOW_MEMORY_MODELS list if a memory-related error occurs.
+
+        Args:
+            model_key: The HuggingFace ID or local path of the model to load.
         """
         if self._model:
             del self._model
@@ -329,7 +389,9 @@ class AudioTranscriber:
         final_model_path = self._convert_and_cache_model(model_key)
 
         # Memory-efficient settings
-        cpu_threads = min(4, os.cpu_count() or 4)  # Limit CPU threads to reduce memory
+        cpu_threads = min(
+            4, os.cpu_count() or 4
+        )  # Limit CPU threads to reduce memory
 
         try:
             self._model = WhisperModel(
@@ -347,7 +409,8 @@ class AudioTranscriber:
             error_msg = str(e).lower()
             # Check for memory-related errors
             if any(
-                x in error_msg for x in ["memory", "mkl_malloc", "allocation", "oom"]
+                x in error_msg
+                for x in ["memory", "mkl_malloc", "allocation", "oom"]
             ):
                 log(f"[WARN] Memory error loading {model_key}: {e}")
                 if not self._fallback_attempted:
@@ -357,9 +420,14 @@ class AudioTranscriber:
                     for fallback_model in self.LOW_MEMORY_MODELS:
                         try:
                             gc.collect()
-                            if self.device == "cuda" and torch.cuda.is_available():
+                            if (
+                                self.device == "cuda"
+                                and torch.cuda.is_available()
+                            ):
                                 torch.cuda.empty_cache()
-                            log(f"[INFO] Trying fallback model: {fallback_model}")
+                            log(
+                                f"[INFO] Trying fallback model: {fallback_model}"
+                            )
                             fallback_path = self._convert_and_cache_model(
                                 fallback_model
                             )
@@ -397,21 +465,21 @@ class AudioTranscriber:
         """
         hours, remainder = divmod(seconds, 3600)
         minutes, secs = divmod(remainder, 60)
-        millis = int(round((secs - int(secs)) * 1000))
+        millis = round((secs - int(secs)) * 1000)
         return f"{int(hours):02}:{int(minutes):02}:{int(secs):02},{millis:03}"
 
     def _write_srt(
         self, chunks: list[dict[str, Any]], path: Path, offset: float
     ) -> int:
-        """Write ASR output chunks to an SRT subtitle file.
+        """Writes ASR output chunks to an SRT formatted subtitle file.
 
         Args:
-            chunks (list[dict]): List of timestamped transcribed segments.
-            path (Path): Output SRT file path.
-            offset (float): Offset to apply to timestamps.
+            chunks: List of dictionaries, each containing 'text' and 'timestamp' (start, end).
+            path: The destination path for the SRT file.
+            offset: A time offset in seconds to apply to all timestamps.
 
         Returns:
-            int: Number of subtitle entries written.
+            The number of subtitle entries successfully written.
         """
         count = 0
         with open(path, "w", encoding="utf-8") as f:
@@ -449,17 +517,17 @@ class AudioTranscriber:
     def _split_long_chunks(
         self, chunks: list[dict[str, Any]], max_segment_s: float = 8.0
     ) -> list[dict[str, Any]]:
-        """Split chunks longer than `max_segment_s` into smaller subchunks.
+        """Splits segments longer than a threshold into smaller sub-segments.
 
-        The text is split approximately proportionally across time bins by word
-        count. This is a heuristic to avoid extremely long subtitle segments.
+        Uses a word-count heuristic to split text approximately proportionally
+        across the duration to avoid extremely long subtitle entries.
 
         Args:
-            chunks (list[dict]): Original chunks from the pipeline.
-            max_segment_s (float): Maximum allowed duration per SRT entry.
+            chunks: The original list of transcribed chunks.
+            max_segment_s: The maximum allowed duration in seconds for a segment.
 
         Returns:
-            list[dict]: New list of chunks where long entries are subdivided.
+            A new list of chunks where long entries have been subdivided.
         """
         out: list[dict[str, Any]] = []
         for ch in chunks:
@@ -503,7 +571,9 @@ class AudioTranscriber:
                 sub_text = " ".join(sub_words)
                 sub_start = start + i * (duration / n)
                 sub_end = start + (i + 1) * (duration / n)
-                out.append({"text": sub_text, "timestamp": (sub_start, sub_end)})
+                out.append(
+                    {"text": sub_text, "timestamp": (sub_start, sub_end)}
+                )
 
             if ptr < len(words) and out:
                 out[-1]["text"] = out[-1]["text"] + " " + " ".join(words[ptr:])
@@ -520,19 +590,22 @@ class AudioTranscriber:
         start_time: float = 0.0,
         end_time: float | None = None,
     ) -> list[dict[str, Any]] | None:
-        """Main entry point: Transcribe audio and generate SRT subtitles.
+        """Transcribes an audio or video file and generates SRT subtitles.
+
+        Automatically checks for existing subtitles (sidecar or embedded) first.
+        If none are found, it proceeds with AI-based transcription using Whisper.
 
         Args:
-            audio_path (Path): Path to the input audio/video file.
-            language (str | None): Target language code or fallback setting.
-            subtitle_path (Path | None): Optional external subtitle to override.
-            output_path (Path | None): Output SRT destination (auto if None).
-            start_time (float): Start offset in seconds.
-            end_time (float | None): End offset in seconds.
+            audio_path: Path to the input media file.
+            language: Target language code. If None, uses system defaults.
+            subtitle_path: Optional path to an explicit subtitle file to use.
+            output_path: Destination path for the generated/discovered SRT.
+            start_time: The start time in seconds to begin transcription from.
+            end_time: The end time in seconds to stop transcription at.
 
         Returns:
-            list[dict[str, Any]] | None: list of ASR chunks, or None if subtitle
-                fallback was used.
+            A list of transcribed chunks (dictionaries) or None if existing
+            subtitles were used.
         """
         if not audio_path.exists():
             log(f"[ERROR] Input file not found: {audio_path}")
@@ -582,24 +655,29 @@ class AudioTranscriber:
         offset: float,
         is_temp_file: bool = False,
     ) -> list[dict[str, Any]] | None:
-        """Run Whisper inference on the provided audio file.
+        """Executes the Whisper model inference on a processed audio file.
+
+        Handles model selection based on the target language, invokes the
+        batched inference pipeline, and post-processes segments.
 
         Args:
-            audio_path: Path to audio file (temp slice or original).
-            lang: Target language code.
-            out_srt: Output path for SRT.
-            offset: Time offset for timestamps.
-            is_temp_file: Whether audio_path is temporary (for logging).
+            audio_path: Path to the audio file to transcribe.
+            lang: The target language code.
+            out_srt: The path to save the resulting SRT.
+            offset: Time offset in seconds for the subtitle timestamps.
+            is_temp_file: Whether the input file is a temporary slice.
 
         Returns:
-            List of transcribed chunks or None.
+            A list of transcribed chunks, or None if no speech was detected.
         """
         chunks: list[dict[str, Any]] = []
 
         candidates = settings.whisper_model_map.get(
             lang or "en", [settings.fallback_model_id]
         )
-        model_to_use = candidates[0] if candidates else settings.fallback_model_id
+        model_to_use = (
+            candidates[0] if candidates else settings.fallback_model_id
+        )
 
         try:
             if self._batched_model is None or (
@@ -610,7 +688,9 @@ class AudioTranscriber:
             if self._batched_model is None:
                 raise RuntimeError("Model failed to initialize")
 
-            log(f"[INFO] Running Inference on {audio_path} with {model_to_use}.")
+            log(
+                f"[INFO] Running Inference on {audio_path} with {model_to_use}."
+            )
 
             # Language locking: detect once, force for all chunks
             effective_lang = lang
@@ -657,9 +737,9 @@ class AudioTranscriber:
 
                     for word in segment.words:
                         current_words.append(word.word)
-                        if (word.end - seg_start > 6.0) or word.word.strip().endswith(
-                            ("?", ".", "!")
-                        ):
+                        if (
+                            word.end - seg_start > 6.0
+                        ) or word.word.strip().endswith(("?", ".", "!")):
                             chunks.append(
                                 {
                                     "text": "".join(current_words).strip(),
@@ -688,7 +768,9 @@ class AudioTranscriber:
                 log("[WARN] No speech detected.")
                 return None
 
-            log(f"[SUCCESS] Transcription complete. Prob: {info.language_probability}")
+            log(
+                f"[SUCCESS] Transcription complete. Prob: {info.language_probability}"
+            )
 
             lines_written = self._write_srt(chunks, out_srt, offset=offset)
             if lines_written > 0:
@@ -703,10 +785,17 @@ class AudioTranscriber:
 
     @observe("language_detection")
     def detect_language(self, audio_path: Path) -> str:
-        """Detect language using robust model loading.
+        """Detects the spoken language of an audio file using Whisper.
 
-        Uses the base model (`openai/whisper-base`) to detect language.
-        Leverages _load_model() to ensure model is downloaded if missing.
+        Uses the 'openai/whisper-base' model for fast and robust detection.
+        Includes special handling for Indic languages with lower confidence
+        thresholds.
+
+        Args:
+            audio_path: Path to the input media file.
+
+        Returns:
+            The detected language code (e.g., 'en', 'ta', 'hi').
         """
         model_id = "openai/whisper-base"
         wav_path = None
@@ -725,7 +814,9 @@ class AudioTranscriber:
                 # Use _slice_audio which uses ffmpeg to generate a clean 16kHz WAV
                 wav_path = self._slice_audio(audio_path, start=0.0, end=30.0)
             except Exception as e:
-                log(f"[WARN] Slicing for detection failed: {e}. Trying raw file.")
+                log(
+                    f"[WARN] Slicing for detection failed: {e}. Trying raw file."
+                )
                 wav_path = audio_path
 
             # Detect on the WAV (or raw if slice failed)
@@ -782,9 +873,13 @@ def main() -> None:
     args = sys.argv
     audio = Path(args[1]).resolve()
     start = float(args[2]) if len(args) > 2 else 0.0
-    end = float(args[3]) if len(args) > 3 and args[3].lower() != "none" else None
+    end = (
+        float(args[3]) if len(args) > 3 and args[3].lower() != "none" else None
+    )
     sub = (
-        Path(args[4]).resolve() if len(args) > 4 and args[4].lower() != "none" else None
+        Path(args[4]).resolve()
+        if len(args) > 4 and args[4].lower() != "none"
+        else None
     )
     lang = args[5] if len(args) > 5 else "ta"
 

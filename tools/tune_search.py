@@ -17,8 +17,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from core.storage.db import VectorDB
-from core.utils.logger import log
+from core.storage.db import VectorDB  # noqa: E402
+from core.utils.logger import log  # noqa: E402
 
 # Synthetic Dataset (Query -> Expected Content/Keywords in Result)
 # Ideally this should target specific files if known, but for generic tuning
@@ -39,6 +39,8 @@ DATASET = [
 
 
 class WeightConfig(NamedTuple):
+    """Configuration for search weights."""
+
     face_match: float
     speaker_match: float
     entity_match: float
@@ -58,6 +60,7 @@ def calculate_mrr(results: list, expected_keywords: list[str]) -> float:
 
 
 def main():
+    """Run search weight tuning."""
     print("🚀 Starting Search Tuner...")
 
     try:
@@ -83,7 +86,9 @@ def main():
     best_mrr = -1.0
     best_config = None
 
-    combinations = list(itertools.product(face_weights, entity_weights, action_weights))
+    combinations = list(
+        itertools.product(face_weights, entity_weights, action_weights)
+    )
     print(f"🔍 Testing {len(combinations)} configurations...")
 
     for fw, ew, aw in combinations:

@@ -25,7 +25,9 @@ class QueryModality(str, Enum):
 class EntityRelationship(BaseModel):
     """Relationship between entities in query."""
 
-    relation: str = Field(description="Relationship type (wearing, holding, near)")
+    relation: str = Field(
+        description="Relationship type (wearing, holding, near)"
+    )
     target: str = Field(description="Target entity of the relationship")
 
 
@@ -46,7 +48,9 @@ class TemporalConstraint(BaseModel):
     """Time-related constraint from query."""
 
     type: str = Field(description="Type: before, after, during, slow, fast")
-    reference: str | None = Field(default=None, description="Reference point if any")
+    reference: str | None = Field(
+        default=None, description="Reference point if any"
+    )
     value: str | None = Field(default=None, description="Extracted value")
 
 
@@ -70,17 +74,20 @@ class StructuredQuery(BaseModel):
         description="Audio/dialogue cues to search for (spoken words, sounds)",
     )
     text_cues: list[str] = Field(
-        default_factory=list, description="On-screen text or entity names to match"
+        default_factory=list,
+        description="On-screen text or entity names to match",
     )
 
     # Identity Filters (names of people to filter)
     identities: list[str] = Field(
-        default_factory=list, description="Person names that should appear in results"
+        default_factory=list,
+        description="Person names that should appear in results",
     )
 
     # Extracted entities with full structure
     entities: list[QueryEntity] = Field(
-        default_factory=list, description="Fully extracted entities with relationships"
+        default_factory=list,
+        description="Fully extracted entities with relationships",
     )
 
     # Temporal constraints
@@ -94,10 +101,12 @@ class StructuredQuery(BaseModel):
 
     # Flags for advanced processing
     requires_external_knowledge: bool = Field(
-        default=False, description="True if query needs external web search for context"
+        default=False,
+        description="True if query needs external web search for context",
     )
     is_question: bool = Field(
-        default=False, description="True if query is a question requiring an answer"
+        default=False,
+        description="True if query is a question requiring an answer",
     )
 
     # Dense scene description for semantic search

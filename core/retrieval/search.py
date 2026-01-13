@@ -17,6 +17,7 @@ class SearchEngine:
     """Search engine with agentic query expansion and identity filtering."""
 
     def __init__(self, db: VectorDB) -> None:
+        """Initialize the Search Engine."""
         self.db = db
         self._llm = None
 
@@ -136,7 +137,9 @@ Return ONLY JSON, no explanation."""
         # Fallback
         return {"person_name": None, "visual_keywords": query}
 
-    def search(self, query: str, limit: int = 10) -> dict[str, list[dict[str, Any]]]:
+    def search(
+        self, query: str, limit: int = 10
+    ) -> dict[str, list[dict[str, Any]]]:
         """Synchronous search (backward compatible)."""
         frame_results = self.db.search_frames(query, limit=limit)
         dialogue_results = self.db.search_media(query, limit=limit)

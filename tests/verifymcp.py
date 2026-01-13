@@ -1,3 +1,5 @@
+"""Verification script for the MCP server connectivity."""
+
 import asyncio
 import os
 import sys
@@ -7,8 +9,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession, StdioServerParameters  # noqa: E402
+from mcp.client.stdio import stdio_client  # noqa: E402
 
 
 async def verify_mcp_server():
@@ -18,8 +20,12 @@ async def verify_mcp_server():
     # Path to server script
     server_script = os.path.join(project_root, "core", "agent", "server.py")
 
+    env = os.environ.copy()
+    # Ensure project root is in PYTHONPATH for the subprocess
+    env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+
     server_params = StdioServerParameters(
-        command=sys.executable, args=[server_script], env=os.environ.copy()
+        command=sys.executable, args=[server_script], env=env
     )
 
     try:
@@ -33,7 +39,9 @@ async def verify_mcp_server():
                 tools = await session.list_tools()
                 print(f"🛠️  Found {len(tools.tools)} tools:")
                 for tool in tools.tools:
-                    print(f"  - {tool.name}: {tool.description[:50]}...")
+                    print(
+                        f"  - {tool.name}: {(tool.description or '')[:50]}..."
+                    )
 
                 # Check for required tools
                 required = [
@@ -43,7 +51,9 @@ async def verify_mcp_server():
                     "search_media",
                 ]
                 missing = [
-                    t for t in required if not any(x.name == t for x in tools.tools)
+                    t
+                    for t in required
+                    if not any(x.name == t for x in tools.tools)
                 ]
 
                 if missing:

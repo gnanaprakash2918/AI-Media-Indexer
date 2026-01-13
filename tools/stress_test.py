@@ -18,10 +18,13 @@ try:
     HAS_NVML = True
 except ImportError:
     HAS_NVML = False
-    print("⚠️  pynvml not installed. VRAM monitoring will be estimated via torch.")
+    print(
+        "⚠️  pynvml not installed. VRAM monitoring will be estimated via torch."
+    )
 
 
 def get_vram_usage():
+    """Get current VRAM usage in GB."""
     if HAS_NVML:
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
@@ -36,6 +39,7 @@ def get_vram_usage():
 
 
 def monitor_vram(stop_event):
+    """Monitor VRAM usage until stop event is set."""
     print("📊 Starting VRAM Monitor...")
     max_usage = 0.0
     while not stop_event.is_set():
@@ -48,6 +52,7 @@ def monitor_vram(stop_event):
 
 
 def trigger_ingest(job_id: int):
+    """Trigger a dummy ingestion job (simulated)."""
     # Trigger a dummy ingest or just hit the endpoint
     print(f"🚀 Launching Job {job_id}...")
     try:
@@ -62,6 +67,7 @@ def trigger_ingest(job_id: int):
 
 
 def main():
+    """Run the VRAM stress test."""
     print("🧪 Starting Stress Test (Phase 15)...")
 
     if not torch.cuda.is_available():

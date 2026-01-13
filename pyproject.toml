@@ -82,17 +82,17 @@ indic = [
 ]
 
 [tool.black]
-line-length = 88
+line-length = 80
 target-version = ["py312"]
 skip-string-normalization = false
 
 [tool.ruff]
-line-length = 88
+line-length = 80
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "C4", "D"]
-ignore = ["D203", "D213", "E501"]
+ignore = ["D203", "D213", "E501", "B008"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncGenerator
 from threading import Lock
-from typing import Any, AsyncGenerator
+from typing import Any
 
 from core.ingestion.jobs import JobInfo, JobStatus, PipelineStage, job_manager
 
@@ -44,6 +45,9 @@ class ProgressTracker:
         """Start tracking a job.
 
         Args:
+            job_id: Unique identifier for the job.
+            file_path: Path to the media file being processed.
+            media_type: Type of media (video, audio, etc.).
             resume: If True, don't create a new DB entry, just update cache.
         """
         if resume:
@@ -237,7 +241,9 @@ class ProgressTracker:
         except Exception:
             pass
 
-    def complete(self, job_id: str, message: str = "Processing complete") -> None:
+    def complete(
+        self, job_id: str, message: str = "Processing complete"
+    ) -> None:
         """Mark job as complete."""
         with self._lock:
             if job_id in self._cache:
@@ -387,7 +393,9 @@ class ProgressTracker:
         self._sync_cache()
         with self._lock:
             return sorted(
-                list(self._cache.values()), key=lambda x: x.started_at, reverse=True
+                self._cache.values(),
+                key=lambda x: x.started_at,
+                reverse=True,
             )
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
@@ -419,7 +427,9 @@ class ProgressTracker:
             "message": message,
         }
         if status is not None:
-            event["status"] = status.value if isinstance(status, JobStatus) else status
+            event["status"] = (
+                status.value if isinstance(status, JobStatus) else status
+            )
         if progress is not None:
             event["progress"] = progress
         if payload:

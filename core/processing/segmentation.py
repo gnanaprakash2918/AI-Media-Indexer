@@ -6,8 +6,9 @@ Uses LAZY LOADING to prevent OOM on startup.
 
 import gc
 import logging
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -15,16 +16,30 @@ logger = logging.getLogger(__name__)
 
 
 class SegmentationEngine:
-    """SAM-based segmentation with lazy loading."""
+    """Orchestrates zero-shot object segmentation using SAM (Segment Anything Model).
+
+    Provides lazy loading of heavy models to optimize VRAM usage and
+    supports both automatic and point-prompted segmentation modes.
+    """
 
     def __init__(self, model_size: str = "sam_b"):
+        """Initializes the SegmentationEngine.
+
+        Args:
+            model_size: The size of the SAM model to use (e.g., 'sam_b', 'sam_l').
+        """
         self.model = None
         self.model_type = model_size
-        self._device: Optional[str] = None
+        self._device: str | None = None
         self._initialized = False
 
     @property
     def device(self) -> str:
+        """Determines the optimal computation device (CUDA or CPU).
+
+        Returns:
+            The device string ('cuda' or 'cpu').
+        """
         if self._device is None:
             import torch
 
@@ -32,7 +47,14 @@ class SegmentationEngine:
         return self._device
 
     def lazy_load(self) -> bool:
-        """Loads SAM model only when needed to save VRAM."""
+        """Loads the SAM model into memory only when first required.
+
+        Reduces initial start-up time and VRAM usage by deferring model
+        initialization until the first segmentation request.
+
+        Returns:
+            True if the model was successfully loaded or already exists.
+        """
         if self.model is not None:
             return True
 
@@ -56,16 +78,20 @@ class SegmentationEngine:
             return False
 
     def segment_frame(
-        self, frame: np.ndarray, prompt_points: Optional[List[List[int]]] = None
-    ) -> List[Dict[str, Any]]:
-        """Segments objects in a frame.
+        self, frame: np.ndarray, prompt_points: list[list[int]] | None = None
+    ) -> list[dict[str, Any]]:
+        """Segments objects within a single image frame.
 
         Args:
-            frame: Input image as numpy array.
-            prompt_points: Optional click points for interactive segmentation.
+            frame: Input image array (H, W, C) in BGR format.
+            prompt_points: Optional list of [x, y] coordinates to guide
+                segmentation around specific objects.
 
         Returns:
-            List of segment dicts with id, segmentation polygon, confidence.
+            A list of dictionary results, each containing:
+                - 'id': Segment identifier (int).
+                - 'segmentation': Boolean mask or polygon.
+                - 'score': Confidence score.
         """
         if not self.lazy_load():
             return []
@@ -74,7 +100,9 @@ class SegmentationEngine:
         try:
             assert self.model is not None
             if prompt_points:
-                res = self.model(frame, points=prompt_points, device=self.device)
+                res = self.model(
+                    frame, points=prompt_points, device=self.device
+                )
             else:
                 res = self.model(frame, device=self.device)
 
@@ -101,7 +129,11 @@ class SegmentationEngine:
         return results
 
     def cleanup(self) -> None:
-        """Release resources."""
+        """Releases the SAM model and clears GPU memory.
+
+        Moves the model to CPU, deletes references, and forces PyTorch
+        CUDA cache clearing and garbage collection.
+        """
         self.model = None
         import torch
 
@@ -112,19 +144,27 @@ class SegmentationEngine:
 
 
 class Sam3Tracker:
-    """SAM 3 video segmentation and concept tracking.
+    """Advanced video object segmenter and tracker using SAM 3.
 
-    This is the full SAM-3 wrapper for video tracking with text prompts.
+    Provides persistent object tracking across video frames by leveraging
+    the SAM 3 (Segment Anything Model 2/3) video predictor, allowing for
+    concept-based tracking through text or visual prompts.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initializes the Sam3Tracker state and internal predictor."""
         self.predictor = None
         self.inference_state = None
-        self._device: Optional[str] = None
+        self._device: str | None = None
         self._initialized = False
 
     @property
     def device(self) -> str:
+        """Determines the computation device from system settings.
+
+        Returns:
+            The configured device string (e.g., 'cuda', 'cpu', 'mps').
+        """
         if self._device is None:
             from config import settings
 
@@ -132,18 +172,26 @@ class Sam3Tracker:
         return self._device
 
     def initialize(self) -> bool:
-        """Load SAM 3 model. Returns True if successful."""
+        """Loads and initializes the SAM 3 model predictor.
+
+        Returns:
+            True if the model was successfully loaded or is already available.
+        """
         if self._initialized:
             return self.predictor is not None
 
         self._initialized = True
 
         try:
-            from sam2.build_sam import build_sam2_video_predictor  # type: ignore
+            from sam2.build_sam import (  # type: ignore
+                build_sam2_video_predictor,  # type: ignore
+            )
 
             from config import settings
 
-            checkpoint = settings.model_cache_dir / "sam2" / "sam2_hiera_large.pt"
+            checkpoint = (
+                settings.model_cache_dir / "sam2" / "sam2_hiera_large.pt"
+            )
             config = "sam2_hiera_l.yaml"
 
             if not checkpoint.exists():
@@ -168,13 +216,22 @@ class Sam3Tracker:
             return False
 
     def init_video(self, video_path: Path) -> bool:
-        """Initialize video state for tracking."""
+        """Initializes the tracking state for a specific video file.
+
+        Args:
+            video_path: Path to the video file to be processed.
+
+        Returns:
+            True if the inference state was successfully initialized.
+        """
         if not self.initialize():
             return False
 
         try:
             if self.predictor:
-                self.inference_state = self.predictor.init_state(str(video_path))
+                self.inference_state = self.predictor.init_state(
+                    str(video_path)
+                )
                 logger.info(f"SAM3 initialized video: {video_path.name}")
                 return True
             return False
@@ -182,8 +239,16 @@ class Sam3Tracker:
             logger.error(f"SAM3 video init failed: {e}")
             return False
 
-    def add_concept_prompt(self, text: str, frame_idx: int = 0) -> List[int]:
-        """Add a text concept prompt for tracking."""
+    def add_concept_prompt(self, text: str, frame_idx: int = 0) -> list[int]:
+        """Adds a concept-based prompt to track an object starting at a specific frame.
+
+        Args:
+            text: Description of the object or concept to track.
+            frame_idx: The video frame index where the prompt should be applied.
+
+        Returns:
+            A list of object IDs assigned to this concept tracking task.
+        """
         if self.predictor is None or self.inference_state is None:
             logger.warning("SAM3 not initialized")
             return []
@@ -192,21 +257,36 @@ class Sam3Tracker:
             _, obj_ids, _ = self.predictor.add_new_prompt(
                 self.inference_state, frame_idx=frame_idx, text=text
             )
-            logger.info(f"SAM3 added concept '{text}': {len(obj_ids)} instances")
-            return obj_ids.tolist() if hasattr(obj_ids, "tolist") else list(obj_ids)
+            logger.info(
+                f"SAM3 added concept '{text}': {len(obj_ids)} instances"
+            )
+            return (
+                obj_ids.tolist()
+                if hasattr(obj_ids, "tolist")
+                else list(obj_ids)
+            )
         except Exception as e:
             logger.error(f"SAM3 prompt failed: {e}")
             return []
 
-    def propagate(self) -> Iterator[Dict[str, Any]]:
-        """Propagate masks through video frames."""
+    def propagate(self) -> Iterator[dict[str, Any]]:
+        """Propagates the initialized masks and prompts through the entire video.
+
+        Yields:
+            A dictionary for each frame containing:
+                - 'frame_idx': The index of the frame.
+                - 'object_ids': List of IDs active in this frame.
+                - 'masks': Boolean mask array for the objects.
+        """
         if self.predictor is None or self.inference_state is None:
             return
 
         try:
-            for frame_idx, obj_ids, mask_logits in self.predictor.propagate_in_video(
-                self.inference_state
-            ):
+            for (
+                frame_idx,
+                obj_ids,
+                mask_logits,
+            ) in self.predictor.propagate_in_video(self.inference_state):
                 masks = (mask_logits > 0.0).cpu().numpy()
                 yield {
                     "frame_idx": frame_idx,
@@ -219,9 +299,19 @@ class Sam3Tracker:
             logger.error(f"SAM3 propagation error: {e}")
 
     def process_video_concepts(
-        self, video_path: Path, prompts: List[str]
-    ) -> Iterator[Dict[str, Any]]:
-        """Full pipeline: init video, add prompts, propagate."""
+        self, video_path: Path, prompts: list[str]
+    ) -> Iterator[dict[str, Any]]:
+        """Orchestrates the full concept tracking pipeline for a video.
+
+        Handles initialization, prompt addition, and mask propagation in one flow.
+
+        Args:
+            video_path: Path to the video file.
+            prompts: A list of text descriptions to track throughout the video.
+
+        Yields:
+            Tracking result dictionaries for each frame in the video.
+        """
         if not self.init_video(video_path):
             return
 
@@ -232,7 +322,7 @@ class Sam3Tracker:
         self.cleanup()
 
     def cleanup(self) -> None:
-        """Release resources."""
+        """Releases tracking state and clears GPU memory."""
         self.inference_state = None
         import torch
 
@@ -242,7 +332,10 @@ class Sam3Tracker:
         logger.info("SAM3 resources released")
 
     def reset(self) -> None:
-        """Full reset including model."""
+        """Resets the entire tracker state and clears the model predictor.
+
+        Use this to reclaim all VRAM and clear the internal state of the model.
+        """
         self.cleanup()
         self.predictor = None
         self._initialized = False

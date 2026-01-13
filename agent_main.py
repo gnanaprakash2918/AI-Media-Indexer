@@ -14,13 +14,17 @@ from core.orchestration.orchestrator import get_orchestrator
 
 
 async def main_async() -> None:
+    """Async entry point for the agent CLI."""
     parser = argparse.ArgumentParser(
         description="AI Media Agent (Antigravity)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("video_path", type=str, help="Path to input video")
     parser.add_argument(
-        "--task", type=str, default="analyze", help="Natural language task description"
+        "--task",
+        type=str,
+        default="analyze",
+        help="Natural language task description",
     )
 
     args = parser.parse_args()
@@ -45,26 +49,30 @@ async def main_async() -> None:
         # But for now, we pass the task directly.
         # Construct a query that includes video context if possible, or just the task.
         query = f"For video '{video.name}': {args.task}"
-        
+
         print(f"Executing Query: {query}")
         result = await orchestrator.execute(query)
 
         print()
         print("--- Result ---")
         if "results" in result:
-             print(f"Found {len(result['results'])} matches")
-             for res in result['results']:
-                 print(f"- {res}")
+            print(f"Found {len(result['results'])} matches")
+            for res in result["results"]:
+                print(f"- {res}")
         else:
-             print(result)
+            print(result)
 
     except Exception as e:
         print(f"Error executing agent: {e}")
         import traceback
+
         traceback.print_exc()
 
+
 def main():
+    """Sync wrapper for the async main entry point."""
     import asyncio
+
     asyncio.run(main_async())
 
 

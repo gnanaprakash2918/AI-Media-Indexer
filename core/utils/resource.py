@@ -95,7 +95,9 @@ class ResourceManager:
 
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            temp = pynvml.nvmlDeviceGetTemperature(
+                handle, pynvml.NVML_TEMPERATURE_GPU
+            )
             pynvml.nvmlShutdown()
             return float(temp)
         except ImportError:

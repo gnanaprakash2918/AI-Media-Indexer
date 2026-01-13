@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codebase Cleanup Script
+"""Codebase Cleanup Script.
 
 Safely removes deprecated/obsolete files from the AI-Media-Indexer project.
 Run with --dry-run to preview changes before execution.
@@ -95,14 +95,19 @@ def remove_path(path: Path, dry_run: bool = True) -> bool:
 
 
 def main():
+    """CLI entry point for cleanup script."""
     parser = argparse.ArgumentParser(
         description="Clean up obsolete files from the codebase"
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
-        "--dry-run", action="store_true", help="Preview changes without deleting"
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without deleting",
     )
-    group.add_argument("--execute", action="store_true", help="Actually delete files")
+    group.add_argument(
+        "--execute", action="store_true", help="Actually delete files"
+    )
     parser.add_argument(
         "--include-cache",
         action="store_true",

@@ -1,5 +1,8 @@
+"""API routes for search operations."""
+
 import time
 from collections import defaultdict
+from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,21 +19,43 @@ try:
     from core.retrieval.agentic_search import SearchAgent
 except ImportError:
     SearchAgent = None
-    logger.warning("SearchAgent could not be imported. Agentic search will be disabled.")
+    logger.warning(
+        "SearchAgent could not be imported. Agentic search will be disabled."
+    )
 
 router = APIRouter()
 
+
 @router.get("/search/hybrid")
 async def hybrid_search(
-    q: str = Query(..., description="Search query"),
-    video_path: str | None = Query(None, description="Optional video filter"),
-    limit: int = Query(20, description="Maximum results"),
-    use_reranking: bool = Query(
-        True, description="Use LLM re-ranking for higher accuracy"
-    ),
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
-    """SOTA hybrid search with reasoning and identity resolution."""
+    q: Annotated[str, Query(..., description="Search query")],
+    limit: Annotated[int, Query(20, description="Maximum results")],
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    video_path: Annotated[
+        str | None, Query(None, description="Optional video filter")
+    ] = None,
+    use_reranking: Annotated[
+        bool, Query(True, description="Use LLM re-ranking for higher accuracy")
+    ] = True,
+) -> dict:
+    """Performs a SOTA hybrid search with identity resolution and re-ranking.
+
+    Combines vector similarity, keyword matching, and LLM-based verification
+    to find the most relevant video segments.
+
+    Args:
+        q: The natural language search query.
+        video_path: Optional path to filter results by a specific video.
+        limit: Maximum number of results to return.
+        use_reranking: Whether to enable the second-stage LLM verification.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary containing ranked results, parsed query info, and stats.
+
+    Raises:
+        HTTPException: If the pipeline or database is uninitialized.
+    """
     start_time = time.perf_counter()
     logger.info(f"[Search] Hybrid search: '{q}' (reranking: {use_reranking})")
 
@@ -53,7 +78,9 @@ async def hybrid_search(
             for r in result.get("results", []):
                 transformed = {
                     **r,
-                    "match_reason": r.get("llm_reasoning", r.get("reasoning", "")),
+                    "match_reason": r.get(
+                        "llm_reasoning", r.get("reasoning", "")
+                    ),
                     "agent_thought": r.get("llm_reasoning", ""),
                     "matched_constraints": [
                         c.get("constraint", "")
@@ -86,7 +113,9 @@ async def hybrid_search(
             }
         else:
             # Fallback to basic DB search
-            logger.warning("[Search] SearchAgent unavailable, using basic search")
+            logger.warning(
+                "[Search] SearchAgent unavailable, using basic search"
+            )
             results = pipeline.db.search_frames(query=q, limit=limit)
             duration = time.perf_counter() - start_time
             return {
@@ -111,16 +140,26 @@ async def hybrid_search(
                 "error": str(e),
                 "search_type": "error_fallback",
             }
-        except Exception:
-            raise HTTPException(status_code=500, detail=f"Search failed: {e}")
+        except Exception as fallback_err:
+            raise HTTPException(
+                status_code=500, detail=f"Search failed: {e}"
+            ) from fallback_err
 
 
 @router.post("/search/hybrid")
 async def hybrid_search_post(
     request: AdvancedSearchRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
-    """POST version of hybrid search for complex filters."""
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """POST endpoint for hybrid search, supporting complex structured queries.
+
+    Args:
+        request: The search request payload with filters and settings.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary of ranked search results.
+    """
     return await hybrid_search(
         q=request.query,
         video_path=request.video_path,
@@ -133,8 +172,9 @@ async def hybrid_search_post(
 @router.post("/search/advanced")
 async def advanced_search(
     req: AdvancedSearchRequest,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
+    """Executes an advanced search with filtering and reranking."""
     from core.retrieval.engine import get_search_engine
 
     if not pipeline or not pipeline.db:
@@ -159,18 +199,35 @@ async def advanced_search(
 @router.get("/search")
 async def search(
     q: str,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit: int = 20,
-    search_type: str = Query(
-        default="all",
-        description="Type of search: all, dialogue, visual, voice",
-    ),
-    video_path: str | None = Query(
-        default=None,
-        description="Filter results to specific video path",
-    ),
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
-    """Semantic search across audio, visual, and voice with detailed stats."""
+    search_type: Annotated[
+        str,
+        Query(
+            default="all",
+            description="Type of search: all, dialogue, visual, voice",
+        ),
+    ] = "all",
+    video_path: Annotated[
+        str | None,
+        Query(
+            default=None,
+            description="Filter results to specific video path",
+        ),
+    ] = None,
+) -> dict:
+    """Performs a multi-modal semantic search with deduplication.
+
+    Args:
+        q: The search query string.
+        limit: Maximum results to return per modality.
+        search_type: Filter by 'dialogue', 'visual', 'voice', or 'all'.
+        video_path: Optional absolute path filter for a specific video.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A dictionary containing aggregated results and scoring statistics.
+    """
     if not pipeline:
         return {"error": "Pipeline not initialized", "results": [], "stats": {}}
 
@@ -248,7 +305,8 @@ async def search(
             # Deduplication: Skip if within 5 seconds
             if video in seen_timestamps:
                 if any(
-                    abs(ts - existing) < 5.0 for existing in seen_timestamps[video]
+                    abs(ts - existing) < 5.0
+                    for existing in seen_timestamps[video]
                 ):
                     continue
             elif video is not None:
@@ -271,7 +329,9 @@ async def search(
                 hit["thumbnail_url"] = (
                     f"/media/thumbnail?path={safe_path}&time={ts}"
                 )
-                hit["playback_url"] = f"/media?path={safe_path}#t={start_context}"
+                hit["playback_url"] = (
+                    f"/media?path={safe_path}#t={start_context}"
+                )
                 hit["segment_url"] = (
                     f"/media/segment?path={safe_path}&start={start_context:.2f}&end={end_context:.2f}"
                 )
@@ -324,11 +384,15 @@ async def search(
                 hit["thumbnail_url"] = (
                     f"/media/thumbnail?path={safe_path}&time={ts}"
                 )
-                hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                hit["playback_url"] = (
+                    f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                )
 
         final_results = fallback_results
         stats["fallback"] = True
-        stats["message"] = "No exact matches found. Showing recent indexed content."
+        stats["message"] = (
+            "No exact matches found. Showing recent indexed content."
+        )
 
     return {
         "results": final_results,
@@ -339,9 +403,9 @@ async def search(
 @router.get("/search/agentic")
 async def agentic_search(
     q: str,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit: int = 20,
     use_expansion: bool = True,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
 ):
     """FAANG-level search with LLM query expansion and identity resolution."""
     if not pipeline:
@@ -351,10 +415,12 @@ async def agentic_search(
         # Use simple import if reliable, otherwise fallback handled at top level
         if SearchAgent:
             agent = SearchAgent(db=pipeline.db)
-            result = await agent.search(q, limit=limit, use_expansion=use_expansion)
+            result = await agent.search(
+                q, limit=limit, use_expansion=use_expansion
+            )
             return result
         else:
-             raise ImportError("SearchAgent undefined")
+            raise ImportError("SearchAgent undefined")
 
     except Exception as e:
         logger.error(f"Agentic search failed: {e}")
@@ -371,17 +437,21 @@ async def agentic_search(
 @router.get("/search/scenes")
 async def scene_search(
     q: str,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit: int = 20,
     use_expansion: bool = True,
-    video_path: str | None = Query(None, description="Filter to specific video"),
-    pipeline: IngestionPipeline = Depends(get_pipeline),
+    video_path: Annotated[
+        str | None, Query(None, description="Filter to specific video")
+    ] = None,
 ):
     """Production-grade scene-level search for complex queries."""
     if not pipeline:
         return {"error": "Pipeline not initialized", "results": []}
 
     start_time_search = time.perf_counter()
-    logger.info(f"[SceneSearch] Query: '{q[:100]}...' | video_filter: {video_path}")
+    logger.info(
+        f"[SceneSearch] Query: '{q[:100]}...' | video_filter: {video_path}"
+    )
 
     try:
         if SearchAgent:

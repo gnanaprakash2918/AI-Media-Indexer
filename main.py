@@ -109,7 +109,9 @@ def _interactive_resolve(raw_path: str) -> Path:
         path.name, [p.name for p in candidates], n=5, cutoff=0.3
     )
 
-    selection_pool = [parent / m for m in matches] if matches else candidates[:10]
+    selection_pool = (
+        [parent / m for m in matches] if matches else candidates[:10]
+    )
 
     print("\n--- Did you mean one of these? ---")
     for i, candidate in enumerate(selection_pool):

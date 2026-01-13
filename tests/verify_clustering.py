@@ -1,3 +1,5 @@
+"""Verification script for clustering logic."""
+
 import json
 import sys
 import time
@@ -10,6 +12,7 @@ VIDEO_PATH = r"C:\Users\Gnana Prakash M\Downloads\Programs\Video Song ｜ Keladi
 
 
 def wait_for_server():
+    """Wait for API server to come online."""
     print("Waiting for server...")
     for _ in range(30):
         try:
@@ -22,9 +25,11 @@ def wait_for_server():
 
 
 def ingest_video():
+    """Trigger ingestion for test video."""
     print(f"Ingesting: {VIDEO_PATH}")
     res = requests.post(
-        f"{BASE_URL}/ingest", json={"path": VIDEO_PATH, "media_type_hint": "video"}
+        f"{BASE_URL}/ingest",
+        json={"path": VIDEO_PATH, "media_type_hint": "video"},
     )
     if res.status_code != 200:
         print(f"Ingest failed: {res.text}")
@@ -33,6 +38,7 @@ def ingest_video():
 
 
 def wait_for_job(file_path):
+    """Poll for ingestion job completion."""
     print("Waiting for job completion...")
     while True:
         res = requests.get(f"{BASE_URL}/jobs")
@@ -66,6 +72,7 @@ def wait_for_job(file_path):
 
 
 def trigger_clustering():
+    """Trigger face and voice clustering manually."""
     print("Triggering Face Clustering...")
     res = requests.post(f"{BASE_URL}/faces/cluster")
     print("Face Cluster Result:", json.dumps(res.json(), indent=2))
@@ -76,6 +83,7 @@ def trigger_clustering():
 
 
 def get_clusters():
+    """List resulting clusters."""
     print("Fetching Face Clusters...")
     res = requests.get(f"{BASE_URL}/faces/clusters")
     clusters = res.json().get("clusters", [])

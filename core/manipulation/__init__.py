@@ -1,1 +1,1 @@
-"""Video manipulation engine for inpainting and privacy."""
+"""Media manipulation and editing utility modules."""

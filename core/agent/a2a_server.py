@@ -1,3 +1,9 @@
+"""A2A-compliant agent server for Ollama-based media analysis.
+
+This server exposes a REST interface for interacting with the media agent
+using the Agent-to-Agent (A2A) protocol.
+"""
+
 from __future__ import annotations
 
 import os
@@ -17,6 +23,14 @@ logger = get_logger(__name__)
 
 
 def check_ollama_connection(model_name: str) -> None:
+    """Verifies that the Ollama service is reachable and responsive.
+
+    Args:
+        model_name: The name of the model to check.
+
+    Raises:
+        RuntimeError: If Ollama cannot be reached.
+    """
     try:
         ollama.list()
         logger.info("ollama.ok", model=model_name)
@@ -26,6 +40,11 @@ def check_ollama_connection(model_name: str) -> None:
 
 
 def create_app() -> FastAPI:
+    """Creates and configures the A2A server application.
+
+    Returns:
+        A configured FastAPI application instance.
+    """
     base_url = os.getenv("MEDIA_AGENT_BASE_URL", "http://localhost:8000")
     model_name = os.getenv("MEDIA_AGENT_MODEL", "llama3.1")
 
@@ -51,6 +70,7 @@ app = create_app()
 
 @app.middleware("http")
 async def log_routes(request, call_next):
+    """Middleware to log all available routes on the first request."""
     if not getattr(app.state, "_routes_logged", False):
         app.state._routes_logged = True
         for route in app.routes:

@@ -120,6 +120,7 @@ class EntityEnricher:
     """
 
     def __init__(self):
+        """Initializes the entity enricher."""
         self.brave = BraveSearchClient()
         self._cache: dict[str, Any] = {}
         self._pending_approvals: list[dict[str, Any]] = []  # HITL queue
@@ -180,7 +181,9 @@ class EntityEnricher:
         """Get all entities pending HITL approval for external search."""
         return [p for p in self._pending_approvals if p["status"] == "pending"]
 
-    async def process_approved(self, indices: list[int]) -> list[dict[str, Any]]:
+    async def process_approved(
+        self, indices: list[int]
+    ) -> list[dict[str, Any]]:
         """Process approved entities with external search.
 
         Args:
@@ -246,7 +249,11 @@ class EntityEnricher:
                 }
 
         if not self.is_available:
-            return {"possible_matches": [], "confidence": 0.0, "source": "unavailable"}
+            return {
+                "possible_matches": [],
+                "confidence": 0.0,
+                "source": "unavailable",
+            }
 
         # Build search query from context
         query_parts = []

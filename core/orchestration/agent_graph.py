@@ -7,13 +7,14 @@ using Semantic Routing (LLM-based decision making).
 import json
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class AgentResponse:
+    """Represents the response from a routed agent."""
+
     agent_name: str = ""
     content: str = ""
     error: str = ""
@@ -45,7 +46,10 @@ User Query: {query}
 class AgentCard:
     """Capability card for an agent."""
 
-    def __init__(self, name: str, description: str, capabilities: list[str] = None):
+    def __init__(
+        self, name: str, description: str, capabilities: list[str] | None = None
+    ):
+        """Initialize the agent card."""
         self.name = name
         self.description = description
         self.capabilities = capabilities or []
@@ -55,9 +59,14 @@ class MultiAgentOrchestrator:
     """Routes queries to appropriate agents using LLM-based semantic routing."""
 
     def __init__(self, llm=None):
+        """Initializes the orchestrator.
+
+        Args:
+            llm: Optional LLM instance.
+        """
         self._llm = llm
         self._llm_loaded = False
-        self.agents: Dict[str, AgentCard] = {}
+        self.agents: dict[str, AgentCard] = {}
         self._register_default_agents()
 
     def _register_default_agents(self):
@@ -67,7 +76,11 @@ class MultiAgentOrchestrator:
             AgentCard(
                 name="search_agent",
                 description="Searches indexed media for specific moments, people, objects, actions. Handles complex queries like 'Prakash bowling at Brunswick'.",
-                capabilities=["semantic_search", "identity_filter", "temporal_search"],
+                capabilities=[
+                    "semantic_search",
+                    "identity_filter",
+                    "temporal_search",
+                ],
             ),
         )
         self.register_agent(
@@ -125,7 +138,10 @@ class MultiAgentOrchestrator:
 
         # Build Agent Descriptions for Prompt
         agents_desc = "\n".join(
-            [f"- {name}: {card.description}" for name, card in self.agents.items()]
+            [
+                f"- {name}: {card.description}"
+                for name, card in self.agents.items()
+            ]
         )
 
         try:
@@ -140,7 +156,9 @@ class MultiAgentOrchestrator:
 
             selected_agent_name = routing_data.get("selected_agent")
             if selected_agent_name not in self.agents:
-                logger.warning(f"Router selected unknown agent: {selected_agent_name}")
+                logger.warning(
+                    f"Router selected unknown agent: {selected_agent_name}"
+                )
                 return self._fallback_route(user_query)
 
             logger.info(
@@ -162,7 +180,14 @@ class MultiAgentOrchestrator:
         # Audio queries
         if any(
             w in query_lower
-            for w in ["said", "say", "transcript", "speech", "subtitle", "dialogue"]
+            for w in [
+                "said",
+                "say",
+                "transcript",
+                "speech",
+                "subtitle",
+                "dialogue",
+            ]
         ):
             return AgentResponse(agent_name="audio_agent", content=user_query)
 
@@ -178,10 +203,15 @@ class MultiAgentOrchestrator:
 
 
 # Singleton
-_orchestrator: Optional[MultiAgentOrchestrator] = None
+_orchestrator: MultiAgentOrchestrator | None = None
 
 
 def get_orchestrator() -> MultiAgentOrchestrator:
+    """Retrieves the singleton instance of the MultiAgentOrchestrator.
+
+    Returns:
+        The initialized MultiAgentOrchestrator instance.
+    """
     global _orchestrator
     if _orchestrator is None:
         _orchestrator = MultiAgentOrchestrator()

@@ -32,8 +32,12 @@ from core.storage.db import VectorDB
 from core.utils.logger import log
 
 # FORCE UTF-8 for stdout/stderr to prevent Windows charmap crashes
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+sys.stdout = io.TextIOWrapper(
+    sys.stdout.buffer, encoding="utf-8", errors="replace"
+)
+sys.stderr = io.TextIOWrapper(
+    sys.stderr.buffer, encoding="utf-8", errors="replace"
+)
 
 # Initialize FastMCP server
 mcp = FastMCP("MediaIndexer")
@@ -43,7 +47,7 @@ mcp = FastMCP("MediaIndexer")
 _vector_db: VectorDB | None = None
 _search_engine: SearchEngine | None = None
 _pipeline: IngestionPipeline | None = None
-_agentic_search: "SearchAgent | None" = None
+_agentic_search: SearchAgent | None = None
 
 
 def _get_vector_db() -> VectorDB:
@@ -81,7 +85,7 @@ def _get_pipeline() -> IngestionPipeline:
     return _pipeline
 
 
-def _get_agentic_search() -> "SearchAgent":
+def _get_agentic_search() -> SearchAgent:
     """Return a shared SearchAgent instance for FAANG-level search."""
     global _agentic_search
     if _agentic_search is None:
@@ -337,7 +341,7 @@ async def ingest_media(
     try:
         await pipeline.process_video(path, media_type_hint=media_type)
         msg = "Ingestion complete."
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         msg = f"Ingestion failed: {exc}"
 
     return IngestResponse(

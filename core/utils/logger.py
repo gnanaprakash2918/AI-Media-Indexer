@@ -181,6 +181,11 @@ class LokiSink:
     """Loguru sink for Grafana Loki."""
 
     def __init__(self, url: str) -> None:
+        """Initializes the Loki sink.
+
+        Args:
+            url: The HTTP URL of the Loki push endpoint.
+        """
         self.url = url
         self.session = None
 
@@ -204,7 +209,9 @@ class LokiSink:
                         "stream": {
                             "app": "ai-media-indexer",
                             "level": record_level,
-                            "component": record["extra"].get("component", "unknown"),
+                            "component": record["extra"].get(
+                                "component", "unknown"
+                            ),
                         },
                         "values": [[timestamp_ns, text]],
                     }

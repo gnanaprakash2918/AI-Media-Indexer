@@ -86,15 +86,21 @@ class LibraryScanner:
                 raise ValueError("Provided path is empty or whitespace.")
 
             if not directory_path.exists():
-                raise FileNotFoundError(f"Path does not exist: {directory_path}")
+                raise FileNotFoundError(
+                    f"Path does not exist: {directory_path}"
+                )
 
             if not directory_path.is_dir():
-                raise NotADirectoryError(f"Path is not a directory: {directory_path}")
+                raise NotADirectoryError(
+                    f"Path is not a directory: {directory_path}"
+                )
 
             if excluded_dirs is None:
                 excluded_dirs = self.DEFAULT_EXCLUDES
 
-            excludes = set(excluded_dirs) if excluded_dirs else self.DEFAULT_EXCLUDES
+            excludes = (
+                set(excluded_dirs) if excluded_dirs else self.DEFAULT_EXCLUDES
+            )
 
             # Walk through the given directory recursively.
             for dirpath, dir_names, filenames in os.walk(directory_path):
@@ -109,7 +115,9 @@ class LibraryScanner:
                         continue
 
                     full_file_path = Path(dirpath) / filename
-                    file_media_type = self._get_media_type(full_file_path.suffix)
+                    file_media_type = self._get_media_type(
+                        full_file_path.suffix
+                    )
 
                     if file_media_type:
                         stat = full_file_path.stat()
@@ -132,11 +140,15 @@ class LibraryScanner:
             IsADirectoryError,
             OSError,
         ) as exc:
-            log(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
+            log(
+                f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}"
+            )
             return
 
         except Exception as exc:  # pylint: disable=broad-except
-            log(f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}")
+            log(
+                f"[ERROR:{type(exc).__name__}] Cannot read '{directory_path}': {exc}"
+            )
             return
 
 
@@ -145,4 +157,6 @@ if __name__ == "__main__":
     file_path = ""
 
     for media_asset in scanner.scan(file_path):
-        log(f"[{media_asset.media_type.value.upper()}] found: {media_asset.file_path}")
+        log(
+            f"[{media_asset.media_type.value.upper()}] found: {media_asset.file_path}"
+        )

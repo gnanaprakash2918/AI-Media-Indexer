@@ -1,3 +1,5 @@
+"""Natural language query parsing for structured intent extraction."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -7,6 +9,8 @@ from core.utils.logger import log
 
 
 class SearchIntent(BaseModel):
+    """Represents the structured intent extracted from a search query."""
+
     identity_names: list[str] = Field(default_factory=list)
     visual_description: str = ""
     temporal_clues: str = ""
@@ -29,16 +33,25 @@ Return ONLY valid JSON matching this schema:
 
 
 class QueryParser:
+    """Parses natural language queries into structured `SearchIntent` objects."""
+
     def __init__(self, client: TextLLMClient | None = None):
+        """Initializes the query parser.
+
+        Args:
+            client: Optional LLM client for intent extraction.
+        """
         self._client = client
 
     @property
     def client(self) -> TextLLMClient:
+        """Lazy load the text LLM client."""
         if self._client is None:
             self._client = get_text_client()
         return self._client
 
     def parse(self, query: str) -> SearchIntent:
+        """Parse a raw query into structured intent."""
         if not query.strip():
             return SearchIntent()
 

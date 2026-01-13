@@ -147,7 +147,9 @@ class LLMFactory:
         provider = provider.lower()
 
         if provider not in ("gemini", "ollama"):
-            print(f"Warning: Unknown provider '{provider}', falling back to ollama")
+            print(
+                f"Warning: Unknown provider '{provider}', falling back to ollama"
+            )
             provider = "ollama"
 
         return LLMFactory.create_llm(

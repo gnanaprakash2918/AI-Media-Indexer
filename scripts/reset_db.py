@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Database Reset Script
+"""Database Reset Script.
 
 Safely resets the application databases (Qdrant, SQLite jobs.db).
 Replaces the dangerous nuke.bat with a documented, safe procedure.
@@ -43,7 +43,7 @@ def reset_qdrant() -> bool:
         collections = [
             db.MEDIA_COLLECTION,
             db.FACES_COLLECTION,
-            db.VOICES_COLLECTION,
+            db.VOICE_COLLECTION,
         ]
 
         for coll in collections:
@@ -80,14 +80,21 @@ def reset_cache() -> bool:
     return True
 
 
-def main():
+def main() -> None:
+    """Main execution entry point for the database reset utility.
+
+    Parses command-line arguments and coordinates the deletion of
+    requested databases and cache directories.
+    """
     parser = argparse.ArgumentParser(description="Reset application databases")
     parser.add_argument(
         "--confirm",
         action="store_true",
         help="Reset all databases (requires confirmation)",
     )
-    parser.add_argument("--jobs", action="store_true", help="Reset only jobs.db")
+    parser.add_argument(
+        "--jobs", action="store_true", help="Reset only jobs.db"
+    )
     parser.add_argument(
         "--qdrant", action="store_true", help="Reset only Qdrant collections"
     )

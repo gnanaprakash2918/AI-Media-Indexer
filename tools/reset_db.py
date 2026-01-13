@@ -1,14 +1,17 @@
+"""Script to reset the Qdrant database."""
+
 import os
 import sys
 
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from config import settings
-from core.storage.db import VectorDB
+from config import settings  # noqa: E402
+from core.storage.db import VectorDB  # noqa: E402
 
 
 def reset():
+    """Reset the vector database by deleting all collections."""
     print(f"Connecting to Qdrant ({settings.qdrant_backend})...")
     try:
         db = VectorDB()

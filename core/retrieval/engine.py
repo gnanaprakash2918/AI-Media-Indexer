@@ -1,7 +1,14 @@
+"""Legacy Search Engine for video segment retrieval and calibration.
+
+Provides vector search matching, identity filtering, and optional
+VLM-based re-ranking for precise segment identification.
+"""
+
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from core.retrieval.calibration import (
     combine_scores,
@@ -14,9 +21,16 @@ from core.schemas import MatchReason, SearchResultDetail
 from core.storage.identity_graph import identity_graph
 from core.utils.logger import log
 
+if TYPE_CHECKING:
+    from core.storage.db import VectorDB
+
 
 @dataclass
 class SearchCandidate:
+    """Represents a potential search match before result calibration."""
+
+    """Represents a potential search match before result calibration."""
+
     video_path: str
     start_time: float
     end_time: float
@@ -25,13 +39,28 @@ class SearchCandidate:
 
 
 class SearchEngine:
-    def __init__(self, db=None):
+    """Orchestrates video searching across vector and identity indexes.
+
+    Handles query parsing, multi-stage retrieval, and result calibration.
+    """
+
+    def __init__(self, db: VectorDB | None = None) -> None:
+        """Initializes the search engine.
+
+        Args:
+            db: Optional vector database interface.
+        """
         self._db = db
         self._parser = QueryParser()
         self._reranker = VLMReranker()
 
     @property
-    def db(self):
+    def db(self) -> VectorDB:
+        """Lazy-loaded vector database interface.
+
+        Returns:
+            The initialized VectorDB instance.
+        """
         if self._db is None:
             from core.storage.db import VectorDB
 
@@ -44,6 +73,16 @@ class SearchEngine:
         use_rerank: bool = False,
         limit: int = 20,
     ) -> list[SearchResultDetail]:
+        """Performs a search for video segments matching the query.
+
+        Args:
+            query: The natural language search query.
+            use_rerank: Whether to use VLM-based re-ranking.
+            limit: Maximum number of results to return.
+
+        Returns:
+            A list of SearchResultDetail objects.
+        """
         intent = self._parser.parse(query)
         log(f"Parsed intent: {intent}")
 
@@ -61,6 +100,14 @@ class SearchEngine:
         return self._candidates_to_results(candidates, intent, identity_matched)
 
     def _get_identity_filter(self, names: list[str]) -> list[str] | None:
+        """Resolves identity names to a list of video IDs for filtering.
+
+        Args:
+            names: A list of person names to filter by.
+
+        Returns:
+            A list of video paths if identities match, otherwise None.
+        """
         if not names:
             return None
 
@@ -68,7 +115,9 @@ class SearchEngine:
         for name in names:
             identity = identity_graph.get_identity_by_name(name)
             if identity:
-                tracks = identity_graph.get_face_tracks_for_identity(identity.id)
+                tracks = identity_graph.get_face_tracks_for_identity(
+                    identity.id
+                )
                 for track in tracks:
                     video_ids.add(track.media_id)
 
@@ -85,6 +134,16 @@ class SearchEngine:
         video_filter: list[str] | None,
         limit: int,
     ) -> list[SearchCandidate]:
+        """Executes the vector-based search stage.
+
+        Args:
+            intent: The parsed search intent.
+            video_filter: Optional list of video IDs to restrict the search.
+            limit: Maximum number of candidates to retrieve.
+
+        Returns:
+            A list of SearchCandidate objects.
+        """
         search_text = intent.visual_description
         if intent.temporal_clues:
             search_text += f" {intent.temporal_clues}"
@@ -99,7 +158,7 @@ class SearchEngine:
             results = self.db.search_frames_hybrid(
                 query=search_text,
                 limit=limit,
-                video_paths=video_filter,
+                video_paths=video_filter[0] if video_filter else None,
             )
         except Exception as e:
             log(f"Vector search error: {e}")
@@ -114,7 +173,9 @@ class SearchEngine:
                 payload = getattr(r, "payload", {})
                 score = getattr(r, "score", 0.5)
 
-            video_path = payload.get("video_path", payload.get("media_path", ""))
+            video_path = payload.get(
+                "video_path", payload.get("media_path", "")
+            )
             timestamp = payload.get("timestamp", 0.0)
 
             candidates.append(
@@ -130,6 +191,14 @@ class SearchEngine:
         return candidates
 
     def _generate_video_id(self, path: str) -> str:
+        """Generates a stable short ID for a video path.
+
+        Args:
+            path: The file path of the video.
+
+        Returns:
+            A truncated MD5 hash string.
+        """
         return hashlib.md5(path.encode()).hexdigest()[:12]
 
     def _candidates_to_results(
@@ -138,6 +207,16 @@ class SearchEngine:
         intent: SearchIntent,
         identity_matched: bool,
     ) -> list[SearchResultDetail]:
+        """Converts raw search candidates into finalized result details.
+
+        Args:
+            candidates: List of search candidates.
+            intent: The parsed search intent.
+            identity_matched: Whether an identity was found for the query.
+
+        Returns:
+            A list of calibrated SearchResultDetail objects.
+        """
         results = []
         for c in candidates:
             reasons = []
@@ -157,7 +236,9 @@ class SearchEngine:
                     end_time=c.end_time,
                     score=normalized_score,
                     match_reasons=reasons,
-                    thumbnail_url=generate_thumbnail_url(c.video_path, c.start_time),
+                    thumbnail_url=generate_thumbnail_url(
+                        c.video_path, c.start_time
+                    ),
                     dense_context=c.payload.get("action", ""),
                     matched_identities=intent.identity_names,
                 )
@@ -171,6 +252,16 @@ class SearchEngine:
         intent: SearchIntent,
         identity_matched: bool,
     ) -> list[SearchResultDetail]:
+        """Converts re-ranked results into finalized result details.
+
+        Args:
+            ranked: List of VLM-re-ranked results.
+            intent: The parsed search intent.
+            identity_matched: Whether an identity was found for the query.
+
+        Returns:
+            A list of calibrated SearchResultDetail objects.
+        """
         results = []
         for r in ranked:
             reasons = []
@@ -203,5 +294,13 @@ class SearchEngine:
         return results
 
 
-def get_search_engine(db=None) -> SearchEngine:
+def get_search_engine(db: VectorDB | None = None) -> SearchEngine:
+    """Retrieves an initialized SearchEngine instance.
+
+    Args:
+        db: Optional vector database interface.
+
+    Returns:
+        The SearchEngine instance.
+    """
     return SearchEngine(db=db)

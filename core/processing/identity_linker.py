@@ -9,22 +9,24 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class IdentitySuggestion:
+    """Suggestion for merging or matching identities."""
+
     type: str  # "merge_face_voice", "merge_face_face", "tmdb_match"
     source: str
     target: str
     reason: str
     confidence: float
-    source_id: Optional[int] = None
-    target_id: Optional[int] = None
+    source_id: int | None = None
+    target_id: int | None = None
 
     def to_dict(self) -> dict:
+        """Converts the suggestion to a dictionary format."""
         return {
             "type": self.type,
             "source": self.source,
@@ -39,7 +41,15 @@ class IdentitySuggestion:
 class IdentityLinker:
     """Links Face, Voice, and TMDB Cast identities through temporal analysis."""
 
-    def __init__(self, overlap_threshold: float = 0.8, fuzzy_threshold: float = 0.75):
+    def __init__(
+        self, overlap_threshold: float = 0.8, fuzzy_threshold: float = 0.75
+    ):
+        """Initializes the IdentityLinker.
+
+        Args:
+            overlap_threshold: Minimum temporal overlap ratio for suggesting links.
+            fuzzy_threshold: Minimum name similarity for suggesting links.
+        """
         self.overlap_threshold = overlap_threshold
         self.fuzzy_threshold = fuzzy_threshold
 
@@ -101,7 +111,9 @@ class IdentityLinker:
                 continue
 
             face_ranges = [
-                (t - 1.0, t + 1.0) for t in face_times if isinstance(t, (int, float))
+                (t - 1.0, t + 1.0)
+                for t in face_times
+                if isinstance(t, (int, float))
             ]
 
             for voice in voice_clusters:
@@ -121,7 +133,9 @@ class IdentityLinker:
                     elif isinstance(segment, (int, float)):
                         voice_ranges.append((segment - 1.0, segment + 1.0))
 
-                overlap = self.calculate_temporal_overlap(face_ranges, voice_ranges)
+                overlap = self.calculate_temporal_overlap(
+                    face_ranges, voice_ranges
+                )
 
                 if overlap >= self.overlap_threshold:
                     suggestions.append(
@@ -151,7 +165,10 @@ class IdentityLinker:
             cluster_id = cluster.get("cluster_id")
             cluster_name = (cluster.get("name") or "").strip()
 
-            if not cluster_name or cluster_name.lower() in ("unknown", "unnamed"):
+            if not cluster_name or cluster_name.lower() in (
+                "unknown",
+                "unnamed",
+            ):
                 continue
 
             for cast in cast_list:
@@ -198,7 +215,11 @@ class IdentityLinker:
                 if not name2:
                     continue
 
-                pair = tuple(sorted([str(c1.get("cluster_id")), str(c2.get("cluster_id"))]))
+                pair = tuple(
+                    sorted(
+                        [str(c1.get("cluster_id")), str(c2.get("cluster_id"))]
+                    )
+                )
                 if pair in seen:
                     continue
                 seen.add(pair)
@@ -234,17 +255,24 @@ class IdentityLinker:
         all_suggestions.extend(self.suggest_face_merges(face_clusters))
 
         if tmdb_cast:
-            all_suggestions.extend(self.suggest_tmdb_matches(face_clusters, tmdb_cast))
+            all_suggestions.extend(
+                self.suggest_tmdb_matches(face_clusters, tmdb_cast)
+            )
 
         all_suggestions.sort(key=lambda x: -x.confidence)
 
         return [s.to_dict() for s in all_suggestions[:15]]
 
 
-_linker: Optional[IdentityLinker] = None
+_linker: IdentityLinker | None = None
 
 
 def get_identity_linker() -> IdentityLinker:
+    """Retrieves the singleton instance of the IdentityLinker.
+
+    Returns:
+        The initialized IdentityLinker instance.
+    """
     global _linker
     if _linker is None:
         _linker = IdentityLinker()

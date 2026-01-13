@@ -49,7 +49,9 @@ class DynamicEntity(BaseModel):
         "[{relation: 'wears', target: 'blue shirt'}, "
         "{relation: 'driving', target: 'red ferrari'}]",
     )
-    confidence: float = Field(default=1.0, description="Detection confidence 0.0-1.0")
+    confidence: float = Field(
+        default=1.0, description="Detection confidence 0.0-1.0"
+    )
     temporal_info: dict[str, Any] = Field(
         default_factory=dict,
         description="Time-related info: {appears_at: 5.2, duration: 3.1, sequence: 'first'}",
@@ -60,9 +62,16 @@ class DynamicEntity(BaseModel):
     )
 
     def to_search_text(self) -> str:
-        """Generate searchable text from this entity."""
+        """Generates a dense searchable text representation of the entity.
+
+        Combines entity type, name, attributes, and relationships into a
+        single string optimized for vector similarity search.
+
+        Returns:
+            A space-separated string of descriptive keywords.
+        """
         parts = [self.entity_type, self.name]
-        for key, val in self.attributes.items():
+        for _key, val in self.attributes.items():
             if val:
                 parts.append(f"{val}")
         for rel in self.relationships:
@@ -126,7 +135,14 @@ class DynamicParsedQuery(BaseModel):
     )
 
     def to_search_text(self) -> str:
-        """Generate dense search text from all query components."""
+        """Aggregates all query components into a single dense search string.
+
+        Combines entity details, scene description, temporal hints, and audio
+        constraints to create a comprehensive query for semantic search.
+
+        Returns:
+            A consolidated search string.
+        """
         parts = []
 
         # All entity search texts
@@ -146,14 +162,29 @@ class DynamicParsedQuery(BaseModel):
         return " ".join(filter(None, parts))
 
     def get_entities_by_type(self, entity_type: str) -> list[DynamicEntity]:
-        """Get all entities of a specific type."""
+        """Filters extracted entities by their dynamic type.
+
+        Args:
+            entity_type: The type string to filter by (e.g., 'person', 'car').
+
+        Returns:
+            A list of matching DynamicEntity objects.
+        """
         return [
-            e for e in self.entities if e.entity_type.lower() == entity_type.lower()
+            e
+            for e in self.entities
+            if e.entity_type.lower() == entity_type.lower()
         ]
 
     def get_person_names(self) -> list[str]:
-        """Get all person names for identity search."""
-        return [e.name for e in self.entities if e.entity_type.lower() == "person"]
+        """Extracts all recognized person names from the entities.
+
+        Returns:
+            A list of names suitable for identity-based filtering.
+        """
+        return [
+            e.name for e in self.entities if e.entity_type.lower() == "person"
+        ]
 
 
 # =============================================================================
@@ -278,10 +309,13 @@ class FrameAnalysis(BaseModel):
     )
 
     def to_search_content(self) -> str:
-        """Generate rich searchable text for embedding.
+        """Generates rich searchable text for vector embedding.
 
-        This creates a dense text representation optimized for
-        semantic search, with priority ordering.
+        Creates a dense text representation optimized for semantic search,
+        with priority weighting (Identity > Action > Entities > Scene).
+
+        Returns:
+            A priority-weighted search string.
         """
         parts: list[str] = []
 
@@ -341,8 +375,12 @@ class PersonAttribute(BaseModel):
     """Attributes of a person in a scene (clothing, accessories)."""
 
     face_id: str = Field(default="", description="Face cluster ID")
-    name: str | None = Field(default=None, description="Resolved name from HITL")
-    clothing_color: str = Field(default="", description="Primary clothing color")
+    name: str | None = Field(
+        default=None, description="Resolved name from HITL"
+    )
+    clothing_color: str = Field(
+        default="", description="Primary clothing color"
+    )
     clothing_type: str = Field(
         default="", description="Clothing type (shirt, saree, etc.)"
     )
@@ -360,9 +398,13 @@ class SceneData(BaseModel):
     """
 
     # Temporal bounds
-    start_time: float = Field(..., description="Scene start timestamp in seconds")
+    start_time: float = Field(
+        ..., description="Scene start timestamp in seconds"
+    )
     end_time: float = Field(..., description="Scene end timestamp in seconds")
-    duration: float = Field(default=0.0, description="Scene duration in seconds")
+    duration: float = Field(
+        default=0.0, description="Scene duration in seconds"
+    )
 
     # Aggregated content from all frames in scene
     visual_summary: str = Field(
@@ -421,7 +463,9 @@ class SceneData(BaseModel):
     cultural_context: str = Field(
         default="", description="Cultural setting if relevant"
     )
-    time_of_day: str = Field(default="", description="Morning/afternoon/evening/night")
+    time_of_day: str = Field(
+        default="", description="Morning/afternoon/evening/night"
+    )
 
     # Source
     media_path: str = Field(default="", description="Path to source video")
@@ -431,7 +475,14 @@ class SceneData(BaseModel):
     )
 
     def to_search_content(self) -> str:
-        """Generate rich searchable text optimized for semantic search."""
+        """Aggregates scene-level data into a single searchable string.
+
+        Combines person attributes, actions, dialogue, and scene context
+        into a dense representation for cross-modal retrieval.
+
+        Returns:
+            A weighted search string for the entire scene.
+        """
         parts: list[str] = []
 
         # 1. IDENTITY (highest weight)
@@ -500,10 +551,14 @@ class SceneData(BaseModel):
             "face_cluster_ids": self.face_cluster_ids,
             "person_names": self.person_names,
             "clothing_colors": [
-                a.clothing_color for a in self.person_attributes if a.clothing_color
+                a.clothing_color
+                for a in self.person_attributes
+                if a.clothing_color
             ],
             "clothing_types": [
-                a.clothing_type for a in self.person_attributes if a.clothing_type
+                a.clothing_type
+                for a in self.person_attributes
+                if a.clothing_type
             ],
             "accessories": [
                 acc for a in self.person_attributes for acc in a.accessories
@@ -531,9 +586,12 @@ class ClothingItem(BaseModel):
         description="Body location (e.g., 'upper body', 'left foot', 'right foot', 'head')",
     )
     item_type: str = Field(
-        default="", description="Type (e.g., 't-shirt', 'shoe', 'spectacles', 'watch')"
+        default="",
+        description="Type (e.g., 't-shirt', 'shoe', 'spectacles', 'watch')",
     )
-    color: str = Field(default="", description="Color (e.g., 'blue', 'red and white')")
+    color: str = Field(
+        default="", description="Color (e.g., 'blue', 'red and white')"
+    )
     brand: str = Field(
         default="",
         description="Brand name if mentioned (e.g., 'Nike', 'John Jacobs', 'Balenciaga')",
@@ -552,7 +610,8 @@ class PersonInQuery(BaseModel):
         description="Person name if known (e.g., 'Prakash', 'a guy', 'everyone')",
     )
     clothing_items: list[ClothingItem] = Field(
-        default_factory=list, description="All clothing/accessories worn by this person"
+        default_factory=list,
+        description="All clothing/accessories worn by this person",
     )
     actions: list[str] = Field(
         default_factory=list,
@@ -570,9 +629,12 @@ class VehicleInQuery(BaseModel):
     vehicle_type: str = Field(
         default="", description="Type (e.g., 'car', 'ferrari', 'lamborghini')"
     )
-    brand: str = Field(default="", description="Brand (e.g., 'Ferrari', 'Lamborghini')")
+    brand: str = Field(
+        default="", description="Brand (e.g., 'Ferrari', 'Lamborghini')"
+    )
     model: str = Field(
-        default="", description="Model if mentioned (e.g., 'Hurricane', 'Model 3')"
+        default="",
+        description="Model if mentioned (e.g., 'Hurricane', 'Model 3')",
     )
     color: str = Field(default="", description="Color (e.g., 'red', 'yellow')")
     actions: list[str] = Field(
@@ -604,7 +666,7 @@ class ParsedQuery(BaseModel):
         default_factory=list,
         description="All people mentioned with their clothing and actions",
     )
-    
+
     # All entities extracted from the query (Dynamic)
     entities: list[DynamicEntity] = Field(
         default_factory=list,
@@ -613,7 +675,8 @@ class ParsedQuery(BaseModel):
 
     # Legacy single-person fields (for backwards compatibility)
     person_name: str | None = Field(
-        default=None, description="Primary person name (use people[] for multiple)"
+        default=None,
+        description="Primary person name (use people[] for multiple)",
     )
     clothing_color: str | None = Field(default=None)
     clothing_type: str | None = Field(default=None)
@@ -641,7 +704,8 @@ class ParsedQuery(BaseModel):
 
     # Objects/Brands
     text_to_find: list[str] = Field(
-        default_factory=list, description="All brand names and visible text to search"
+        default_factory=list,
+        description="All brand names and visible text to search",
     )
     objects: list[str] = Field(
         default_factory=list,
@@ -666,17 +730,22 @@ class ParsedQuery(BaseModel):
     )
 
     def to_search_text(self) -> str:
-        """Generate dense search text from all parsed components.
+        """Aggregates all legacy query components into a single search string.
 
-        Creates a rich text representation that captures all query semantics
-        for vector similarity search.
+        Maintains compatibility with older search methods while capturing
+        complex multi-person and multi-vehicle semantics.
+
+        Returns:
+            A consolidated search string.
         """
         parts = []
 
         # 1. PEOPLE (with all their attributes)
         for person in self.people:
             if person.name:
-                parts.extend([person.name, person.name])  # Double weight for names
+                parts.extend(
+                    [person.name, person.name]
+                )  # Double weight for names
             for item in person.clothing_items:
                 if item.brand:
                     parts.append(item.brand)
@@ -705,7 +774,9 @@ class ParsedQuery(BaseModel):
             if vehicle.model:
                 parts.append(vehicle.model)
             if vehicle.color:
-                parts.append(f"{vehicle.color} {vehicle.vehicle_type or 'vehicle'}")
+                parts.append(
+                    f"{vehicle.color} {vehicle.vehicle_type or 'vehicle'}"
+                )
             elif vehicle.vehicle_type:
                 parts.append(vehicle.vehicle_type)
             parts.extend(vehicle.actions)

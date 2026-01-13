@@ -1,6 +1,9 @@
+"""FastAPI server for AI4Bharat Indic ASR."""
+
 import os
 import shutil
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
@@ -16,17 +19,23 @@ asr_pipeline.load_model()
 
 
 class TranscribeResponse(BaseModel):
+    """Response model for transcription requests."""
+
     segments: list[dict]
     text: str
 
 
 @app.get("/health")
 def health_check():
+    """Health check endpoint."""
     return {"status": "ok", "backend": asr_pipeline._backend}
 
 
 @app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe_audio(file: UploadFile = File(...), language: str = "ta"):
+async def transcribe_audio(
+    file: Annotated[UploadFile, File(...)], language: str = "ta"
+):
+    """Transcribes an uploaded audio file using IndicASR."""
     temp_file = Path(f"/tmp/{file.filename}")
     with temp_file.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)

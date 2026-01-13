@@ -1,3 +1,5 @@
+"""Video scene detection utilities using adaptive thresholding."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +11,8 @@ from core.utils.logger import log
 
 @dataclass
 class SceneInfo:
+    """Contains timing and frame metadata for a detected video scene."""
+
     start_time: float
     end_time: float
     start_frame: int
@@ -18,9 +22,18 @@ class SceneInfo:
 
 
 def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
+    """Detects logical scene boundaries in a video using adaptive thresholding.
+
+    Args:
+        video_path: Path to the input video file.
+
+    Returns:
+        A list of SceneInfo objects, one for each detected scene.
+    """
     try:
         import scenedetect  # type: ignore
-        AdaptiveDetector = scenedetect.AdaptiveDetector
+
+        adaptive_detector_cls = scenedetect.AdaptiveDetector
         detect = scenedetect.detect
     except ImportError:
         log("scenedetect not installed")
@@ -33,7 +46,7 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     try:
         scene_list = detect(
             str(path),
-            AdaptiveDetector(
+            adaptive_detector_cls(
                 adaptive_threshold=settings.scene_detect_threshold,
                 min_scene_len=int(
                     settings.scene_detect_min_length * 30
@@ -69,7 +82,18 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     return scenes
 
 
-def extract_scene_frame(video_path: Path | str, timestamp: float) -> bytes | None:
+def extract_scene_frame(
+    video_path: Path | str, timestamp: float
+) -> bytes | None:
+    """Extracts a single frame from a video at a specific timestamp.
+
+    Args:
+        video_path: Path to the video file.
+        timestamp: The time in seconds to extract the frame from.
+
+    Returns:
+        The JPEG-encoded frame as bytes, or None if extraction fails.
+    """
     import subprocess
 
     path = Path(video_path)

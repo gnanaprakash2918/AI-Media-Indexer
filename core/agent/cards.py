@@ -19,6 +19,8 @@ except ImportError:
 
 @dataclass
 class ToolParameter:
+    """Parameter definition for an agent tool."""
+
     name: str
     type: str
     description: str
@@ -34,6 +36,7 @@ class AgentToolCard:
     parameters: list[ToolParameter] = field(default_factory=list)
 
     def to_json_schema(self) -> dict[str, Any]:
+        """Converts the tool card to a JSON-Schema compatible dictionary."""
         props = {}
         required = []
         for p in self.parameters:
@@ -43,7 +46,11 @@ class AgentToolCard:
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": {"type": "object", "properties": props, "required": required},
+            "parameters": {
+                "type": "object",
+                "properties": props,
+                "required": required,
+            },
         }
 
 
@@ -68,7 +75,9 @@ VISION_AGENT_TOOLS = [
         parameters=[
             ToolParameter("video_path", "string", "Path to video file"),
             ToolParameter(
-                "concept", "string", "Concept to track (e.g., 'red car', 'person')"
+                "concept",
+                "string",
+                "Concept to track (e.g., 'red car', 'person')",
             ),
         ],
     ),
@@ -118,20 +127,34 @@ SEARCH_AGENT_TOOLS = [
                 "Person name to filter by (HITL-assigned)",
                 required=False,
             ),
-            ToolParameter("limit", "integer", "Maximum results", required=False),
+            ToolParameter(
+                "limit", "integer", "Maximum results", required=False
+            ),
         ],
     ),
     AgentToolCard(
         name="search_dialogue",
         description="Search transcripts and spoken dialogue",
         parameters=[
-            ToolParameter("query", "string", "Text to search for in transcripts"),
+            ToolParameter(
+                "query", "string", "Text to search for in transcripts"
+            ),
         ],
     ),
 ]
 
 
-def get_vision_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard":
+def get_vision_agent_card(
+    base_url: str = "http://localhost:8000",
+) -> AgentCard:
+    """Returns the AgentCard for the VisionAgent.
+
+    Args:
+        base_url: The base URL where the agent is reachable.
+
+    Returns:
+        The vision agent card.
+    """
     if not HAS_A2A:
         raise ImportError("a2a package not installed")
     return AgentCard(
@@ -139,7 +162,9 @@ def get_vision_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard
         description="Analyzes video frames for objects, people, actions, and scene context using VLM and SAM3",
         version="1.0.0",
         url=f"{base_url}/a2a/vision",
-        capabilities=AgentCapabilities(streaming=False, push_notifications=False),
+        capabilities=AgentCapabilities(
+            streaming=False, push_notifications=False
+        ),
         default_input_modes=["image/jpeg", "video/mp4"],
         default_output_modes=["application/json"],
         skills=[
@@ -165,7 +190,17 @@ def get_vision_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard
     )
 
 
-def get_audio_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard":
+def get_audio_agent_card(
+    base_url: str = "http://localhost:8000",
+) -> AgentCard:
+    """Returns the AgentCard for the AudioAgent.
+
+    Args:
+        base_url: The base URL where the agent is reachable.
+
+    Returns:
+        The audio agent card.
+    """
     if not HAS_A2A:
         raise ImportError("a2a package not installed")
     return AgentCard(
@@ -173,7 +208,9 @@ def get_audio_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard"
         description="Transcribes audio using AI4Bharat/Whisper and performs speaker diarization",
         version="1.0.0",
         url=f"{base_url}/a2a/audio",
-        capabilities=AgentCapabilities(streaming=True, push_notifications=False),
+        capabilities=AgentCapabilities(
+            streaming=True, push_notifications=False
+        ),
         default_input_modes=["audio/wav", "video/mp4"],
         default_output_modes=["application/json", "text/srt"],
         skills=[
@@ -193,7 +230,17 @@ def get_audio_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard"
     )
 
 
-def get_search_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard":
+def get_search_agent_card(
+    base_url: str = "http://localhost:8000",
+) -> AgentCard:
+    """Returns the AgentCard for the SearchAgent.
+
+    Args:
+        base_url: The base URL where the agent is reachable.
+
+    Returns:
+        The search agent card.
+    """
     if not HAS_A2A:
         raise ImportError("a2a package not installed")
     return AgentCard(
@@ -201,7 +248,9 @@ def get_search_agent_card(base_url: str = "http://localhost:8000") -> "AgentCard
         description="Agentic search with LLM query expansion, identity resolution, and constraint verification",
         version="1.0.0",
         url=f"{base_url}/a2a/search",
-        capabilities=AgentCapabilities(streaming=False, push_notifications=False),
+        capabilities=AgentCapabilities(
+            streaming=False, push_notifications=False
+        ),
         default_input_modes=["application/json"],
         default_output_modes=["application/json"],
         skills=[

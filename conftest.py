@@ -1,3 +1,5 @@
+"""Pytest configuration for root."""
+
 import sys
 from unittest.mock import MagicMock
 
@@ -12,6 +14,6 @@ mock_torch.__version__ = "2.0.0"
 sys.modules["torch"] = mock_torch
 
 # sys.path hack for relative imports if needed
-import os
+import os  # noqa: E402
 
 sys.path.append(os.getcwd())

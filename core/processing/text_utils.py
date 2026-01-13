@@ -44,7 +44,7 @@ def parse_srt(file_path: str | Path) -> list[dict[str, Any]]:
 
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log(f"[ERROR] Failed to read SRT file {path}: {exc}")
         return []
 

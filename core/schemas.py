@@ -31,7 +31,8 @@ class EntityDetail(BaseModel):
         description="Specific name (e.g., 'Idly', 'iPhone 15 Pro', 'Katana', 'Tesla Model 3')",
     )
     category: str = Field(
-        ..., description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle')"
+        ...,
+        description="Category (e.g., 'Food', 'Electronics', 'Weapon', 'Vehicle')",
     )
     visual_details: str | dict | list = Field(
         default="",
@@ -43,12 +44,16 @@ class EntityDetail(BaseModel):
         if isinstance(self.visual_details, str):
             return self.visual_details
         if isinstance(self.visual_details, dict):
-            return ", ".join(f"{k}: {v}" for k, v in self.visual_details.items())
+            return ", ".join(
+                f"{k}: {v}" for k, v in self.visual_details.items()
+            )
         if isinstance(self.visual_details, list):
             parts = []
             for item in self.visual_details:
                 if isinstance(item, dict):
-                    parts.append(", ".join(f"{k}: {v}" for k, v in item.items()))
+                    parts.append(
+                        ", ".join(f"{k}: {v}" for k, v in item.items())
+                    )
                 else:
                     parts.append(str(item))
             return "; ".join(parts)
@@ -59,11 +64,15 @@ class SceneContext(BaseModel):
     """Contextual understanding of the scene."""
 
     location: str = Field(default="", description="Specific location")
-    action_narrative: str = Field(default="", description="Precise action physics")
+    action_narrative: str = Field(
+        default="", description="Precise action physics"
+    )
     cultural_context: str | None = Field(
         default=None, description="Inferred cultural setting"
     )
-    visible_text: list = Field(default_factory=list, description="Readable text/brands")
+    visible_text: list = Field(
+        default_factory=list, description="Readable text/brands"
+    )
 
     def get_text_strings(self) -> list[str]:
         """Extract text strings from visible_text (handles dicts from LLM)."""
@@ -152,7 +161,9 @@ class FrameAnalysis(BaseModel):
         if scene.location:
             parts.append(scene.location)
         parts.extend(
-            scene.get_text_strings() if hasattr(scene, "get_text_strings") else []
+            scene.get_text_strings()
+            if hasattr(scene, "get_text_strings")
+            else []
         )
         if scene.cultural_context:
             parts.append(scene.cultural_context)
@@ -338,6 +349,8 @@ class MediaFile(BaseModel):
 
 
 class MatchReason(str, Enum):
+    """Reason why a result matched the query."""
+
     IDENTITY_FACE = "identity_face"
     IDENTITY_VOICE = "identity_voice"
     SEMANTIC_VISUAL = "semantic_visual"
@@ -346,6 +359,8 @@ class MatchReason(str, Enum):
 
 
 class SearchResultDetail(BaseModel):
+    """Detailed metadata for a search result item."""
+
     video_id: str
     file_path: str
     start_time: float
@@ -354,7 +369,9 @@ class SearchResultDetail(BaseModel):
         ..., ge=0.0, le=1.0, description="Normalized confidence 0.0-1.0"
     )
     match_reasons: list[MatchReason]
-    explanation: str = Field(default="", description="VLM-generated explanation")
+    explanation: str = Field(
+        default="", description="VLM-generated explanation"
+    )
     thumbnail_url: str | None = None
     dense_context: str = ""
     matched_identities: list[str] = Field(default_factory=list)

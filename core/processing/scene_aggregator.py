@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 class GlobalContextManager:
     """Manages global video-level context for long-term understanding."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initializes the global context manager with empty collectors."""
         self.scene_summaries: list[str] = []
         self.key_entities: dict[str, int] = defaultdict(int)
         self.key_people: dict[str, int] = defaultdict(int)
@@ -26,6 +27,11 @@ class GlobalContextManager:
         self.total_duration: float = 0.0
 
     def add_scene(self, scene: dict) -> None:
+        """Aggregates data from a single scene into the global context.
+
+        Args:
+            scene: A dictionary containing scene-level metadata and summaries.
+        """
         summary = scene.get("visual_summary", "")
         if summary:
             self.scene_summaries.append(summary)
@@ -38,7 +44,11 @@ class GlobalContextManager:
             self.key_locations[location] += 1
 
         for entity in scene.get("entities", []):
-            name = entity.get("name", "") if isinstance(entity, dict) else str(entity)
+            name = (
+                entity.get("name", "")
+                if isinstance(entity, dict)
+                else str(entity)
+            )
             if name:
                 self.key_entities[name] += 1
 
@@ -58,12 +68,16 @@ class GlobalContextManager:
             names = ", ".join(n for n, _ in top_people)
             parts.append(f"Featuring: {names}")
 
-        top_locations = sorted(self.key_locations.items(), key=lambda x: -x[1])[:3]
+        top_locations = sorted(self.key_locations.items(), key=lambda x: -x[1])[
+            :3
+        ]
         if top_locations:
-            locs = ", ".join(l for l, _ in top_locations)
+            locs = ", ".join(loc for loc, _ in top_locations)
             parts.append(f"Locations: {locs}")
 
-        top_entities = sorted(self.key_entities.items(), key=lambda x: -x[1])[:5]
+        top_entities = sorted(self.key_entities.items(), key=lambda x: -x[1])[
+            :5
+        ]
         if top_entities:
             ents = ", ".join(e for e, _ in top_entities)
             parts.append(f"Key objects: {ents}")
@@ -83,6 +97,11 @@ class GlobalContextManager:
             return self._rule_based_summary()
 
     def to_payload(self) -> dict:
+        """Converts the global context state to a serializable dictionary.
+
+        Returns:
+            A dictionary of aggregated video stats for indexing.
+        """
         return {
             "global_summary": self._rule_based_summary(),
             "scene_count": len(self.scene_summaries),
@@ -96,7 +115,12 @@ class GlobalContextManager:
 class SceneAggregator:
     """Aggregate frame-level data into scene-level storage units."""
 
-    def __init__(self, min_confidence: float = 0.5):
+    def __init__(self, min_confidence: float = 0.5) -> None:
+        """Initializes the scene aggregator.
+
+        Args:
+            min_confidence: Minimum confidence threshold for entities/faces.
+        """
         self.min_confidence = min_confidence
         self.global_context = GlobalContextManager()
 
@@ -107,6 +131,20 @@ class SceneAggregator:
         end_time: float,
         dialogue_segments: list[dict] | None = None,
     ) -> dict:
+        """Aggregates multiple frame analysis dicts into a single scene record.
+
+        Performs majority-vote location detection, deduplicates actions,
+        and matches dialogue segments to the temporal window.
+
+        Args:
+            frames: List of frame-level analysis results.
+            start_time: Start timestamp of the scene.
+            end_time: End timestamp of the scene.
+            dialogue_segments: Optional list of transcripts to associate.
+
+        Returns:
+            A comprehensive scene dictionary for database insertion.
+        """
         all_actions: list[str] = []
         all_entities: dict[str, dict] = {}
         all_face_ids: set[int] = set()
@@ -158,25 +196,37 @@ class SceneAggregator:
                                         "type": name,
                                         "color": self._extract_color(details),
                                     }
-                        elif category in ("accessory", "accessories", "eyewear"):
+                        elif category in (
+                            "accessory",
+                            "accessories",
+                            "eyewear",
+                        ):
                             name = entity.get("name", "")
                             for fid in face_ids:
                                 all_accessories[fid].add(name)
 
-            location = frame.get("scene_location") or structured.get("scene", {}).get(
-                "location", ""
-            )
+            location = frame.get("scene_location") or structured.get(
+                "scene", {}
+            ).get("location", "")
             if location:
                 location_votes[location] += 1
 
-            cultural = frame.get("scene_cultural") or structured.get("scene", {}).get(
-                "cultural_context", ""
-            )
+            cultural = frame.get("scene_cultural") or structured.get(
+                "scene", {}
+            ).get("cultural_context", "")
             if cultural:
                 cultural_votes[cultural] += 1
 
-        best_location = max(location_votes, key=lambda k: location_votes[k]) if location_votes else ""
-        best_cultural = max(cultural_votes, key=lambda k: cultural_votes[k]) if cultural_votes else ""
+        best_location = (
+            max(location_votes, key=lambda k: location_votes[k])
+            if location_votes
+            else ""
+        )
+        best_cultural = (
+            max(cultural_votes, key=lambda k: cultural_votes[k])
+            if cultural_votes
+            else ""
+        )
 
         person_attributes = []
         for face_id in all_face_ids:
@@ -199,7 +249,6 @@ class SceneAggregator:
         speaker_names: set[str] = set()
         if dialogue_segments:
             for seg in dialogue_segments:
-
                 seg_start = seg.get("start", 0)
                 seg_end = seg.get("end", 0)
                 if seg_end > start_time and seg_start < end_time:
@@ -239,6 +288,11 @@ class SceneAggregator:
         return scene_data
 
     def get_global_context(self) -> dict:
+        """Retrieves the aggregated video-level context.
+
+        Returns:
+            The global context payload dictionary.
+        """
         return self.global_context.to_payload()
 
     def _extract_color(self, text: str) -> str:
@@ -321,5 +375,18 @@ def aggregate_frames_to_scene(
     end_time: float,
     dialogue_segments: list[dict] | None = None,
 ) -> dict:
+    """Convenience functional wrapper for SceneAggregator.
+
+    Args:
+        frames: List of frames to aggregate.
+        start_time: Start of the scene window.
+        end_time: End of the scene window.
+        dialogue_segments: Optional audio segments.
+
+    Returns:
+        The aggregated scene dictionary.
+    """
     aggregator = SceneAggregator()
-    return aggregator.aggregate_frames(frames, start_time, end_time, dialogue_segments)
+    return aggregator.aggregate_frames(
+        frames, start_time, end_time, dialogue_segments
+    )

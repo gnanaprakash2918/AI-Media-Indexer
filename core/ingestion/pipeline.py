@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import gc
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import torch
 from qdrant_client.http import models
@@ -47,7 +48,15 @@ class IngestionPipeline:
         frame_interval_seconds: float = settings.frame_interval,
         tmdb_api_key: str | None = settings.tmdb_api_key,
     ) -> None:
-        """Initialize the pipeline and its sub-components."""
+        """Initializes the ingestion pipeline and its sub-components.
+
+        Args:
+            qdrant_backend: The storage backend ('memory' or 'docker').
+            qdrant_host: Qdrant host address for docker backend.
+            qdrant_port: Qdrant port for docker backend.
+            frame_interval_seconds: Interval between sampled frames in seconds.
+            tmdb_api_key: Optional API key for TMDB movie metadata.
+        """
         self.prober = MediaProber()
         self.extractor = FrameExtractor()
         self.db = VectorDB(
@@ -72,7 +81,9 @@ class IngestionPipeline:
         self._face_clusters: dict[int, list[float]] = {}
 
         # Deep Video Understanding (SAM 3)
-        self.sam3_tracker = Sam3Tracker() if settings.enable_sam3_tracking else None
+        self.sam3_tracker = (
+            Sam3Tracker() if settings.enable_sam3_tracking else None
+        )
         self.frame_sampler = FrameSampler(every_n=5)
 
     def _cleanup_memory(self, context: str = "") -> None:
@@ -103,7 +114,24 @@ class IngestionPipeline:
         end_time: float | None = None,
         job_id: str | None = None,
         content_type_hint: str = "auto",
-    ):
+    ) -> str:
+        """Orchestrates the full ingestion of a video file.
+
+        Executes audio transcription, voice diarization, visual frame analysis,
+        and scene-level summarization. Supports resume from crash if job_id
+        is provided.
+
+        Args:
+            video_path: Path to the media file to ingest.
+            media_type_hint: Optional hint ('movie', 'episode', etc).
+            start_time: Optional start timestamp for clipped ingestion.
+            end_time: Optional end timestamp for clipped ingestion.
+            job_id: Optional existing job ID for resuming after a crash.
+            content_type_hint: Optional hint for processing ('song', etc).
+
+        Returns:
+            The job ID associated with this ingestion task.
+        """
         resume = False
         if job_id:
             resume = True
@@ -207,15 +235,17 @@ class IngestionPipeline:
             )
             logger.debug("Starting frame processing")
             await retry(
-                lambda: self._process_frames(path, job_id, total_duration=duration)
+                lambda: self._process_frames(
+                    path, job_id, total_duration=duration
+                )
             )
 
             logger.debug("Frame processing complete - cleaning memory")
             self._cleanup_memory("frames_complete")
 
-            if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(
+            if progress_tracker.is_cancelled(
                 job_id
-            ):
+            ) or progress_tracker.is_paused(job_id):
                 return job_id
 
             # Dense Scene Captioning (VLM on detected scene boundaries)
@@ -229,7 +259,10 @@ class IngestionPipeline:
 
             # Post-Processing Phase
             progress_tracker.update(
-                job_id, 95.0, stage="post_processing", message="Enriching metadata"
+                job_id,
+                95.0,
+                stage="post_processing",
+                message="Enriching metadata",
             )
             await self._post_process_video(path, job_id)
 
@@ -243,7 +276,15 @@ class IngestionPipeline:
 
     @observe("audio_processing")
     async def _process_audio(self, path: Path) -> None:
-        """Process audio with auto language detection and AI4Bharat for Indic languages."""
+        """Processes audio to generate transcriptions and language classification.
+
+        Prioritizes sidecar SRT files, then tries to extract embedded
+        subtitles, and finally falls back to AI-based ASR (Whisper or AI4Bharat).
+        Stores the resulting segments in the vector database.
+
+        Args:
+            path: Path to the media file.
+        """
         from core.utils.logger import log
 
         audio_segments: list[dict[str, Any]] = []
@@ -253,7 +294,9 @@ class IngestionPipeline:
         if srt_path.exists():
             audio_segments = parse_srt(srt_path) or []
             if audio_segments:
-                log(f"[Audio] Using existing SRT: {len(audio_segments)} segments")
+                log(
+                    f"[Audio] Using existing SRT: {len(audio_segments)} segments"
+                )
 
         # Check for embedded subtitles
         if not audio_segments:
@@ -261,7 +304,9 @@ class IngestionPipeline:
             try:
                 with AudioTranscriber() as transcriber:
                     temp_srt = path.with_suffix(".embedded.srt")
-                    if transcriber._find_existing_subtitles(path, temp_srt, None, "ta"):
+                    if transcriber._find_existing_subtitles(
+                        path, temp_srt, None, "ta"
+                    ):
                         audio_segments = parse_srt(temp_srt) or []
                         if audio_segments:
                             log(
@@ -305,16 +350,22 @@ class IngestionPipeline:
                 )
                 indic_transcriber = None
                 try:
-                    from core.processing.indic_transcriber import IndicASRPipeline
+                    from core.processing.indic_transcriber import (
+                        IndicASRPipeline,
+                    )
 
                     indic_transcriber = IndicASRPipeline(lang=detected_lang)
-                    log(f"[Audio] IndicASR backend: {indic_transcriber._backend}")
+                    log(
+                        f"[Audio] IndicASR backend: {indic_transcriber._backend}"
+                    )
 
                     # Generate SRT sidecar file alongside the video
                     srt_path = path.with_suffix(".srt")
                     async with GPU_SEMAPHORE:
                         audio_segments = (
-                            indic_transcriber.transcribe(path, output_srt=srt_path)
+                            indic_transcriber.transcribe(
+                                path, output_srt=srt_path
+                            )
                             or []
                         )
 
@@ -324,16 +375,22 @@ class IngestionPipeline:
                         )
                         log(f"[Audio] SRT saved to: {srt_path}")
                     else:
-                        log("[Audio] AI4Bharat returned empty, falling back to Whisper")
+                        log(
+                            "[Audio] AI4Bharat returned empty, falling back to Whisper"
+                        )
                         raise ValueError("AI4Bharat returned no segments")
                 except Exception as e:
                     log(f"[Audio] AI4Bharat failed: {e}")
-                    log(f"[Audio] Falling back to Whisper for '{detected_lang}'")
+                    log(
+                        f"[Audio] Falling back to Whisper for '{detected_lang}'"
+                    )
                     try:
                         with AudioTranscriber() as transcriber:
                             async with GPU_SEMAPHORE:
                                 audio_segments = (
-                                    transcriber.transcribe(path, language=detected_lang)
+                                    transcriber.transcribe(
+                                        path, language=detected_lang
+                                    )
                                     or []
                                 )
                     except Exception as e2:
@@ -349,21 +406,27 @@ class IngestionPipeline:
                     with AudioTranscriber() as transcriber:
                         async with GPU_SEMAPHORE:
                             audio_segments = (
-                                transcriber.transcribe(path, language=detected_lang)
+                                transcriber.transcribe(
+                                    path, language=detected_lang
+                                )
                                 or []
                             )
                 except Exception as e:
                     log(f"[Audio] Whisper failed: {e}")
 
             if audio_segments:
-                log(f"[Audio] Transcription SUCCESS: {len(audio_segments)} segments")
+                log(
+                    f"[Audio] Transcription SUCCESS: {len(audio_segments)} segments"
+                )
             else:
                 log(f"[Audio] WARNING - NO SEGMENTS produced for {path.name}")
                 # NEVER-EMPTY GUARANTEE: Create a placeholder segment to preserve timeline
                 # This ensures search can still find the media by path/timestamp
                 try:
                     probed = self.prober.probe(path)
-                    duration = float(probed.get("format", {}).get("duration", 0.0))
+                    duration = float(
+                        probed.get("format", {}).get("duration", 0.0)
+                    )
                     if duration > 0:
                         audio_segments = [
                             {
@@ -379,13 +442,17 @@ class IngestionPipeline:
                     pass
 
         if audio_segments:
-            prepared = self._prepare_segments_for_db(path=path, chunks=audio_segments)
+            prepared = self._prepare_segments_for_db(
+                path=path, chunks=audio_segments
+            )
             self.db.insert_media_segments(str(path), prepared)
             log(f"[Audio] Stored {len(prepared)} dialogue segments in DB")
 
             try:
                 probed = self.prober.probe(path)
-                total_duration = float(probed.get("format", {}).get("duration", 0.0))
+                total_duration = float(
+                    probed.get("format", {}).get("duration", 0.0)
+                )
                 if total_duration > 0:
                     speech_duration = sum(
                         (s.get("end", 0) - s.get("start", 0))
@@ -409,10 +476,13 @@ class IngestionPipeline:
         self._cleanup_memory()
 
     async def _detect_audio_language(self, path: Path) -> str:
-        """Detect audio language using robust AudioTranscriber.
+        """Detects the audio language using Whisper's language detection.
+
+        Args:
+            path: Path to the media file.
 
         Returns:
-            ISO 639-1 language code (e.g., 'en', 'ta', 'hi')
+            The detected ISO 639-1 language code (e.g., 'en', 'ta', 'hi').
         """
         await resource_manager.throttle_if_needed("compute")
 
@@ -427,12 +497,28 @@ class IngestionPipeline:
             return "en"
 
     def _run_detection(self, path: Path) -> str:
-        """Helper to run detection synchronously."""
+        """Synchronous helper for language detection.
+
+        Args:
+            path: Path to the media file.
+
+        Returns:
+            The detected language code.
+        """
         with AudioTranscriber() as transcriber:
             return transcriber.detect_language(path)
 
     @observe("voice_processing")
     async def _process_voice(self, path: Path) -> None:
+        """Processes voice diarization and identity registries.
+
+        Extracts voice segments, generates embeddings, matches them against
+        the global speaker registry, and stores them in the database. Also
+        extracts audio clips for each identified voice segment.
+
+        Args:
+            path: Path to the media file.
+        """
         await resource_manager.throttle_if_needed("compute")
         self.voice = VoiceProcessor()
 
@@ -454,7 +540,7 @@ class IngestionPipeline:
             # 2. Assign Global ID
             # 3. Persist specific samples for future matching
 
-            for idx, seg in enumerate(voice_segments or []):
+            for _idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
                 global_speaker_id = f"unknown_{uuid.uuid4().hex[:8]}"
 
@@ -462,7 +548,7 @@ class IngestionPipeline:
                 if seg.embedding is not None:
                     match = self.db.match_speaker(seg.embedding, threshold=0.5)
                     if match:
-                        global_speaker_id, score = match
+                        global_speaker_id, _score = match
                         # log(f"Matched speaker {seg.speaker_label} -> {global_speaker_id} ({score:.2f})")
                     else:
                         # New Global Speaker
@@ -482,9 +568,7 @@ class IngestionPipeline:
 
                     # Extract audio clip
                     try:
-                        clip_name = (
-                            f"{safe_stem}_{seg.start_time:.2f}_{seg.end_time:.2f}.mp3"
-                        )
+                        clip_name = f"{safe_stem}_{seg.start_time:.2f}_{seg.end_time:.2f}.mp3"
                         clip_file = thumb_dir / clip_name
 
                         if not clip_file.exists():
@@ -535,7 +619,20 @@ class IngestionPipeline:
     async def _process_frames(
         self, path: Path, job_id: str | None = None, total_duration: float = 0.0
     ) -> None:
-        vision_task_type = "network" if settings.llm_provider == "gemini" else "compute"
+        """Handles visual frame extraction and vision analysis.
+
+        Samples frames at a fixed interval, performs face detection and
+        VLM analysis for each sampled frame, and builds temporal face tracks.
+        Supports resume via checkpointing and manages memory/throttling.
+
+        Args:
+            path: Path to the media file.
+            job_id: Optional ID for progress tracking and checkpointing.
+            total_duration: Total video duration for accurate progress reporting.
+        """
+        vision_task_type = (
+            "network" if settings.llm_provider == "gemini" else "compute"
+        )
         await resource_manager.throttle_if_needed(vision_task_type)
 
         # Use the configured LLM provider from settings
@@ -593,9 +690,9 @@ class IngestionPipeline:
 
         async for frame_path in frame_generator:
             if job_id:
-                if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(
+                if progress_tracker.is_cancelled(
                     job_id
-                ):
+                ) or progress_tracker.is_paused(job_id):
                     break
 
             # RESUME: Skip already processed frames
@@ -606,12 +703,16 @@ class IngestionPipeline:
                 continue
 
             # Calculate actual timestamp including offset
-            timestamp = time_offset + (frame_count * float(self.frame_interval_seconds))
+            timestamp = time_offset + (
+                frame_count * float(self.frame_interval_seconds)
+            )
             try:
                 if self.frame_sampler.should_sample(frame_count):
                     # Get temporal context from XMem-style memory
                     narrative_context = temporal_ctx.get_context_for_vlm()
-                    neighbor_timestamps = [c.timestamp for c in temporal_ctx.sensory]
+                    neighbor_timestamps = [
+                        c.timestamp for c in temporal_ctx.sensory
+                    ]
 
                     new_desc = await self._process_single_frame(
                         video_path=path,
@@ -635,11 +736,15 @@ class IngestionPipeline:
 
                 if job_id:
                     if progress_tracker.is_paused(job_id):
-                        logger.info(f"Job {job_id} paused. Stopping frame loop.")
+                        logger.info(
+                            f"Job {job_id} paused. Stopping frame loop."
+                        )
                         break
 
                     if progress_tracker.is_cancelled(job_id):
-                        logger.warning(f"Job {job_id} cancelled. Aborting pipeline.")
+                        logger.warning(
+                            f"Job {job_id} cancelled. Aborting pipeline."
+                        )
                         return
 
                     # Update Granular Stats
@@ -649,7 +754,9 @@ class IngestionPipeline:
                         try:
                             probe_data = self.prober.probe(path)
                             video_duration = float(
-                                probe_data.get("format", {}).get("duration", 0.0)
+                                probe_data.get("format", {}).get(
+                                    "duration", 0.0
+                                )
                             )
                         except Exception:
                             video_duration = 0.0
@@ -661,7 +768,9 @@ class IngestionPipeline:
                     )
                     current_ts = timestamp
                     current_frame_index = (
-                        int(current_ts / interval) if interval > 0 else frame_count
+                        int(current_ts / interval)
+                        if interval > 0
+                        else frame_count
                     )
 
                     status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
@@ -677,7 +786,10 @@ class IngestionPipeline:
                     if frame_count % 5 == 0:
                         progress = (
                             55.0
-                            + min(40.0, (current_ts / (video_duration or 1)) * 40.0)
+                            + min(
+                                40.0,
+                                (current_ts / (video_duration or 1)) * 40.0,
+                            )
                             if video_duration
                             else 55.0
                         )
@@ -699,12 +811,12 @@ class IngestionPipeline:
 
             frame_count += 1
 
-            # Aggressive memory cleanup every 5 frames to prevent OOM (same approach as audio chunking)
-            # This preserves timestamps and accuracy while managing VRAM on 8GB GPUs
-            CLEANUP_INTERVAL = 5
-            if frame_count % CLEANUP_INTERVAL == 0:
+            # Aggressive memory cleanup every 5 frames to prevent OOM
+            # This preserves timestamps and accuracy while managing VRAM
+            cleanup_interval = 5
+            if frame_count % cleanup_interval == 0:
                 self._cleanup_memory(context=f"frame_{frame_count}")
-                # Extra VRAM flush for video processing (mirrors audio chunking)
+                # Extra VRAM flush for video processing
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
@@ -713,8 +825,8 @@ class IngestionPipeline:
                 await resource_manager.throttle_if_needed("compute")
 
             # CHECKPOINT: Save progress every 50 frames for crash recovery
-            CHECKPOINT_INTERVAL = 50
-            if job_id and frame_count % CHECKPOINT_INTERVAL == 0:
+            checkpoint_interval = 50
+            if job_id and frame_count % checkpoint_interval == 0:
                 from core.ingestion.jobs import job_manager
 
                 checkpoint_data = {
@@ -745,7 +857,7 @@ class IngestionPipeline:
                 # Store each track in the Identity Graph
                 media_id = getattr(self, "_current_media_id", str(path))
                 for (
-                    track_id,
+                    _track_id,
                     avg_embedding,
                     metadata,
                 ) in self._face_track_builder.get_track_embeddings():
@@ -761,7 +873,9 @@ class IngestionPipeline:
                             frame_count=metadata.get("frame_count", 1),
                         )
                     except Exception as track_err:
-                        logger.warning(f"Failed to store face track: {track_err}")
+                        logger.warning(
+                            f"Failed to store face track: {track_err}"
+                        )
             except Exception as e:
                 logger.warning(f"Track finalization failed: {e}")
 
@@ -778,13 +892,15 @@ class IngestionPipeline:
     async def _process_scene_captions(
         self, path: Path, job_id: str | None = None
     ) -> None:
-        """Process scenes and store with multi-vector embeddings.
+        """Processes scene boundaries and aggregates multi-modal data.
 
-        This is the production-grade approach:
-        1. Detect scene boundaries
-        2. Aggregate frame data per scene (entities, actions, faces, clothing)
-        3. Get dialogue for each scene from audio segments
-        4. Store scene with visual/motion/dialogue vectors
+        Identifies scene changes, creates visual summaries for each scene
+        using VLM, aggregates dialogue and frame-level entities/faces,
+        and stores everything with multi-vector embeddings for hybrid search.
+
+        Args:
+            path: Path to the media file.
+            job_id: Optional ID for progress tracking.
         """
         scenes = detect_scenes(path)
         if not scenes:
@@ -816,7 +932,9 @@ class IngestionPipeline:
             frame_bytes = extract_scene_frame(path, scene.mid_time)
             if frame_bytes:
                 try:
-                    caption = vlm.generate_caption_from_bytes(frame_bytes, prompt)
+                    caption = vlm.generate_caption_from_bytes(
+                        frame_bytes, prompt
+                    )
                     if caption:
                         visual_summary = caption
                 except Exception as e:
@@ -944,7 +1062,9 @@ class IngestionPipeline:
             except Exception as e:
                 logger.warning(f"Failed to store scene {idx}: {e}")
 
-        logger.info(f"Stored {scenes_stored}/{len(scenes)} scenes for {path.name}")
+        logger.info(
+            f"Stored {scenes_stored}/{len(scenes)} scenes for {path.name}"
+        )
 
     @observe("frame")
     async def _process_single_frame(
@@ -957,12 +1077,22 @@ class IngestionPipeline:
         context: str | None = None,
         neighbor_timestamps: list[float] | None = None,
     ) -> str | None:
-        """Process a single frame with face-frame linking and structured analysis.
+        """Processes a single frame for identities and visual description.
 
-        Order: Faces FIRST -> Vision Analysis -> Store with linked identities
+        Performs face detection first to establish identity links, then runs
+        structural vision analysis. Stores results in the database with
+        linked face/voice info and temporal context.
 
-        Uses incremental face clustering (not hash-based) for consistent identity.
-        Stores temporal context (neighbor_timestamps) for video-aware search.
+        Args:
+            video_path: Path to the source video.
+            frame_path: Path to the extracted frame image.
+            timestamp: Timestamp of the frame in the video.
+            index: Sequential index of the frame.
+            context: Narrative context from previous frames for VLM.
+            neighbor_timestamps: Timestamps of neighboring frames for search.
+
+        Returns:
+            The generated frame description or None if processing failed.
         """
         if not self.vision or not self.faces:
             return None
@@ -1039,7 +1169,9 @@ class IngestionPipeline:
 
                         if crop_h > 10 and crop_w > 10:
                             if crop_h < min_size or crop_w < min_size:
-                                scale = max(min_size / crop_h, min_size / crop_w)
+                                scale = max(
+                                    min_size / crop_h, min_size / crop_w
+                                )
                                 new_w = int(crop_w * scale)
                                 new_h = int(crop_h * scale)
                                 face_crop = cv2.resize(
@@ -1049,7 +1181,9 @@ class IngestionPipeline:
                                 )
 
                             # Use slightly lower quality (95) to save memory/space, explicit int cast for resize
-                            thumb_name = f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
+                            thumb_name = (
+                                f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
+                            )
                             thumb_file = thumb_dir / thumb_name
 
                             try:
@@ -1072,7 +1206,9 @@ class IngestionPipeline:
                                     thumb_file.unlink()
 
                 except (MemoryError, cv2.error) as e:
-                    logger.warning(f"Thumbnail generation skipped (OOM/CV error): {e}")
+                    logger.warning(
+                        f"Thumbnail generation skipped (OOM/CV error): {e}"
+                    )
                     gc.collect()  # Try to recover leaks
                 except Exception as e:
                     logger.error(f"Thumbnail generation failed: {e}")
@@ -1087,7 +1223,9 @@ class IngestionPipeline:
                     thumbnail_path=thumb_path,
                     # Quality metrics for clustering
                     bbox_size=getattr(face, "_bbox_size", None),
-                    det_score=face.confidence if hasattr(face, "confidence") else None,
+                    det_score=face.confidence
+                    if hasattr(face, "confidence")
+                    else None,
                 )
 
         # 2. RUN VISION ANALYSIS (With OCR and structured output)
@@ -1105,7 +1243,9 @@ class IngestionPipeline:
             if name:
                 identity_parts.append(f"Person {idx + 1}: {name}")
             else:
-                identity_parts.append(f"Person {idx + 1}: Unknown (cluster {cid})")
+                identity_parts.append(
+                    f"Person {idx + 1}: Unknown (cluster {cid})"
+                )
 
         # Get speaker name at this timestamp
         try:
@@ -1149,11 +1289,19 @@ class IngestionPipeline:
                 video_context_parts.append(
                     f"Content Type (User Override): {hitl_content_type}"
                 )
-                if hitl_content_type.lower() in ("song", "music", "music_video"):
+                if hitl_content_type.lower() in (
+                    "song",
+                    "music",
+                    "music_video",
+                ):
                     video_context_parts.append(
                         "INSTRUCTION: This is a music video. Describe choreography and visuals, NOT imaginary conversations."
                     )
-                elif hitl_content_type.lower() in ("interview", "podcast", "talk"):
+                elif hitl_content_type.lower() in (
+                    "interview",
+                    "podcast",
+                    "talk",
+                ):
                     video_context_parts.append(
                         "INSTRUCTION: This is conversational content. Describe the speakers and their expressions."
                     )
@@ -1184,7 +1332,9 @@ class IngestionPipeline:
             # Always add grounding rules regardless of content type
             video_context_parts.append("")
             video_context_parts.append("GROUNDING RULES (ALWAYS FOLLOW):")
-            video_context_parts.append("1. Describe ONLY what you SEE in the frame")
+            video_context_parts.append(
+                "1. Describe ONLY what you SEE in the frame"
+            )
             video_context_parts.append(
                 "2. Do NOT hallucinate conversations, events, or contexts not visible"
             )
@@ -1204,12 +1354,16 @@ class IngestionPipeline:
                 description = analysis.to_search_content()
                 analysis.face_ids = [str(cid) for cid in face_cluster_ids]
         except Exception as e:
-            logger.warning(f"Structured analysis failed: {e}, falling back to describe")
+            logger.warning(
+                f"Structured analysis failed: {e}, falling back to describe"
+            )
 
         # Fallback to unstructured description
         if not description:
             try:
-                description = await self.vision.describe(frame_path, context=context)
+                description = await self.vision.describe(
+                    frame_path, context=context
+                )
             except Exception:
                 pass
 
@@ -1245,7 +1399,9 @@ class IngestionPipeline:
 
                 # Now process speaker clusters
                 for cluster_id in speaker_cluster_ids:
-                    speaker_name = self.db.get_speaker_name_by_cluster(cluster_id)
+                    speaker_name = self.db.get_speaker_name_by_cluster(
+                        cluster_id
+                    )
 
                     if speaker_name:
                         payload["speaker_names"].append(speaker_name)
@@ -1266,7 +1422,7 @@ class IngestionPipeline:
                         # Propagate Face Name -> Unnamed Speaker
                         # Heuristic: If exactly one named face is visible, assume they are the speaker
                         if len(current_face_names) == 1:
-                            face_name = list(current_face_names.values())[0]
+                            face_name = next(iter(current_face_names.values()))
                             logger.info(
                                 f"Auto-mapping Face '{face_name}' -> Speaker Cluster {cluster_id}"
                             )
@@ -1283,7 +1439,9 @@ class IngestionPipeline:
             # 3c. Build identity text for searchability
             identity_parts = []
             if payload["face_names"]:
-                identity_parts.append(f"Visible: {', '.join(payload['face_names'])}")
+                identity_parts.append(
+                    f"Visible: {', '.join(payload['face_names'])}"
+                )
             if payload["speaker_names"]:
                 identity_parts.append(
                     f"Speaking: {', '.join(payload['speaker_names'])}"
@@ -1298,7 +1456,9 @@ class IngestionPipeline:
                     analysis.scene.visible_text if analysis.scene else []
                 )
                 payload["entities"] = (
-                    [e.name for e in analysis.entities] if analysis.entities else []
+                    [e.name for e in analysis.entities]
+                    if analysis.entities
+                    else []
                 )
                 payload["entity_categories"] = (
                     list({e.category for e in analysis.entities})
@@ -1314,7 +1474,9 @@ class IngestionPipeline:
             # 3d. Add structured face data for UI overlays (bboxes)
             # This enables drawing boxes around identified people in the UI
             faces_metadata = []
-            for face, cluster_id in zip(detected_faces, face_cluster_ids):
+            for face, cluster_id in zip(
+                detected_faces, face_cluster_ids, strict=False
+            ):
                 face_name = self.db.get_face_name_by_cluster(cluster_id)
                 faces_metadata.append(
                     {
@@ -1363,17 +1525,17 @@ class IngestionPipeline:
     def _get_speaker_clusters_at_time(
         self, media_path: str, timestamp: float
     ) -> list[int]:
-        """Get speaker cluster IDs who are speaking at a given timestamp.
+        """Identifies speaker cluster IDs active at a specific timestamp.
 
-        This enables face-audio mapping by finding which speaker is talking
-        when a particular face is visible.
+        Enables cross-modal mapping by finding which speaker is talking
+        at the moment a particular face or visual event occurs.
 
         Args:
             media_path: Path to the media file.
-            timestamp: Frame timestamp in seconds.
+            timestamp: The timestamp in seconds.
 
         Returns:
-            List of speaker cluster IDs who are speaking at this time.
+            A list of active speaker cluster IDs.
         """
         clusters = []
         try:
@@ -1391,15 +1553,16 @@ class IngestionPipeline:
         return clusters
 
     def _get_audio_segments_for_video(self, media_path: str) -> list[dict]:
-        """Get all audio/dialogue segments for a video.
+        """Retrieves all dialogue/audio segments for a specific video.
 
-        Used by scene aggregation to include dialogue in scene data.
+        Querying the database for previously stored segments to be used
+        in high-level aggregation or scene summarization.
 
         Args:
             media_path: Path to the media file.
 
         Returns:
-            List of audio segment dicts with start, end, text.
+            A list of audio segment dictionaries containing start, end, and text.
         """
         try:
             # Query media_segments collection for this video
@@ -1430,15 +1593,16 @@ class IngestionPipeline:
             return []
 
     def _get_frames_for_video(self, media_path: str) -> list[dict]:
-        """Get all indexed frames for a video.
+        """Retrieves all sampled and analyzed frames for a video.
 
-        Used by scene aggregation to collect frame data per scene.
+        Provides a consolidated view of visual detections (faces, entities,
+        actions) across the video timeline for scene-level reasoning.
 
         Args:
             media_path: Path to the media file.
 
         Returns:
-            List of frame dicts with timestamp, payload data.
+            A list of frame data dictionaries ordered by timestamp.
         """
         try:
             # Query media_frames collection for this video
@@ -1465,14 +1629,22 @@ class IngestionPipeline:
                             "action": p.payload.get("action", ""),
                             "description": p.payload.get("description", "")
                             or p.payload.get("action", ""),
-                            "face_cluster_ids": p.payload.get("face_cluster_ids", []),
+                            "face_cluster_ids": p.payload.get(
+                                "face_cluster_ids", []
+                            ),
                             "face_names": p.payload.get("face_names", []),
                             "speaker_names": p.payload.get("speaker_names", []),
                             "visible_text": p.payload.get("visible_text", []),
                             "entities": p.payload.get("entities", []),
-                            "structured_data": p.payload.get("structured_data", {}),
-                            "scene_location": p.payload.get("scene_location", ""),
-                            "scene_cultural": p.payload.get("scene_cultural", ""),
+                            "structured_data": p.payload.get(
+                                "structured_data", {}
+                            ),
+                            "scene_location": p.payload.get(
+                                "scene_location", ""
+                            ),
+                            "scene_cultural": p.payload.get(
+                                "scene_cultural", ""
+                            ),
                         }
                     )
             # Sort by timestamp
@@ -1487,6 +1659,17 @@ class IngestionPipeline:
         path: Path,
         chunks: Iterable[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        """Prepares raw transcription chunks for ingestion into the database.
+
+        Filters empty segments and ensures consistent timing metadata.
+
+        Args:
+            path: Path to the media file.
+            chunks: Iterable of raw segment dictionaries.
+
+        Returns:
+            A list of cleaned and formatted segment dictionaries.
+        """
         prepared: list[dict[str, Any]] = []
         for chunk in chunks:
             text = (chunk.get("text") or "").strip()
@@ -1509,7 +1692,15 @@ class IngestionPipeline:
         return prepared
 
     async def _post_process_video(self, path: Path, job_id: str) -> None:
-        """Run post-processing: global context, metadata enrichment, identity linking."""
+        """Executes global enrichment and cross-modal linking after ingestion.
+
+        Finalizes global context, stores high-level summaries, attaches
+        thumbnails, and performs deep video tracking (SAM 3).
+
+        Args:
+            path: Path to the media file.
+            job_id: The ID of the ingestion job.
+        """
         media_path = str(path)
 
         try:
@@ -1530,9 +1721,13 @@ class IngestionPipeline:
             if frames:
                 # Collect dialogue from audio segments
                 dialogue_texts = [
-                    seg.get("text", "") for seg in audio_segments if seg.get("text")
+                    seg.get("text", "")
+                    for seg in audio_segments
+                    if seg.get("text")
                 ]
-                dialogue_summary = " ".join(dialogue_texts[:50])  # First 50 segments
+                dialogue_summary = " ".join(
+                    dialogue_texts[:50]
+                )  # First 50 segments
 
                 scene_data = {
                     "start_time": 0,
@@ -1541,10 +1736,14 @@ class IngestionPipeline:
                         f.get("action", "") for f in frames[:20]
                     ),
                     "person_names": list(
-                        set(n for f in frames for n in f.get("face_names", []))
+                        {n for f in frames for n in f.get("face_names", [])}
                     ),
-                    "location": frames[0].get("scene_location", "") if frames else "",
-                    "entities": [e for f in frames for e in f.get("entities", [])],
+                    "location": frames[0].get("scene_location", "")
+                    if frames
+                    else "",
+                    "entities": [
+                        e for f in frames for e in f.get("entities", [])
+                    ],
                     "dialogue_summary": dialogue_summary,
                 }
                 global_ctx.add_scene(scene_data)
@@ -1575,7 +1774,14 @@ class IngestionPipeline:
             logger.error(f"Post-processing failed: {e}")
 
     def _generate_main_thumbnail(self, path: Path) -> str | None:
-        """Generate a main thumbnail for the video (at 5.0s)."""
+        """Generates a representative thumbnail for the video at 5.0s.
+
+        Args:
+            path: Path to the media file.
+
+        Returns:
+            The relative web path to the generated thumbnail, or None on failure.
+        """
         import hashlib
         import subprocess
 
@@ -1610,7 +1816,10 @@ class IngestionPipeline:
 
             # Run ffmpeg
             subprocess.run(
-                cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                cmd,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
 
             # Fallback to 0s if 5s failed (e.g. short video)
@@ -1632,7 +1841,15 @@ class IngestionPipeline:
             return None
 
     def _process_video_masklets(self, path: Path, frames: list[dict]) -> None:
-        """Run SAM 3 Tracking on top concepts extracted from video frames."""
+        """Executes Segment-Anything-2 (SAM 3) tracking for top visual concepts.
+
+        Identifies recurring or unique entities across frames and generates
+        spatio-temporal tracking data (masklets) for precise retrieval.
+
+        Args:
+            path: Path to the media file.
+            frames: List of already analyzed frame metadata.
+        """
         # 1. Extract potential concepts from frame entities/descriptions
         concept_counts = {}
         for f in frames:
@@ -1643,16 +1860,21 @@ class IngestionPipeline:
             action = f.get("action", "")
             if "holding a" in action:
                 try:
-                    obj = action.split("holding a")[1].split()[0].strip().strip(".,")
+                    obj = (
+                        action.split("holding a")[1]
+                        .split()[0]
+                        .strip()
+                        .strip(".,")
+                    )
                     if len(obj) > 2:
                         concept_counts[obj] = concept_counts.get(obj, 0) + 1
-                except:
+                except Exception:
                     pass
 
         # 2. Select top 5 concepts to track
-        top_concepts = sorted(concept_counts.items(), key=lambda x: x[1], reverse=True)[
-            :5
-        ]
+        top_concepts = sorted(
+            concept_counts.items(), key=lambda x: x[1], reverse=True
+        )[:5]
         prompts = [c[0] for c in top_concepts]
 
         if not prompts:
@@ -1678,12 +1900,14 @@ class IngestionPipeline:
         # We assume 1-to-1 for now.
 
         if self.sam3_tracker:
-            for frame_data in self.sam3_tracker.process_video_concepts(path, prompts):
+            for frame_data in self.sam3_tracker.process_video_concepts(
+                path, prompts
+            ):
                 frame_idx = frame_data["frame_idx"]
                 obj_ids = frame_data["object_ids"]
 
                 for obj_id in obj_ids:
-                # Get concept name
+                    # Get concept name
                     if obj_id < len(prompts):
                         concept = prompts[obj_id]
                     else:
@@ -1698,10 +1922,14 @@ class IngestionPipeline:
                         "concept": concept,
                     }
                 else:
-                    tracks[track_key]["end"] = max(tracks[track_key]["end"], frame_idx)
+                    tracks[track_key]["end"] = max(
+                        tracks[track_key]["end"], frame_idx
+                    )
 
         # 4. Save Masklets to DB
-        fps = settings.frame_interval  # Ingestion loop uses frame_interval approx?
+        fps = (
+            settings.frame_interval
+        )  # Ingestion loop uses frame_interval approx?
         # Actually frames have timestamps. We can map frame_idx to timestamp roughly.
         # Or better: pipeline knows fps or duration.
         # We can map frame_idx to time if we know video FPS.
@@ -1717,10 +1945,10 @@ class IngestionPipeline:
             cap = cv2.VideoCapture(str(path))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             cap.release()
-        except:
+        except Exception:
             fps = 30.0
 
-        for key, data in tracks.items():
+        for _key, data in tracks.items():
             start_time = data["start"] / fps
             end_time = data["end"] / fps
             duration = end_time - start_time

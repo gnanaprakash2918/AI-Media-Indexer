@@ -38,7 +38,9 @@ def get_video_duration(path: Path) -> float | None:
     return None
 
 
-def recommend_preset(file_size_mb: float, duration_seconds: float | None) -> str:
+def recommend_preset(
+    file_size_mb: float, duration_seconds: float | None
+) -> str:
     """Recommend a preset based on file size and duration.
 
     Returns:
@@ -236,7 +238,7 @@ def convert_to_mp4(
 
 def batch_convert(
     directory: Path,
-    extensions: list[str] = [".webm", ".mkv", ".avi"],
+    extensions: list[str] | None = None,
     workers: int = 2,
     preset: str = "fast",
     interactive: bool = True,
@@ -253,6 +255,8 @@ def batch_convert(
     Returns:
         Tuple of (successful, failed) counts
     """
+    if extensions is None:
+        extensions = [".webm", ".mkv", ".avi"]
     files = []
     for ext in extensions:
         files.extend(directory.glob(f"*{ext}"))
@@ -291,7 +295,8 @@ def batch_convert(
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(convert_to_mp4, f, None, preset): f for f in files
+                executor.submit(convert_to_mp4, f, None, preset): f
+                for f in files
             }
 
             for future in as_completed(futures):
@@ -304,6 +309,7 @@ def batch_convert(
 
 
 def main():
+    """CLI entry point for conversion tools."""
     parser = argparse.ArgumentParser(
         description="Convert videos to MP4 with faststart for instant seeking in browser",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -317,19 +323,19 @@ PRESETS:
 EXAMPLES:
   # Interactive mode - shows menu to choose preset
   python -m tools.convert "C:\\Videos\\movie.webm"
-  
+
   # Auto mode - uses smart defaults based on video duration
   python -m tools.convert "C:\\Videos\\movie.webm" -y
-  
+
   # Force specific preset (skips interactive menu)
   python -m tools.convert "C:\\Videos\\movie.webm" --preset ultrafast
-  
+
   # Batch convert entire folder with 4 parallel workers
   python -m tools.convert "C:\\Downloads\\Videos" --workers 4
-  
+
   # Batch convert with specific preset, no prompts
   python -m tools.convert "C:\\Videos" --preset fast --workers 4 -y
-  
+
   # Convert only .webm files (skip .mkv, .avi)
   python -m tools.convert "C:\\Videos" --extensions .webm
 
@@ -400,7 +406,11 @@ WHY CONVERT?
     else:
         # Batch conversion
         success, failed = batch_convert(
-            path, args.extensions, args.workers, args.preset or "fast", interactive
+            path,
+            args.extensions,
+            args.workers,
+            args.preset or "fast",
+            interactive,
         )
         print(f"\n{'=' * 60}")
         print(f"  Completed: {success} succeeded, {failed} failed")

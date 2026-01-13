@@ -142,16 +142,27 @@ class VisionAnalyzer:
         self,
         llm: LLMInterface | None = None,
         prompt_filename: str = "vision_prompt.txt",
-    ):
+    ) -> None:
+        """Initializes the VisionAnalyzer in lazy mode.
+
+        The LLM implementation is only initialized when analysis is first
+        requested, which helps conserve VRAM during system startup.
+
+        Args:
+            llm: Optional pre-configured LLM interface.
+            prompt_filename: The name of the file containing the vision prompt.
+        """
         # LAZY LOADING: Store llm reference but don't create if not provided
         self._llm = llm
         self._llm_loaded = llm is not None
         self.prompt_filename = prompt_filename
         self.prompt: str | None = None
-        log("[Vision] Initialized (lazy mode). LLM will load on first analyze call.")
+        log(
+            "[Vision] Initialized (lazy mode). LLM will load on first analyze call."
+        )
 
     def _ensure_llm_loaded(self) -> None:
-        """Lazy load LLM on first use."""
+        """Loads the LLM and prompt template if they are not already cached."""
         if not self._llm_loaded:
             log("[Vision] Lazy loading LLM...")
             self._llm = LLMFactory.create_llm(provider="ollama")
@@ -159,15 +170,23 @@ class VisionAnalyzer:
 
         if self.prompt is None and self._llm is not None:
             try:
-                self.prompt = self._llm.construct_user_prompt(self.prompt_filename)
+                self.prompt = self._llm.construct_user_prompt(
+                    self.prompt_filename
+                )
                 log(f"[Vision] Loaded prompt from {self.prompt_filename}")
             except FileNotFoundError:
-                log("[Vision] Prompt file not found, using DENSE_MULTIMODAL_PROMPT")
+                log(
+                    "[Vision] Prompt file not found, using DENSE_MULTIMODAL_PROMPT"
+                )
                 self.prompt = DENSE_MULTIMODAL_PROMPT
 
     @property
     def llm(self) -> LLMInterface:
-        """Access LLM with lazy loading."""
+        """Provides access to the lazy-loaded LLM interface.
+
+        Returns:
+            The initialized LLMInterface instance.
+        """
         self._ensure_llm_loaded()
         assert self._llm is not None
         return self._llm
@@ -259,7 +278,9 @@ IMPORTANT RULES:
             return None
 
     @observe("vision_describe")
-    async def describe(self, image_path: Path, context: str | None = None) -> str:
+    async def describe(
+        self, image_path: Path, context: str | None = None
+    ) -> str:
         """Asynchronously describe an image using the configured LLM.
 
         Args:

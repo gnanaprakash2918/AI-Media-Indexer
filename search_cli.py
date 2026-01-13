@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+"""CLI tool for searching the media index."""
+
 import argparse
 import asyncio
 import json
@@ -8,12 +9,17 @@ from core.retrieval.engine import get_search_engine
 from core.storage.db import VectorDB
 
 
-async def run_search(query: str, use_rerank: bool, limit: int, as_json: bool) -> None:
+async def run_search(
+    query: str, use_rerank: bool, limit: int, as_json: bool
+) -> None:
+    """Executes the search and prints results."""
     db = VectorDB(backend="docker")
     engine = get_search_engine(db=db)
 
     try:
-        results = await engine.search(query=query, use_rerank=use_rerank, limit=limit)
+        results = await engine.search(
+            query=query, use_rerank=use_rerank, limit=limit
+        )
 
         if as_json:
             output = [r.model_dump() for r in results]
@@ -47,9 +53,14 @@ async def run_search(query: str, use_rerank: bool, limit: int, as_json: bool) ->
 
 
 def main():
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description="Search the media index")
-    parser.add_argument("query", nargs="?", help="Natural language search query")
-    parser.add_argument("--rerank", action="store_true", help="Enable VLM reranking")
+    parser.add_argument(
+        "query", nargs="?", help="Natural language search query"
+    )
+    parser.add_argument(
+        "--rerank", action="store_true", help="Enable VLM reranking"
+    )
     parser.add_argument("--limit", type=int, default=10, help="Max results")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     args = parser.parse_args()

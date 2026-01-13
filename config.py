@@ -75,7 +75,9 @@ class Settings(BaseSettings):
         """Find the project root directory."""
         start = start or Path(__file__).resolve()
         for parent in start.parents:
-            if (parent / ".git").exists() or (parent / "pyproject.toml").exists():
+            if (parent / ".git").exists() or (
+                parent / "pyproject.toml"
+            ).exists():
                 return parent
         raise RuntimeError("Project root not found")
 
@@ -113,7 +115,8 @@ class Settings(BaseSettings):
 
     # --- Performance ---
     batch_size: int = Field(
-        default=_HW_PROFILE["batch_size"], description="Batch size for inference"
+        default=_HW_PROFILE["batch_size"],
+        description="Batch size for inference",
     )
 
     embedding_batch_size: int = Field(
@@ -132,10 +135,14 @@ class Settings(BaseSettings):
     #  Infrastructure (Qdrant)
     qdrant_host: str = Field(default="localhost", description="Qdrant host")
     qdrant_port: int = Field(default=6333, description="Qdrant HTTP port")
-    qdrant_backend: str = Field(default="docker", description="'memory' or 'docker'")
+    qdrant_backend: str = Field(
+        default="docker", description="'memory' or 'docker'"
+    )
 
     #  Agent & LLM
-    agent_model: str = Field(default="llama3.1", description="Model for Agent CLI")
+    agent_model: str = Field(
+        default="llama3.1", description="Model for Agent CLI"
+    )
     llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
     ollama_base_url: str = Field(default="http://localhost:11434")
     ollama_vision_model: str = Field(default="moondream:latest")
@@ -156,7 +163,8 @@ class Settings(BaseSettings):
         default=None, description="Brave Search API key for external enrichment"
     )
     enable_external_search: bool = Field(
-        default=False, description="Enable external web search for unknown entities"
+        default=False,
+        description="Enable external web search for unknown entities",
     )
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
@@ -230,10 +238,12 @@ class Settings(BaseSettings):
 
     # HDBSCAN Tuning (used for clustering algorithms)
     hdbscan_min_cluster_size: int = Field(
-        default=2, description="Minimum cluster size for HDBSCAN (2=pair of samples)"
+        default=2,
+        description="Minimum cluster size for HDBSCAN (2=pair of samples)",
     )
     hdbscan_min_samples: int = Field(
-        default=1, description="Min samples for core point (1=lenient, 3=stricter)"
+        default=1,
+        description="Min samples for core point (1=lenient, 3=stricter)",
     )
     hdbscan_cluster_selection_epsilon: float = Field(
         default=0.55,
@@ -246,7 +256,8 @@ class Settings(BaseSettings):
         description="RMS threshold in dB below which audio is considered silent",
     )
     whisper_language_lock: bool = Field(
-        default=True, description="Lock Whisper to detected language after first 30s"
+        default=True,
+        description="Lock Whisper to detected language after first 30s",
     )
 
     # Face Track Builder
@@ -274,7 +285,8 @@ class Settings(BaseSettings):
         description="VLM provider for dense captioning (ollama/gemini)",
     )
     ai_provider_text: str = Field(
-        default="ollama", description="LLM provider for query parsing (ollama/gemini)"
+        default="ollama",
+        description="LLM provider for query parsing (ollama/gemini)",
     )
 
     # Resource
@@ -317,7 +329,8 @@ class Settings(BaseSettings):
 
     # --- Antigravity Feature Flags ---
     use_indic_asr: bool = Field(
-        default=True, description="Use AI4Bharat IndicConformer for Indic languages"
+        default=True,
+        description="Use AI4Bharat IndicConformer for Indic languages",
     )
 
     use_native_nemo: bool = Field(
@@ -326,7 +339,8 @@ class Settings(BaseSettings):
     )
 
     auto_detect_language: bool = Field(
-        default=True, description="Auto-detect audio language before transcription"
+        default=True,
+        description="Auto-detect audio language before transcription",
     )
 
     ai4bharat_url: str = Field(
@@ -335,11 +349,15 @@ class Settings(BaseSettings):
     )
 
     enable_sam3_tracking: bool = Field(
-        default=False, description="Enable SAM 3 Promptable Concept Segmentation"
+        default=False,
+        description="Enable SAM 3 Promptable Concept Segmentation",
     )
 
-    manipulation_backend: Literal["disabled", "wan", "propainter", "auto"] = Field(
-        default="disabled", description="Backend for video inpainting/manipulation"
+    manipulation_backend: Literal["disabled", "wan", "propainter", "auto"] = (
+        Field(
+            default="disabled",
+            description="Backend for video inpainting/manipulation",
+        )
     )
 
     # Hierarchical Summarization
@@ -358,7 +376,8 @@ class Settings(BaseSettings):
         description="Path to ArcFace ONNX model for twin verification",
     )
     biometric_threshold: float = Field(
-        default=0.6, description="Distance threshold for ArcFace identity verification"
+        default=0.6,
+        description="Distance threshold for ArcFace identity verification",
     )
 
     # Advanced Overrides - SOTA Embeddings for 100% accuracy
@@ -367,7 +386,8 @@ class Settings(BaseSettings):
         description="Text embedding model (BGE-M3 = 1024d, SOTA multilingual)",
     )
     text_embedding_dim: int = Field(
-        default=1024, description="Dimension of text embeddings (must match model)"
+        default=1024,
+        description="Dimension of text embeddings (must match model)",
     )
     visual_embedding_dim: int = Field(
         default=1024,
@@ -385,7 +405,8 @@ class Settings(BaseSettings):
     )
 
     enable_hybrid_search: bool = Field(
-        default=True, description="Use hybrid search (vector + keyword + identity)"
+        default=True,
+        description="Use hybrid search (vector + keyword + identity)",
     )
 
     # Memory Management - STRATEGY: SOTA Always, Throttle Resources
@@ -415,9 +436,7 @@ class Settings(BaseSettings):
                     "Auto-adjusting text_embedding_dim to 4096 for NV-Embed-v2"
                 )
                 self.text_embedding_dim = 4096
-                self.visual_embedding_dim = (
-                    4096  # If using for both (likely not, usually SigLIP is separate)
-                )
+                self.visual_embedding_dim = 4096  # If using for both (likely not, usually SigLIP is separate)
                 # But VectorDB.MEDIA_VECTOR_SIZE uses visual_embedding_dim.
                 # If we use LLM for vision, SigLIP is still 768 or 1024.
                 # Wait, visual_embedding_dim configures Media Collection.

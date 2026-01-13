@@ -1,6 +1,9 @@
+"""API routes for media file operations (streaming, thumbnails)."""
+
 import hashlib
 import subprocess
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -16,9 +19,23 @@ router = APIRouter()
 @router.get("/thumbnails/faces/{filename}")
 async def get_face_thumbnail(
     filename: str,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
-    """Serve face thumbnail, generating on-demand if missing using FFmpeg fast-seek."""
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> FileResponse:
+    """Serves a face thumbnail, generating it on-demand if not cached.
+
+    Uses FFmpeg for sub-second extraction from the source video based on
+    the stored face detection timestamp.
+
+    Args:
+        filename: The name of the cached thumbnail file.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A FileResponse containing the JPEG thumbnail.
+
+    Raises:
+        HTTPException: If the face metadata is missing or generation fails.
+    """
     thumb_dir = settings.cache_dir / "thumbnails"
     file_path = thumb_dir / "faces" / filename
 
@@ -42,7 +59,9 @@ async def get_face_thumbnail(
         timestamp = face_data.get("timestamp", 0)
 
         if not media_path or not Path(media_path).exists():
-            raise HTTPException(status_code=404, detail="Source video not found")
+            raise HTTPException(
+                status_code=404, detail="Source video not found"
+            )
 
         # Ensure directory exists
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,23 +94,38 @@ async def get_face_thumbnail(
         if result.returncode == 0 and file_path.exists():
             return FileResponse(file_path, media_type="image/jpeg")
         else:
-            raise HTTPException(status_code=500, detail="FFmpeg extraction failed")
+            raise HTTPException(
+                status_code=500, detail="FFmpeg extraction failed"
+            )
 
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Thumbnail generation timeout")
+    except subprocess.TimeoutExpired as e:
+        raise HTTPException(
+            status_code=504, detail="Thumbnail generation timeout"
+        ) from e
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Face thumbnail generation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/thumbnails/voices/{filename}")
 async def get_voice_audio(
     filename: str,
-    pipeline: IngestionPipeline = Depends(get_pipeline),
-):
-    """Serve voice audio clip, generating on-demand if missing."""
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> FileResponse:
+    """Serves a voice audio clip, extracting it on-demand if not cached.
+
+    Args:
+        filename: The name of the voice segment file.
+        pipeline: The core ingestion pipeline instance.
+
+    Returns:
+        A FileResponse containing the extracted MP3 clip.
+
+    Raises:
+        HTTPException: If the voice metadata is missing or extraction fails.
+    """
     thumb_dir = settings.cache_dir / "thumbnails"
     file_path = thumb_dir / "voices" / filename
 
@@ -109,14 +143,18 @@ async def get_voice_audio(
             f"/thumbnails/voices/{filename}"
         )
         if not segment:
-            raise HTTPException(status_code=404, detail="Voice segment not found")
+            raise HTTPException(
+                status_code=404, detail="Voice segment not found"
+            )
 
         media_path = segment.get("media_path")
         start = segment.get("start", 0)
         end = segment.get("end", start + 5)
 
         if not media_path or not Path(media_path).exists():
-            raise HTTPException(status_code=404, detail="Source video not found")
+            raise HTTPException(
+                status_code=404, detail="Source video not found"
+            )
 
         # Extract audio segment using FFmpeg
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,21 +180,34 @@ async def get_voice_audio(
         if file_path.exists():
             return FileResponse(file_path, media_type="audio/mpeg")
         else:
-            raise HTTPException(status_code=500, detail="Audio extraction failed")
+            raise HTTPException(
+                status_code=500, detail="Audio extraction failed"
+            )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Voice audio generation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/media")
 async def stream_media(
     request: Request,
-    path: str = Query(...),
-):
-    """Stream a media file with HTTP Range support for proper seeking and audio."""
+    path: Annotated[str, Query(...)],
+) -> StreamingResponse | FileResponse:
+    """Streams a media file with full HTTP Range support for seeking.
+
+    Args:
+        request: The incoming HTTP request containing Range headers.
+        path: Absolute path to the media file on disk.
+
+    Returns:
+        A StreamingResponse for partial content or a full FileResponse.
+
+    Raises:
+        HTTPException: If the file is missing or inaccessible.
+    """
     file_path = Path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -219,6 +270,7 @@ async def stream_media(
             media_type=media_type,
         )
     else:
+
         def iterfile():
             with open(file_path, "rb") as f:
                 chunk_size = 64 * 1024
@@ -239,13 +291,26 @@ async def stream_media(
 
 @router.get("/media/segment")
 async def stream_segment(
-    path: str = Query(...),
-    start: float = Query(..., description="Start time in seconds"),
-    end: float = Query(
-        None, description="End time in seconds (default: start + 10)"
-    ),
-):
-    """Stream a specific video segment with caching."""
+    path: Annotated[str, Query(...)],
+    start: Annotated[float, Query(..., description="Start time in seconds")],
+    end: Annotated[
+        float,
+        Query(None, description="End time in seconds (default: start + 10)"),
+    ] = None,
+) -> FileResponse:
+    """Extracts and streams a specific video segment with local caching.
+
+    Args:
+        path: Absolute path to the source video.
+        start: Start timestamp in seconds.
+        end: Optional end timestamp in seconds.
+
+    Returns:
+        A FileResponse containing the MP4 segment.
+
+    Raises:
+        HTTPException: If encoding or caching fails.
+    """
     file_path = Path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -256,7 +321,9 @@ async def stream_segment(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     cache_key = f"{file_path.stem}_{start:.2f}_{duration:.2f}"
-    cache_hash = hashlib.md5(f"{path}_{start}_{duration}".encode()).hexdigest()[:8]
+    cache_hash = hashlib.md5(f"{path}_{start}_{duration}".encode()).hexdigest()[
+        :8
+    ]
     cache_file = cache_dir / f"{cache_key}_{cache_hash}.mp4"
 
     if cache_file.exists():
@@ -311,8 +378,21 @@ async def stream_segment(
 
 
 @router.get("/media/thumbnail")
-async def get_media_thumbnail(path: str = Query(...), time: float = 0.0):
-    """Generate a thumbnail for a video at a specific timestamp."""
+async def get_media_thumbnail(
+    path: Annotated[str, Query(...)], time: float = 0.0
+) -> Response:
+    """Generates a dynamic thumbnail for any video at a specific timestamp.
+
+    Args:
+        path: Absolute path to the source video.
+        time: Timestamp in seconds for the frame extraction.
+
+    Returns:
+        A Response containing the JPEG image bytes.
+
+    Raises:
+        HTTPException: If frame extraction via OpenCV fails.
+    """
     import cv2
 
     file_path = Path(path)
@@ -347,4 +427,6 @@ async def get_media_thumbnail(path: str = Query(...), time: float = 0.0):
 
     except Exception as e:
         logger.error(f"Thumbnail generation failed: {e}")
-        raise HTTPException(status_code=500, detail="Could not generate thumbnail")
+        raise HTTPException(
+            status_code=500, detail="Could not generate thumbnail"
+        ) from e

@@ -1,7 +1,9 @@
+"""Retry utilities for asynchronous operations."""
+
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 
 async def retry(

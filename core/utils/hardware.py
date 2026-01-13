@@ -12,7 +12,7 @@ from __future__ import annotations
 import gc
 import os
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 
@@ -38,6 +38,11 @@ class SystemProfile:
     aggressive_cleanup: bool = True
 
     def to_dict(self) -> dict:
+        """Converts the system profile to a dictionary.
+
+        Returns:
+            A dictionary representation of the profile.
+        """
         return {
             "vram_gb": self.vram_gb,
             "ram_gb": self.ram_gb,
@@ -54,7 +59,11 @@ class SystemProfile:
 
 
 def get_available_vram() -> float:
-    """Get total VRAM in GB, 0 if CPU-only."""
+    """Retrieves the total VRAM available on the primary CUDA device.
+
+    Returns:
+        The total VRAM in gigabytes, or 0.0 if CUDA is not available.
+    """
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
         return props.total_memory / (1024**3)
@@ -62,14 +71,22 @@ def get_available_vram() -> float:
 
 
 def get_used_vram() -> float:
-    """Get currently allocated VRAM in GB."""
+    """Retrieves the amount of VRAM currently allocated by PyTorch.
+
+    Returns:
+        The allocated VRAM in gigabytes, or 0.0 if CUDA is not available.
+    """
     if torch.cuda.is_available():
         return torch.cuda.memory_allocated() / (1024**3)
     return 0.0
 
 
 def get_available_ram() -> float:
-    """Get total system RAM in GB."""
+    """Retrieves the total system RAM.
+
+    Returns:
+        The total RAM in gigabytes, defaulting to 16.0 if psutil is unavailable.
+    """
     try:
         import psutil
 
@@ -79,7 +96,11 @@ def get_available_ram() -> float:
 
 
 def get_vram_usage_percent() -> float:
-    """Get VRAM usage as percentage (0-100)."""
+    """Calculates the current VRAM usage percentage.
+
+    Returns:
+        The usage percentage (0.0 to 100.0).
+    """
     total = get_available_vram()
     if total == 0:
         return 0.0
@@ -87,7 +108,10 @@ def get_vram_usage_percent() -> float:
 
 
 def cleanup_vram() -> None:
-    """Force garbage collection and clear CUDA cache."""
+    """Forces garbage collection and clears the PyTorch CUDA cache.
+
+    This is used to free up VRAM between heavy processing stages.
+    """
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -97,8 +121,16 @@ def cleanup_vram() -> None:
 VramTier = Literal["low", "medium", "high"]
 
 
-def get_vram_tier(vram_gb: Optional[float] = None) -> VramTier:
-    """Categorize VRAM availability."""
+def get_vram_tier(vram_gb: float | None = None) -> VramTier:
+    """Categorizes hardware into performance tiers based on VRAM.
+
+    Args:
+        vram_gb: Optional total VRAM value to use for categorization.
+            If None, the system total is detected automatically.
+
+    Returns:
+        The VRAM tier ('low', 'medium', or 'high').
+    """
     vram = vram_gb if vram_gb is not None else get_available_vram()
     if vram >= 12:
         return "high"
@@ -108,22 +140,35 @@ def get_vram_tier(vram_gb: Optional[float] = None) -> VramTier:
 
 
 def get_system_profile(
-    embedding_override: Optional[str] = None,
-    vision_override: Optional[str] = None,
+    embedding_override: str | None = None,
+    vision_override: str | None = None,
 ) -> SystemProfile:
-    """Create dynamic resource profile based on hardware.
+    """Creates a dynamic resource profile based on hardware detection.
 
-    STRATEGY: SOTA models always, throttle resources for low VRAM.
+    Implements the 'SOTA Quality Always' strategy by choosing state-of-the-art
+    models and throttling concurrency/batch sizes rather than downgrading
+    model quality on lower-end hardware.
+
+    Args:
+        embedding_override: Optional override for the embedding model.
+        vision_override: Optional override for the vision model.
+
+    Returns:
+        An initialized SystemProfile tailored to the current hardware.
     """
     vram = get_available_vram()
     ram = get_available_ram()
     tier = get_vram_tier(vram)
 
     embedding_model = (
-        embedding_override or os.getenv("EMBEDDING_MODEL_OVERRIDE") or "BAAI/bge-m3"
+        embedding_override
+        or os.getenv("EMBEDDING_MODEL_OVERRIDE")
+        or "BAAI/bge-m3"
     )
     vision_model = (
-        vision_override or os.getenv("OLLAMA_VISION_MODEL") or "moondream:latest"
+        vision_override
+        or os.getenv("OLLAMA_VISION_MODEL")
+        or "moondream:latest"
     )
 
     if "bge-m3" in embedding_model or "large" in embedding_model:
@@ -183,7 +228,14 @@ def get_system_profile(
 
 
 def select_embedding_model() -> tuple[str, int]:
-    """Select embedding model - ALWAYS SOTA unless overridden."""
+    """Selects the optimal embedding model, prioritizing SOTA models.
+
+    Checks for environment overrides before falling back to the default
+    SOTA model (BGE-M3).
+
+    Returns:
+        A tuple of (model_name, embedding_dimension).
+    """
     override = os.getenv("EMBEDDING_MODEL_OVERRIDE")
     if override:
         if "large" in override or "m3" in override:
@@ -202,7 +254,11 @@ def select_embedding_model() -> tuple[str, int]:
 
 
 def select_vision_model() -> str:
-    """Select vision model based on VRAM."""
+    """Selects the optimal vision model based on available VRAM.
+
+    Returns:
+        The name of the vision model to use.
+    """
     vram = get_available_vram()
     override = os.getenv("OLLAMA_VISION_MODEL")
     if override:
@@ -220,8 +276,18 @@ def select_vision_model() -> str:
     return model
 
 
-def can_load_model(estimated_vram_gb: float, safety_margin: float = 0.75) -> bool:
-    """Check if we can safely load a model of given size."""
+def can_load_model(
+    estimated_vram_gb: float, safety_margin: float = 0.75
+) -> bool:
+    """Checks if a model of a given size can be safely loaded into VRAM.
+
+    Args:
+        estimated_vram_gb: The estimated VRAM requirement of the model.
+        safety_margin: The fraction of total available memory to consider safe.
+
+    Returns:
+        True if the model can be loaded with the specified safety margin.
+    """
     total = get_available_vram()
     used = get_used_vram()
     available = total - used
@@ -230,7 +296,11 @@ def can_load_model(estimated_vram_gb: float, safety_margin: float = 0.75) -> boo
 
 
 def log_vram_status(context: str = "") -> None:
-    """Log current VRAM usage."""
+    """Logs the current VRAM usage status.
+
+    Args:
+        context: Optional string to provide context in the log message.
+    """
     if torch.cuda.is_available():
         total = get_available_vram()
         used = get_used_vram()
@@ -239,13 +309,19 @@ def log_vram_status(context: str = "") -> None:
 
 
 class VRAMManager:
-    """Manages GPU model lifecycle."""
+    """Manages the lifecycle and memory distribution of GPU-resident models.
 
-    _instance: Optional["VRAMManager"] = None
+    Implements a singleton pattern to ensure coordinated control over which
+    models are currently occupying VRAM, allowing for proactive unloading
+    before loading heavy models like LLVs or Ollama.
+    """
+
+    _instance: VRAMManager | None = None
     _models: dict[str, object]
-    _current_model: Optional[str]
+    _current_model: str | None
 
-    def __new__(cls) -> "VRAMManager":
+    def __new__(cls) -> VRAMManager:
+        """Ensures that only one instance of VRAMManager exists."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._models = {}
@@ -253,21 +329,32 @@ class VRAMManager:
         return cls._instance
 
     def register(self, name: str, model: object) -> None:
+        """Registers a newly loaded model with the manager.
+
+        Args:
+            name: A unique identifier for the model.
+            model: The model object (expected to be a PyTorch model or similar).
+        """
         self._models[name] = model
         self._current_model = name
         log(f"VRAMManager: Registered '{name}'")
 
     def unload(self, name: str) -> None:
+        """Unloads a specific model from VRAM and releases its resources.
+
+        Args:
+            name: The unique identifier of the model to unload.
+        """
         if name in self._models:
             model = self._models.pop(name)
             if hasattr(model, "to"):
                 try:
-                    model.to("cpu")
+                    model.to("cpu")  # type: ignore
                 except Exception:
                     pass
             if hasattr(model, "unload"):
                 try:
-                    model.unload()
+                    model.unload()  # type: ignore
                 except Exception:
                     pass
             del model
@@ -276,12 +363,25 @@ class VRAMManager:
             if self._current_model == name:
                 self._current_model = None
 
-    def unload_all_except(self, keep: Optional[str] = None) -> None:
+    def unload_all_except(self, keep: str | None = None) -> None:
+        """Unloads all registered models except for the specified one.
+
+        Args:
+            keep: Optional identifier of the model to remain loaded.
+        """
         to_unload = [n for n in list(self._models.keys()) if n != keep]
         for name in to_unload:
             self.unload(name)
 
-    def prepare_for_model(self, name: str, estimated_vram_gb: float = 2.0) -> None:
+    def prepare_for_model(
+        self, name: str, estimated_vram_gb: float = 2.0
+    ) -> None:
+        """Ensures sufficient VRAM is available before loading a new model.
+
+        Args:
+            name: The identifier of the model about to be loaded.
+            estimated_vram_gb: Estimated VRAM requirement for the new model.
+        """
         if not can_load_model(estimated_vram_gb):
             log(f"VRAMManager: Low VRAM, unloading all for '{name}'")
             self.unload_all_except(None)
@@ -289,17 +389,28 @@ class VRAMManager:
         log_vram_status(f"before_{name}")
 
     def cleanup_before_ollama(self) -> None:
+        """Clears all GPU models to free maximum VRAM for external Ollama calls.
+
+        Ollama runs in a separate process, so we must manually release all
+        PyTorch-allocated VRAM for it to function correctly on low-memory GPUs.
+        """
         self.unload_all_except(None)
         cleanup_vram()
         log_vram_status("before_ollama")
 
 
 vram_manager = VRAMManager()
-_cached_profile: Optional[SystemProfile] = None
+_cached_profile: SystemProfile | None = None
 
 
 def get_cached_profile() -> SystemProfile:
-    """Get cached system profile (singleton)."""
+    """Retrieves the globally cached system profile.
+
+    Uses lazy initialization to detect hardware on the first call.
+
+    Returns:
+        The cached SystemProfile.
+    """
     global _cached_profile
     if _cached_profile is None:
         _cached_profile = get_system_profile()
@@ -307,7 +418,13 @@ def get_cached_profile() -> SystemProfile:
 
 
 def refresh_profile() -> SystemProfile:
-    """Force refresh the cached profile."""
+    """Forces a refresh of the cached hardware profile.
+
+    Use this if hardware state might have changed (e.g., after loading models).
+
+    Returns:
+        The updated SystemProfile.
+    """
     global _cached_profile
     _cached_profile = get_system_profile()
     return _cached_profile

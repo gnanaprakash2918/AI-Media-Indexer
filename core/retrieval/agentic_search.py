@@ -112,25 +112,26 @@ class SearchAgent:
     - Visible text/brands
     """
 
-    def __init__(self, db: VectorDB, llm: LLMInterface | None = None):
-        """Initialize search agent.
+    def __init__(self, db: VectorDB, llm: LLMInterface | None = None) -> None:
+        """Initializes the search agent.
 
         Args:
-            db: Vector database for search.
-            llm: LLM for query expansion.
+            db: Vector database for search operations.
+            llm: Optional LLM interface for query expansion. If not provided,
+                the default LLM from factory will be used.
         """
         self.db = db
         self.llm = llm or LLMFactory.create_llm()
 
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:
-        """Parse and expand user query using LLM.
+        """Parses and expands a natural language search query using an LLM.
 
         Args:
-            query: Natural language search query (can be paragraph-length).
+            query: The user's natural language search query.
 
         Returns:
-            ParsedQuery with expanded keywords and structured filters.
+            A ParsedQuery object containing structured filters and expanded text.
         """
         prompt = QUERY_EXPANSION_PROMPT.format(query=query)
 
@@ -148,18 +149,15 @@ class SearchAgent:
             return ParsedQuery(visual_keywords=[query])
 
     def _resolve_identity(self, person_name: str) -> int | None:
-        """Resolve person name to cluster ID via HITL database.
+        """Resolves a person's name to a face cluster ID.
 
-        Uses exact match first, then fuzzy matching for:
-        - Typos ("prakash" → "Prakash")
-        - Partial names ("Gnana" → "Gnana Prakash")
-        - Nickname variations
+        Performs exact and fuzzy matching against the HITL identity database.
 
         Args:
-            person_name: Name to look up.
+            person_name: The name of the person to resolve.
 
         Returns:
-            Cluster ID if found, None otherwise.
+            The cluster ID if found, otherwise None.
         """
         try:
             # 1. Try exact match first (fastest)
@@ -170,19 +168,21 @@ class SearchAgent:
             # 2. Fallback to fuzzy match (handles typos, partial names)
             cluster_id = self.db.fuzzy_get_cluster_id_by_name(person_name)
             if cluster_id:
-                log(f"[Search] Fuzzy matched '{person_name}' → cluster {cluster_id}")
+                log(
+                    f"[Search] Fuzzy matched '{person_name}' → cluster {cluster_id}"
+                )
             return cluster_id
         except Exception:
             return None
 
     def _get_face_ids_for_cluster(self, cluster_id: int) -> list[str]:
-        """Get all face point IDs belonging to a cluster.
+        """Retrieves all face point IDs belonging to a specific cluster.
 
         Args:
-            cluster_id: The cluster to look up.
+            cluster_id: The ID of the face cluster.
 
         Returns:
-            List of face IDs in that cluster.
+            A list of face point IDs (strings).
         """
         try:
             return self.db.get_face_ids_by_cluster(cluster_id)
@@ -197,20 +197,20 @@ class SearchAgent:
         use_expansion: bool = True,
         video_path: str | None = None,
     ) -> dict[str, Any]:
-        """Search scenes with comprehensive filtering for complex queries.
+        """Performs a production-grade scene-level search with LLM expansion.
 
-        This is the production-grade search method using scene-level storage.
-        Supports complex queries like:
-        "Prakash wearing blue shirt with spectacles bowling at Brunswick hitting a strike"
+        Resolves identities, builds comprehensive filters for clothing,
+        location, and actions, and queries the scene collection. Falls back
+        to frame-level search if scene search fails.
 
         Args:
-            query: Natural language search query (can be paragraph-length).
-            limit: Maximum results.
+            query: The natural language search query.
+            limit: Maximum number of results to return.
             use_expansion: Whether to use LLM query expansion.
-            video_path: Optional filter by specific video.
+            video_path: Optional filter for a specific video path.
 
         Returns:
-            Dict with results, parsed query, and metadata.
+            A dictionary containing results, parsed query, and metadata.
         """
         log(f"[Search] Scene search: '{query[:100]}...'")
 
@@ -230,7 +230,9 @@ class SearchAgent:
             if cluster_id is not None:
                 face_ids = self._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
-                log(f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}")
+                log(
+                    f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}"
+                )
 
         # 3. Build search query from expanded keywords
         search_text = parsed.to_search_text()
@@ -242,12 +244,16 @@ class SearchAgent:
                 query=search_text,
                 limit=limit,
                 person_name=resolved_name,
-                face_cluster_ids=[cluster_id] if cluster_id is not None else None,
+                face_cluster_ids=[cluster_id]
+                if cluster_id is not None
+                else None,
                 clothing_color=parsed.clothing_color,
                 clothing_type=parsed.clothing_type,
                 accessories=parsed.accessories if parsed.accessories else None,
                 location=parsed.location,
-                visible_text=parsed.text_to_find if parsed.text_to_find else None,
+                visible_text=parsed.text_to_find
+                if parsed.text_to_find
+                else None,
                 action_keywords=parsed.action_keywords
                 if parsed.action_keywords
                 else None,
@@ -256,8 +262,12 @@ class SearchAgent:
             )
             log(f"[Search] Found {len(results)} scene results")
         except Exception as e:
-            log(f"[Search] Scene search failed: {e}, falling back to frame search")
-            results = await self._fallback_frame_search(parsed, search_text, limit)
+            log(
+                f"[Search] Scene search failed: {e}, falling back to frame search"
+            )
+            results = await self._fallback_frame_search(
+                parsed, search_text, limit
+            )
 
         return {
             "query": query,
@@ -277,17 +287,17 @@ class SearchAgent:
         limit: int = 20,
         use_expansion: bool = True,
     ) -> dict[str, Any]:
-        """Perform agentic search with query expansion.
+        """Performs a frame-level agentic search with query expansion.
 
-        This method searches FRAMES (legacy). For production, use search_scenes().
+        This is a legacy search method. For production use, use `search_scenes`.
 
         Args:
-            query: Natural language search query.
-            limit: Maximum results to return.
+            query: The natural language search query.
+            limit: Maximum number of results to return.
             use_expansion: Whether to use LLM query expansion.
 
         Returns:
-            Dict with results, parsed query, and metadata.
+            A dictionary containing results, parsed query, and metadata.
         """
         log(f"[Search] Agentic frame search: '{query}'")
 
@@ -338,7 +348,9 @@ class SearchAgent:
                     match=models.MatchAny(any=[parsed.clothing_color.lower()]),
                 )
             )
-            log(f"[Search] Added clothing color filter: {parsed.clothing_color}")
+            log(
+                f"[Search] Added clothing color filter: {parsed.clothing_color}"
+            )
 
         if parsed.clothing_type:
             filters.append(
@@ -381,7 +393,9 @@ class SearchAgent:
 
         # Entity/Object filter
         if parsed.visual_keywords:
-            specific_entities = [k for k in parsed.visual_keywords if len(k) > 3]
+            specific_entities = [
+                k for k in parsed.visual_keywords if len(k) > 3
+            ]
             if specific_entities:
                 filters.append(
                     models.FieldCondition(
@@ -444,21 +458,30 @@ class SearchAgent:
         search_text: str,
         limit: int,
     ) -> list[dict]:
-        """Fallback to frame search if scene search fails."""
+        """Falls back to frame-level search if scene search is unavailable.
+
+        Args:
+            parsed: The already parsed query object.
+            search_text: The expanded search text.
+            limit: Maximum number of results to return.
+
+        Returns:
+            A list of search result dictionaries.
+        """
         try:
             return self.db.search_frames(query=search_text, limit=limit)
         except Exception:
             return []
 
     async def search_simple(self, query: str, limit: int = 20) -> list[dict]:
-        """Simple search without expansion (fallback).
+        """Performs a simple frame search without LLM expansion.
 
         Args:
-            query: Search query.
-            limit: Maximum results.
+            query: The search query string.
+            limit: Maximum number of results to return.
 
         Returns:
-            List of search results.
+            A list of search result dictionaries.
         """
         return self.db.search_frames(query=query, limit=limit)
 
@@ -473,27 +496,25 @@ class SearchAgent:
         candidates: list[dict],
         top_k: int = 10,
     ) -> list[dict]:
-        """Re-rank candidates using LLM to verify ALL query constraints.
+        """Re-ranks search candidates using an LLM to verify all query constraints.
 
-        This is the SOTA re-ranking stage that:
-        1. Takes candidate results from vector search
-        2. Uses LLM to verify each constraint from query is satisfied
-        3. Scores based on number of matched constraints
-        4. Provides chain-of-thought reasoning for each decision
+        Performs a second-stage verification where an LLM checks if the
+        candidate segments actually satisfy the specific entities, actions,
+        and attributes mentioned in the query.
 
         Args:
-            query: Original user query.
-            candidates: List of search results to re-rank.
-            top_k: Number of top results to return.
+            query: The original user search query.
+            candidates: A list of candidate search results.
+            top_k: The number of top results to return after re-ranking.
 
         Returns:
-            Re-ranked list with LLM verification scores and reasoning.
+            The re-ranked list of results with LLM verification metadata.
         """
         if not candidates:
             return []
 
         # Re-ranking prompt template
-        RERANK_PROMPT = """You are verifying if a video segment matches a user query.
+        rerank_prompt = """You are verifying if a video segment matches a user query.
 
 QUERY: "{query}"
 
@@ -527,14 +548,16 @@ Return JSON:
 
         reranked = []
 
-        for candidate in candidates[: top_k * 2]:  # Check more candidates than needed
+        for candidate in candidates[
+            : top_k * 2
+        ]:  # Check more candidates than needed
             description = (
                 candidate.get("description", "")
                 or candidate.get("dense_caption", "")
                 or candidate.get("raw_description", "")
             )
 
-            prompt = RERANK_PROMPT.format(
+            prompt = rerank_prompt.format(
                 query=query,
                 description=description[:500],
                 face_names=candidate.get("face_names", []),
@@ -549,7 +572,9 @@ Return JSON:
 
                 class RerankResult(BaseModel):
                     match_score: float = Field(default=0.5)
-                    constraints_checked: list[dict] = Field(default_factory=list)
+                    constraints_checked: list[dict] = Field(
+                        default_factory=list
+                    )
                     reasoning: str = Field(default="")
                     missing: list[str] = Field(default_factory=list)
 
@@ -590,22 +615,20 @@ Return JSON:
         video_path: str | None = None,
         use_reranking: bool = True,
     ) -> dict[str, Any]:
-        """SOTA search pipeline with full verification.
+        """Performs a state-of-the-art search with full verification and explainability.
 
-        This is the highest quality search method that:
-        1. Parses query with dynamic entity extraction
-        2. Retrieves candidates via multi-vector hybrid search
-        3. Re-ranks with LLM constraint verification
-        4. Returns explainable results with reasoning
+        This pipeline combines dynamic query expansion, multi-vector hybrid
+        search, and LLM-based re-ranking to provide highly accurate and
+        transparent search results.
 
         Args:
-            query: Complex natural language query.
-            limit: Maximum results.
-            video_path: Optional filter by video.
-            use_reranking: Whether to use LLM re-ranking (slower but more accurate).
+            query: The complex natural language query.
+            limit: Maximum number of results to return.
+            video_path: Optional filter for a specific video.
+            use_reranking: Whether to perform second-stage LLM verification.
 
         Returns:
-            Dict with ranked results and full explainability.
+            A dictionary containing ranked results and reasoning for each match.
         """
         log(f"[SOTA Search] Query: '{query[:100]}...'")
 
@@ -636,11 +659,32 @@ Return JSON:
 
         # 3. Retrieve candidates via multi-vector search
         try:
-            candidates = self.db.explainable_search(
-                query_text=search_text,
-                parsed_query=parsed,
+            # Use search_scenes as the explainable/SOTA method
+            candidates = self.db.search_scenes(
+                query=search_text,
                 limit=limit * 3 if use_reranking else limit,
-                score_threshold=0.25,
+                person_name=person_names[0] if person_names else None,
+                face_cluster_ids=face_ids if face_ids else None,
+                clothing_color=parsed.clothing_color
+                if hasattr(parsed, "clothing_color")
+                else None,
+                clothing_type=parsed.clothing_type
+                if hasattr(parsed, "clothing_type")
+                else None,
+                accessories=parsed.accessories
+                if hasattr(parsed, "accessories")
+                else None,
+                location=parsed.location
+                if hasattr(parsed, "location")
+                else None,
+                visible_text=parsed.text_to_find
+                if hasattr(parsed, "text_to_find")
+                else None,
+                action_keywords=parsed.action_keywords
+                if hasattr(parsed, "action_keywords")
+                else None,
+                video_path=video_path,
+                search_mode="hybrid",
             )
             log(f"[SOTA Search] Retrieved {len(candidates)} candidates")
         except Exception as e:
@@ -650,7 +694,9 @@ Return JSON:
         # 4. Re-rank with LLM verification (optional but recommended)
         if use_reranking and candidates:
             try:
-                candidates = await self.rerank_with_llm(query, candidates, top_k=limit)
+                candidates = await self.rerank_with_llm(
+                    query, candidates, top_k=limit
+                )
                 log(f"[SOTA Search] Re-ranked to {len(candidates)} results")
             except Exception as e:
                 log(f"[SOTA Search] Re-ranking failed: {e}, using raw results")
@@ -658,7 +704,9 @@ Return JSON:
         # 5. Build response with full explainability
         return {
             "query": query,
-            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
+            "parsed": parsed.model_dump()
+            if hasattr(parsed, "model_dump")
+            else {},
             "search_text": search_text,
             "person_names_resolved": person_names,
             "face_ids_matched": len(face_ids),
@@ -675,10 +723,18 @@ Return JSON:
         video_path: str | None = None,
         limit: int = 10,
     ) -> dict:
-        """Search using Scenelet temporal windows for action queries.
+        """Searches for action-based video segments with temporal context.
 
-        Returns results with precise start_time/end_time ranges and
-        natural language reasoning.
+        Identifies relevant moments and expands them into short windows
+        (scenelets) to capture the full context of an action or event.
+
+        Args:
+            query: The natural language search query.
+            video_path: Optional filter for a specific video.
+            limit: Maximum number of results to return.
+
+        Returns:
+            A dictionary with results containing start and end time ranges.
         """
         log(f"[Scenelet Search] Query: '{query[:80]}...'")
 

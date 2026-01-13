@@ -41,7 +41,9 @@ class LLMInterface(ABC):
 
         if not self.prompt_dir.exists():
             # Create the prompt directory if it does not exist.
-            print(f"Prompt directory '{self.prompt_dir}' does not exist. Creating it.")
+            print(
+                f"Prompt directory '{self.prompt_dir}' does not exist. Creating it."
+            )
             try:
                 os.makedirs(self.prompt_dir, exist_ok=True)
                 print(f"Prompt directory '{self.prompt_dir}' created.")
@@ -104,7 +106,9 @@ class LLMInterface(ABC):
     def parse_json_response(self, response_text: str, schema: type[T]) -> T:
         """Extract JSON from a model response and validate via Pydantic."""
         clean_text = (
-            re.sub(r"```[a-zA-Z]*", "", response_text).replace("```", "").strip()
+            re.sub(r"```[a-zA-Z]*", "", response_text)
+            .replace("```", "")
+            .strip()
         )
 
         match = re.search(r"(\{.*\})", clean_text, re.DOTALL)

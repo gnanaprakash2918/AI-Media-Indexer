@@ -89,7 +89,9 @@ def _build_tool_schemas() -> list[dict[str, Any]]:
                     "properties": {
                         "file_path": {
                             "type": "string",
-                            "description": ("Absolute path to the video file on disk."),
+                            "description": (
+                                "Absolute path to the video file on disk."
+                            ),
                         },
                         "media_type": {
                             "type": "string",
@@ -136,7 +138,7 @@ class MediaAgentHandler(RequestHandler):
         self,
         params: MessageSendParams,
         context: ServerCallContext | None = None,
-    ) -> Task:  # noqa: ARG002
+    ) -> Task:
         """Handle an A2A `message.send` request.
 
         This implementation treats the most recent user message as a
@@ -155,7 +157,9 @@ class MediaAgentHandler(RequestHandler):
         logger.info("DEBUG: Handler received request!")
         user_message: Message = params.message  # type: ignore[assignment]
         text_parts = [
-            p.root.text for p in user_message.parts if isinstance(p.root, TextPart)
+            p.root.text
+            for p in user_message.parts
+            if isinstance(p.root, TextPart)
         ]
         user_text = "\n".join(text_parts).strip()
 
@@ -183,11 +187,9 @@ class MediaAgentHandler(RequestHandler):
                 messages=history,
                 tools=self.tools,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("media_agent_handler.ollama_error", exc_info=exc)
-            reply_text = (
-                f"The language model failed while processing your request: {exc}"
-            )
+            reply_text = f"The language model failed while processing your request: {exc}"
             return self._build_task(
                 user_message=user_message,
                 reply_text=reply_text,
@@ -243,7 +245,7 @@ class MediaAgentHandler(RequestHandler):
                     messages=history,
                 )
                 reply_text = final["message"]["content"]
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(
                     "media_agent_handler.ollama_followup_error",
                     exc_info=exc,
@@ -288,8 +290,10 @@ class MediaAgentHandler(RequestHandler):
                     )
 
                 return "\n".join(lines)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("media_agent_handler.search_error", exc_info=exc)
+            except Exception as exc:
+                logger.exception(
+                    "media_agent_handler.search_error", exc_info=exc
+                )
                 return f"search_media failed with error: {exc}"
 
         if name == "ingest_media":
@@ -306,8 +310,10 @@ class MediaAgentHandler(RequestHandler):
                     f"{ingest_result.message} "
                     f"(media_type_hint={ingest_result.media_type_hint})"
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("media_agent_handler.ingest_error", exc_info=exc)
+            except Exception as exc:
+                logger.exception(
+                    "media_agent_handler.ingest_error", exc_info=exc
+                )
                 return f"ingest_media failed with error: {exc}"
 
         logger.warning("media_agent_handler.unknown_tool", name=name)
@@ -341,22 +347,44 @@ class MediaAgentHandler(RequestHandler):
     async def on_get_task(
         self, params: TaskQueryParams, context: ServerCallContext | None = None
     ) -> Task | None:
-        # We don't store task history persistently in this simple version yet
+        """Retrieves a specific task's status.
+
+        Note: Task history is currently not persisted.
+
+        Returns:
+            Always None in this implementation.
+        """
         return None
 
     async def on_cancel_task(
         self, params: TaskIdParams, context: ServerCallContext | None = None
     ) -> Task | None:
+        """Cancels a running task.
+
+        Raises:
+            ServerError: Implementation not supported.
+        """
         raise ServerError(
-            error=UnsupportedOperationError(message="Cancellation not supported yet")
+            error=UnsupportedOperationError(
+                message="Cancellation not supported yet"
+            )
         )
 
     async def on_message_send_stream(
-        self, params: MessageSendParams, context: ServerCallContext | None = None
+        self,
+        params: MessageSendParams,
+        context: ServerCallContext | None = None,
     ):
+        """Streaming version of message send.
+
+        Raises:
+            ServerError: Implementation not supported.
+        """
         # We will implement this in Sprint 8 for streaming
         raise ServerError(
-            error=UnsupportedOperationError(message="Streaming not supported yet")
+            error=UnsupportedOperationError(
+                message="Streaming not supported yet"
+            )
         )
         yield  # Required for generator return type
 
@@ -365,6 +393,11 @@ class MediaAgentHandler(RequestHandler):
         params: TaskPushNotificationConfig,
         context: ServerCallContext | None = None,
     ) -> TaskPushNotificationConfig:
+        """Sets push notification configuration for a task.
+
+        Raises:
+            ServerError: Implementation not supported.
+        """
         raise ServerError(error=UnsupportedOperationError())
 
     async def on_get_task_push_notification_config(
@@ -372,11 +405,21 @@ class MediaAgentHandler(RequestHandler):
         params: TaskIdParams | GetTaskPushNotificationConfigParams,
         context: ServerCallContext | None = None,
     ) -> TaskPushNotificationConfig:
+        """Retrieves push notification configuration for a task.
+
+        Raises:
+            ServerError: Implementation not supported.
+        """
         raise ServerError(error=UnsupportedOperationError())
 
     async def on_resubscribe_to_task(
         self, params: TaskIdParams, context: ServerCallContext | None = None
     ):
+        """Resubscribes to task updates.
+
+        Raises:
+            ServerError: Implementation not supported.
+        """
         raise ServerError(error=UnsupportedOperationError())
         yield
 
@@ -385,6 +428,11 @@ class MediaAgentHandler(RequestHandler):
         params: ListTaskPushNotificationConfigParams,
         context: ServerCallContext | None = None,
     ) -> list[TaskPushNotificationConfig]:
+        """Lists push notification configurations.
+
+        Returns:
+            Always an empty list.
+        """
         return []
 
     async def on_delete_task_push_notification_config(
@@ -392,4 +440,5 @@ class MediaAgentHandler(RequestHandler):
         params: DeleteTaskPushNotificationConfigParams,
         context: ServerCallContext | None = None,
     ) -> None:
+        """Deletes push notification configuration."""
         pass

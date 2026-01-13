@@ -66,10 +66,16 @@ class OllamaLLM(LLMInterface):
             print("Ollama AsyncClient initialized successfully.")
         except Exception as e:
             print(f"Failed to construct Ollama AsyncClient: {e}")
-            raise RuntimeError(f"Failed to construct Ollama AsyncClient: {e}") from e
+            raise RuntimeError(
+                f"Failed to construct Ollama AsyncClient: {e}"
+            ) from e
 
     async def _rate_limit(self) -> None:
-        """Apply rate limiting and cooldown before making a call."""
+        """Applies rate limiting and cooldown before making an Ollama API call.
+
+        Enforces minimum call intervals and waits if the system is currently
+        in a cooldown period due to recent errors.
+        """
         # Check cooldown
         now = time.time()
         if now < OllamaLLM._cooldown_until:
@@ -85,11 +91,18 @@ class OllamaLLM(LLMInterface):
         OllamaLLM._last_call_time = time.time()
 
     def _record_success(self) -> None:
-        """Reset error counter on successful call."""
+        """Resets the consecutive error counter upon a successful API call."""
         OllamaLLM._consecutive_errors = 0
 
     def _record_error(self, error: Any = None) -> None:
-        """Track errors and trigger cooldown if needed."""
+        """Tracks consecutive errors and triggers cooldowns if necessary.
+
+        Detects specific error types like CUDA OOM and model runner crashes
+        to trigger immediate long cooldowns or system recovery actions.
+
+        Args:
+            error: The exception or error object encountered.
+        """
         OllamaLLM._consecutive_errors += 1
 
         error_str = str(error).lower() if error else ""
@@ -97,30 +110,36 @@ class OllamaLLM(LLMInterface):
         # Check for CUDA OOM (VRAM exhaustion)
         is_cuda_oom = (
             "cuda" in error_str
-            and ("out of memory" in error_str or "unable to allocate" in error_str)
-            or "cudamalloc failed" in error_str
-        )
+            and (
+                "out of memory" in error_str
+                or "unable to allocate" in error_str
+            )
+        ) or "cudamalloc failed" in error_str
 
         # Check for model runner crash or 500 errors (VRAM exhaustion)
         is_runner_crash = (
             "model runner has unexpectedly stopped" in error_str
             or "500" in error_str
             or "internal server error" in error_str
-            or "unexpected" in error_str
-            and "stop" in error_str
+            or ("unexpected" in error_str and "stop" in error_str)
         )
 
         if is_cuda_oom:
-            print("[Ollama] CUDA OOM detected! Moving encoder to CPU as fallback...")
+            print(
+                "[Ollama] CUDA OOM detected! Moving encoder to CPU as fallback..."
+            )
             try:
                 # Try to free VRAM by moving encoder to CPU
                 from core.ingestion.pipeline import IngestionPipeline
 
                 if (
                     hasattr(IngestionPipeline, "_instance")
-                    and IngestionPipeline._instance
+                    and IngestionPipeline._instance  # type: ignore
                 ):
-                    IngestionPipeline._instance.db.encoder_to_cpu()
+                    try:
+                        IngestionPipeline._instance.db.encoder_to_cpu()  # type: ignore
+                    except Exception:
+                        pass
             except Exception as e:
                 print(f"[Ollama] Could not move encoder to CPU: {e}")
 
@@ -143,7 +162,15 @@ class OllamaLLM(LLMInterface):
 
     @observe("llm_generate")
     async def generate(self, prompt: str, **kwargs: Any) -> str:
-        """Generate text from the Ollama service for a user prompt."""
+        """Generates a text response from Ollama for a given prompt.
+
+        Args:
+            prompt: The user prompt to send to the model.
+            **kwargs: Additional model parameters (e.g., temperature).
+
+        Returns:
+            The generated text response.
+        """
         debug_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
         print(f"Ollama generating text for prompt: {debug_prompt}")
 
@@ -186,9 +213,19 @@ class OllamaLLM(LLMInterface):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> T:
-        """Generate structured JSON output matching the Pydantic schema.
+        """Generates a structured JSON response matching a Pydantic schema.
 
-        Uses Ollama's native format='json' for structured output.
+        Uses Ollama's native JSON mode and explicit schema-based prompting to
+        ensure the model returns data in the expected format.
+
+        Args:
+            schema: The Pydantic model class defining the expected structure.
+            prompt: The user prompt.
+            system_prompt: Optional system prompt to guide the model.
+            **kwargs: Additional model parameters.
+
+        Returns:
+            An instance of the schema class populated with the model's output.
         """
         print("Ollama structured generation requested.")
 
@@ -254,7 +291,17 @@ Now respond with JSON:"""
             raise RuntimeError("Exhausted retries")
 
     def _build_schema_example(self, schema: type) -> str:
-        """Build a JSON example from a Pydantic schema, recursively handling nested models."""
+        """Builds a JSON example string from a Pydantic schema for prompting.
+
+        Recursively traverses the schema to create a representative JSON object
+        that can be used as a template in the LLM prompt.
+
+        Args:
+            schema: The Pydantic model class or primitive type.
+
+        Returns:
+            A formatted JSON string representing the structure of the schema.
+        """
         import json
         from typing import get_args, get_origin
 
@@ -284,22 +331,24 @@ Now respond with JSON:"""
                 elif hasattr(annotation, "model_fields"):
                     # It's a nested Pydantic model like SceneContext
                     example[name] = build_example(annotation)
-                elif annotation == str or (
+                elif annotation is str or (
                     origin is None and "str" in str(annotation).lower()
                 ):
                     # String field - use description as hint
-                    example[name] = desc[:60] + "..." if len(desc) > 60 else desc
-                elif annotation == int or (
+                    example[name] = (
+                        desc[:60] + "..." if len(desc) > 60 else desc
+                    )
+                elif annotation is int or (
                     origin is None and "int" in str(annotation).lower()
                 ):
                     example[name] = 0
-                elif annotation == bool:
+                elif annotation is bool:
                     example[name] = False
                 else:
                     # Handle Optional[str], Optional[X], or unknowns
                     args = get_args(annotation)
                     if args:
-                        if args[0] == str:
+                        if args[0] is str:
                             example[name] = (
                                 desc[:60] + "..." if len(desc) > 60 else desc
                             )
@@ -327,7 +376,17 @@ Now respond with JSON:"""
         system_prompt: str = "",
         **kwargs: Any,
     ) -> str:
-        """Generate a description for an image using the Ollama client."""
+        """Generates a text description for a given image.
+
+        Args:
+            prompt: The text prompt or question about the image.
+            image_path: Path to the image file to analyze.
+            system_prompt: Optional system prompt.
+            **kwargs: Additional model parameters.
+
+        Returns:
+            The model's description of the image.
+        """
         img_path = str(Path(image_path))
 
         messages = []
@@ -370,7 +429,9 @@ Now respond with JSON:"""
                     print(
                         f"Ollama image description failed after {self.MAX_RETRIES} attempts: {e}"
                     )
-                    raise RuntimeError(f"Ollama image description failed: {e}") from e
+                    raise RuntimeError(
+                        f"Ollama image description failed: {e}"
+                    ) from e
             return ""
 
     @observe("llm_describe_image_structured")
@@ -382,9 +443,20 @@ Now respond with JSON:"""
         system_prompt: str = "",
         **kwargs: Any,
     ) -> T:
-        """Describe an image and return structured JSON output.
+        """Describes an image and returns a structured JSON response.
 
-        Uses format='json' for proper JSON output from vision model.
+        Combines vision analysis with structured output constraints to extract
+        specific entities or attributes from an image in a machine-readable format.
+
+        Args:
+            schema: The Pydantic model class defining the expected output.
+            prompt: The vision analysis prompt.
+            image_path: Path to the image file.
+            system_prompt: Optional system prompt.
+            **kwargs: Additional model parameters.
+
+        Returns:
+            An instance of the schema class populated with the vision results.
         """
         img_path = str(Path(image_path))
 

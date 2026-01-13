@@ -9,14 +9,13 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import settings
-from llm.factory import LLMFactory
+from config import settings  # noqa: E402
+from llm.factory import LLMFactory  # noqa: E402
 
 TEST_SET = [
     {
@@ -24,7 +23,10 @@ TEST_SET = [
         "expected_keywords": ["bowl", "lane", "strike", "ball"],
     },
     {"query": "red car", "expected_keywords": ["car", "red", "vehicle"]},
-    {"query": "person speaking", "expected_keywords": ["speak", "talk", "dialogue"]},
+    {
+        "query": "person speaking",
+        "expected_keywords": ["speak", "talk", "dialogue"],
+    },
     {
         "query": "outdoor scene",
         "expected_keywords": ["outdoor", "outside", "sky", "tree"],
@@ -53,12 +55,16 @@ Respond with ONLY this JSON format:
 
 
 class QualityEvaluator:
+    """Evaluates search results against expected outcomes."""
+
     def __init__(self, base_url: str = "http://localhost:8000"):
+        """Initialize the evaluator with API base URL."""
         self.base_url = base_url
         self.client = httpx.AsyncClient(timeout=30.0)
-        self.llm: Optional[object] = None
+        self.llm: object | None = None
 
     async def search(self, query: str, limit: int = 5) -> list[dict]:
+        """Perform a search query against the API."""
         try:
             resp = await self.client.get(
                 f"{self.base_url}/search", params={"q": query, "limit": limit}
@@ -71,10 +77,12 @@ class QualityEvaluator:
             return []
 
     def _ensure_llm(self):
+        """Lazy load the LLM client."""
         if self.llm is None:
             self.llm = LLMFactory.create_llm(provider=settings.llm_provider)  # type: ignore
 
     async def judge_result(self, query: str, result: dict) -> dict:
+        """Rate result relevance using LLM-as-a-Judge."""
         self._ensure_llm()
 
         description = (
@@ -89,7 +97,9 @@ class QualityEvaluator:
         prompt = JUDGE_PROMPT.format(query=query, description=description)
 
         try:
-            response = await self.llm.generate(prompt)
+            if not self.llm:
+                return {"score": 0, "reason": "LLM not initialized"}
+            response = await self.llm.generate(prompt)  # type: ignore
 
             response = response.strip()
             if response.startswith("```"):
@@ -112,7 +122,10 @@ class QualityEvaluator:
                 "reason": f"LLM failed ({e}), keyword fallback",
             }
 
-    async def evaluate_test_set(self, test_set: list[dict] = None) -> dict:
+    async def evaluate_test_set(
+        self, test_set: list[dict] | None = None
+    ) -> dict:
+        """Run evaluation across all test cases."""
         tests = test_set or TEST_SET
         results = []
         total_score = 0.0
@@ -155,7 +168,8 @@ class QualityEvaluator:
                     "score": score,
                     "reason": reason,
                     "result_preview": (
-                        top_result.get("action") or top_result.get("description", "")
+                        top_result.get("action")
+                        or top_result.get("description", "")
                     )[:100],
                 }
             )
@@ -183,10 +197,12 @@ class QualityEvaluator:
         }
 
     async def close(self):
+        """Close the HTTP client."""
         await self.client.aclose()
 
 
 async def main():
+    """Run the quality evaluation suite."""
     print("\nInitializing Quality Evaluator...")
     evaluator = QualityEvaluator()
 

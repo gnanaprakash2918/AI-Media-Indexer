@@ -4,7 +4,7 @@ Uses LLM reasoning to route queries to appropriate agents based on their capabil
 """
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.agent.cards import (
     AUDIO_AGENT_TOOLS,
@@ -13,6 +13,9 @@ from core.agent.cards import (
     get_all_tool_schemas,
 )
 from core.utils.logger import log
+
+if TYPE_CHECKING:
+    from llm.interface import LLMInterface
 
 ROUTER_PROMPT = """You are an AI orchestrator for a media indexing system. Given a user query, select the best tool(s) to execute.
 
@@ -34,13 +37,24 @@ Example:
 class MultiAgentOrchestrator:
     """Routes queries to appropriate agents using LLM-based reasoning."""
 
-    def __init__(self, llm=None):
-        self.llm = llm
+    def __init__(self, llm: LLMInterface | None = None) -> None:
+        """Initializes the orchestrator with an LLM and tool schemas.
+
+        Args:
+            llm: Optional LLM interface for reasoning and routing.
+        """
+        from llm.factory import LLMFactory
+
+        self.llm = llm or LLMFactory.get_default_llm()
         self.tool_schemas = get_all_tool_schemas()
         self._tool_map = self._build_tool_map()
 
     def _build_tool_map(self) -> dict[str, str]:
-        """Map tool names to agent types."""
+        """Maps individual tool names to their parent agent types.
+
+        Returns:
+            A dictionary mapping tool names to 'vision', 'audio', or 'search'.
+        """
         mapping = {}
         for t in VISION_AGENT_TOOLS:
             mapping[t.name] = "vision"
@@ -50,8 +64,20 @@ class MultiAgentOrchestrator:
             mapping[t.name] = "search"
         return mapping
 
-    def route(self, query: str) -> dict[str, Any]:
-        """Route query to appropriate agent using LLM reasoning."""
+    async def route(self, query: str) -> dict[str, Any]:
+        """Routes a natural language query to the most appropriate agent.
+
+        Uses LLM-based reasoning to analyze the query and select a tool
+        from the available agent capability cards. Falls back to rule-based
+        routing if the LLM is unavailable or fails.
+
+        Args:
+            query: The user's natural language query.
+
+        Returns:
+            A dictionary containing the selected 'agent', 'tool',
+            and 'parameters'.
+        """
         if self.llm is None:
             return self._fallback_route(query)
 
@@ -60,7 +86,7 @@ class MultiAgentOrchestrator:
         )
 
         try:
-            response = self.llm.generate(prompt)
+            response = await self.llm.generate(prompt)
             result = json.loads(response)
             agent_type = self._tool_map.get(result.get("tool", ""), "search")
             log(f"[Orchestrator] Routed to {agent_type}: {result.get('tool')}")
@@ -70,11 +96,19 @@ class MultiAgentOrchestrator:
             return self._fallback_route(query)
 
     def _fallback_route(self, query: str) -> dict[str, Any]:
-        """Rule-based fallback when LLM unavailable."""
+        """Provides a simplified rule-based routing when LLM is unavailable.
+
+        Args:
+            query: The user's natural language query.
+
+        Returns:
+            A dictionary containing the selected agent and tool.
+        """
         q = query.lower()
 
         if any(
-            w in q for w in ["transcribe", "speech", "audio", "speaker", "dialogue"]
+            w in q
+            for w in ["transcribe", "speech", "audio", "speaker", "dialogue"]
         ):
             return {
                 "agent": "audio",
@@ -83,7 +117,9 @@ class MultiAgentOrchestrator:
                 "reasoning": "Audio-related query",
             }
 
-        if any(w in q for w in ["face", "person", "detect", "track", "segment"]):
+        if any(
+            w in q for w in ["face", "person", "detect", "track", "segment"]
+        ):
             return {
                 "agent": "vision",
                 "tool": "analyze_frame",
@@ -100,8 +136,18 @@ class MultiAgentOrchestrator:
         }
 
     async def execute(self, query: str) -> dict[str, Any]:
-        """Route and execute query through appropriate agent."""
-        route_result = self.route(query)
+        """Orchestrates the routing and execution of a user query.
+
+        Identifies the target agent and invokes the corresponding tool
+        asynchronously.
+
+        Args:
+            query: The user's natural language query.
+
+        Returns:
+            A dictionary containing the routing information and execution results.
+        """
+        route_result = await self.route(query)
         agent_type = route_result.get("agent", "search")
         tool_name = route_result.get("tool", "search_scenes")
         params = route_result.get("parameters", {})
@@ -138,7 +184,15 @@ class MultiAgentOrchestrator:
 _orchestrator: MultiAgentOrchestrator | None = None
 
 
-def get_orchestrator(llm=None) -> MultiAgentOrchestrator:
+def get_orchestrator(llm: LLMInterface | None = None) -> MultiAgentOrchestrator:
+    """Retrieves the singleton instance of the MultiAgentOrchestrator.
+
+    Args:
+        llm: Optional LLM interface override.
+
+    Returns:
+        The initialized MultiAgentOrchestrator instance.
+    """
     global _orchestrator
     if _orchestrator is None:
         _orchestrator = MultiAgentOrchestrator(llm=llm)

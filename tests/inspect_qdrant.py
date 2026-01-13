@@ -1,3 +1,5 @@
+"""Scripts to inspect Qdrant data."""
+
 import sys
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from core.storage.db import VectorDB
 
 
 def inspect_data():
+    """Dump Qdrant data for inspection."""
     db = VectorDB()
     output = []
 
@@ -28,8 +31,9 @@ def inspect_data():
     faces = resp[0]
     output.append(f"Faces in Cluster 2: {len(faces)}")
     for face in faces:
+        payload = face.payload or {}
         output.append(
-            f"ID: {face.id}, Name: {face.payload.get('name')}, Media: {face.payload.get('media_path')}"
+            f"ID: {face.id}, Name: {payload.get('name')}, Media: {payload.get('media_path')}"
         )
 
     output.append("\n--- Searching Frames with Cluster 2 ---")

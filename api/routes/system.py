@@ -1,4 +1,5 @@
 """System configuration and health check routes."""
+
 import asyncio
 import json
 
@@ -84,10 +85,14 @@ async def health_check(request: Request):
             "status": "ok",
             "device": settings.device,
             "pipeline": "ready" if pipeline else "unavailable",
-            "qdrant": "connected" if pipeline and pipeline.db else "disconnected",
+            "qdrant": "connected"
+            if pipeline and pipeline.db
+            else "disconnected",
             "stats": stats,
             "observability": observability_status,
-            "asr_mode": "Native" if settings.use_native_nemo else "Docker/Whisper",
+            "asr_mode": "Native"
+            if settings.use_native_nemo
+            else "Docker/Whisper",
         }
     except Exception as e:
         logger.exception("Health check failed")
@@ -110,7 +115,7 @@ async def sse_events():
                     )
                     data = json.dumps(event)
                     yield f"data: {data}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send heartbeat to keep connection alive
                     yield ": heartbeat\n\n"
         finally:

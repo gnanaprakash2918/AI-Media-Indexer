@@ -123,8 +123,7 @@ class FrameExtractor:
                 def run_ffmpeg():
                     return subprocess.run(
                         args_to_ffmpeg,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        capture_output=True,
                         text=True,
                         encoding="utf-8",
                         errors="replace",
@@ -151,7 +150,9 @@ class FrameExtractor:
             IsADirectoryError,
             OSError,
         ) as exc:
-            log(f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}")
+            log(
+                f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}"
+            )
             return
 
         except Exception as exc:
