@@ -200,17 +200,14 @@ class EntityEnricher:
                 if record["entity_type"] == "face":
                     result = await self.enrich_unknown_face(
                         context=record["context"],
-                        skip_privacy_check=True,
                     )
                 elif record["entity_type"] == "location":
                     result = await self.enrich_location(
                         location_hint=record["context"],
-                        skip_privacy_check=True,
                     )
                 else:
                     result = await self.enrich_topic(
                         topic=record["context"],
-                        skip_privacy_check=True,
                     )
 
                 record["result"] = result

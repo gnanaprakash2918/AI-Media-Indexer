@@ -21,7 +21,7 @@ import torch
 # Backend 1: HuggingFace Transformers (lightweight, cross-platform)
 
 try:
-    from transformers import (
+    from transformers import (  # type: ignore
         AutoModelForSpeechSeq2Seq,
         AutoProcessor,
         pipeline as hf_pipeline,

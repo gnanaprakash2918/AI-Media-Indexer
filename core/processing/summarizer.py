@@ -218,7 +218,7 @@ class HierarchicalSummarizer:
                 with_payload=True,
             )
 
-            return [p.payload for p in results[0]]
+            return [p.payload for p in results[0] if p.payload]
         except Exception as e:
             log(f"Error getting frames: {e}")
             return []
@@ -316,9 +316,11 @@ class HierarchicalSummarizer:
         )
 
         try:
-            summary_text = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.llm.generate(prompt, max_tokens=500)
-            )
+            # Ensure self.llm.generate is compatible or wrapped properly
+            if hasattr(self.llm, "generate_sync"):
+                 summary_text = self.llm.generate_sync(prompt, max_tokens=500)
+            else:
+                 summary_text = await self.llm.generate(prompt, max_tokens=500)
 
             return {
                 "video_path": video_path,
