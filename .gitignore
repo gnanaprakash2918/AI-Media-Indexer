@@ -15,6 +15,9 @@ verify_fixes.py
 # Langfuse local data
 langfuse_data/
 
+# Agents
+AGENTS.md
+
 # Custom - AI Media Indexer Data
 models/
 qdrant_data/

@@ -341,3 +341,24 @@ async def resume_job(job_id: str):
             status_code=404, detail="Job not found or cannot be resumed"
         )
     return {"status": "resumed", "job_id": job_id}
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Delete a job from the system.
+
+    Removes the job from both the progress tracker cache and the SQLite database.
+
+    Args:
+        job_id: The unique identifier of the job to delete.
+
+    Returns:
+        A confirmation status dictionary.
+
+    Raises:
+        HTTPException: If the job cannot be found.
+    """
+    success = progress_tracker.delete(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"status": "deleted", "job_id": job_id}

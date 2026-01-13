@@ -363,6 +363,35 @@ class ProgressTracker:
 
         return False
 
+    def delete(self, job_id: str) -> bool:
+        """Delete a job from both cache and database.
+
+        Args:
+            job_id: The job ID to delete.
+
+        Returns:
+            True if the job was deleted, False if not found.
+        """
+        found = False
+
+        with self._lock:
+            if job_id in self._cache:
+                del self._cache[job_id]
+                found = True
+            if job_id in self._last_db_update:
+                del self._last_db_update[job_id]
+
+        try:
+            job_manager.delete_job(job_id)
+            found = True
+        except Exception:
+            pass
+
+        if found:
+            self._broadcast({"event": "job_deleted", "job_id": job_id})
+
+        return found
+
     def is_paused(self, job_id: str) -> bool:
         """Check if a job is paused."""
         with self._lock:
