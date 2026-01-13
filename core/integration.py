@@ -23,11 +23,13 @@ from core.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from core.processing.audio_events import AudioEventDetector
+    from core.processing.biometric_arbitrator import BiometricArbitrator
     from core.processing.frame_sampling import SmartFrameSampler, TextGatedOCR
     from core.processing.ocr import OCRProcessor
     from core.processing.object_detection import ObjectDetector
     from core.processing.temporal import TemporalAnalyzer
     from core.retrieval.hybrid import HybridSearcher
+    from core.retrieval.privacy import PrivacyFilter
     from core.storage.keyword_index import KeywordIndex
     from core.utils.cancellation import CancellationToken
     from core.utils.resource_arbiter import ResourceArbiter
@@ -225,3 +227,16 @@ def safe_path(path_str: str | Path) -> Path:
     """Get a Windows-safe path."""
     from core.utils.filesystem import safe_path as _safe
     return _safe(path_str)
+
+
+def get_biometric_arbitrator() -> "BiometricArbitrator":
+    """Get the global BiometricArbitrator for face verification."""
+    from core.processing.biometric_arbitrator import BIOMETRIC_ARBITRATOR
+    return BIOMETRIC_ARBITRATOR
+
+
+def get_privacy_filter() -> "PrivacyFilter":
+    """Get the global PrivacyFilter for personal/movie mode."""
+    from core.retrieval.privacy import PRIVACY_FILTER
+    return PRIVACY_FILTER
+
