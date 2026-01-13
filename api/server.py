@@ -77,7 +77,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 # Import routers
-from api.routes import agent, identities, ingest, media, search, system
+from api.routes import (
+    agent,
+    councils,
+    identities,
+    ingest,
+    media,
+    search,
+    system,
+)
 from config import settings
 from core.ingestion.jobs import job_manager
 from core.ingestion.pipeline import IngestionPipeline
@@ -167,6 +175,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router, tags=["Search"])
     app.include_router(agent.router, tags=["Agent"])
     app.include_router(identities.router, tags=["Identities"])
+    app.include_router(councils.router, tags=["Councils"])
 
     # Mount static files for default thumbnails/assets
     thumb_dir = settings.cache_dir / "thumbnails"
