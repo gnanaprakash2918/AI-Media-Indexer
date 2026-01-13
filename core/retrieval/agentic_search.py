@@ -112,16 +112,37 @@ class SearchAgent:
     - Visible text/brands
     """
 
-    def __init__(self, db: VectorDB, llm: LLMInterface | None = None) -> None:
+    def __init__(
+        self,
+        db: "VectorDB",
+        llm: "LLMInterface | None" = None,
+        enable_hybrid: bool = True,
+    ) -> None:
         """Initializes the search agent.
 
         Args:
             db: Vector database for search operations.
             llm: Optional LLM interface for query expansion. If not provided,
                 the default LLM from factory will be used.
+            enable_hybrid: Enable hybrid BM25+vector search with RRF fusion.
         """
         self.db = db
         self.llm = llm or LLMFactory.create_llm()
+        self._hybrid_searcher = None
+        self._enable_hybrid = enable_hybrid
+
+    @property
+    def hybrid_searcher(self):
+        """Lazy-load HybridSearcher for BM25+vector fusion."""
+        if self._hybrid_searcher is None and self._enable_hybrid:
+            try:
+                from core.retrieval.hybrid import HybridSearcher
+
+                self._hybrid_searcher = HybridSearcher(self.db)
+                log("[Search] HybridSearcher initialized")
+            except Exception as e:
+                log(f"[Search] HybridSearcher init failed: {e}")
+        return self._hybrid_searcher
 
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:
@@ -513,6 +534,48 @@ class SearchAgent:
         Returns:
             A list of search result dictionaries.
         """
+        return self.db.search_frames(query=query, limit=limit)
+
+    async def hybrid_search(
+        self,
+        query: str,
+        limit: int = 50,
+        vector_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+        video_id: str | None = None,
+    ) -> list[dict]:
+        """Perform hybrid BM25+vector search with weighted RRF fusion.
+
+        Per AGENTS.MD: Use weighted RRF (0.7 vector, 0.3 BM25).
+
+        Args:
+            query: Search query string.
+            limit: Maximum results to return.
+            vector_weight: Weight for vector search (default 0.7).
+            keyword_weight: Weight for BM25 keyword search (default 0.3).
+            video_id: Optional filter by video.
+
+        Returns:
+            List of results with fused scores.
+        """
+        if self.hybrid_searcher:
+            try:
+                results = await self.hybrid_searcher.search(
+                    query=query,
+                    limit=limit,
+                    vector_weight=vector_weight,
+                    keyword_weight=keyword_weight,
+                    video_id=video_id,
+                )
+                log(
+                    f"[Search] Hybrid search: {len(results)} results "
+                    f"(weights: {vector_weight:.1f}v/{keyword_weight:.1f}kw)"
+                )
+                return results
+            except Exception as e:
+                log(f"[Search] Hybrid search failed, falling back: {e}")
+
+        # Fallback to vector-only search
         return self.db.search_frames(query=query, limit=limit)
 
     # =========================================================================
