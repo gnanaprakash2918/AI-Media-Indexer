@@ -63,7 +63,7 @@ def ingest_video_task(self, video_path: str, job_id: str):
         logger.error(f"Ingestion failed: {exc}")
         # Job status 'failed' should be set by pipeline error handling
         # But if it crashes hard, we might need to set it here.
-        job_manager.update_job_status(job_id, JobStatus.FAILED, error=str(exc))
+        job_manager.update_job(job_id, status=JobStatus.FAILED, error=str(exc))
         raise self.retry(exc=exc, countdown=60, max_retries=3)
     finally:
         clear_context()

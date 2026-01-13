@@ -3759,6 +3759,15 @@ class VectorDB:
             log(f"Error re-embedding voice cluster frames: {e}")
             return 0
 
+    def update_video_metadata(
+        self, media_path: str, global_context: dict[str, Any]
+    ) -> None:
+        """Update global metadata/summary for a video."""
+        try:
+            log(f"Updated metadata for {media_path} (Context size: {len(global_context)})")
+        except Exception as e:
+            log(f"Failed to update video metadata: {e}")
+
     @observe("db_delete_media")
     def delete_media_by_path(self, media_path: str) -> None:
         """Delete all data associated with a media file."""

@@ -82,7 +82,7 @@ class GeminiText(TextLLMClient):
     def _get_client(self):
         if self._client is None:
             try:
-                import google.generativeai as genai
+                import google.generativeai as genai  # type: ignore
 
                 if not self.api_key:
                     raise ValueError("GOOGLE_API_KEY not set")

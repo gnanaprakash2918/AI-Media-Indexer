@@ -69,6 +69,7 @@ class IngestionPipeline:
         self.vision: VisionAnalyzer | None = None
         self.faces: FaceManager | None = None
         self.voice: VoiceProcessor | None = None
+        self._face_clusters: dict[int, list[float]] = {}
 
         # Deep Video Understanding (SAM 3)
         self.sam3_tracker = Sam3Tracker() if settings.enable_sam3_tracking else None
@@ -1212,9 +1213,8 @@ class IngestionPipeline:
             except Exception:
                 pass
 
-        # 3. STORE FRAME WITH LINKED IDENTITIES AND STRUCTURED PAYLOAD
         if description:
-            vector = self.db.encoder.encode(description).tolist()
+            vector = self.db.encode_texts(description)[0]
 
             # Build structured payload for accurate search with filterable fields
             payload: dict[str, Any] = {
@@ -1323,9 +1323,7 @@ class IngestionPipeline:
                         else list(face.bbox),  # [top, right, bottom, left]
                         "cluster_id": cluster_id,
                         "name": face_name,
-                        "confidence": face.det_score
-                        if hasattr(face, "det_score")
-                        else 1.0,
+                        "confidence": face.confidence,
                     }
                 )
 
@@ -1349,7 +1347,7 @@ class IngestionPipeline:
             if "identity_text" in payload:
                 full_text = f"{description}. {payload['identity_text']}"
 
-            vector = self.db.encoder.encode(full_text).tolist()
+            vector = self.db.encode_texts(full_text)[0]
 
             self.db.upsert_media_frame(
                 point_id=f"{video_path}_{timestamp:.3f}",
@@ -1679,7 +1677,8 @@ class IngestionPipeline:
 
         # We assume 1-to-1 for now.
 
-        for frame_data in self.sam3_tracker.process_video_concepts(path, prompts):
+        if self.sam3_tracker:
+             for frame_data in self.sam3_tracker.process_video_concepts(path, prompts):
             frame_idx = frame_data["frame_idx"]
             obj_ids = frame_data["object_ids"]
 

@@ -10,10 +10,10 @@ import sys
 from pathlib import Path
 
 from config import settings
-from core.orchestration.agent_graph import MediaPipelineAgent
+from core.orchestration.orchestrator import get_orchestrator
 
 
-def main() -> None:
+async def main_async() -> None:
     parser = argparse.ArgumentParser(
         description="AI Media Agent (Antigravity)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -38,21 +38,34 @@ def main() -> None:
     print(f"Manipulation: {settings.manipulation_backend}")
     print()
 
-    agent = MediaPipelineAgent()
-    agent.initialize(str(video), args.task)
+    # Initialize Orchestrator
+    try:
+        orchestrator = get_orchestrator()
+        # In a real scenario, we might want to register the video with the agent context first
+        # But for now, we pass the task directly.
+        # Construct a query that includes video context if possible, or just the task.
+        query = f"For video '{video.name}': {args.task}"
+        
+        print(f"Executing Query: {query}")
+        result = await orchestrator.execute(query)
 
-    result = agent.run()
+        print()
+        print("--- Result ---")
+        if "results" in result:
+             print(f"Found {len(result['results'])} matches")
+             for res in result['results']:
+                 print(f"- {res}")
+        else:
+             print(result)
 
-    print()
-    print("--- Result ---")
-    print(f"Transcript: {result['transcript_length']} chars")
-    print(f"Masks: {result['masks_count']}")
+    except Exception as e:
+        print(f"Error executing agent: {e}")
+        import traceback
+        traceback.print_exc()
 
-    if result["output_path"]:
-        print(f"Output: {result['output_path']}")
-
-    if result["errors"]:
-        print(f"Errors: {result['errors']}")
+def main():
+    import asyncio
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":

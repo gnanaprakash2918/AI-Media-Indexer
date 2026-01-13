@@ -478,6 +478,8 @@ class IndicASRPipeline:
                 log(f"[IndicASR] Chunk {start}-{end}s failed: {e}")
             finally:
                 # Remove temp chunk file
+
+
                 if chunk_path.exists():
                     try:
                         chunk_path.unlink()

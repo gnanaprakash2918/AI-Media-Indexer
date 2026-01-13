@@ -156,11 +156,19 @@ async def scan_library(
     from core.ingestion.scanner import LibraryScanner
 
     scanner = LibraryScanner()
-    new_files = scanner.scan_directory(
+    new_files = []
+    # Convert generator to list of paths
+    for asset in scanner.scan(
         request.directory,
-        recursive=request.recursive,
-        extensions=request.extensions,
-    )
+        excluded_dirs=None,  # Use defaults
+    ):
+        # Filter extensions if provided
+        if request.extensions:
+            # Check if file suffix is in requested extensions
+            if asset.file_path.suffix.lower() in [e.lower() for e in request.extensions]:
+                new_files.append(asset.file_path)
+        else:
+            new_files.append(asset.file_path)
 
     return {
         "found": len(new_files),
