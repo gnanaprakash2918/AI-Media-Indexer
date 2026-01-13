@@ -249,6 +249,9 @@ def match_cast_to_clusters(
         if not cluster_name or cluster_name.lower() in ("unknown", "unnamed"):
             continue
 
+        if cluster_id is None:
+            continue
+
         for cast in cast_list:
             if fuzzy_match_name(cast.name, cluster_name):
                 matches[cluster_id] = cast.name

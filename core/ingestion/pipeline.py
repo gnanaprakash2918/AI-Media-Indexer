@@ -1684,12 +1684,12 @@ class IngestionPipeline:
 
                 for obj_id in obj_ids:
                 # Get concept name
-                if obj_id < len(prompts):
-                    concept = prompts[obj_id]
-                else:
-                    concept = f"object_{obj_id}"
+                    if obj_id < len(prompts):
+                        concept = prompts[obj_id]
+                    else:
+                        concept = f"object_{obj_id}"
 
-                track_key = f"{concept}_{obj_id}"
+                    track_key = f"{concept}_{obj_id}"
 
                 if track_key not in tracks:
                     tracks[track_key] = {

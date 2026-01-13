@@ -623,7 +623,7 @@ class FaceManager:
 
                 # Only load detection and recognition models
                 # This skips: genderage.onnx, 1k3d68.onnx, 2d106det.onnx
-                app = FaceAnalysis(
+                app = face_analysis_cls(
                     name="buffalo_l",
                     root=str(MODELS_DIR),
                     providers=providers,
@@ -665,7 +665,7 @@ class FaceManager:
 
                 # Last resort: CPU only with minimal modules and smallest detection size
                 try:
-                    app = FaceAnalysis(
+                    app = face_analysis_cls(
                         name="buffalo_l",
                         root=str(MODELS_DIR),
                         providers=["CPUExecutionProvider"],  # Force CPU

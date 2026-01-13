@@ -72,6 +72,7 @@ class SegmentationEngine:
 
         results = []
         try:
+            assert self.model is not None
             if prompt_points:
                 res = self.model(frame, points=prompt_points, device=self.device)
             else:

@@ -25,7 +25,7 @@ try:
         AutoModelForSpeechSeq2Seq,
         AutoProcessor,
     )
-    from transformers.pipelines import pipeline as hf_pipeline # type: ignore
+    from transformers.pipelines import pipeline as hf_pipeline  # type: ignore
 
     HAS_HF_TRANSFORMERS = True
 except ImportError:
@@ -587,7 +587,7 @@ class IndicASRPipeline:
 
     def _get_audio_duration(self, audio_path: Path) -> float:
         """Get audio duration in seconds."""
-        if HAS_TORCHAUDIO:
+        if HAS_TORCHAUDIO and torchaudio is not None:
             try:
                 info = torchaudio.info(str(audio_path))
                 return info.num_frames / info.sample_rate
@@ -596,6 +596,8 @@ class IndicASRPipeline:
 
         # Fallback: estimate from file size (16kHz, 16-bit mono)
         try:
+            if not audio_path.exists():
+                return 0.0
             size = audio_path.stat().st_size
             # Assuming 16kHz, 16-bit mono WAV
             return size / (16000 * 2)

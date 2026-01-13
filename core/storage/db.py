@@ -337,13 +337,22 @@ class VectorDB:
         if self.client.collection_exists(self.MEDIA_COLLECTION):
             try:
                 info = self.client.get_collection(self.MEDIA_COLLECTION)
-                existing_size = info.config.params.vectors.size
-                if existing_size != self.MEDIA_VECTOR_SIZE:
-                    log(
-                        f"media_frames dimension mismatch: {existing_size} vs {self.MEDIA_VECTOR_SIZE}. Recreating.",
-                        level="WARNING",
-                    )
-                    self.client.delete_collection(self.MEDIA_COLLECTION)
+                # Handle both single vector and named vectors
+                vectors_config = info.config.params.vectors
+                if isinstance(vectors_config, dict):
+                    # If named vectors, check specific vector or just pass (complex mismatch)
+                     # For now, let's assume if it's a dict, we might be using named vectors
+                     # and simple size check might need specific key.
+                     # Defaulting to checking typical key if known, or skip/log.
+                     pass
+                elif hasattr(vectors_config, "size"):
+                    existing_size = vectors_config.size
+                    if existing_size != self.MEDIA_VECTOR_SIZE:
+                        log(
+                            f"media_frames dimension mismatch: {existing_size} vs {self.MEDIA_VECTOR_SIZE}. Recreating.",
+                            level="WARNING",
+                        )
+                        self.client.delete_collection(self.MEDIA_COLLECTION)
             except Exception as e:
                 log(f"Failed to check media_frames dimension: {e}")
 
@@ -2720,7 +2729,12 @@ class VectorDB:
                 if isinstance(point.vector, list):
                     cluster_embeddings[cluster_id].append(point.vector)
                 elif hasattr(point.vector, "tolist"):
-                    cluster_embeddings[cluster_id].append(point.vector.tolist())
+                    # Cast for Pylance safety or strict type check ignore
+                     cluster_embeddings[cluster_id].append(point.vector.tolist()) # type: ignore
+                elif isinstance(point.vector, dict):
+                     # Handle named vectors - assuming we want the default or specific one
+                     # If we don't know the name, we might skip or take values()
+                     pass
 
             centroids: dict[int, list[float]] = {}
             for cluster_id, embeddings in cluster_embeddings.items():
