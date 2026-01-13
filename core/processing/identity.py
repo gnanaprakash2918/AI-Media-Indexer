@@ -449,6 +449,18 @@ class FaceManager:
         global_clusters: dict[int, list[float]] | None = None,
         db_client: Any = None,
     ) -> None:
+        """Initialize FaceManager.
+
+        Args:
+            dbscan_eps: Eps for DBSCAN clustering.
+            dbscan_min_samples: Min samples for DBSCAN.
+            dbscan_metric: Metric for DBSCAN.
+            use_gpu: Whether to use GPU.
+            max_fps: Max processing FPS.
+            batch_size: Batch size for inference.
+            global_clusters: Existing global face clusters.
+            db_client: Database client.
+        """
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
         self.dbscan_metric = dbscan_metric
@@ -552,8 +564,8 @@ class FaceManager:
         """
         import gc
 
-        FaceAnalysis = _try_import_insightface()
-        if FaceAnalysis is None:
+        face_analysis_cls = _try_import_insightface()
+        if face_analysis_cls is None:
             print("[FaceManager] InsightFace library not found. Falling back.")
             return False
 
@@ -585,7 +597,7 @@ class FaceManager:
                 print(
                     "[FaceManager] High-end system detected, loading all InsightFace models..."
                 )
-                app = FaceAnalysis(
+                app = face_analysis_cls(
                     name="buffalo_l",
                     root=str(MODELS_DIR),
                     providers=providers,

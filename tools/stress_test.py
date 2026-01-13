@@ -25,7 +25,7 @@ def get_vram_usage():
     if HAS_NVML:
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        return info.used / (1024**3), info.total / (1024**3)
+        return float(info.used) / (1024**3), float(info.total) / (1024**3)
     elif torch.cuda.is_available():
         # Torch only knows about what it allocated, not system total usually,
         # but mem_get_info returns (free, total)

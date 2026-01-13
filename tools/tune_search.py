@@ -117,8 +117,11 @@ def main():
     print("\n🏆 Optimization Complete!")
     print(f"Best MRR: {best_mrr:.4f}")
     print("Best Configuration:")
-    for k, v in best_config.items():
-        print(f"  {k}: {v}")
+    if best_config:
+        for k, v in best_config.items():
+            print(f"  {k}: {v}")
+    else:
+        print("  No improvement found.")
 
     # Recommendation
     print("\nRecommended Action:")

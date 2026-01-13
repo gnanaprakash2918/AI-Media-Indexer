@@ -126,6 +126,7 @@ class IndicASRPipeline:
         )
 
     def load_model(self) -> None:
+        """Load the selected ASR backend model."""
         if self._is_loaded:
             return
 
@@ -287,6 +288,12 @@ class IndicASRPipeline:
         Args:
             audio_path: Path to audio/video file.
             language: Override language for this call.
+            output_srt: Optional path to save SRT file.
+            **kwargs: Additional arguments passed to the backend transcriber.
+
+        Returns:
+            List of segment dictionaries {start, end, text, ...}.
+        """
             output_srt: Optional path to write SRT file.
 
         Returns:
@@ -434,10 +441,10 @@ class IndicASRPipeline:
         import torch
 
         duration = self._get_audio_duration(audio_path)
-        CHUNK_DURATION_SEC = 30  # Process in 30s chunks to prevent OOM
+        chunk_duration_sec = 30  # Process in 30s chunks to prevent OOM
 
         # Short audio: process directly
-        if duration <= CHUNK_DURATION_SEC:
+        if duration <= chunk_duration_sec:
             with torch.no_grad():
                 self.model.cur_decoder = "ctc"  # type: ignore
                 transcriptions = self.model.transcribe(  # type: ignore
