@@ -557,6 +557,43 @@ class AudioTranscriber:
         # Run Whisper (If no subs found) ---
         is_sliced = True
         proc_path = self._slice_audio(audio_path, start_time, end_time)
+
+        try:
+            return self._run_whisper_inference(
+                proc_path,
+                lang,
+                out_srt,
+                start_time,
+                is_sliced,
+            )
+        finally:
+            if is_sliced and proc_path.exists():
+                try:
+                    proc_path.unlink()
+                except Exception:
+                    pass
+
+    @observe("whisper_inference")
+    def _run_whisper_inference(
+        self,
+        audio_path: Path,
+        lang: str | None,
+        out_srt: Path,
+        offset: float,
+        is_temp_file: bool = False,
+    ) -> list[dict[str, Any]] | None:
+        """Run Whisper inference on the provided audio file.
+
+        Args:
+            audio_path: Path to audio file (temp slice or original).
+            lang: Target language code.
+            out_srt: Output path for SRT.
+            offset: Time offset for timestamps.
+            is_temp_file: Whether audio_path is temporary (for logging).
+
+        Returns:
+            List of transcribed chunks or None.
+        """
         chunks: list[dict[str, Any]] = []
 
         candidates = settings.whisper_model_map.get(
@@ -573,7 +610,7 @@ class AudioTranscriber:
             if self._batched_model is None:
                 raise RuntimeError("Model failed to initialize")
 
-            log(f"[INFO] Running Inference on {proc_path} with {model_to_use}.")
+            log(f"[INFO] Running Inference on {audio_path} with {model_to_use}.")
 
             # Language locking: detect once, force for all chunks
             effective_lang = lang
@@ -584,7 +621,7 @@ class AudioTranscriber:
                     effective_lang = None  # Auto-detect on first run
 
             segments, info = self._batched_model.transcribe(
-                str(proc_path),
+                str(audio_path),
                 batch_size=settings.batch_size,
                 language=effective_lang,
                 task="transcribe",
@@ -653,21 +690,16 @@ class AudioTranscriber:
 
             log(f"[SUCCESS] Transcription complete. Prob: {info.language_probability}")
 
-            lines_written = self._write_srt(chunks, out_srt, offset=start_time)
+            lines_written = self._write_srt(chunks, out_srt, offset=offset)
             if lines_written > 0:
                 log(f"[SUCCESS] Saved {lines_written} subtitles to: {out_srt}")
                 return chunks
 
+            return None
+
         except Exception as e:
             log(f"[ERROR] Inference failed: {e}")
             raise
-        finally:
-            if is_sliced and proc_path.exists():
-                try:
-                    proc_path.unlink()
-                except Exception:
-                    pass
-        return None
 
     @observe("language_detection")
     def detect_language(self, audio_path: Path) -> str:

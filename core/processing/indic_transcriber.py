@@ -133,7 +133,7 @@ class IndicASRPipeline:
             self._load_hf_model()
         else:
             self._load_nemo_model()
-        
+
         self._is_loaded = True
 
     def _load_hf_model(self) -> None:

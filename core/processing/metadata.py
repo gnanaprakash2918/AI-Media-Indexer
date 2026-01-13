@@ -33,6 +33,7 @@ class CastMember:
 
 @dataclass
 class MediaMetadata:
+    """Dataclass metadata for media content (movies/TV)."""
     title: str
     year: Optional[int] = None
     overview: str = ""
@@ -67,12 +68,14 @@ class MetadataEngine:
 
     @property
     def client(self) -> httpx.AsyncClient:
+        """Get or create the async HTTP client."""
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=10.0)
         return self._client
 
     @property
     def is_available(self) -> bool:
+        """Check if metadata engine is configured and enabled."""
         return self.enabled
 
     async def search_movie(
@@ -163,6 +166,7 @@ class MetadataEngine:
         return movie
 
     async def close(self):
+        """Close the async HTTP client."""
         if self._client:
             await self._client.aclose()
             self._client = None
