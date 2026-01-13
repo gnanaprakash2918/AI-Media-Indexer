@@ -58,7 +58,7 @@ class VideoInpainter:
         logger.info("Loading ProPainter model...")
 
         try:
-            from propainter import ProPainter
+            from propainter import ProPainter  # type: ignore
 
             self._propainter_model = ProPainter(device=self.device)
             self._initialized = True
@@ -92,6 +92,9 @@ class VideoInpainter:
         self, video_path: Path, mask_frames: dict[int, np.ndarray], output_path: Path
     ) -> InpaintResult:
         """Inpaint using ProPainter propagation-based method."""
+        if self._propainter_model is None:
+             return InpaintResult(success=False, error="ProPainter model not loaded")
+
         try:
             import cv2
             import torch
@@ -101,7 +104,7 @@ class VideoInpainter:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
             writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
             frames = []
@@ -166,7 +169,7 @@ class VideoInpainter:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
             writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
             frame_idx = 0
@@ -236,7 +239,7 @@ class WanVideoInpainter:
         logger.info("Loading Wan-2.1 inpainting model...")
         try:
             import torch
-            from diffusers import StableDiffusionInpaintPipeline
+            from diffusers import StableDiffusionInpaintPipeline  # type: ignore
 
             self._model = StableDiffusionInpaintPipeline.from_pretrained(
                 "runwayml/stable-diffusion-inpainting",
@@ -259,6 +262,9 @@ class WanVideoInpainter:
         """Inpaint single frame using diffusion."""
         if not self._lazy_load():
             return None
+            
+        if self._model is None:
+             return None
 
         try:
             from PIL import Image

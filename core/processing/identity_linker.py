@@ -198,7 +198,7 @@ class IdentityLinker:
                 if not name2:
                     continue
 
-                pair = tuple(sorted([c1.get("cluster_id"), c2.get("cluster_id")]))
+                pair = tuple(sorted([str(c1.get("cluster_id")), str(c2.get("cluster_id"))]))
                 if pair in seen:
                     continue
                 seen.add(pair)

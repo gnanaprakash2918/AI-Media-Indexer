@@ -41,7 +41,7 @@ class SegmentationEngine:
         )
 
         try:
-            from ultralytics import SAM
+            from ultralytics import SAM  # type: ignore
 
             self.model = SAM("sam_b.pt")  # Downloads automatically if missing
             logger.info("SAM Model loaded successfully.")
@@ -138,7 +138,7 @@ class Sam3Tracker:
         self._initialized = True
 
         try:
-            from sam2.build_sam import build_sam2_video_predictor
+            from sam2.build_sam import build_sam2_video_predictor  # type: ignore
 
             from config import settings
 

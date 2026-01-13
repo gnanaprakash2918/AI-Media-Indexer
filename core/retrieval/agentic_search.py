@@ -242,7 +242,7 @@ class SearchAgent:
                 query=search_text,
                 limit=limit,
                 person_name=resolved_name,
-                face_cluster_ids=[cluster_id] if cluster_id else None,
+                face_cluster_ids=[cluster_id] if cluster_id is not None else None,
                 clothing_color=parsed.clothing_color,
                 clothing_type=parsed.clothing_type,
                 accessories=parsed.accessories if parsed.accessories else None,

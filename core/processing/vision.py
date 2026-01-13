@@ -277,7 +277,7 @@ IMPORTANT RULES:
             return f"Error: Image not found at {image_path}"
 
         self._ensure_llm_loaded()
-        final_prompt = self.prompt
+        final_prompt = self.prompt or ""
         if context:
             # Append context to help the model understand continuity
             final_prompt += f"\n\n[PREVIOUS FRAME CONTEXT]: {context}\nUse this context to infer continuing actions, but focus on the CURRENT image."

@@ -175,8 +175,8 @@ class SceneAggregator:
             if cultural:
                 cultural_votes[cultural] += 1
 
-        best_location = max(location_votes, key=location_votes.get, default="")
-        best_cultural = max(cultural_votes, key=cultural_votes.get, default="")
+        best_location = max(location_votes, key=location_votes.get) if location_votes else ""
+        best_cultural = max(cultural_votes, key=cultural_votes.get) if cultural_votes else ""
 
         person_attributes = []
         for face_id in all_face_ids:

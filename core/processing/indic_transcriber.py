@@ -189,6 +189,9 @@ class IndicASRPipeline:
         log(f"[IndicASR] Loading NeMo model: {model_info['repo_id']}")
 
         try:
+            if nemo_asr is None:
+                 raise ImportError("NeMo not installed")
+
             nemo_ckpt_path = hf_hub_download(
                 repo_id=model_info["repo_id"],
                 filename=model_info["filename"],
@@ -212,7 +215,7 @@ class IndicASRPipeline:
                 if hasattr(model_cfg, "decoding"):
                     model_cfg.decoding.preserve_alignments = False
 
-            self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.from_config_dict(
+            self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.from_config_dict(  # type: ignore
                 model_cfg
             )
             state_dict = torch.load(nemo_ckpt_path, map_location=self.device)
@@ -220,7 +223,7 @@ class IndicASRPipeline:
                 self.model.load_state_dict(state_dict["state_dict"], strict=False)
 
             self.model.to(self.device)
-            self.model.freeze()
+            self.model.freeze()  # type: ignore
             log(f"[IndicASR] NeMo model loaded on {self.device} (config patched)")
         except Exception as e:
             log(f"[IndicASR] Failed to load NeMo model: {e}")
@@ -436,8 +439,8 @@ class IndicASRPipeline:
         # Short audio: process directly
         if duration <= CHUNK_DURATION_SEC:
             with torch.no_grad():
-                self.model.cur_decoder = "ctc"
-                transcriptions = self.model.transcribe(
+                self.model.cur_decoder = "ctc"  # type: ignore
+                transcriptions = self.model.transcribe(  # type: ignore
                     [str(audio_path)],
                     batch_size=1,
                     language_id=self.lang,
@@ -460,8 +463,8 @@ class IndicASRPipeline:
 
             try:
                 with torch.no_grad():
-                    self.model.cur_decoder = "ctc"
-                    transcriptions = self.model.transcribe(
+                    self.model.cur_decoder = "ctc"  # type: ignore
+                    transcriptions = self.model.transcribe(  # type: ignore
                         [str(chunk_path)],
                         batch_size=1,
                         language_id=self.lang,

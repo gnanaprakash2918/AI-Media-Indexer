@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field
 from config import settings
 from core.storage.db import VectorDB
 from core.utils.logger import log
-from llm.interface import LLMInterface, get_llm
+from llm.interface import LLMInterface
+from llm.factory import LLMFactory
 
 SCENE_SUMMARY_PROMPT = """Summarize this 5-minute scene from a video.
 
@@ -90,7 +91,7 @@ class HierarchicalSummarizer:
         llm: LLMInterface | None = None,
     ):
         self.db = db or VectorDB()
-        self.llm = llm or get_llm()
+        self.llm = llm or LLMFactory.get_default_llm()
         self._scene_duration = getattr(
             settings, "summary_scene_duration", self.SCENE_DURATION_SECONDS
         )
@@ -149,14 +150,22 @@ class HierarchicalSummarizer:
     def _get_existing_summaries(self, video_path: str) -> dict[str, Any]:
         """Check for existing summaries in the database."""
         try:
+            from qdrant_client.http import models
+
             results = self.db.client.scroll(
                 collection_name=self.db.SUMMARIES_COLLECTION,
-                scroll_filter={
-                    "must": [
-                        {"key": "video_path", "match": {"value": video_path}},
-                        {"key": "level", "match": {"value": SummaryLevel.L1_VIDEO}},
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchValue(value=video_path),
+                        ),
+                        models.FieldCondition(
+                            key="level",
+                            match=models.MatchValue(value=SummaryLevel.L1_VIDEO),
+                        ),
                     ]
-                },
+                ),
                 limit=1,
                 with_payload=True,
             )
@@ -167,16 +176,21 @@ class HierarchicalSummarizer:
                 # Get L2 summaries
                 l2_results = self.db.client.scroll(
                     collection_name=self.db.SUMMARIES_COLLECTION,
-                    scroll_filter={
-                        "must": [
-                            {"key": "video_path", "match": {"value": video_path}},
-                            {"key": "level", "match": {"value": SummaryLevel.L2_SCENE}},
+                    scroll_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="video_path",
+                                match=models.MatchValue(value=video_path),
+                            ),
+                            models.FieldCondition(
+                                key="level",
+                                match=models.MatchValue(value=SummaryLevel.L2_SCENE),
+                            ),
                         ]
-                    },
+                    ),
                     limit=100,
                     with_payload=True,
                 )
-
                 l2_summaries = [p.payload for p in l2_results[0]]
                 return {"l1_summary": l1, "l2_summaries": l2_summaries}
 
@@ -190,9 +204,14 @@ class HierarchicalSummarizer:
         try:
             results = self.db.client.scroll(
                 collection_name=self.db.FRAMES_COLLECTION,
-                scroll_filter={
-                    "must": [{"key": "video_path", "match": {"value": video_path}}]
-                },
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchValue(value=video_path),
+                        )
+                    ]
+                ),
                 limit=10000,
                 with_payload=True,
             )
@@ -237,9 +256,7 @@ class HierarchicalSummarizer:
             )
 
             try:
-                summary_text = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: self.llm.generate(prompt, max_tokens=300)
-                )
+                summary_text = await self.llm.generate(prompt, max_tokens=300)
 
                 summaries.append(
                     {
@@ -251,9 +268,7 @@ class HierarchicalSummarizer:
                         "summary": summary_text.strip(),
                         "entities": entities,
                     }
-                )
-
-            except Exception as e:
+                )            except Exception as e:
                 log(f"Error generating scene {i} summary: {e}")
 
         return summaries
@@ -367,7 +382,7 @@ class HierarchicalSummarizer:
         from qdrant_client.models import PointStruct
 
         # Ensure collection exists
-        self.db._ensure_collection(self.db.SUMMARIES_COLLECTION)
+        self.db._ensure_collections()
 
         points = []
 
@@ -377,7 +392,7 @@ class HierarchicalSummarizer:
             points.append(
                 PointStruct(
                     id=str(uuid.uuid4()),
-                    vector=embedding.tolist(),
+                    vector=embedding,  # Removed .tolist()
                     payload=l1_summary,
                 )
             )
@@ -389,7 +404,7 @@ class HierarchicalSummarizer:
                 points.append(
                     PointStruct(
                         id=str(uuid.uuid4()),
-                        vector=embedding.tolist(),
+                        vector=embedding,  # Removed .tolist()
                         payload=s,
                     )
                 )

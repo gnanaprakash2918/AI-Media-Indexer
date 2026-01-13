@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from PIL import Image
-from sklearn.cluster import HDBSCAN
+from sklearn.cluster import HDBSCAN  # type: ignore
 
 from config import settings
 from core.schemas import DetectedFace

@@ -407,6 +407,15 @@ class VectorDB:
             )
             log("Created scenes collection with multi-vector support")
 
+        if not self.client.collection_exists(self.SUMMARIES_COLLECTION):
+            self.client.create_collection(
+                collection_name=self.SUMMARIES_COLLECTION,
+                vectors_config=models.VectorParams(
+                    size=self.MEDIA_VECTOR_SIZE,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+
         log("Qdrant collections ensured")
 
     def list_collections(self) -> models.CollectionsResponse:

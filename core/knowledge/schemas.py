@@ -604,6 +604,12 @@ class ParsedQuery(BaseModel):
         default_factory=list,
         description="All people mentioned with their clothing and actions",
     )
+    
+    # All entities extracted from the query (Dynamic)
+    entities: list[DynamicEntity] = Field(
+        default_factory=list,
+        description="ALL entities from query - unlimited types and attributes",
+    )
 
     # Legacy single-person fields (for backwards compatibility)
     person_name: str | None = Field(

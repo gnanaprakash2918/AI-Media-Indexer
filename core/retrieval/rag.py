@@ -25,7 +25,8 @@ from core.retrieval.schemas import (
 )
 from core.storage.db import VectorDB
 from core.utils.logger import log
-from llm.interface import LLMInterface, get_llm
+from llm.interface import LLMInterface
+from llm.factory import LLMFactory
 
 # Query Decomposition Prompt
 QUERY_DECOMPOSITION_PROMPT = """You are a VideoRAG query analyzer. Given a user query about video content,
@@ -88,7 +89,7 @@ class QueryDecoupler:
     """
 
     def __init__(self, llm: LLMInterface | None = None):
-        self.llm = llm or get_llm()
+        self.llm = llm or LLMFactory.get_default_llm()
 
     async def decompose(self, query: str) -> StructuredQuery:
         """Decompose a natural language query into structured components.
@@ -104,9 +105,8 @@ class QueryDecoupler:
         # Try LLM decomposition
         try:
             prompt = QUERY_DECOMPOSITION_PROMPT.format(query=query)
-            response = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.llm.generate(prompt, max_tokens=800)
-            )
+            prompt = QUERY_DECOMPOSITION_PROMPT.format(query=query)
+            response = await self.llm.generate(prompt, max_tokens=800)
 
             # Parse JSON response
             import json
@@ -183,7 +183,7 @@ class VideoRAGOrchestrator:
         llm: LLMInterface | None = None,
     ):
         self.db = db or VectorDB()
-        self.llm = llm or get_llm()
+        self.llm = llm or LLMFactory.get_default_llm()
         self.decoupler = QueryDecoupler(self.llm)
 
     async def search(
@@ -497,9 +497,7 @@ class VideoRAGOrchestrator:
             context=context,
         )
 
-        answer = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: self.llm.generate(prompt, max_tokens=500)
-        )
+        answer = await self.llm.generate(prompt, max_tokens=500)
 
         # Simple confidence based on result relevance
         avg_score = sum(r.score for r in results) / len(results) if results else 0

@@ -40,7 +40,7 @@ class MediaMetadata:
     poster_path: Optional[str] = None
     tmdb_id: int = 0
     media_type: str = "movie"
-    cast: list[CastMember] = None
+    cast: list[CastMember] | None = None
 
     def __post_init__(self):
         if self.cast is None:

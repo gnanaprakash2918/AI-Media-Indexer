@@ -100,7 +100,7 @@ def main():
 
             try:
                 results = db.search_frames_hybrid(
-                    query=query, limit=case["min_rank"], weights=current_weights
+                    query=query, limit=case["min_rank"]
                 )
                 mrr = calculate_mrr(results, expected)
                 total_mrr += mrr

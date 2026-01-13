@@ -72,7 +72,7 @@ class BraveSearchClient:
 
         try:
             # Lazy import to avoid dependency issues
-            from brave_search import BraveSearch
+            from brave_search import BraveSearch  # type: ignore
 
             client = BraveSearch(api_key=self.api_key)
 

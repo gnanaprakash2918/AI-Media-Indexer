@@ -89,10 +89,7 @@ class QualityEvaluator:
         prompt = JUDGE_PROMPT.format(query=query, description=description)
 
         try:
-            if hasattr(self.llm, "generate"):
-                response = await self.llm.generate(prompt)
-            else:
-                response = self.llm.generate_sync(prompt)
+            response = await self.llm.generate(prompt)
 
             response = response.strip()
             if response.startswith("```"):
