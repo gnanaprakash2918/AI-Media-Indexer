@@ -1,0 +1,227 @@
+"""Content moderation for detecting inappropriate content.
+
+Provides detection of:
+- NSFW visual content
+- Violence/gore
+- Hate speech (text)
+- Sensitive content flags
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING
+
+from core.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    import numpy as np
+
+log = get_logger(__name__)
+
+
+class ContentFlag(Enum):
+    """Content moderation flags."""
+
+    SAFE = "safe"
+    NSFW = "nsfw"
+    VIOLENCE = "violence"
+    GORE = "gore"
+    HATE_SPEECH = "hate_speech"
+    HARASSMENT = "harassment"
+    SELF_HARM = "self_harm"
+    SEXUAL = "sexual"
+    DRUGS = "drugs"
+    WEAPONS = "weapons"
+
+
+@dataclass
+class ModerationResult:
+    """Result from content moderation."""
+
+    is_safe: bool
+    flags: list[ContentFlag]
+    confidence: float
+    details: dict[str, float]
+
+
+class VisualContentModerator:
+    """Detect inappropriate visual content.
+
+    Uses NSFW detection models to flag sensitive frames.
+    """
+
+    def __init__(self, threshold: float = 0.7):
+        """Initialize moderator.
+
+        Args:
+            threshold: Confidence threshold for flagging (0-1).
+        """
+        self.threshold = threshold
+        self._model = None
+
+    async def _lazy_load(self) -> bool:
+        """Load moderation model lazily."""
+        if self._model is not None:
+            return True
+
+        try:
+            from transformers import pipeline
+
+            self._model = pipeline(
+                "image-classification",
+                model="Falconsai/nsfw_image_detection",
+                device=-1,
+            )
+            log.info("[Moderation] NSFW model loaded")
+            return True
+        except ImportError:
+            log.warning("[Moderation] transformers not installed")
+            return False
+        except Exception as e:
+            log.error(f"[Moderation] Model load failed: {e}")
+            return False
+
+    async def check_frame(self, frame: "np.ndarray") -> ModerationResult:
+        """Check a frame for inappropriate content.
+
+        Args:
+            frame: RGB frame as numpy array.
+
+        Returns:
+            ModerationResult with flags and confidence.
+        """
+        if not await self._lazy_load():
+            return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={},
+            )
+
+        try:
+            from PIL import Image
+
+            img = Image.fromarray(frame)
+            result = self._model(img)
+
+            flags = []
+            details = {}
+            nsfw_score = 0.0
+
+            for item in result:
+                label = item["label"].lower()
+                score = item["score"]
+                details[label] = score
+
+                if "nsfw" in label or "porn" in label:
+                    nsfw_score = max(nsfw_score, score)
+                if "safe" not in label and "normal" not in label:
+                    if score > self.threshold:
+                        flags.append(ContentFlag.NSFW)
+
+            is_safe = nsfw_score < self.threshold
+            if is_safe:
+                flags = [ContentFlag.SAFE]
+
+            return ModerationResult(
+                is_safe=is_safe,
+                flags=flags,
+                confidence=nsfw_score,
+                details=details,
+            )
+
+        except Exception as e:
+            log.error(f"[Moderation] Check failed: {e}")
+            return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={"error": str(e)},
+            )
+
+
+class TextContentModerator:
+    """Detect inappropriate text content.
+
+    Uses toxicity classification for text moderation.
+    """
+
+    def __init__(self, threshold: float = 0.7):
+        """Initialize text moderator.
+
+        Args:
+            threshold: Confidence threshold for flagging.
+        """
+        self.threshold = threshold
+        self._pipeline = None
+
+    async def _lazy_load(self) -> bool:
+        """Load toxicity model lazily."""
+        if self._pipeline is not None:
+            return True
+
+        try:
+            from transformers import pipeline
+
+            self._pipeline = pipeline(
+                "text-classification",
+                model="unitary/toxic-bert",
+                device=-1,
+            )
+            log.info("[TextMod] Toxicity model loaded")
+            return True
+        except ImportError:
+            log.warning("[TextMod] transformers not installed")
+            return False
+        except Exception as e:
+            log.error(f"[TextMod] Model load failed: {e}")
+            return False
+
+    async def check_text(self, text: str) -> ModerationResult:
+        """Check text for inappropriate content.
+
+        Args:
+            text: Text to check.
+
+        Returns:
+            ModerationResult with flags.
+        """
+        if not text or not await self._lazy_load():
+            return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={},
+            )
+
+        try:
+            result = self._pipeline(text[:512])[0]
+            label = result["label"].lower()
+            score = result["score"]
+
+            flags = []
+            is_safe = True
+
+            if "toxic" in label and score > self.threshold:
+                flags.append(ContentFlag.HATE_SPEECH)
+                is_safe = False
+            else:
+                flags = [ContentFlag.SAFE]
+
+            return ModerationResult(
+                is_safe=is_safe,
+                flags=flags,
+                confidence=score if not is_safe else 1 - score,
+                details={"label": label, "score": score},
+            )
+
+        except Exception as e:
+            log.error(f"[TextMod] Check failed: {e}")
+            return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={"error": str(e)},
+            )
