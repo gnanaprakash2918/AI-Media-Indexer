@@ -112,6 +112,32 @@ def setup_logger() -> None:
         _logger.handlers = [InterceptHandler()]
         _logger.propagate = False
 
+    # Suppress noisy ML frameworks per GOLD.md compliance (console: INFO+, file: full DEBUG)
+    noisy_ml_frameworks = (
+        "speechbrain",
+        "nemo",
+        "nemo_logger",
+        "nemo.collections",
+        "transformers",
+        "transformers.modeling_utils",
+        "torch",
+        "torch.distributed",
+        "torch.cuda",
+        "whisper",
+        "faster_whisper",
+        "ctranslate2",
+        "onnxruntime",
+        "PIL",
+        "matplotlib",
+        "numba",
+        "filelock",
+        "huggingface_hub",
+        "datasets",
+    )
+    for framework in noisy_ml_frameworks:
+        framework_logger = logging.getLogger(framework)
+        framework_logger.setLevel(logging.WARNING)
+
 
 def bind_context(
     *,

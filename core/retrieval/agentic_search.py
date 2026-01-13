@@ -269,6 +269,35 @@ class SearchAgent:
                 parsed, search_text, limit
             )
 
+        # GOLD.md Compliance: Comprehensive Search Reasoning Trace
+        reasoning_chain = {
+            "step1_parse": f"Parsed '{query[:50]}...' into structured query",
+            "step2_identity": f"Resolved identity: {resolved_name or 'None'} → cluster {cluster_id}",
+            "step3_expand": f"Expanded to: {search_text[:80]}...",
+            "step4_filters": {
+                "face_cluster": cluster_id,
+                "clothing_color": parsed.clothing_color,
+                "clothing_type": parsed.clothing_type,
+                "accessories": parsed.accessories,
+                "location": parsed.location,
+                "visible_text": parsed.text_to_find,
+                "video_path": video_path,
+            },
+            "step5_results": f"Found {len(results)} scenes",
+        }
+        top_scores = [
+            {r.get("id", "?"): round(r.get("score", 0), 3)}
+            for r in results[:5]
+        ]
+        log(f"[Search] Original: {query}")
+        log(f"[Search] Expanded: {search_text}")
+        log(
+            f"[Search] Filters: faces={[cluster_id] if cluster_id else []}, "
+            f"video={video_path or 'all'}"
+        )
+        log(f"[Search] Scoring: {top_scores}")
+        log(f"[Search] Reasoning: {reasoning_chain}")
+
         return {
             "query": query,
             "parsed": parsed.model_dump(),
@@ -278,6 +307,7 @@ class SearchAgent:
             "results": results,
             "result_count": len(results),
             "search_type": "scene",
+            "reasoning_chain": reasoning_chain,
         }
 
     @observe("search_agentic")
@@ -701,6 +731,16 @@ Return JSON:
             except Exception as e:
                 log(f"[SOTA Search] Re-ranking failed: {e}, using raw results")
 
+        # GOLD.md Compliance: Comprehensive Search Reasoning Trace
+        reasoning_chain = {
+            "step1_parse": f"Parsed '{query[:50]}...' → dynamic entities",
+            "step2_identity": f"Resolved: {person_names} → {len(face_ids)} faces",
+            "step3_expand": f"Search text: {search_text[:80]}...",
+            "step4_retrieve": f"Retrieved {len(candidates)} candidates",
+            "step5_rerank": f"Reranking={use_reranking}, final={len(candidates[:limit])}",
+        }
+        log(f"[SOTA Search] Reasoning: {reasoning_chain}")
+
         # 5. Build response with full explainability
         return {
             "query": query,
@@ -714,6 +754,7 @@ Return JSON:
             "result_count": len(candidates[:limit]),
             "search_type": "sota",
             "reranking_used": use_reranking,
+            "reasoning_chain": reasoning_chain,
         }
 
     @observe("scenelet_search")
