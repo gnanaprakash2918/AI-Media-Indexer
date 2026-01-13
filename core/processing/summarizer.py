@@ -201,6 +201,8 @@ class HierarchicalSummarizer:
 
     def _get_video_frames(self, video_path: str) -> list[dict[str, Any]]:
         """Get all indexed frames for a video."""
+        from qdrant_client.http import models
+
         try:
             results = self.db.client.scroll(
                 collection_name=self.db.FRAMES_COLLECTION,
@@ -268,7 +270,8 @@ class HierarchicalSummarizer:
                         "summary": summary_text.strip(),
                         "entities": entities,
                     }
-                )            except Exception as e:
+                )
+            except Exception as e:
                 log(f"Error generating scene {i} summary: {e}")
 
         return summaries

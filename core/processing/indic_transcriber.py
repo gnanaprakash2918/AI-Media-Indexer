@@ -208,12 +208,12 @@ class IndicASRPipeline:
 
             with open_dict(model_cfg):
                 if hasattr(model_cfg, "tokenizer"):
-                    if "dir" not in model_cfg.tokenizer:
-                        model_cfg.tokenizer.dir = "tokenizers"
-                    if "type" not in model_cfg.tokenizer:
-                        model_cfg.tokenizer.type = "bpe"
+                    if "dir" not in model_cfg.tokenizer:  # type: ignore
+                        model_cfg.tokenizer.dir = "tokenizers"  # type: ignore
+                    if "type" not in model_cfg.tokenizer:  # type: ignore
+                        model_cfg.tokenizer.type = "bpe"  # type: ignore
                 if hasattr(model_cfg, "decoding"):
-                    model_cfg.decoding.preserve_alignments = False
+                    model_cfg.decoding.preserve_alignments = False  # type: ignore
 
             self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.from_config_dict(  # type: ignore
                 model_cfg

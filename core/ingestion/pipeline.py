@@ -1677,10 +1677,10 @@ class IngestionPipeline:
 
         # We assume 1-to-1 for now.
 
-        if self.sam3_tracker:
-             for frame_data in self.sam3_tracker.process_video_concepts(path, prompts):
-            frame_idx = frame_data["frame_idx"]
-            obj_ids = frame_data["object_ids"]
+            if self.sam3_tracker:
+                for frame_data in self.sam3_tracker.process_video_concepts(path, prompts):
+                    frame_idx = frame_data["frame_idx"]
+                    obj_ids = frame_data["object_ids"]
 
             for obj_id in obj_ids:
                 # Get concept name

@@ -175,8 +175,8 @@ class SceneAggregator:
             if cultural:
                 cultural_votes[cultural] += 1
 
-        best_location = max(location_votes, key=location_votes.get) if location_votes else ""
-        best_cultural = max(cultural_votes, key=cultural_votes.get) if cultural_votes else ""
+        best_location = max(location_votes, key=lambda k: location_votes[k]) if location_votes else ""
+        best_cultural = max(cultural_votes, key=lambda k: cultural_votes[k]) if cultural_votes else ""
 
         person_attributes = []
         for face_id in all_face_ids:
@@ -199,6 +199,7 @@ class SceneAggregator:
         speaker_names: set[str] = set()
         if dialogue_segments:
             for seg in dialogue_segments:
+
                 seg_start = seg.get("start", 0)
                 seg_end = seg.get("end", 0)
                 if seg_end > start_time and seg_start < end_time:

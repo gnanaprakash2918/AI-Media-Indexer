@@ -19,7 +19,9 @@ class SceneInfo:
 
 def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     try:
-        from scenedetect import AdaptiveDetector, detect
+        import scenedetect  # type: ignore
+        AdaptiveDetector = scenedetect.AdaptiveDetector
+        detect = scenedetect.detect
     except ImportError:
         log("scenedetect not installed")
         return []

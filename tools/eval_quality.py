@@ -72,7 +72,7 @@ class QualityEvaluator:
 
     def _ensure_llm(self):
         if self.llm is None:
-            self.llm = LLMFactory.create_llm(provider=settings.llm_provider)
+            self.llm = LLMFactory.create_llm(provider=settings.llm_provider)  # type: ignore
 
     async def judge_result(self, query: str, result: dict) -> dict:
         self._ensure_llm()
