@@ -76,10 +76,15 @@ class IndicASRPipeline:
     supports all major Indic languages without separate model downloads.
     """
 
+    # All supported Indic languages
+    # Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi, Odia
+    INDIC_LANGUAGES = {"hi", "ta", "te", "kn", "ml", "bn", "mr", "gu", "pa", "or"}
+
     # Lightweight HF model (~600MB, multilingual)
     HF_MODEL = "ai4bharat/indic-conformer-600m-multilingual"
 
     # Heavy NeMo models (optional, 3-5GB each)
+    # Not all languages have dedicated NeMo models - fallback to HF for others
     NEMO_MODEL_MAP = {
         "ta": {
             "repo_id": "ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large",
@@ -88,6 +93,22 @@ class IndicASRPipeline:
         "hi": {
             "repo_id": "ai4bharat/indicconformer_stt_hi_hybrid_ctc_rnnt_large",
             "filename": "indicconformer_stt_hi_hybrid_rnnt_large.nemo",
+        },
+        "te": {
+            "repo_id": "ai4bharat/indicconformer_stt_te_hybrid_ctc_rnnt_large",
+            "filename": "indicconformer_stt_te_hybrid_rnnt_large.nemo",
+        },
+        "kn": {
+            "repo_id": "ai4bharat/indicconformer_stt_kn_hybrid_ctc_rnnt_large",
+            "filename": "indicconformer_stt_kn_hybrid_rnnt_large.nemo",
+        },
+        "ml": {
+            "repo_id": "ai4bharat/indicconformer_stt_ml_hybrid_ctc_rnnt_large",
+            "filename": "indicconformer_stt_ml_hybrid_rnnt_large.nemo",
+        },
+        "bn": {
+            "repo_id": "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large",
+            "filename": "indicconformer_stt_bn_hybrid_rnnt_large.nemo",
         },
     }
 
