@@ -75,6 +75,8 @@ class VLMCouncil:
         council = VLMCouncil()
         result = await council.analyze_frame(frame_bytes)
         print(result.description)
+
+    Models are configured via COUNCIL_CONFIG.
     """
 
     def __init__(
@@ -91,6 +93,23 @@ class VLMCouncil:
         self._chairman = chairman_client
         self._local_client: VLMClient | None = None
         self._enable_api = enable_api_models
+
+        # Log enabled models from config
+        enabled = self.get_enabled_models()
+        log.info(f"[VLMCouncil] Enabled models: {[m.name for m in enabled]}")
+
+    def get_enabled_models(self) -> list:
+        """Get enabled VLM models from council config.
+
+        Returns:
+            List of enabled ModelSpec objects.
+        """
+        try:
+            from core.processing.council_config import COUNCIL_CONFIG
+
+            return COUNCIL_CONFIG.get_enabled("vlm")
+        except ImportError:
+            return []
 
     @property
     def chairman(self) -> VLMClient:

@@ -53,6 +53,8 @@ class ASRCouncil:
         council = ASRCouncil()
         result = await council.transcribe(audio_segment)
         print(result.text)
+
+    Models are configured via COUNCIL_CONFIG.
     """
 
     def __init__(
@@ -72,6 +74,23 @@ class ASRCouncil:
         self._seamless = None
         self._indic = None
         self._initialized = False
+
+        # Log enabled models from config
+        enabled = self.get_enabled_models()
+        log.info(f"[ASRCouncil] Enabled models: {[m.name for m in enabled]}")
+
+    def get_enabled_models(self) -> list:
+        """Get enabled ASR models from council config.
+
+        Returns:
+            List of enabled ModelSpec objects.
+        """
+        try:
+            from core.processing.council_config import COUNCIL_CONFIG
+
+            return COUNCIL_CONFIG.get_enabled("asr")
+        except ImportError:
+            return []
 
     async def _lazy_load(self) -> None:
         """Lazy load ASR models."""
