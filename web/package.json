@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "gts lint",
+    "lint:eslint": "eslint .",
+    "fix": "gts fix",
+    "clean": "gts clean",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -34,6 +37,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "gts": "^7.0.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "typescript": "~5.9.3",

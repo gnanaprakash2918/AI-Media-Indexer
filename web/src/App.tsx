@@ -1,5 +1,10 @@
-import { createBrowserRouter, RouterProvider, Outlet, NavLink } from 'react-router-dom';
-import { useState, useMemo, lazy, Suspense } from 'react';
+import {
+  createBrowserRouter,
+  RouterProvider,
+  Outlet,
+  NavLink,
+} from 'react-router-dom';
+import {useState, useMemo, lazy, Suspense} from 'react';
 import {
   ThemeProvider,
   CssBaseline,
@@ -30,11 +35,15 @@ import {
   Dashboard,
   RecordVoiceOver,
 } from '@mui/icons-material';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { AnimatePresence, motion } from 'framer-motion';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from '@tanstack/react-query';
+import {AnimatePresence, motion} from 'framer-motion';
 
-import { getTheme } from './theme';
-import { healthCheck } from './api/client';
+import {getTheme} from './theme';
+import {healthCheck} from './api/client';
 
 // Lazy load pages for faster initial load
 const DashboardPage = lazy(() => import('./pages/Dashboard'));
@@ -45,7 +54,14 @@ const VoicesPage = lazy(() => import('./pages/Voices'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
 
 const PageLoader = () => (
-  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
+  <Box
+    sx={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      minHeight: 200,
+    }}
+  >
     <CircularProgress />
   </Box>
 );
@@ -63,12 +79,12 @@ const queryClient = new QueryClient({
 });
 
 const navItems = [
-  { path: '/', label: 'Dashboard', icon: <Dashboard /> },
-  { path: '/search', label: 'Search', icon: <Search /> },
-  { path: '/ingest', label: 'Ingest', icon: <CloudUpload /> },
-  { path: '/faces', label: 'Faces', icon: <Face /> },
-  { path: '/voices', label: 'Voices', icon: <RecordVoiceOver /> },
-  { path: '/settings', label: 'Settings', icon: <Settings /> },
+  {path: '/', label: 'Dashboard', icon: <Dashboard />},
+  {path: '/search', label: 'Search', icon: <Search />},
+  {path: '/ingest', label: 'Ingest', icon: <CloudUpload />},
+  {path: '/faces', label: 'Faces', icon: <Face />},
+  {path: '/voices', label: 'Voices', icon: <RecordVoiceOver />},
+  {path: '/settings', label: 'Settings', icon: <Settings />},
 ];
 
 function Layout() {
@@ -97,11 +113,20 @@ function Layout() {
     refetchInterval: 30000,
   });
 
-  const drawerWidth = isMobile ? DRAWER_WIDTH : (drawerOpen ? DRAWER_WIDTH : DRAWER_WIDTH_COLLAPSED);
+  const drawerWidth = isMobile
+    ? DRAWER_WIDTH
+    : drawerOpen
+      ? DRAWER_WIDTH
+      : DRAWER_WIDTH_COLLAPSED;
 
   const drawerContent = (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Toolbar sx={{ px: 2, justifyContent: drawerOpen || isMobile ? 'flex-start' : 'center' }}>
+    <Box sx={{height: '100%', display: 'flex', flexDirection: 'column'}}>
+      <Toolbar
+        sx={{
+          px: 2,
+          justifyContent: drawerOpen || isMobile ? 'flex-start' : 'center',
+        }}
+      >
         {(drawerOpen || isMobile) && (
           <Typography
             variant="h6"
@@ -136,9 +161,9 @@ function Layout() {
         )}
       </Toolbar>
       <Divider />
-      <List sx={{ flex: 1, px: 1, py: 2 }}>
-        {navItems.map((item) => (
-          <ListItem key={item.path} disablePadding sx={{ mb: 0.5 }}>
+      <List sx={{flex: 1, px: 1, py: 2}}>
+        {navItems.map(item => (
+          <ListItem key={item.path} disablePadding sx={{mb: 0.5}}>
             <ListItemButton
               component={NavLink}
               to={item.path}
@@ -169,13 +194,15 @@ function Layout() {
               >
                 {item.icon}
               </ListItemIcon>
-              {(drawerOpen || isMobile) && <ListItemText primary={item.label} />}
+              {(drawerOpen || isMobile) && (
+                <ListItemText primary={item.label} />
+              )}
             </ListItemButton>
           </ListItem>
         ))}
       </List>
       <Divider />
-      <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
+      <Box sx={{p: 2, display: 'flex', justifyContent: 'center'}}>
         <Chip
           size="small"
           label={health.isSuccess ? 'Online' : 'Offline'}
@@ -193,7 +220,13 @@ function Layout() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          minHeight: '100vh',
+          bgcolor: 'background.default',
+        }}
+      >
         {/* Mobile AppBar */}
         {isMobile && (
           <AppBar
@@ -210,11 +243,11 @@ function Layout() {
                 edge="start"
                 color="inherit"
                 onClick={() => setDrawerOpen(true)}
-                sx={{ mr: 2 }}
+                sx={{mr: 2}}
               >
                 <MenuIcon />
               </IconButton>
-              <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>
+              <Typography variant="h6" sx={{flexGrow: 1, fontWeight: 700}}>
                 AI Media Indexer
               </Typography>
               <IconButton onClick={toggleColorMode} color="inherit">
@@ -271,11 +304,11 @@ function Layout() {
             >
               <IconButton
                 onClick={() => setDrawerOpen(!drawerOpen)}
-                sx={{ mr: 2 }}
+                sx={{mr: 2}}
               >
                 <MenuIcon />
               </IconButton>
-              <Box sx={{ flexGrow: 1 }} />
+              <Box sx={{flexGrow: 1}} />
               <IconButton onClick={toggleColorMode}>
                 {mode === 'dark' ? <LightMode /> : <DarkMode />}
               </IconButton>
@@ -285,10 +318,10 @@ function Layout() {
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.15 }}
+              initial={{opacity: 0, y: 10}}
+              animate={{opacity: 1, y: 0}}
+              exit={{opacity: 0, y: -10}}
+              transition={{duration: 0.15}}
             >
               <Outlet />
             </motion.div>
@@ -304,12 +337,54 @@ const router = createBrowserRouter([
     path: '/',
     element: <Layout />,
     children: [
-      { index: true, element: <Suspense fallback={<PageLoader />}><DashboardPage /></Suspense> },
-      { path: 'search', element: <Suspense fallback={<PageLoader />}><SearchPage /></Suspense> },
-      { path: 'ingest', element: <Suspense fallback={<PageLoader />}><IngestPage /></Suspense> },
-      { path: 'faces', element: <Suspense fallback={<PageLoader />}><FacesPage /></Suspense> },
-      { path: 'voices', element: <Suspense fallback={<PageLoader />}><VoicesPage /></Suspense> },
-      { path: 'settings', element: <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense> },
+      {
+        index: true,
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <DashboardPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'search',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <SearchPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'ingest',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <IngestPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'faces',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <FacesPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'voices',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <VoicesPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'settings',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <SettingsPage />
+          </Suspense>
+        ),
+      },
     ],
   },
 ]);
