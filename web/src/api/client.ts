@@ -175,7 +175,7 @@ export const mergeFaceClusters = async (
 };
 
 export const setFaceMain = async (clusterId: number, isMain: boolean) => {
-  const res = await apiClient.post(`/faces/${clusterId}/main`, null, {
+  const res = await apiClient.post(`/faces/cluster/${clusterId}/main`, null, {
     params: { is_main: isMain },
   });
   return res.data;
