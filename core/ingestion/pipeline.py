@@ -78,6 +78,9 @@ class IngestionPipeline:
         self.vision: VisionAnalyzer | None = None
         self.faces: FaceManager | None = None
         self.voice: VoiceProcessor | None = None
+
+        # Enhanced pipeline config for SmartFrameSampler, BiometricArbitrator, etc.
+        self._enhanced_config = None
         self._face_clusters: dict[int, list[float]] = {}
 
         # Deep Video Understanding (SAM 3)
@@ -85,6 +88,19 @@ class IngestionPipeline:
             Sam3Tracker() if settings.enable_sam3_tracking else None
         )
         self.frame_sampler = FrameSampler(every_n=5)
+
+    @property
+    def enhanced_config(self):
+        """Lazy-load EnhancedPipelineConfig for SmartFrameSampler, audio events, etc."""
+        if self._enhanced_config is None:
+            try:
+                from core.integration import get_enhanced_config
+
+                self._enhanced_config = get_enhanced_config()
+                logger.info("[Pipeline] EnhancedPipelineConfig loaded")
+            except Exception as e:
+                logger.warning(f"[Pipeline] EnhancedPipelineConfig failed: {e}")
+        return self._enhanced_config
 
     def _cleanup_memory(self, context: str = "") -> None:
         """Force garbage collection and clear CUDA cache.
