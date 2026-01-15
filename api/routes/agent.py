@@ -1,4 +1,7 @@
-"""Agent API routes for LLM interaction and status checks."""
+"""Agent API routes for LLM interaction and status checks.
+
+Prompts loaded from external files.
+"""
 
 from typing import Annotated
 
@@ -8,6 +11,7 @@ from api.deps import get_pipeline
 from api.schemas import AgentChatRequest
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
+from core.utils.prompt_loader import load_prompt
 
 router = APIRouter()
 
@@ -93,10 +97,7 @@ async def agent_chat(
     try:
         import ollama
 
-        system_prompt = """You are a helpful AI assistant for a multimedia indexing system.
-You can search through indexed videos to find specific scenes, people, or dialogue.
-When the user asks to find something, use the search tools available.
-Always explain what you found and why it matches the query."""
+        system_prompt = load_prompt("agent_chat_system")
 
         messages = [
             {"role": "system", "content": system_prompt},

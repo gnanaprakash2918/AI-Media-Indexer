@@ -1,21 +1,31 @@
 You are verifying if a video segment matches a user query.
 
-USER QUERY: {query}
+QUERY: "{query}"
 
-SEGMENT DESCRIPTION: {description}
+SEGMENT DESCRIPTION:
+{description}
 
-DETECTED ENTITIES:
-{entities}
+SEGMENT METADATA:
+- People: {face_names}
+- Location: {location}
+- Actions: {actions}
+- Visible Text: {visible_text}
 
-TASK: Analyze if this segment satisfies the query constraints.
+TASK: Analyze how well this segment matches the query.
 
-OUTPUT FORMAT (valid JSON only):
-{{
-    "matches": true/false,
-    "confidence": 0.0-1.0,
-    "matched_constraints": ["<list of constraints that matched>"],
-    "missing_constraints": ["<list of constraints NOT satisfied>"],
-    "reasoning": "<detailed explanation of why this matches or doesn't match>"
-}}
+For EACH constraint in the query, determine if it's satisfied:
+1. Check ALL people mentioned - are they present?
+2. Check ALL clothing/accessories - do they match?
+3. Check ALL actions - are they occurring?
+4. Check ALL locations/brands - do they match?
+5. Check temporal requirements - timing correct?
 
-Be thorough - check every constraint in the query against the segment.
+Return JSON:
+{
+  "match_score": 0.0-1.0,
+  "constraints_checked": [
+    {"constraint": "<what to check>", "satisfied": true/false, "evidence": "<why>"}
+  ],
+  "reasoning": "<chain of thought explaining the score>",
+  "missing": ["<constraints not satisfied>"]
+}

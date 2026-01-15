@@ -530,38 +530,8 @@ class SearchAgent:
         if not candidates:
             return []
 
-        # Re-ranking prompt template
-        rerank_prompt = """You are verifying if a video segment matches a user query.
-
-QUERY: "{query}"
-
-SEGMENT DESCRIPTION:
-{description}
-
-SEGMENT METADATA:
-- People: {face_names}
-- Location: {location}
-- Actions: {actions}
-- Visible Text: {visible_text}
-
-TASK: Analyze how well this segment matches the query.
-
-For EACH constraint in the query, determine if it's satisfied:
-1. Check ALL people mentioned - are they present?
-2. Check ALL clothing/accessories - do they match?
-3. Check ALL actions - are they occurring?
-4. Check ALL locations/brands - do they match?
-5. Check temporal requirements - timing correct?
-
-Return JSON:
-{{
-  "match_score": 0.0-1.0,  // Overall match (0=no match, 1=perfect match)
-  "constraints_checked": [
-    {{"constraint": "<what to check>", "satisfied": true/false, "evidence": "<why>"}}
-  ],
-  "reasoning": "<chain of thought explaining the score>",
-  "missing": ["<constraints not satisfied>"]
-}}"""
+        # Load rerank prompt from external file
+        rerank_prompt = load_prompt("rerank_verification")
 
         reranked = []
 

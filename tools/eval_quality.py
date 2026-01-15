@@ -1,6 +1,6 @@
 """Search Quality Evaluation using LLM-as-a-Judge.
 
-Runs test queries, evaluates results using an LLM, and reports accuracy score.
+Prompts loaded from external files.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings  # noqa: E402
+from core.utils.prompt_loader import load_prompt  # noqa: E402
 from llm.factory import LLMFactory  # noqa: E402
 
 TEST_SET = [
@@ -37,21 +38,8 @@ TEST_SET = [
     },
 ]
 
-JUDGE_PROMPT = """You are a search quality evaluator. Given a search query and the returned result description, rate the relevance on a scale of 0-10.
-
-Query: {query}
-Result Description: {description}
-
-Rate relevance 0-10 where:
-- 0-2: Completely irrelevant
-- 3-4: Weakly related
-- 5-6: Moderately relevant
-- 7-8: Strongly relevant
-- 9-10: Perfect match
-
-Respond with ONLY this JSON format:
-{{"score": <number>, "reason": "<brief explanation>"}}
-"""
+# Load from external file
+JUDGE_PROMPT = load_prompt("eval_judge")
 
 
 class QualityEvaluator:

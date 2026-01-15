@@ -1,7 +1,6 @@
 """Agentic Search Engine with LLM Query Expansion.
 
-Parses queries to expand "South Indian breakfast" → "idly, dosa, sambar"
-and resolves person names to face cluster IDs for identity filtering.
+Prompts loaded from external files.
 """
 
 import json
@@ -10,6 +9,7 @@ from typing import Any
 from core.storage.db import VectorDB
 from core.utils.logger import log
 from core.utils.observe import observe
+from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
 
 
@@ -101,28 +101,9 @@ class SearchEngine:
 
     async def _parse_query(self, query: str) -> dict[str, Any]:
         """Parse query and expand visual keywords using LLM."""
-        prompt = f"""Parse this video search query: "{query}"
-
-Return JSON with:
-{{
-    "person_name": "Name of person/character if mentioned, or null",
-    "visual_keywords": "Expanded visual keywords with specific items",
-    "text_in_scene": "Any specific text/brand mentioned (e.g., LensKart, Tesla) or empty"
-}}
-
-UNIVERSAL EXPANSION RULES - Expand generic terms to specific items:
-- "breakfast" → "idly dosa sambar eggs toast cereal pancakes"
-- "South Indian food" → "idly dosa sambar rasam vada pongal biryani"
-- "Japanese food" → "sushi ramen tempura miso onigiri"
-- "car" → "sedan SUV Tesla BMW Toyota sports car"
-- "weapon" → "katana sword knife gun rifle AK-47 lightsaber"
-- "phone" → "iPhone Samsung Galaxy smartphone mobile"
-- "shoes" → "sneakers Nike Adidas Jordan boots heels"
-- "eating" → "eating dipping biting chewing swallowing"
-- "fighting" → "punching kicking slashing blocking dodging"
-- "driving" → "driving steering accelerating drifting braking"
-
-Return ONLY JSON, no explanation."""
+        # Load prompt from external file
+        prompt_template = load_prompt("search_expansion")
+        prompt = prompt_template.format(query=query)
 
         try:
             raw = await self.llm.generate(prompt)

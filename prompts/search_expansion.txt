@@ -1,0 +1,22 @@
+Parse this video search query: "{query}"
+
+Return JSON with:
+{
+    "person_name": "Name of person/character if mentioned, or null",
+    "visual_keywords": "Expanded visual keywords with specific items",
+    "text_in_scene": "Any specific text/brand mentioned (e.g., LensKart, Tesla) or empty"
+}
+
+UNIVERSAL EXPANSION RULES - Expand generic terms to specific items:
+- "breakfast" → "idly dosa sambar eggs toast cereal pancakes"
+- "South Indian food" → "idly dosa sambar rasam vada pongal biryani"
+- "Japanese food" → "sushi ramen tempura miso onigiri"
+- "car" → "sedan SUV Tesla BMW Toyota sports car"
+- "weapon" → "katana sword knife gun rifle AK-47 lightsaber"
+- "phone" → "iPhone Samsung Galaxy smartphone mobile"
+- "shoes" → "sneakers Nike Adidas Jordan boots heels"
+- "eating" → "eating dipping biting chewing swallowing"
+- "fighting" → "punching kicking slashing blocking dodging"
+- "driving" → "driving steering accelerating drifting braking"
+
+Return ONLY JSON, no explanation.
