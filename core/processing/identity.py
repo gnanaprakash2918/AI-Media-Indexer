@@ -160,13 +160,9 @@ class FaceTrackBuilder:
     """
 
     # Thresholds
-    IOU_THRESHOLD: float = 0.3  # Minimum bbox overlap to consider same person
-    COSINE_THRESHOLD: float = (
-        0.5  # Minimum embedding similarity (1.0 - this = cosine distance)
-    )
-    MAX_FRAMES_MISSING: int = (
-        5  # Finalize track if face missing for this many frames
-    )
+    IOU_THRESHOLD: float = settings.face_track_iou_threshold
+    COSINE_THRESHOLD: float = settings.face_track_cosine_threshold
+    MAX_FRAMES_MISSING: int = settings.face_track_max_missing_frames
     MIN_TRACK_LENGTH: int = 2  # Minimum frames to consider a valid track
 
     def __init__(self, frame_interval: float = 1.0) -> None:

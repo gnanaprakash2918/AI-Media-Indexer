@@ -135,12 +135,16 @@ class ProgressTracker:
             if total_duration is not None:
                 job.total_duration = total_duration
 
-            # Create checkpoint data for resuming
+            # Create checkpoint data for resuming (merge with existing)
             if current_timestamp is not None:
-                job.checkpoint_data = {
+                existing_checkpoint = job.checkpoint_data or {}
+                # Update only what changed, keep flags like "audio_complete"
+                new_checkpoint = {
+                    **existing_checkpoint,
                     "timestamp": current_timestamp,
                     "processed_frames": job.processed_frames,
                 }
+                job.checkpoint_data = new_checkpoint
 
             # Broadcast detailed update
             self._broadcast(
@@ -240,6 +244,35 @@ class ProgressTracker:
             )
         except Exception:
             pass
+
+    def save_checkpoint(self, job_id: str, data: dict[str, Any]) -> None:
+        """Explicitly save key-value pairs to the job's checkpoint data.
+
+        Useful for flags like 'audio_complete', 'voice_complete'.
+        Does a safe merge with existing checkpoint data.
+        """
+        with self._lock:
+            if job_id not in self._cache:
+                return
+            job = self._cache[job_id]
+            
+            # Merge with existing
+            current = job.checkpoint_data or {}
+            updated = {**current, **data}
+            job.checkpoint_data = updated
+            
+            # Persist immediately
+            try:
+                job_manager.update_job(
+                    job_id,
+                    checkpoint_data=updated,
+                    last_heartbeat=time.time()
+                )
+            except Exception:
+                pass
+                
+        # Optional: Broadcast if needed (usually internal state)
+
 
     def complete(
         self, job_id: str, message: str = "Processing complete"

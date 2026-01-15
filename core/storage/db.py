@@ -353,8 +353,12 @@ class VectorDB:
         Returns:
             The embedding vector as a list of floats.
         """
-        embeddings = self.encode_texts(text, is_query=True)
-        return embeddings[0] if embeddings else []
+        try:
+            return self.encode_texts(text, is_query=True)[0]
+        except Exception as e:
+            log(f"Error generating embedding for '{text[:20]}...': {e}", level="ERROR")
+            # Return zero vector as fallback to prevent crash
+            return [0.0] * self.MEDIA_VECTOR_SIZE
 
     def get_indexed_videos(self) -> list[str]:
         """Retrieves a list of all unique video paths currently indexed in the database.
@@ -511,8 +515,6 @@ class VectorDB:
             )
             log("Created scenes collection with multi-vector support")
 
-        if not self.client.collection_exists(self.SUMMARIES_COLLECTION):
-            self.client.create_collection(
                 collection_name=self.SUMMARIES_COLLECTION,
                 vectors_config=models.VectorParams(
                     size=self.MEDIA_VECTOR_SIZE,
@@ -520,7 +522,38 @@ class VectorDB:
                 ),
             )
 
-        log("Qdrant collections ensured")
+        # Create Payload Indexes for Keyword Search (Full Text)
+        # This is CRITICAL for hybrid search to work without scanning the entire DB in memory
+        text_fields = [
+            "action",
+            "dialogue",
+            "description",
+            "entities",
+            "visible_text",
+            "face_names",
+            "clothing_colors",
+            "clothing_types",
+            "accessories",
+            "scene_location",
+            "scene_type",
+        ]
+        for field in text_fields:
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.MEDIA_COLLECTION,
+                    field_name=field,
+                    field_schema=models.TextIndexParams(
+                        type="text",
+                        tokenizer=models.TokenizerType.WORD,
+                        min_token_len=2,
+                        lowercase=True,
+                    ),
+                )
+            except Exception as e:
+                # Index might already exist
+                log(f"Index creation for {field} failed (likely exists): {e}", level="DEBUG")
+
+        log("Qdrant collections and indexes ensured")
 
     def list_collections(self) -> models.CollectionsResponse:
         """List all collections in the Qdrant instance."""
@@ -1036,55 +1069,86 @@ class VectorDB:
         except Exception as e:
             log(f"Vector search failed: {e}")
 
-        # === 2. KEYWORD SEARCH (Text Fields) ===
-        try:
-            query_lower = query.lower()
-            query_words = set(query_lower.split())
+        log(f"Vector search found {len(results_by_id)} candidates so far")
 
-            conditions = []
+        # === 2. KEYWORD SEARCH (Text Fields via Qdrant Indexes) ===
+        try:
+            # We use Qdrant's MatchText to find documents containing query terms.
+            # This is much faster than scraping random frames.
+            
+            # Fields to search
+            text_fields = [
+                "action", "dialogue", "description", "entities", 
+                "visible_text", "face_names", "clothing_colors", 
+                "clothing_types", "accessories", "scene_location"
+            ]
+            
+            should_conditions = []
+            for field in text_fields:
+                should_conditions.append(
+                    models.FieldCondition(
+                        key=field,
+                        match=models.MatchText(text=query)
+                    )
+                )
+
+            # Combine with strong filters (video path)
+            must_conditions = []
             if video_paths:
-                conditions.append(
+                must_conditions.append(
                     models.FieldCondition(
                         key="video_path",
                         match=models.MatchAny(any=video_paths),
                     )
                 )
 
-            qfilter = models.Filter(must=conditions) if conditions else None
+            keyword_filter = models.Filter(
+                should=should_conditions,
+                must=must_conditions if must_conditions else None
+            )
 
+            # Scroll for matches (limit to 100 high-relevance matches)
+            # Since Qdrant basic text match doesn't score, we treat them as high-confidence hits.
+            # Ideally we'd use sparse vectors for BM25, but this is a robust fallback.
             scroll_resp = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
-                scroll_filter=qfilter,
-                limit=500,
+                scroll_filter=keyword_filter,
+                limit=limit * 3,
                 with_payload=True,
                 with_vectors=False,
             )
 
-            keyword_matches: list[tuple[str, float, dict]] = []
-            for point in scroll_resp[0]:
-                payload = point.payload or {}
+            for rank, point in enumerate(scroll_resp[0]):
                 point_id = str(point.id)
-
-                text_fields = [
-                    str(payload.get("action", "")),
-                    str(payload.get("dialogue", "")),
-                    str(payload.get("scene_type", "")),
-                    " ".join(payload.get("entities", []))
-                    if isinstance(payload.get("entities"), list)
-                    else "",
-                    " ".join(payload.get("visible_text", []))
-                    if isinstance(payload.get("visible_text"), list)
-                    else "",
-                    " ".join(payload.get("face_names", []))
-                    if isinstance(payload.get("face_names", []), list)
-                    else "",
-                ]
-                combined_text = " ".join(text_fields).lower()
-
-                word_hits = sum(1 for w in query_words if w in combined_text)
-                if word_hits > 0:
-                    score = word_hits / len(query_words) if query_words else 0
-                    keyword_matches.append((point_id, score, payload))
+                rank_lists["keyword"][point_id] = rank + 1  # 1-based rank
+                
+                if point_id not in results_by_id:
+                    payload = point.payload or {}
+                    results_by_id[point_id] = {
+                        "id": point_id,
+                        "score": 0.0,
+                        "keyword_score": 1.0, # Placeholder info
+                        "match_reasons": [],
+                        **payload,
+                    }
+                
+                # Try to determine WHY it matched for the UI
+                payload = results_by_id[point_id]
+                matched_fields = []
+                q_lower = query.lower().split()
+                
+                # Heuristic verify
+                for field in text_fields:
+                    val = str(payload.get(field, "")).lower()
+                    if any(w in val for w in q_lower if len(w) > 2):
+                        matched_fields.append(field)
+                
+                if matched_fields:
+                    results_by_id[point_id]["match_reasons"].append(
+                        f"Keyword match: {', '.join(matched_fields[:3])}"
+                    )
+                else:
+                    results_by_id[point_id]["match_reasons"].append("Text match")
 
             # === 2b. MASKLET SEARCH (Deep Video Understanding) ===
             # Search for SAM3-tracked concepts overlap with query
@@ -1098,85 +1162,50 @@ class VectorDB:
                         )
                     )
                 # Check for concept match
-                concept_matches = []
-                for word in query_words:
-                    if len(word) > 3:  # Ignore short words
-                        concept_matches.append(
-                            models.FieldCondition(
-                                key="concept",
-                                match=models.MatchValue(value=word),
-                            )
-                        )
-
-                if concept_matches:
-                    masklet_filter = models.Filter(
-                        must=masklet_conditions,
-                        should=concept_matches,  # Match ANY concept word
+                # Use MatchText for concepts too
+                masklet_conditions.append(
+                    models.FieldCondition(
+                        key="concept",
+                        match=models.MatchText(text=query),
                     )
+                )
 
-                    mask_resp = self.client.scroll(
-                        collection_name="masklets",
-                        scroll_filter=masklet_filter,
-                        limit=50,
-                        with_payload=True,
+                masklet_filter = models.Filter(must=masklet_conditions)
+
+                mask_resp = self.client.scroll(
+                    collection_name="masklets",
+                    scroll_filter=masklet_filter,
+                    limit=50,
+                    with_payload=True,
+                )
+
+                for point in mask_resp[0]:
+                    payload = point.payload or {}
+                    point_id = str(point.id)  # Use unique ID
+
+                    rank_lists["keyword"][point_id] = 1  # High rank
+
+                    if point_id not in results_by_id:
+                        results_by_id[point_id] = {
+                            "id": point_id,
+                            "score": 0.0,
+                            "keyword_score": 0.9,  # High confidence
+                            "match_reasons": [],
+                            "timestamp": payload.get("start_time", 0.0),
+                            "video_path": payload.get("video_path"),
+                            "action": f"Tracked concept: {payload.get('concept')}",
+                            "type": "masklet",
+                        }
+                    results_by_id[point_id]["match_reasons"].append(
+                        f"Concept match: {payload.get('concept')}"
                     )
-
-                    for point in mask_resp[0]:
-                        payload = point.payload or {}
-                        point_id = str(point.id)  # Use unique ID
-
-                        # Create a synthetic result from masklet
-                        # Masklet has start/end. We map to start time.
-
-                        rank_lists["keyword"][point_id] = 1  # High rank
-
-                        if point_id not in results_by_id:
-                            results_by_id[point_id] = {
-                                "id": point_id,
-                                "score": 0.0,
-                                "keyword_score": 0.9,  # High confidence
-                                "match_reasons": [],
-                                "timestamp": payload.get("start_time", 0.0),
-                                "video_path": payload.get("video_path"),
-                                "action": f"Tracked concept: {payload.get('concept')}",
-                                "type": "masklet",
-                            }
-                        results_by_id[point_id]["match_reasons"].append(
-                            f"Concept match: {payload.get('concept')}"
-                        )
             except Exception as e:
                 log(f"Masklet search failed: {e}")
 
-            keyword_matches.sort(key=lambda x: x[1], reverse=True)
-            for rank, (point_id, score, payload) in enumerate(
-                keyword_matches[: limit * 2]
-            ):
-                rank_lists["keyword"][point_id] = rank + 1
-                if point_id not in results_by_id:
-                    results_by_id[point_id] = {
-                        "id": point_id,
-                        "score": 0.0,
-                        "keyword_score": score,
-                        "match_reasons": [],
-                        **payload,
-                    }
-                matched_fields = []
-                if query_lower in str(payload.get("action", "")).lower():
-                    matched_fields.append("action")
-                if payload.get("face_names"):
-                    matched_fields.append(
-                        f"person: {payload.get('face_names')}"
-                    )
-                if matched_fields:
-                    results_by_id[point_id]["match_reasons"].append(
-                        f"Text match: {', '.join(matched_fields)}"
-                    )
-                else:
-                    results_by_id[point_id]["match_reasons"].append(
-                        f"Keyword hit ({score:.2f})"
-                    )
         except Exception as e:
             log(f"Keyword search failed: {e}")
+
+        log(f"Keyword search found {len(rank_lists['keyword'])} matches")
 
         # === 3. IDENTITY SEARCH (Face/Speaker Names) ===
         try:

@@ -112,11 +112,12 @@ async def hybrid_search(
                 "search_type": "sota",
             }
         else:
-            # Fallback to basic DB search
+            # Fallback to Hybrid Search (Vector + Text)
             logger.warning(
-                "[Search] SearchAgent unavailable, using basic search"
+                "[Search] SearchAgent unavailable, using hybrid search"
             )
-            results = pipeline.db.search_frames(query=q, limit=limit)
+            # Use hybrid search instead of pure vector search for better accuracy
+            results = pipeline.db.search_frames_hybrid(query=q, limit=limit)
             duration = time.perf_counter() - start_time
             return {
                 "query": q,
@@ -132,7 +133,8 @@ async def hybrid_search(
     except Exception as e:
         logger.error(f"[Search] Hybrid search failed: {e}")
         try:
-            results = pipeline.db.search_frames(query=q, limit=limit)
+            # Fallback to hybrid search
+            results = pipeline.db.search_frames_hybrid(query=q, limit=limit)
             return {
                 "query": q,
                 "results": results,
@@ -424,7 +426,8 @@ async def agentic_search(
 
     except Exception as e:
         logger.error(f"Agentic search failed: {e}")
-        regular_results = pipeline.db.search_frames(query=q, limit=limit)
+        # Fallback to hybrid search
+        regular_results = pipeline.db.search_frames_hybrid(query=q, limit=limit)
         return {
             "query": q,
             "parsed": None,
@@ -491,7 +494,11 @@ async def scene_search(
             "query": q,
             "error": str(e),
             "fallback": True,
-            "results": pipeline.db.search_frames(query=q, limit=limit),
+        return {
+            "query": q,
+            "error": str(e),
+            "fallback": True,
+            "results": pipeline.db.search_frames_hybrid(query=q, limit=limit),
         }
 
 

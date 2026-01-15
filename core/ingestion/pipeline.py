@@ -28,7 +28,7 @@ from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
 from core.utils.frame_sampling import FrameSampler
-from core.utils.locks import GPU_SEMAPHORE
+from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
@@ -217,6 +217,8 @@ class IngestionPipeline:
                 )
                 await retry(lambda: self._process_audio(path))
                 self._cleanup_memory("audio_complete")  # Unload Whisper
+                # Checkpoint audio completion
+                progress_tracker.save_checkpoint(job_id, {"audio_complete": True})
             progress_tracker.update(
                 job_id, 30.0, stage="audio", message="Audio complete"
             )
@@ -232,6 +234,8 @@ class IngestionPipeline:
                 )
                 await retry(lambda: self._process_voice(path))
                 self._cleanup_memory("voice_complete")  # Unload Pyannote
+                # Checkpoint voice completion
+                progress_tracker.save_checkpoint(job_id, {"voice_complete": True})
             progress_tracker.update(
                 job_id, 50.0, stage="voice", message="Voice complete"
             )
@@ -402,7 +406,10 @@ class IngestionPipeline:
                     )
                     try:
                         with AudioTranscriber() as transcriber:
-                            async with GPU_SEMAPHORE:
+                            # Use Arbiter to guarantee VRAM availability
+                            async with RESOURCE_ARBITER.acquire(
+                                "whisper", vram_gb=1.5
+                            ):
                                 audio_segments = (
                                     transcriber.transcribe(
                                         path, language=detected_lang
@@ -420,7 +427,9 @@ class IngestionPipeline:
                 log(f"[Audio] Using Whisper turbo for '{detected_lang}'")
                 try:
                     with AudioTranscriber() as transcriber:
-                        async with GPU_SEMAPHORE:
+                        async with RESOURCE_ARBITER.acquire(
+                            "whisper", vram_gb=1.5
+                        ):
                             audio_segments = (
                                 transcriber.transcribe(
                                     path, language=detected_lang
@@ -562,7 +571,10 @@ class IngestionPipeline:
 
                 # Check Global Registry if embedding exists
                 if seg.embedding is not None:
-                    match = self.db.match_speaker(seg.embedding, threshold=0.5)
+                    match = self.db.match_speaker(
+                        seg.embedding, 
+                        threshold=settings.voice_clustering_threshold
+                    )
                     if match:
                         global_speaker_id, _score = match
                         # log(f"Matched speaker {seg.speaker_label} -> {global_speaker_id} ({score:.2f})")

@@ -242,12 +242,12 @@ class Settings(BaseSettings):
         description="Minimum cluster size for HDBSCAN (2=pair of samples)",
     )
     hdbscan_min_samples: int = Field(
-        default=1,
-        description="Min samples for core point (1=lenient, 3=stricter)",
+        default=2,
+        description="Min samples for core point (2=reduces noise/singlets)",
     )
     hdbscan_cluster_selection_epsilon: float = Field(
-        default=0.55,
-        description="Cluster selection epsilon for HDBSCAN (0.55=balanced)",
+        default=0.6,
+        description="Cluster selection epsilon for HDBSCAN (0.6=more aggressive merging)",
     )
 
     # Audio Processing

@@ -34,7 +34,7 @@ from core.utils.observe import observe
 
 warnings.filterwarnings("ignore")
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -94,17 +94,26 @@ class AudioTranscriber:
             "int8_float16" if self.device == "cuda" else "int8"
         )
         self._fallback_attempted = False
-        self._locked_language: str | None = (
-            None  # Language lock for current file
-        )
+        self._locked_language: str | None = None
+
+        # Register with Resource Arbiter for VRAM management
+        try:
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            RESOURCE_ARBITER.register_model("whisper", self.unload_model)
+        except ImportError:
+            pass
 
     def __enter__(self):
         """Called when entering the 'with' block."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Called automatically when exiting the 'with' block."""
-        self.unload_model()
+        """Called automatically when exiting the 'with' block.
+        
+        NOTE: We DO NOT unload here anymore. We let ResourceArbiter handle it
+        via the registered callback to allow caching across files.
+        """
+        pass
 
     def unload_model(self) -> None:
         """Forcefully unloads the Whisper model from memory.
@@ -267,86 +276,59 @@ class AudioTranscriber:
 
         Implements high-speed downloads via hf_transfer and caches the converted
         model for future use. Automatically repairs corrupted caches.
+    def _convert_and_cache_model(self, model_id: str) -> Path:
+        """Downloads and converts a HuggingFace model to CTranslate2 format.
+
+        Checks if a converted version already exists in the local cache. If not,
+        downloads, converts, and explicitly patches 'tokenizer.json' to ensure
+        compatibility with faster-whisper.
 
         Args:
-            model_id: The HuggingFace repository ID of the model.
+            model_id: The HuggingFace model identifier (e.g., 'openai/whisper-large-v3').
 
         Returns:
-            The local directory path containing the converted model.
+            Path: The absolute path to the directory containing the converted model.
         """
-        sanitized_name = model_id.replace("/", "_")
-        ct2_output_dir = (
-            settings.model_cache_dir / "converted_models" / sanitized_name
-        )
-        raw_model_dir = settings.model_cache_dir / "raw_models" / sanitized_name
+        model_name = model_id.split("/")[-1]
+        ct2_output_dir = settings.model_cache_dir / f"ct2-{model_name}"
 
-        if (ct2_output_dir / "config.json").exists():
-            try:
-                with open(
-                    ct2_output_dir / "config.json", encoding="utf-8"
-                ) as f:
-                    conf = json.load(f)
-                    if "architectures" in conf or "_name_or_path" in conf:
-                        log(
-                            f"[WARN] Corrupted config in {ct2_output_dir}. Purging."
-                        )
-                        shutil.rmtree(ct2_output_dir)
-            except Exception:
-                shutil.rmtree(ct2_output_dir, ignore_errors=True)
+        # If cache exists and looks valid (has model.bin), skip conversion
+        if ct2_output_dir.exists() and (ct2_output_dir / "model.bin").exists():
+            # log(f"[INFO] Using cached CTranslate2 model: {ct2_output_dir}")
+            return ct2_output_dir
 
-        if (ct2_output_dir / "model.bin").exists():
-            needed_files = ["tokenizer.json", "vocab.json"]
-            if "large-v3" in model_id:
-                needed_files.append("preprocessor_config.json")
-
-            for fname in needed_files:
-                if not (ct2_output_dir / fname).exists():
-                    if (raw_model_dir / fname).exists():
-                        shutil.copy(
-                            raw_model_dir / fname, ct2_output_dir / fname
-                        )
-            return str(ct2_output_dir)
-
-        log(f"[INFO] Model {model_id} needs conversion.")
-        log(f"[INFO] Step 1: High-Speed Download to {raw_model_dir}...")
+        log(f"[INFO] Converting {model_id} to CTranslate2 format...")
 
         try:
-            snapshot_download(
+            # 1. Download original model from HF
+            # Allow HF Transfer for speed
+            raw_model_dir = snapshot_download(
                 repo_id=model_id,
-                local_dir=str(raw_model_dir),
+                local_dir=settings.model_cache_dir / f"raw-{model_name}",
                 local_dir_use_symlinks=False,
-                resume_download=True,
-                max_workers=8,
-                token=settings.hf_token,
-                ignore_patterns=["*.msgpack", "*.h5", "*.tflite", "*.ot"],
             )
-            log("[SUCCESS] Download complete.")
+            raw_model_dir = Path(raw_model_dir)
 
-            # Check if already CTranslate2 format
-            if (raw_model_dir / "model.bin").exists() and (
-                raw_model_dir / "config.json"
-            ).exists():
-                log(
-                    f"[INFO] Model {model_id} appears to be already converted. Skipping conversion step."
-                )
-                shutil.copytree(
-                    raw_model_dir, ct2_output_dir, dirs_exist_ok=True
-                )
-                return str(ct2_output_dir)
-
-            log(
-                f"[INFO] Step 2: Converting to CTranslate2 at {ct2_output_dir}..."
-            )
-
+            # 2. Convert to CTranslate2
             converter = ctranslate2.converters.TransformersConverter(
-                str(raw_model_dir), load_as_float16=True
+                str(raw_model_dir),
+                copy_files=[
+                    "tokenizer.json",
+                    "preprocessor_config.json",
+                    "tokenizer_config.json",
+                ],
             )
             converter.convert(
-                str(ct2_output_dir), quantization="float16", force=True
+                str(ct2_output_dir),
+                force=True,
+                quantization="int8_float16"
+                if settings.device == "cuda"
+                else "int8",
             )
 
+            # 3. CRITICAL: Manually patch tokenizer.json if missing or corrupt
+            # faster-whisper requires specific config files
             for file_name in [
-                "preprocessor_config.json",
                 "tokenizer.json",
                 "vocab.json",
             ]:
@@ -355,7 +337,7 @@ class AudioTranscriber:
                     shutil.copy(src, ct2_output_dir / file_name)
 
             log("[SUCCESS] Model converted and patched successfully.")
-            return str(ct2_output_dir)
+            return ct2_output_dir
 
         except Exception as e:
             log(f"[ERROR] Model download/conversion failed: {e}")
@@ -371,14 +353,17 @@ class AudioTranscriber:
         Args:
             model_key: The HuggingFace ID or local path of the model to load.
         """
-        if self._model:
-            del self._model
-            del self._batched_model
-            self._model = None
-            self._batched_model = None
-            gc.collect()
-            if self.device == "cuda" and torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        # Check if already loaded with correct size
+        if (
+            AudioTranscriber._SHARED_MODEL is not None
+            and AudioTranscriber._SHARED_SIZE == model_key
+        ):
+            return
+
+        # Unload if different size loaded?
+        # Yes, we only support one model loaded at a time for Whisper
+        if AudioTranscriber._SHARED_MODEL is not None:
+            AudioTranscriber.unload_model()
 
         # only log here, when we actually load weights
         log(
@@ -394,7 +379,7 @@ class AudioTranscriber:
         )  # Limit CPU threads to reduce memory
 
         try:
-            self._model = WhisperModel(
+            AudioTranscriber._SHARED_MODEL = WhisperModel(
                 final_model_path,
                 device=self.device,
                 compute_type=self.compute_type,
@@ -402,8 +387,10 @@ class AudioTranscriber:
                 cpu_threads=cpu_threads,
                 num_workers=1,  # Single worker to minimize memory
             )
-            self._batched_model = BatchedInferencePipeline(model=self._model)
-            self._current_model_size = model_key
+            AudioTranscriber._SHARED_BATCHED = BatchedInferencePipeline(
+                model=AudioTranscriber._SHARED_MODEL
+            )
+            AudioTranscriber._SHARED_SIZE = model_key
             log(f"[SUCCESS] Loaded {model_key} on {self.device}")
         except (RuntimeError, MemoryError, Exception) as e:
             error_msg = str(e).lower()
@@ -413,8 +400,8 @@ class AudioTranscriber:
                 for x in ["memory", "mkl_malloc", "allocation", "oom"]
             ):
                 log(f"[WARN] Memory error loading {model_key}: {e}")
-                if not self._fallback_attempted:
-                    self._fallback_attempted = True
+                if not AudioTranscriber._FALLBACK_ATTEMPTED:
+                    AudioTranscriber._FALLBACK_ATTEMPTED = True
                     log("[INFO] Attempting fallback to smaller model...")
                     # Try smaller models
                     for fallback_model in self.LOW_MEMORY_MODELS:
@@ -431,7 +418,7 @@ class AudioTranscriber:
                             fallback_path = self._convert_and_cache_model(
                                 fallback_model
                             )
-                            self._model = WhisperModel(
+                            AudioTranscriber._SHARED_MODEL = WhisperModel(
                                 fallback_path,
                                 device="cpu",  # Force CPU for stability
                                 compute_type="int8",  # Use int8 for minimal memory
@@ -439,10 +426,10 @@ class AudioTranscriber:
                                 cpu_threads=2,
                                 num_workers=1,
                             )
-                            self._batched_model = BatchedInferencePipeline(
-                                model=self._model
+                            AudioTranscriber._SHARED_BATCHED = BatchedInferencePipeline(
+                                model=AudioTranscriber._SHARED_MODEL
                             )
-                            self._current_model_size = fallback_model
+                            AudioTranscriber._SHARED_SIZE = fallback_model
                             log(
                                 f"[SUCCESS] Loaded fallback model {fallback_model} on CPU"
                             )
@@ -680,12 +667,13 @@ class AudioTranscriber:
         )
 
         try:
-            if self._batched_model is None or (
-                self._current_model_size != model_to_use
+            # Check shared model state
+            if AudioTranscriber._SHARED_BATCHED is None or (
+                AudioTranscriber._SHARED_SIZE != model_to_use
             ):
                 self._load_model(model_to_use)
 
-            if self._batched_model is None:
+            if AudioTranscriber._SHARED_BATCHED is None:
                 raise RuntimeError("Model failed to initialize")
 
             log(
@@ -700,7 +688,7 @@ class AudioTranscriber:
                 else:
                     effective_lang = None  # Auto-detect on first run
 
-            segments, info = self._batched_model.transcribe(
+            segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
                 str(audio_path),
                 batch_size=settings.batch_size,
                 language=effective_lang,
@@ -712,10 +700,10 @@ class AudioTranscriber:
                 word_timestamps=True,
                 vad_filter=True,
                 vad_parameters={
-                    "min_speech_duration_ms": 250,
+                    "min_speech_duration_ms": 100,  # Lowered to capture short utterances
                     "min_silence_duration_ms": 500,
-                    "speech_pad_ms": 500,
-                    "threshold": 0.4,
+                    "speech_pad_ms": 800,           # Increased padding context
+                    "threshold": 0.3,               # Lowered threshold for quiet speech
                 },
                 no_speech_threshold=0.6,
                 log_prob_threshold=-1.0,
