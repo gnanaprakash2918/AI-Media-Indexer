@@ -159,7 +159,6 @@ async def move_faces(
 
     try:
         # Use Qdrant's set_payload to update cluster_id for specified face IDs
-        from qdrant_client.http import models
 
         pipeline.db.client.set_payload(
             collection_name=pipeline.db.FACES_COLLECTION,
@@ -275,7 +274,7 @@ async def mark_main_character(
     except ValueError:
         raise HTTPException(
             status_code=400, detail="Cluster ID must be an integer"
-        )
+        ) from None
 
     success = pipeline.db.set_face_main(cluster_int, is_main)
     if not success:
@@ -286,3 +285,40 @@ async def mark_main_character(
         "cluster_id": cluster_id,
         "is_main_character": is_main,
     }
+
+
+@router.post("/voices/cluster/{cluster_id}/name")
+async def name_voice_cluster(
+    cluster_id: str,
+    req: NameFaceRequest,  # Reuse schema (has 'name' field)
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Assign a name to a voice/speaker cluster (Speaker #N -> 'John').
+
+    Args:
+        cluster_id: The voice cluster ID to name.
+        req: Request body containing the new name.
+        pipeline: The ingestion pipeline instance.
+
+    Returns:
+        Confirmation of the update.
+
+    Raises:
+        HTTPException: If the cluster is not found or update fails.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline invalid")
+
+    try:
+        cluster_int = int(cluster_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Cluster ID must be an integer"
+        ) from None
+
+    count = pipeline.db.set_speaker_name(cluster_int, req.name)
+    if count == 0:
+        raise HTTPException(status_code=404, detail="Voice cluster not found")
+
+    return {"status": "updated", "cluster_id": cluster_id, "name": req.name, "updated_segments": count}
+
