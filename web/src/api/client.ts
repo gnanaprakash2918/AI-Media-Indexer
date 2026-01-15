@@ -125,7 +125,7 @@ export const getNamedFaces = async () => {
 };
 
 export const nameFaceCluster = async (clusterId: number, name: string) => {
-  const res = await apiClient.post(`/faces/${clusterId}/name`, { name });
+  const res = await apiClient.post(`/faces/cluster/${clusterId}/name`, { name });
   return res.data;
 };
 
@@ -193,7 +193,7 @@ export const getVoiceClusters = async () => {
 };
 
 export const nameVoiceCluster = async (clusterId: number, name: string) => {
-  const res = await apiClient.post(`/voices/${clusterId}/name`, { name });
+  const res = await apiClient.post(`/voices/cluster/${clusterId}/name`, { name });
   return res.data;
 };
 

@@ -504,20 +504,16 @@ async def granular_search(
         str | None, Query(None, description="Filter to specific video")
     ] = None,
     show_reasoning: bool = True,
+    enable_rerank: bool = True,
 ):
     """Ultra-fine-grained search for complex 200+ word queries.
 
-    Supports queries like:
-    "Fetch segments where Prakash wears blue t-shirt, John Jacobs spectacles,
-    red/green mismatched shoes, bowling at Brunswick, hitting strike with
-    last pin falling slowly after 500-2000ms delay..."
-
-    Architecture:
-    - TwelveLabs-style multi-vector search (separate vectors per aspect)
-    - VideoRAG query decomposition
-    - NER extraction for entities, brands, locations
-    - Temporal Query Networks for timing constraints
-    - Late fusion with aspect-weighted RRF
+    Uses MultiVectorSearcher with:
+    - LLM query decomposition
+    - Identity resolution (names → cluster IDs)
+    - Hybrid search (vector + keyword + RRF)
+    - LLM reranking with chain-of-thought
+    - Constraint scoring and filtering
 
     Args:
         query: Complex natural language query (up to 200+ words).
@@ -525,6 +521,7 @@ async def granular_search(
         limit: Maximum results to return.
         video_path: Optional filter to specific video.
         show_reasoning: Include reasoning trace in response.
+        enable_rerank: Enable LLM-based reranking (slower but more accurate).
 
     Returns:
         Results with matched constraints, reasoning, and confidence.
@@ -537,81 +534,21 @@ async def granular_search(
     logger.info(f"[GranularSearch] Query: {word_count} words | video: {video_path}")
 
     try:
-        # Import advanced search components
-        from core.processing.ner_extractor import VideoNERExtractor
-        from core.retrieval.advanced_query import AdvancedQueryDecomposer
+        # Use enhanced MultiVectorSearcher
+        from core.retrieval.advanced_query import MultiVectorSearcher
 
-        # Step 1: Decompose query
-        decomposer = AdvancedQueryDecomposer()
-        decomposed = await decomposer.decompose(query)
+        searcher = MultiVectorSearcher(db=pipeline.db)
+        results = await searcher.search(
+            query=query,
+            limit=limit,
+            video_path=video_path,
+            enable_rerank=enable_rerank,
+        )
 
-        # Step 2: Extract entities
-        ner = VideoNERExtractor()
-        entities = await ner.extract_for_search(query)
-
-        # Step 3: Build multi-aspect search
-        aspect_queries = []
-        for constraint in decomposed.constraints:
-            aspect_queries.append({
-                "aspect": constraint.aspect.value,
-                "entity": constraint.entity,
-                "negated": constraint.negated,
-            })
-
-        # Step 4: Execute search with SearchAgent if available
-        results = []
-        if SearchAgent:
-            agent = SearchAgent(db=pipeline.db)
-            for aspect_query in aspect_queries[:5]:  # Limit aspects to avoid overload
-                aspect_results = await agent.search(
-                    query=aspect_query["entity"],
-                    limit=limit * 2,
-                    use_expansion=False,
-                )
-                for r in aspect_results.get("results", []):
-                    r["matched_aspect"] = aspect_query["aspect"]
-                    results.append(r)
-        else:
-            # Fallback to basic search
-            results = pipeline.db.search_frames(query=query, limit=limit * 3)
-
-        # Step 5: Apply video filter
-        if video_path:
-            results = [
-                r for r in results
-                if r.get("video_path") == video_path
-            ]
-
-        # Step 6: Apply exclusions
-        for exclusion in decomposed.exclusions:
-            results = [
-                r for r in results
-                if exclusion.lower() not in r.get("description", "").lower()
-            ]
-
-        # Step 7: Score by constraint matches
-        for result in results:
-            desc = result.get("description", "").lower()
-            matches = 0
-            matched_list = []
-            for constraint in decomposed.constraints:
-                if constraint.entity.lower() in desc:
-                    matches += 1
-                    matched_list.append(constraint.entity)
-            result["constraint_matches"] = matches
-            result["matched_constraints"] = matched_list
-            result["granular_score"] = (
-                result.get("score", 0.5) * (1 + matches * 0.1)
-            )
-
-        # Step 8: Sort and limit
-        results.sort(key=lambda x: x.get("granular_score", 0), reverse=True)
-        final_results = results[:limit]
-
-        # Step 9: Add thumbnail URLs
-        for hit in final_results:
+        # Add thumbnail/playback URLs
+        for hit in results:
             video = hit.get("video_path")
-            ts = hit.get("timestamp", hit.get("start", 0))
+            ts = hit.get("timestamp", hit.get("start_time", 0))
             if video:
                 safe_path = quote(str(video))
                 hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
@@ -619,37 +556,27 @@ async def granular_search(
 
         duration = time.perf_counter() - start_time_search
 
+        # Build response
         response = {
             "query": query,
             "query_word_count": word_count,
             "video_filter": video_path,
-            "results": final_results,
+            "results": results,
             "stats": {
-                "total": len(final_results),
+                "total": len(results),
                 "duration_seconds": round(duration, 3),
-                "constraints_parsed": len(decomposed.constraints),
-                "exclusions_applied": len(decomposed.exclusions),
-                "entities_detected": sum(len(v) for v in entities.values()),
-                "aspects_searched": len(aspect_queries),
+                "constraints_parsed": len(results[0].get("decomposed_constraints", [])) if results else 0,
+                "reranking_enabled": enable_rerank,
             },
-            "decomposition": {
-                "constraints": [
-                    {"aspect": c.aspect.value, "entity": c.entity, "negated": c.negated}
-                    for c in decomposed.constraints
-                ],
-                "exclusions": decomposed.exclusions,
-                "temporal_relations": decomposed.temporal_relations,
-                "required_modalities": decomposed.required_modalities,
-            },
-            "entities": entities,
         }
 
-        if show_reasoning:
-            response["reasoning_trace"] = decomposed.reasoning_steps
+        if show_reasoning and results:
+            response["reasoning_trace"] = results[0].get("reasoning_trace", [])
+            response["decomposed_constraints"] = results[0].get("decomposed_constraints", [])
+            response["query_modalities"] = results[0].get("query_modalities", [])
 
         logger.info(
-            f"[GranularSearch] Returned {len(final_results)} results in {duration:.3f}s "
-            f"({len(decomposed.constraints)} constraints, {len(entities)} entity types)"
+            f"[GranularSearch] Returned {len(results)} results in {duration:.3f}s"
         )
         return response
 
@@ -665,4 +592,5 @@ async def granular_search(
     except Exception as e:
         logger.error(f"[GranularSearch] Error: {e}")
         raise HTTPException(status_code=500, detail=f"Granular search failed: {e}") from e
+
 

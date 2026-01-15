@@ -81,11 +81,14 @@ from api.routes import (
     agent,
     councils,
     events,
+    faces,
     identities,
     ingest,
+    library,
     media,
     search,
     system,
+    voices,
 )
 from config import settings
 from core.ingestion.jobs import job_manager
@@ -178,6 +181,9 @@ def create_app() -> FastAPI:
     app.include_router(identities.router, tags=["Identities"])
     app.include_router(councils.router, tags=["Councils"])
     app.include_router(events.router, tags=["Events"])
+    app.include_router(faces.router, tags=["Faces"])
+    app.include_router(voices.router, tags=["Voices"])
+    app.include_router(library.router, tags=["Library"])
 
     # Mount static files for default thumbnails/assets
     thumb_dir = settings.cache_dir / "thumbnails"
