@@ -3639,6 +3639,91 @@ class VectorDB:
         except Exception:
             return None
 
+    def _propagate_speaker_name_to_frames(self, cluster_id: int, name: str) -> int:
+        """Propagate speaker name to all frames associated with this voice cluster.
+
+        This ensures that when a speaker is named (e.g. "Speaker 1" -> "John"),
+        all frames where this speaker is talking become searchable by "John".
+
+        Args:
+            cluster_id: The voice cluster ID.
+            name: The new name for the speaker.
+
+        Returns:
+            Number of updated frames.
+        """
+        try:
+            # 1. Find all segments for this cluster
+            segments = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=["media_path", "start", "end"],
+            )[0]
+
+            if not segments:
+                return 0
+
+            updated_frames = 0
+            
+            # Group by media path to minimize DB queries
+            media_segments = {}
+            for seg in segments:
+                payload = seg.payload or {}
+                path = payload.get("media_path")
+                if path:
+                    if path not in media_segments:
+                        media_segments[path] = []
+                    media_segments[path].append((payload.get("start", 0), payload.get("end", 0)))
+
+            # 2. Update frames for each media file
+            for media_path, time_ranges in media_segments.items():
+                # Find frames within these time ranges
+                # This is an approximation; ideally we'd use exact timestamp matching,
+                # but for search metadata, coarse matching is sufficient.
+                
+                # Fetch all frames for this video
+                frames_resp = self.client.scroll(
+                    collection_name=self.MEDIA_COLLECTION,
+                    scroll_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="video_path",
+                                match=models.MatchValue(value=media_path),
+                            )
+                        ]
+                    ),
+                    limit=2000, # Assume max 2000 frames per video for now or iterate
+                    with_payload=True,
+                )[0]
+
+                for frame in frames_resp:
+                    ts = (frame.payload or {}).get("timestamp", 0)
+                    # Check if frame timestamp falls in any speaker segment
+                    if any(start <= ts <= end for start, end in time_ranges):
+                        # Update this frame
+                        frame_id = str(frame.id)
+                        payload = frame.payload or {}
+                        face_names = payload.get("face_names", [])
+                        speaker_names = list({*payload.get("speaker_names", []), name})
+                        
+                        if self.update_frame_identity_text(frame_id, face_names, speaker_names):
+                            updated_frames += 1
+            
+            log(f"[HITL] Propagated speaker '{name}' to {updated_frames} frames")
+            return updated_frames
+            
+        except Exception as e:
+            log(f"Failed to propagate speaker name: {e}")
+            return 0
+
     def set_speaker_name(self, cluster_id: int, name: str) -> int:
         """Set name for a speaker cluster.
 
@@ -3663,8 +3748,13 @@ class VectorDB:
                     ]
                 ),
             )
-            return 1  # Return 1 to indicate success (Qdrant doesn't return count directly here easily)
-        except Exception:
+            
+            # Propagate to searchable frame metadata
+            self._propagate_speaker_name_to_frames(cluster_id, name)
+            
+            return 1  # Return 1 to indicate success
+        except Exception as e:
+            log(f"set_speaker_name failed: {e}")
             return 0
 
     def get_frames_by_face_cluster(
@@ -4436,3 +4526,47 @@ class VectorDB:
             return updated
         except Exception:
             return 0
+
+    def get_entity_co_occurrences(self, limit_frames: int = 5000) -> dict[int, dict[str, int]]:
+        """Aggregates NER entities that co-occur with face clusters in frames.
+        
+        Args:
+            limit_frames: Number of recent frames to analyze.
+            
+        Returns:
+            Dict[cluster_id, Dict[entity_name, count]]
+        """
+        co_occurrences: dict[int, dict[str, int]] = {}
+        
+        try:
+            # Scroll recent frames with payloads
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                limit=limit_frames,
+                with_payload=["face_cluster_ids", "entities"],
+                with_vectors=False,
+            )[0]
+            
+            for point in resp:
+                payload = point.payload or {}
+                cluster_ids = payload.get("face_cluster_ids", [])
+                entities = payload.get("entities", [])
+                
+                if not cluster_ids or not entities:
+                    continue
+                                    
+                for cid in cluster_ids:
+                    if cid not in co_occurrences:
+                        co_occurrences[cid] = {}
+                    
+                    for entity in entities:
+                        # Skip if entity matches "Person" etc.
+                        if entity.lower() in ("person", "man", "woman"):
+                            continue
+                            
+                        co_occurrences[cid][entity] = co_occurrences[cid].get(entity, 0) + 1
+                        
+            return co_occurrences
+        except Exception as e:
+            log(f"get_entity_co_occurrences failed: {e}")
+            return {}

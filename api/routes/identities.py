@@ -43,7 +43,86 @@ async def list_identities() -> dict:
         )
     return {"identities": result, "total": len(result)}
 
+    return {"identities": result, "total": len(result)}
 
+
+@router.get("/identities/suggest-merges")
+async def suggest_merges(
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    limit_frames: int = 5000,
+) -> dict:
+    """Generates identity merge suggestions (HITL).
+
+    Aggregates data from face clusters, voice clusters, and NER entities
+    to suggest:
+    1. Face-Voice merges (Temporal Co-occurrence)
+    2. Face-Face merges (Name Similarity)
+    3. Face-NER matches (Entity Co-occurrence) - NEW!
+
+    Args:
+        limit_frames: Number of recent frames to analyze for NER.
+
+    Returns:
+        List of suggestion objects with confidence and strict_mode flags.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline invalid")
+
+    try:
+        from core.processing.identity_linker import get_identity_linker
+
+        # 1. Gather Data
+        # Face Clusters (Unresolved + Named)
+        face_clusters = pipeline.db.get_unresolved_faces(limit=1000)
+        # Also grab named ones if needed, but usually we merge unnamed -> named.
+        # For simple version, let's stick to what get_unresolved_faces returns (which has times).
+        # But wait, get_unresolved_faces returns list of faces, we need clusters.
+        # Let's use get_face_clusters logic or fetch aggregated.
+        # Ideally we want aggregated cluster info (times, name if exists).
+        
+        # Re-using logic from faces.py get_face_clusters roughly:
+        faces_raw = pipeline.db.get_unresolved_faces(limit=2000)
+        # Group by cluster
+        clusters_map = {}
+        for f in faces_raw:
+            cid = f.get("cluster_id")
+            if cid not in clusters_map:
+                clusters_map[cid] = {"cluster_id": cid, "timestamps": [], "name": f.get("name")}
+            ts = f.get("timestamp")
+            if ts:
+                clusters_map[cid]["timestamps"].append(ts)
+        
+        face_cluster_list = list(clusters_map.values())
+
+        # Voice Clusters
+        voice_segments = pipeline.db.get_all_voice_segments(limit=2000)
+        voice_map = {}
+        for v in voice_segments:
+            cid = v.get("voice_cluster_id")
+            if cid:
+                if cid not in voice_map:
+                    voice_map[cid] = {"cluster_id": cid, "timestamps": [], "name": v.get("speaker_name")}
+                voice_map[cid]["timestamps"].append({
+                    "start": v.get("start"),
+                    "end": v.get("end")
+                })
+        voice_cluster_list = list(voice_map.values())
+
+        # NER Co-occurrences
+        entity_co = pipeline.db.get_entity_co_occurrences(limit_frames=limit_frames)
+
+        # 2. Link
+        linker = get_identity_linker()
+        suggestions = linker.get_all_suggestions(
+            face_clusters=face_cluster_list,
+            voice_clusters=voice_cluster_list,
+            entity_occurrences=entity_co,
+        )
+
+        return {"suggestions": suggestions, "count": len(suggestions)}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 @router.post("/identities/{identity_id}/merge")
 async def merge_identities(identity_id: str, req: IdentityMergeRequest) -> dict:
     """Merges a source identity into a target identity cluster.

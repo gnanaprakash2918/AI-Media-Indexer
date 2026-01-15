@@ -442,14 +442,6 @@ class AudioTranscriber:
             raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
 
     def _format_timestamp(self, seconds: float) -> str:
-        """Convert seconds into SRT timestamp format.
-
-        Args:
-            seconds (float): Seconds value.
-
-        Returns:
-            str: Formatted timestamp ("HH:MM:SS,mmm").
-        """
         hours, remainder = divmod(seconds, 3600)
         minutes, secs = divmod(remainder, 60)
         millis = round((secs - int(secs)) * 1000)
@@ -458,16 +450,6 @@ class AudioTranscriber:
     def _write_srt(
         self, chunks: list[dict[str, Any]], path: Path, offset: float
     ) -> int:
-        """Writes ASR output chunks to an SRT formatted subtitle file.
-
-        Args:
-            chunks: List of dictionaries, each containing 'text' and 'timestamp' (start, end).
-            path: The destination path for the SRT file.
-            offset: A time offset in seconds to apply to all timestamps.
-
-        Returns:
-            The number of subtitle entries successfully written.
-        """
         count = 0
         with open(path, "w", encoding="utf-8") as f:
             for chunk in chunks:
@@ -504,18 +486,6 @@ class AudioTranscriber:
     def _split_long_chunks(
         self, chunks: list[dict[str, Any]], max_segment_s: float = 8.0
     ) -> list[dict[str, Any]]:
-        """Splits segments longer than a threshold into smaller sub-segments.
-
-        Uses a word-count heuristic to split text approximately proportionally
-        across the duration to avoid extremely long subtitle entries.
-
-        Args:
-            chunks: The original list of transcribed chunks.
-            max_segment_s: The maximum allowed duration in seconds for a segment.
-
-        Returns:
-            A new list of chunks where long entries have been subdivided.
-        """
         out: list[dict[str, Any]] = []
         for ch in chunks:
             text = (ch.get("text") or "").strip()
@@ -577,23 +547,6 @@ class AudioTranscriber:
         start_time: float = 0.0,
         end_time: float | None = None,
     ) -> list[dict[str, Any]] | None:
-        """Transcribes an audio or video file and generates SRT subtitles.
-
-        Automatically checks for existing subtitles (sidecar or embedded) first.
-        If none are found, it proceeds with AI-based transcription using Whisper.
-
-        Args:
-            audio_path: Path to the input media file.
-            language: Target language code. If None, uses system defaults.
-            subtitle_path: Optional path to an explicit subtitle file to use.
-            output_path: Destination path for the generated/discovered SRT.
-            start_time: The start time in seconds to begin transcription from.
-            end_time: The end time in seconds to stop transcription at.
-
-        Returns:
-            A list of transcribed chunks (dictionaries) or None if existing
-            subtitles were used.
-        """
         if not audio_path.exists():
             log(f"[ERROR] Input file not found: {audio_path}")
             return None
@@ -642,18 +595,6 @@ class AudioTranscriber:
         offset: float,
         is_temp_file: bool = False,
     ) -> list[dict[str, Any]] | None:
-        """Executes the Whisper model inference on a processed audio file.
-
-        Args:
-            audio_path: Path to the audio file.
-            lang: The target language code.
-            out_srt: Path to save SRT.
-            offset: Time offset.
-            is_temp_file: Is temp file.
-
-        Returns:
-            List of chunks or None.
-        """
         chunks: list[dict[str, Any]] = []
 
         candidates = settings.whisper_model_map.get(

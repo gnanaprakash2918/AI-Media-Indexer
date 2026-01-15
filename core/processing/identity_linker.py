@@ -17,13 +17,14 @@ logger = logging.getLogger(__name__)
 class IdentitySuggestion:
     """Suggestion for merging or matching identities."""
 
-    type: str  # "merge_face_voice", "merge_face_face", "tmdb_match"
+    type: str  # "merge_face_voice", "merge_face_face", "tmdb_match", "ner_match"
     source: str
     target: str
     reason: str
     confidence: float
     source_id: int | None = None
     target_id: int | None = None
+    strict_mode: bool = True  # If True, requires strict user review (personal ID)
 
     def to_dict(self) -> dict:
         """Converts the suggestion to a dictionary format."""
@@ -35,6 +36,7 @@ class IdentitySuggestion:
             "confidence": round(self.confidence, 2),
             "source_id": self.source_id,
             "target_id": self.target_id,
+            "strict_mode": self.strict_mode,
         }
 
 
@@ -147,6 +149,7 @@ class IdentityLinker:
                             confidence=overlap,
                             source_id=face_id,
                             target_id=voice_id,
+                            strict_mode=True, # Linking face to voice is a personal identity action
                         )
                     )
 
@@ -188,9 +191,55 @@ class IdentityLinker:
                             reason=f"Fuzzy match ({best_score:.0%})",
                             confidence=best_score,
                             source_id=cluster_id,
+                            strict_mode=False, # Public data match, less strict review needed
                         )
                     )
 
+        suggestions.sort(key=lambda x: -x.confidence)
+        return suggestions[:10]
+
+    def suggest_ner_matches(
+        self,
+        face_clusters: list[dict],
+        entity_co_occurrences: dict[int, dict[str, int]],
+    ) -> list[IdentitySuggestion]:
+        """Suggest names based on frequent Entity (NER) co-occurrence.
+
+        Args:
+            face_clusters: List of face cluster info.
+            entity_co_occurrences: Dict mapping cluster_id -> {entity_name: count}.
+        """
+        suggestions = []
+        
+        for cluster in face_clusters:
+            cid = cluster.get("cluster_id")
+            if cid not in entity_co_occurrences:
+                continue
+                
+            entities = entity_co_occurrences[cid]
+            if not entities:
+                continue
+                
+            # Find top entity
+            top_entity, count = max(entities.items(), key=lambda x: x[1])
+            total_sightings = len(cluster.get("timestamps", []))
+            
+            # Heuristic: If entity appears in >30% of frames for this person
+            confidence = min(count / max(total_sightings, 1) * 2.0, 1.0) # Boosted confidence
+            
+            if confidence > 0.4:
+                 suggestions.append(
+                        IdentitySuggestion(
+                            type="ner_match",
+                            source=f"Face #{cid}",
+                            target=top_entity,
+                            reason=f"Entity '{top_entity}' co-occurs frequently ({count} times)",
+                            confidence=confidence,
+                            source_id=cid,
+                            strict_mode=False, # NER/Celeb is public info
+                        )
+                    )
+        
         suggestions.sort(key=lambda x: -x.confidence)
         return suggestions[:10]
 
@@ -235,6 +284,7 @@ class IdentityLinker:
                             confidence=score,
                             source_id=c1.get("cluster_id"),
                             target_id=c2.get("cluster_id"),
+                            strict_mode=True, # Merging faces is strict
                         )
                     )
 
@@ -245,6 +295,7 @@ class IdentityLinker:
         face_clusters: list[dict],
         voice_clusters: list[dict],
         tmdb_cast: list[dict] | None = None,
+        entity_occurrences: dict[int, dict[str, int]] | None = None,
     ) -> list[dict]:
         """Get all identity suggestions across all types."""
         all_suggestions = []
@@ -257,6 +308,11 @@ class IdentityLinker:
         if tmdb_cast:
             all_suggestions.extend(
                 self.suggest_tmdb_matches(face_clusters, tmdb_cast)
+            )
+        
+        if entity_occurrences:
+             all_suggestions.extend(
+                self.suggest_ner_matches(face_clusters, entity_occurrences)
             )
 
         all_suggestions.sort(key=lambda x: -x.confidence)
