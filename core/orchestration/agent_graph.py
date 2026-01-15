@@ -2,13 +2,32 @@
 
 Routes complex user queries to specialized agents (Search, Vision, Audio)
 using Semantic Routing (LLM-based decision making).
+
+Prompts loaded from external files for easy customization.
 """
 
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Prompt file path
+PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+
+
+def _load_prompt(name: str) -> str:
+    """Load prompt from external file."""
+    prompt_file = PROMPTS_DIR / f"{name}.txt"
+    if prompt_file.exists():
+        return prompt_file.read_text(encoding="utf-8")
+    logger.warning(f"Prompt file not found: {prompt_file}")
+    return ""
+
+
+# Load router prompt from external file
+ROUTER_PROMPT = _load_prompt("agent_routing")
 
 
 @dataclass
@@ -19,28 +38,6 @@ class AgentResponse:
     content: str = ""
     error: str = ""
 
-
-ROUTER_PROMPT = """You are the Orchestrator for a Media Intelligence System.
-Your goal is to route the User Query to the correct specialized Agent.
-
-Available Agents:
-{agents_desc}
-
-Rules:
-1. If the user asks to "find", "search", or "show" specific moments -> USE 'search_agent'.
-2. If the user asks to "describe", "analyze", or "explain" a visible image/frame -> USE 'vision_agent'.
-3. If the user asks about "transcripts", "who said what", or "subtitles" -> USE 'audio_agent'.
-4. If the query is complex (e.g., "Find prakash bowling"), breakdown is handled by the Search Agent.
-
-Return ONLY a JSON object:
-{{
-    "selected_agent": "agent_name",
-    "reasoning": "brief reason",
-    "refined_query": "the input query optimized for that agent"
-}}
-
-User Query: {query}
-"""
 
 
 class AgentCard:
@@ -100,6 +97,28 @@ class MultiAgentOrchestrator:
                     "transcription",
                     "speaker_diarization",
                     "dialogue_search",
+                ],
+            ),
+        )
+        # NEW: Advanced query decomposition for extremely complex queries
+        self.register_agent(
+            "query_decomposition_agent",
+            AgentCard(
+                name="query_decomposition_agent",
+                description=(
+                    "Handles ultra-complex 200+ word queries with multiple constraints. "
+                    "Decomposes queries into person, clothing, action, location, temporal, "
+                    "audio aspects. Performs multi-vector search with late fusion. "
+                    "Example: 'Prakash in blue t-shirt, John Jacobs spectacles, red/green "
+                    "mismatched shoes bowling at Brunswick with last pin falling slowly'"
+                ),
+                capabilities=[
+                    "multi_vector_search",
+                    "query_decomposition",
+                    "ner_extraction",
+                    "temporal_reasoning",
+                    "aspect_fusion",
+                    "exclusion_filtering",
                 ],
             ),
         )
@@ -197,6 +216,25 @@ class MultiAgentOrchestrator:
             and "frame" in query_lower
         ):
             return AgentResponse(agent_name="vision_agent", content=user_query)
+
+        # Ultra-complex queries (>50 words or many constraints)
+        word_count = len(user_query.split())
+        constraint_keywords = [
+            "wearing", "with", "while", "at", "on", "in",
+            "excluding", "without", "followed by", "after",
+            "before", "slowly", "quickly", "exactly",
+            "ms", "seconds", "minutes", "dB", "BPM",
+        ]
+        constraint_count = sum(1 for kw in constraint_keywords if kw in query_lower)
+
+        if word_count > 50 or constraint_count >= 5:
+            logger.info(
+                f"Routing to query_decomposition_agent: "
+                f"{word_count} words, {constraint_count} constraints"
+            )
+            return AgentResponse(
+                agent_name="query_decomposition_agent", content=user_query
+            )
 
         # Default to search
         return AgentResponse(agent_name="search_agent", content=user_query)

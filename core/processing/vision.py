@@ -1,8 +1,6 @@
 """Image analysis utilities that use an LLM to describe images.
 
-The VisionAnalyzer provides a small async wrapper to construct prompts and
-request image descriptions from the configured LLM. Supports both unstructured
-descriptions and structured FrameAnalysis for FAANG-level search.
+Prompts loaded from external files for easy customization.
 """
 
 import asyncio
@@ -11,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from core.utils.logger import log
 from core.utils.observe import observe
+from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
 from llm.interface import LLMInterface
 
@@ -18,114 +17,9 @@ if TYPE_CHECKING:
     from core.knowledge.schemas import FrameAnalysis
 
 
-# =============================================================================
-# DENSE MULTIMODAL ANALYSIS PROMPT
-# Captures EVERY MINUTE DETAIL for SOTA search quality
-# =============================================================================
-
-DENSE_MULTIMODAL_PROMPT = """Analyze this video frame and extract EVERY SINGLE DETAIL.
-This is for a $289B investment-grade video search system. Accuracy is critical.
-
-## EXTRACT ALL OF THE FOLLOWING:
-
-### 1. PEOPLE (for EACH person visible)
-- Position in frame (left/center/right, foreground/background)
-- Estimated age range, gender
-- Facial expression (happy, focused, surprised, etc.)
-- Body posture (standing, sitting, walking, running, bent over)
-- EACH clothing item:
-  - Upper body: type, color, brand/logo if visible, pattern, material
-  - Lower body: type, color, brand/logo if visible
-  - Footwear: LEFT foot (type, color, brand), RIGHT foot (type, color, brand) - may differ!
-  - Headwear: hat, glasses, spectacles (brand if visible like John Jacobs, Ray-Ban)
-  - Accessories: watch, jewelry, bags (brand if visible like Balenciaga, Nike)
-- Action being performed with PHYSICS details:
-  - "throwing bowling ball with spin" not just "bowling"
-  - "running at full speed" not just "moving"
-  - Include result/outcome if visible ("hitting strike", "dropped ball")
-
-### 2. VEHICLES (for EACH vehicle)
-- Type (car, motorcycle, truck, bicycle)
-- Brand and model if identifiable (Ferrari 488, Lamborghini Huracán, Tesla Model 3)
-- Color (be specific: "cherry red", "matte black", "metallic silver")
-- State (parked, moving, speeding, crashed)
-- Position relative to other elements
-
-### 3. OBJECTS
-- Every significant object with:
-  - Specific name (not "ball" but "bowling ball" or "cricket ball")
-  - Color, material, size relative to scene
-  - State (falling, stationary, spinning, broken)
-  - Position (on table, in hand, on ground, in air)
-
-### 4. TEXT/BRANDS (OCR)
-- ALL readable text: signs, logos, labels, screens, clothing text
-- Brand logos even if partially visible
-- Numbers, scores, time displays
-
-### 5. ENVIRONMENT
-- Location type (bowling alley, restaurant, office, street, home)
-- Specific venue name if visible ("Brunswick Lanes", "Starbucks")
-- Indoor/outdoor
-- Time of day (from lighting: morning, afternoon, evening, night)
-- Weather if outdoor (sunny, cloudy, raining)
-- Background elements
-
-### 6. ACTIONS/EVENTS
-- Primary action with cause and effect
-- Secondary actions by other people/objects
-- Temporal indicators ("about to", "just finished", "in progress")
-- Motion blur or speed indicators
-- Sequence position ("last pin falling", "first step")
-
-### 7. AUDIO CUES (infer from visual)
-- Likely sounds (pins crashing, engine roaring, crowd cheering)
-- Music/ambient (party, quiet office, sports arena)
-- Speech indicators (mouth open, gesturing while talking)
-
-### 8. EMOTIONS/MOOD
-- Expressions on faces
-- Body language indicators
-- Scene atmosphere (exciting, calm, tense, chaotic)
-
-### 9. SPATIAL RELATIONSHIPS
-- Who/what is next to whom/what
-- Distances (close, far, touching)
-- Interactions between elements
-
-## OUTPUT FORMAT (JSON):
-{
-  "dense_caption": "<comprehensive description covering ALL above points>",
-  "main_subject": "<primary focus of frame>",
-  "people": [
-    {
-      "position": "<location in frame>",
-      "description": "<age, gender, expression>",
-      "clothing": {
-        "upper": {"type": "", "color": "", "brand": ""},
-        "lower": {"type": "", "color": ""},
-        "left_foot": {"type": "", "color": "", "brand": ""},
-        "right_foot": {"type": "", "color": "", "brand": ""},
-        "accessories": []
-      },
-      "action": "<what they're doing with physics>",
-      "action_result": "<outcome if visible>"
-    }
-  ],
-  "vehicles": [{"type": "", "brand": "", "model": "", "color": "", "state": ""}],
-  "objects": [{"name": "", "color": "", "state": "", "position": ""}],
-  "visible_text": ["<all text/brands>"],
-  "location": "<specific location>",
-  "actions": ["<all actions>"],
-  "temporal_hints": ["<timing indicators>"],
-  "sounds_inferred": ["<likely sounds>"],
-  "emotions": ["<emotions detected>"]
-}
-
-BE EXHAUSTIVE. Every detail matters for search accuracy."""
-
-# Legacy prompt alias
-STRUCTURED_ANALYSIS_PROMPT = DENSE_MULTIMODAL_PROMPT
+# Load prompts from external files - NO HARDCODING
+DENSE_MULTIMODAL_PROMPT = load_prompt("dense_multimodal")
+STRUCTURED_ANALYSIS_PROMPT = DENSE_MULTIMODAL_PROMPT  # Legacy alias
 
 
 class VisionAnalyzer:

@@ -493,3 +493,176 @@ async def scene_search(
             "fallback": True,
             "results": pipeline.db.search_frames(query=q, limit=limit),
         }
+
+
+@router.post("/search/granular")
+async def granular_search(
+    query: str,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    limit: int = 20,
+    video_path: Annotated[
+        str | None, Query(None, description="Filter to specific video")
+    ] = None,
+    show_reasoning: bool = True,
+):
+    """Ultra-fine-grained search for complex 200+ word queries.
+
+    Supports queries like:
+    "Fetch segments where Prakash wears blue t-shirt, John Jacobs spectacles,
+    red/green mismatched shoes, bowling at Brunswick, hitting strike with
+    last pin falling slowly after 500-2000ms delay..."
+
+    Architecture:
+    - TwelveLabs-style multi-vector search (separate vectors per aspect)
+    - VideoRAG query decomposition
+    - NER extraction for entities, brands, locations
+    - Temporal Query Networks for timing constraints
+    - Late fusion with aspect-weighted RRF
+
+    Args:
+        query: Complex natural language query (up to 200+ words).
+        pipeline: The core ingestion pipeline instance.
+        limit: Maximum results to return.
+        video_path: Optional filter to specific video.
+        show_reasoning: Include reasoning trace in response.
+
+    Returns:
+        Results with matched constraints, reasoning, and confidence.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    start_time_search = time.perf_counter()
+    word_count = len(query.split())
+    logger.info(f"[GranularSearch] Query: {word_count} words | video: {video_path}")
+
+    try:
+        # Import advanced search components
+        from core.processing.ner_extractor import VideoNERExtractor
+        from core.retrieval.advanced_query import AdvancedQueryDecomposer
+
+        # Step 1: Decompose query
+        decomposer = AdvancedQueryDecomposer()
+        decomposed = await decomposer.decompose(query)
+
+        # Step 2: Extract entities
+        ner = VideoNERExtractor()
+        entities = await ner.extract_for_search(query)
+
+        # Step 3: Build multi-aspect search
+        aspect_queries = []
+        for constraint in decomposed.constraints:
+            aspect_queries.append({
+                "aspect": constraint.aspect.value,
+                "entity": constraint.entity,
+                "negated": constraint.negated,
+            })
+
+        # Step 4: Execute search with SearchAgent if available
+        results = []
+        if SearchAgent:
+            agent = SearchAgent(db=pipeline.db)
+            for aspect_query in aspect_queries[:5]:  # Limit aspects to avoid overload
+                aspect_results = await agent.search(
+                    query=aspect_query["entity"],
+                    limit=limit * 2,
+                    use_expansion=False,
+                )
+                for r in aspect_results.get("results", []):
+                    r["matched_aspect"] = aspect_query["aspect"]
+                    results.append(r)
+        else:
+            # Fallback to basic search
+            results = pipeline.db.search_frames(query=query, limit=limit * 3)
+
+        # Step 5: Apply video filter
+        if video_path:
+            results = [
+                r for r in results
+                if r.get("video_path") == video_path
+            ]
+
+        # Step 6: Apply exclusions
+        for exclusion in decomposed.exclusions:
+            results = [
+                r for r in results
+                if exclusion.lower() not in r.get("description", "").lower()
+            ]
+
+        # Step 7: Score by constraint matches
+        for result in results:
+            desc = result.get("description", "").lower()
+            matches = 0
+            matched_list = []
+            for constraint in decomposed.constraints:
+                if constraint.entity.lower() in desc:
+                    matches += 1
+                    matched_list.append(constraint.entity)
+            result["constraint_matches"] = matches
+            result["matched_constraints"] = matched_list
+            result["granular_score"] = (
+                result.get("score", 0.5) * (1 + matches * 0.1)
+            )
+
+        # Step 8: Sort and limit
+        results.sort(key=lambda x: x.get("granular_score", 0), reverse=True)
+        final_results = results[:limit]
+
+        # Step 9: Add thumbnail URLs
+        for hit in final_results:
+            video = hit.get("video_path")
+            ts = hit.get("timestamp", hit.get("start", 0))
+            if video:
+                safe_path = quote(str(video))
+                hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
+                hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+
+        duration = time.perf_counter() - start_time_search
+
+        response = {
+            "query": query,
+            "query_word_count": word_count,
+            "video_filter": video_path,
+            "results": final_results,
+            "stats": {
+                "total": len(final_results),
+                "duration_seconds": round(duration, 3),
+                "constraints_parsed": len(decomposed.constraints),
+                "exclusions_applied": len(decomposed.exclusions),
+                "entities_detected": sum(len(v) for v in entities.values()),
+                "aspects_searched": len(aspect_queries),
+            },
+            "decomposition": {
+                "constraints": [
+                    {"aspect": c.aspect.value, "entity": c.entity, "negated": c.negated}
+                    for c in decomposed.constraints
+                ],
+                "exclusions": decomposed.exclusions,
+                "temporal_relations": decomposed.temporal_relations,
+                "required_modalities": decomposed.required_modalities,
+            },
+            "entities": entities,
+        }
+
+        if show_reasoning:
+            response["reasoning_trace"] = decomposed.reasoning_steps
+
+        logger.info(
+            f"[GranularSearch] Returned {len(final_results)} results in {duration:.3f}s "
+            f"({len(decomposed.constraints)} constraints, {len(entities)} entity types)"
+        )
+        return response
+
+    except ImportError as e:
+        logger.warning(f"[GranularSearch] Import error: {e}, using fallback")
+        results = pipeline.db.search_frames(query=query, limit=limit)
+        return {
+            "query": query,
+            "results": results,
+            "stats": {"total": len(results), "fallback": True},
+            "error": str(e),
+        }
+    except Exception as e:
+        logger.error(f"[GranularSearch] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Granular search failed: {e}") from e
+

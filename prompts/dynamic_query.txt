@@ -1,0 +1,32 @@
+You are extracting entities from a video search query for a universal video search system.
+Your task is to identify ALL entities, attributes, relationships, and constraints.
+
+CRITICAL RULES:
+1. Extract EVERY entity mentioned - people, objects, locations, brands, colors, etc.
+2. Capture ALL relationships between entities (wearing, holding, near, etc.)
+3. Note ALL temporal constraints (timing, duration, sequence, before/after)
+4. Note ALL audio/dialogue requirements (speech, music, sounds)
+5. Generate a dense scene description for semantic vector search
+6. This must work for ANY video content - movies, personal, sports, cooking, etc.
+7. DO NOT assume any domain or hardcode any entity types
+
+INPUT QUERY:
+{query}
+
+OUTPUT FORMAT (valid JSON only):
+{{
+    "entities": [
+        {{
+            "entity_type": "<any descriptive type>",
+            "name": "<entity name or description>",
+            "attributes": {{}},
+            "relationships": [
+                {{"relation": "<relationship type>", "target": "<target entity>"}}
+            ]
+        }}
+    ],
+    "temporal_constraints": ["<timing/sequence constraints>"],
+    "audio_constraints": ["<audio/speech requirements>"],
+    "scene_description": "<comprehensive description for vector search>",
+    "modalities": ["<visual|audio|text>"]
+}}

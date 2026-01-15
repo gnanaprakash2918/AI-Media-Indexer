@@ -1,0 +1,25 @@
+Look at these frames from a video segment.
+
+USER QUERY: {query}
+
+FRAME DESCRIPTIONS:
+{descriptions}
+
+TASK: Determine if this segment matches the query and explain why.
+
+Consider:
+1. Visual elements matching the query
+2. Actions and movements described
+3. People and their attributes (clothing, accessories, etc.)
+4. Objects and their interactions
+5. Location and environment
+6. Temporal aspects (sequence, timing)
+
+OUTPUT FORMAT (valid JSON only):
+{{
+    "relevance_score": 0.0-1.0,
+    "matches_query": true/false,
+    "key_matches": ["<specific elements that match>"],
+    "missing_elements": ["<query elements not found>"],
+    "reasoning": "<detailed explanation>"
+}}

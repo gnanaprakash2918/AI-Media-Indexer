@@ -1,0 +1,16 @@
+Summarize this 5-minute scene from a video.
+
+SCENE FRAMES AND DESCRIPTIONS:
+{scene_data}
+
+TASK: Create a coherent summary of what happens in this scene.
+
+Include:
+1. Main characters/people present
+2. Key actions and events in chronological order
+3. Important dialogue or sounds
+4. Setting and environment
+5. Mood and atmosphere
+6. Any significant objects or props
+
+OUTPUT: A 2-3 paragraph summary that captures the essence of the scene.

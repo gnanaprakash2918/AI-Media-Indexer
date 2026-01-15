@@ -213,39 +213,19 @@ class OllamaLLM(LLMInterface):
         system_prompt: str = "",
         **kwargs: Any,
     ) -> T:
-        """Generates a structured JSON response matching a Pydantic schema.
+        """Generates a structured JSON response using Ollama's native schema mode.
 
-        Uses Ollama's native JSON mode and explicit schema-based prompting to
-        ensure the model returns data in the expected format.
-
-        Args:
-            schema: The Pydantic model class defining the expected structure.
-            prompt: The user prompt.
-            system_prompt: Optional system prompt to guide the model.
-            **kwargs: Additional model parameters.
-
-        Returns:
-            An instance of the schema class populated with the model's output.
+        Uses Ollama 0.5+ format=schema feature for guaranteed JSON structure.
+        Falls back to format='json' with prompt engineering for older versions.
         """
         print("Ollama structured generation requested.")
 
-        # Build JSON schema example with nested structure
-        schema_example = self._build_schema_example(schema)
+        # Get the JSON schema from Pydantic model
+        json_schema = schema.model_json_schema()
 
-        # Construct prompt with explicit JSON instructions
-        json_instructions = f"""You MUST respond with ONLY valid JSON matching this EXACT structure:
-
-{schema_example}
-
-CRITICAL RULES:
-1. Output ONLY the JSON object, no other text
-2. Do not include markdown code blocks or backticks
-3. Follow the nested structure EXACTLY - entities and scene must be OBJECTS, not strings
-4. Use specific names (Idly not food, Tesla Model 3 not car)
-
-Now respond with JSON:"""
-
-        full_prompt = f"{json_instructions}\n\n{prompt}"
+        # Build the prompt with schema hint (helps model even with native schema)
+        schema_hint = f"Return JSON matching this schema: {self._build_schema_example(schema)}"
+        full_prompt = f"{schema_hint}\n\n{prompt}"
 
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n{full_prompt}"
@@ -257,13 +237,27 @@ Now respond with JSON:"""
 
             for attempt in range(self.MAX_RETRIES):
                 try:
-                    # Use format='json' to force JSON mode in Ollama
-                    resp = await self.client.chat(
-                        model=self.model,
-                        messages=[{"role": "user", "content": full_prompt}],
-                        options={"temperature": kwargs.get("temperature", 0.0)},
-                        format="json",
-                    )
+                    # Try Ollama 0.5+ schema-based format first
+                    try:
+                        resp = await self.client.chat(
+                            model=self.model,
+                            messages=[{"role": "user", "content": full_prompt}],
+                            options={"temperature": kwargs.get("temperature", 0.0)},
+                            format=json_schema,  # Ollama 0.5+ native schema
+                        )
+                    except (TypeError, Exception) as schema_err:
+                        # Fall back to simple JSON mode for older Ollama
+                        if "format" in str(schema_err) or "schema" in str(schema_err).lower():
+                            print("[Ollama] Schema format not supported, using json mode")
+                            resp = await self.client.chat(
+                                model=self.model,
+                                messages=[{"role": "user", "content": full_prompt}],
+                                options={"temperature": kwargs.get("temperature", 0.0)},
+                                format="json",  # Fallback to simple JSON mode
+                            )
+                        else:
+                            raise
+
                     response_text = resp.get("message", {}).get("content", "")
 
                     if not response_text:
@@ -443,45 +437,25 @@ Now respond with JSON:"""
         system_prompt: str = "",
         **kwargs: Any,
     ) -> T:
-        """Describes an image and returns a structured JSON response.
+        """Describes an image with Ollama's native JSON schema mode.
 
-        Combines vision analysis with structured output constraints to extract
-        specific entities or attributes from an image in a machine-readable format.
-
-        Args:
-            schema: The Pydantic model class defining the expected output.
-            prompt: The vision analysis prompt.
-            image_path: Path to the image file.
-            system_prompt: Optional system prompt.
-            **kwargs: Additional model parameters.
-
-        Returns:
-            An instance of the schema class populated with the vision results.
+        Uses Ollama 0.5+ format=schema for guaranteed structure.
+        Falls back to format='json' for older versions.
         """
         img_path = str(Path(image_path))
 
-        # Build schema example
+        # Get JSON schema from Pydantic
+        json_schema = schema.model_json_schema()
         schema_example = self._build_schema_example(schema)
 
-        # Construct prompt with JSON instructions
-        # Note: face_cluster_ids is excluded - it's filled by the pipeline, not LLM
-        json_prompt = f"""Analyze this image and return ONLY valid JSON matching this EXACT structure:
+        # Prompt with schema hint
+        json_prompt = f"""Analyze this image. Return JSON matching this schema:
 
 {schema_example}
 
-CRITICAL TYPE RULES:
-1. "visual_details" MUST be a STRING like "red color, worn out" - NEVER an object or list
-2. "name" and "category" MUST be STRINGS
-3. "entities" must be a LIST OF OBJECTS: [{{"name": "string", "category": "string", "visual_details": "string"}}]
-4. "scene" must be an OBJECT with string fields
-5. "face_cluster_ids" should be an empty list: []
+Be specific with names (e.g., "Tesla Model 3" not "car", "Idly" not "food").
 
-SPECIFIC NAMING:
-- Use "Idly" not "food", "Tesla Model 3" not "car", "Nike Air Jordan" not "shoes"
-
-{prompt}
-
-Return JSON:"""
+{prompt}"""
 
         messages = []
         if system_prompt:
@@ -502,11 +476,22 @@ Return JSON:"""
 
             for attempt in range(self.MAX_RETRIES):
                 try:
-                    resp = await self.client.chat(
-                        model=self.model,
-                        messages=messages,
-                        format="json",  # Force JSON output
-                    )
+                    # Try Ollama 0.5+ schema-based format first
+                    try:
+                        resp = await self.client.chat(
+                            model=self.model,
+                            messages=messages,
+                            format=json_schema,  # Native schema format
+                        )
+                    except (TypeError, Exception) as schema_err:
+                        if "format" in str(schema_err) or "schema" in str(schema_err).lower():
+                            resp = await self.client.chat(
+                                model=self.model,
+                                messages=messages,
+                                format="json",  # Fallback
+                            )
+                        else:
+                            raise
 
                     content = resp.get("message", {}).get("content", "")
                     if not content:

@@ -1,0 +1,16 @@
+Create a comprehensive summary of this entire video.
+
+VIDEO METADATA:
+{metadata}
+
+SCENE SUMMARIES:
+{scenes}
+
+TASK: Create an overall summary of the video that:
+1. Identifies the main subject/topic
+2. Lists key people/characters
+3. Outlines the narrative arc or progression
+4. Highlights memorable moments
+5. Notes any recurring themes or elements
+
+OUTPUT: A comprehensive 3-5 paragraph summary suitable for search indexing.

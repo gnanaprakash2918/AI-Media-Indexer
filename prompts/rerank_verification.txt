@@ -1,0 +1,21 @@
+You are verifying if a video segment matches a user query.
+
+USER QUERY: {query}
+
+SEGMENT DESCRIPTION: {description}
+
+DETECTED ENTITIES:
+{entities}
+
+TASK: Analyze if this segment satisfies the query constraints.
+
+OUTPUT FORMAT (valid JSON only):
+{{
+    "matches": true/false,
+    "confidence": 0.0-1.0,
+    "matched_constraints": ["<list of constraints that matched>"],
+    "missing_constraints": ["<list of constraints NOT satisfied>"],
+    "reasoning": "<detailed explanation of why this matches or doesn't match>"
+}}
+
+Be thorough - check every constraint in the query against the segment.

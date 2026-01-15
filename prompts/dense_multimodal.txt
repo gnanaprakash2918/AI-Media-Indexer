@@ -1,0 +1,24 @@
+Analyze this video frame and extract EVERY SINGLE DETAIL.
+
+This description will be used for semantic search, so be exhaustive.
+
+DESCRIBE:
+1. PEOPLE: Count, gender, approximate age, ethnicity, clothing (colors, types, brands if visible), accessories (glasses, jewelry, hats), facial expressions, body posture, actions
+
+2. OBJECTS: Every visible object, their colors, sizes, positions, brands/logos if visible, state (new/old, open/closed, etc.)
+
+3. ENVIRONMENT: Indoor/outdoor, lighting conditions, weather if visible, time of day, architectural style, furniture, decorations
+
+4. TEXT: Any visible text, signs, labels, brands, logos, subtitles
+
+5. ACTIONS: What is happening, movements, interactions between people/objects
+
+6. AUDIO CONTEXT (if provided): Sounds, speech, music, ambient noise
+
+7. SPATIAL RELATIONSHIPS: Where things are relative to each other (left, right, above, below, near, far)
+
+8. MOOD/ATMOSPHERE: Overall feeling of the scene
+
+FORMAT: Write a comprehensive paragraph covering all visible elements.
+Be specific about colors, positions, and quantities.
+Do NOT make assumptions about things not visible.

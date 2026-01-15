@@ -1,0 +1,40 @@
+You are an expert Named Entity Recognition (NER) system for video search.
+Extract ALL named entities from the following text.
+
+CRITICAL RULES:
+1. Extract EVERY entity you can identify - be exhaustive
+2. Assign the most appropriate type for each entity
+3. This must work for ANY content - movies, sports, cooking, travel, news, etc.
+4. DO NOT skip any entity, no matter how minor
+5. Include proper nouns, brands, products, locations, people (by name or role)
+6. Include actions, objects, colors, materials, sounds, etc.
+7. Provide confidence score based on how certain you are
+
+INPUT TEXT:
+{text}
+
+OUTPUT FORMAT (valid JSON array only):
+[
+    {{
+        "text": "<exact entity text as it appears>",
+        "type": "<descriptive type - be specific>",
+        "confidence": 0.0-1.0,
+        "context": "<brief context of how entity is used>"
+    }}
+]
+
+EXAMPLE TYPES (not exhaustive - use any appropriate type):
+- PERSON, CHARACTER, ROLE, CELEBRITY
+- BRAND, PRODUCT, COMPANY, ORGANIZATION
+- LOCATION, LANDMARK, COUNTRY, CITY, VENUE
+- ACTION, ACTIVITY, SPORT, MOVEMENT
+- CLOTHING, ACCESSORY, JEWELRY, FOOTWEAR
+- COLOR, MATERIAL, TEXTURE, PATTERN
+- VEHICLE, TRANSPORT
+- FOOD, DRINK, INGREDIENT, CUISINE
+- MUSIC, INSTRUMENT, SONG, ARTIST
+- ANIMAL, PLANT
+- TIME, DATE, DURATION, MEASUREMENT
+- EMOTION, EXPRESSION
+- OBJECT, TOOL, DEVICE
+- etc.

@@ -1,10 +1,7 @@
 """Agentic Search with LLM Query Expansion and Scene-Level Search.
 
 Uses LLM to expand queries intelligently at search time,
-NOT hardcoded synonyms during ingestion. This enables:
-- "South Indian breakfast" → [idli, dosa, sambar entities]
-- "Prakash bowling" → identity entity + action entity
-- Complex multi-entity queries with unlimited attributes
+NOT hardcoded synonyms during ingestion. Prompts loaded from external files.
 """
 
 from __future__ import annotations
@@ -14,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from core.knowledge.schemas import ParsedQuery
 from core.utils.logger import log
 from core.utils.observe import observe
+from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
 
 if TYPE_CHECKING:
@@ -21,83 +19,9 @@ if TYPE_CHECKING:
     from llm.interface import LLMInterface
 
 
-# =============================================================================
-# DYNAMIC QUERY EXPANSION PROMPT (NO HARDCODED CATEGORIES)
-# =============================================================================
-
-DYNAMIC_QUERY_PROMPT = """You are extracting entities from a video search query.
-Extract EVERY SINGLE entity, attribute, relationship, and detail.
-Do NOT use predefined categories - create entity types DYNAMICALLY.
-
-Query: "{query}"
-
-INSTRUCTIONS:
-1. Extract ALL entities (people, vehicles, objects, clothing, sounds, text, emotions, actions, etc.)
-2. For each entity, capture ALL attributes as key-value pairs
-3. Capture ALL relationships between entities
-4. Note temporal constraints (timing, sequence)
-5. Note audio/dialogue requirements
-6. Generate a dense scene description for semantic search
-
-ENTITY TYPES (examples, not exhaustive - create new types as needed):
-- person, vehicle, clothing, accessory, footwear, eyewear, bag
-- object, food, drink, animal, plant, furniture
-- action, gesture, emotion, expression
-- sound, music, dialogue, speech
-- text, sign, brand, logo
-- location, setting, weather, time_of_day
-- color, pattern, material, texture
-
-OUTPUT FORMAT (JSON):
-{{
-  "entities": [
-    {{
-      "entity_type": "<dynamic type>",
-      "name": "<entity identifier>",
-      "attributes": {{<any key-value pairs>}},
-      "relationships": [{{"relation": "<verb>", "target": "<other entity>"}}]
-    }}
-  ],
-  "relationships": [{{"source": "<entity>", "relation": "<verb>", "target": "<entity>"}}],
-  "scene_description": "<dense searchable text>",
-  "temporal_constraints": ["<time hints>"],
-  "audio_constraints": ["<audio/speech hints>"],
-  "modalities": ["visual", "audio", "dialogue", "text"]
-}}
-
-EXAMPLE:
-Query: "Prakash wearing blue t-shirt with John Jacobs spectacles and red shoe on left foot with green shoe on right foot playing bowling at Brunswick hitting a strike where last pin slowly falls"
-
-Output:
-{{
-  "entities": [
-    {{"entity_type": "person", "name": "Prakash", "attributes": {{}}, "relationships": [
-      {{"relation": "wearing", "target": "blue t-shirt"}},
-      {{"relation": "wearing", "target": "John Jacobs spectacles"}},
-      {{"relation": "wearing on left foot", "target": "red shoe"}},
-      {{"relation": "wearing on right foot", "target": "green shoe"}},
-      {{"relation": "playing", "target": "bowling"}},
-      {{"relation": "achieving", "target": "strike"}}
-    ]}},
-    {{"entity_type": "clothing", "name": "t-shirt", "attributes": {{"color": "blue", "body_part": "upper body"}}}},
-    {{"entity_type": "eyewear", "name": "spectacles", "attributes": {{"brand": "John Jacobs"}}}},
-    {{"entity_type": "footwear", "name": "shoe", "attributes": {{"color": "red", "body_part": "left foot"}}}},
-    {{"entity_type": "footwear", "name": "shoe", "attributes": {{"color": "green", "body_part": "right foot"}}}},
-    {{"entity_type": "activity", "name": "bowling", "attributes": {{}}}},
-    {{"entity_type": "action_result", "name": "strike", "attributes": {{}}}},
-    {{"entity_type": "object", "name": "pin", "attributes": {{"state": "falling", "sequence": "last"}}}},
-    {{"entity_type": "location", "name": "Brunswick", "attributes": {{}}}}
-  ],
-  "temporal_constraints": ["slowly", "last"],
-  "audio_constraints": [],
-  "scene_description": "Prakash in blue t-shirt John Jacobs spectacles red and green shoes bowling at Brunswick hitting strike with pins falling slowly",
-  "modalities": ["visual"]
-}}
-
-Extract EVERYTHING. Return ONLY valid JSON."""
-
-# Legacy prompt for backwards compatibility
-QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT
+# Load prompts from external files - NO HARDCODING
+DYNAMIC_QUERY_PROMPT = load_prompt("dynamic_query")
+QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT  # Legacy alias
 
 
 class SearchAgent:
