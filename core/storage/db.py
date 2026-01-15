@@ -462,6 +462,29 @@ class VectorDB:
                     distance=models.Distance.COSINE,
                 ),
             )
+            
+            # Create Payload Indexes for fast filtering
+            self.client.create_payload_index(
+                collection_name=self.MEDIA_COLLECTION,
+                field_name="video_path",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+            self.client.create_payload_index(
+                collection_name=self.MEDIA_COLLECTION,
+                field_name="scan_id",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+            self.client.create_payload_index(
+                collection_name=self.MEDIA_COLLECTION,
+                field_name="ocr_text",
+                field_schema=models.TextIndexParams(
+                    type="text",
+                    tokenizer=models.TokenizerType.WORD,
+                    min_token_len=2,
+                    max_token_len=20,
+                    lowercase=True,
+                ),
+            )
             log(
                 f"Created media_frames collection with dim={self.MEDIA_VECTOR_SIZE}"
             )
@@ -538,6 +561,8 @@ class VectorDB:
             )
             log("Created scenes collection with multi-vector support")
 
+        if not self.client.collection_exists(self.SUMMARIES_COLLECTION):
+            self.client.create_collection(
                 collection_name=self.SUMMARIES_COLLECTION,
                 vectors_config=models.VectorParams(
                     size=self.MEDIA_VECTOR_SIZE,
@@ -694,6 +719,7 @@ class VectorDB:
         return results
 
     @observe("db_upsert_media_frame")
+    @retry_on_connection_error()
     def upsert_media_frame(
         self,
         point_id: str,
@@ -703,54 +729,43 @@ class VectorDB:
         action: str | None = None,
         dialogue: str | None = None,
         payload: dict[str, Any] | None = None,
-    ) -> None:
+        ocr_text: str | None = None,  # Add text
+    ):
         """Upsert a single frame embedding with structured metadata.
 
         Args:
             point_id: Unique ID for the point.
             vector: The vector embedding of the frame description.
             video_path: Path to the source video.
-            timestamp: Timestamp of the frame in the video.
-            action: Visual description of the frame.
+            timestamp: Timestamp in seconds.
+            action: Action description (optional).
             dialogue: Associated dialogue (optional).
-            payload: Additional structured data (face_cluster_ids, ocr_text, etc).
+            payload: Additional payload dictionary (optional).
+            ocr_text: Text extracted via OCR (optional).
         """
-        safe_point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
+        payload = payload or {}
+        payload.update(
+            {
+                "video_path": video_path,
+                "timestamp": timestamp,
+                "action": action,
+                "dialogue": dialogue,
+                "ocr_text": ocr_text,  # Store in payload
+            }
+        )
+        
+        # Ensure scan_id is present if passed in payload
+        # This fixes the filtering issue where scan_id was sometimes dropped
+        if payload.get("scan_id"):
+             payload["scan_id"] = str(payload["scan_id"])
 
-        final_payload = {
-            "video_path": video_path,
-            "timestamp": timestamp,
-            "action": action,
-            "dialogue": dialogue,
-            "type": "visual",
-        }
+        self.client.upsert(
+            collection_name=self.MEDIA_COLLECTION,
+            points=[
+                models.PointStruct(id=point_id, vector=vector, payload=payload)
+            ],
+        )
 
-        # Merge structured data (face_cluster_ids, ocr_text, structured_data)
-        if payload:
-            final_payload.update(payload)
-
-        try:
-            # Check dimension match
-            if len(vector) != self.MEDIA_VECTOR_SIZE:
-                log(
-                    f"Vector dim mismatch: {len(vector)} vs {self.MEDIA_VECTOR_SIZE}",
-                    level="ERROR",
-                )
-                return
-
-            self.client.upsert(
-                collection_name=self.MEDIA_COLLECTION,
-                points=[
-                    models.PointStruct(
-                        id=safe_point_id,
-                        vector=vector,
-                        payload=final_payload,
-                    )
-                ],
-            )
-            log(f"Upserted frame: {timestamp:.1f}s", level="DEBUG")
-        except Exception as e:
-            log(f"Upsert failed for {point_id}: {e}", level="ERROR")
 
     @observe("db_insert_masklet")
     def insert_masklet(

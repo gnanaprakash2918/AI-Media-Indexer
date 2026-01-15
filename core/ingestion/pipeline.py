@@ -15,11 +15,14 @@ from qdrant_client.http import models
 from config import settings
 from core.llm.vlm_factory import get_vlm_client
 from core.processing.extractor import FrameExtractor
+from core.processing.frame_sampling import TextGatedOCR
 from core.processing.identity import FaceManager, FaceTrackBuilder
 from core.processing.metadata import MetadataEngine
+from core.processing.ocr import EasyOCRProcessor
 from core.processing.prober import MediaProbeError, MediaProber
 from core.processing.scene_detector import detect_scenes, extract_scene_frame
 from core.processing.segmentation import Sam3Tracker
+from core.processing.temporal_context import SceneletBuilder, TemporalContextManager
 from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
 from core.processing.vision import VisionAnalyzer
@@ -28,11 +31,11 @@ from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
 from core.utils.frame_sampling import FrameSampler
-from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
+from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 from core.utils.retry import retry
 
 
@@ -57,7 +60,18 @@ class IngestionPipeline:
             frame_interval_seconds: Interval between sampled frames in seconds.
             tmdb_api_key: Optional API key for TMDB movie metadata.
         """
+        self.scene_detector = detect_scenes
+        self.face_manager = FaceManager()
+        self.vision_analyzer = VisionAnalyzer()
+        self.audio_transcriber = AudioTranscriber()
         self.prober = MediaProber()
+        self.sam_tracker = Sam3Tracker()
+        self.metadata_engine = MetadataEngine(tmdb_api_key=settings.tmdb_api_key)
+        self.voice_processor = VoiceProcessor()
+        
+        # OCR Components
+        self.ocr_engine = EasyOCRProcessor(langs=["en"], use_gpu=True)
+        self.text_gate = TextGatedOCR()
         self.extractor = FrameExtractor()
         self.db = VectorDB(
             backend=qdrant_backend,
@@ -741,116 +755,114 @@ class IngestionPipeline:
             timestamp = time_offset + (
                 frame_count * float(self.frame_interval_seconds)
             )
-            try:
-                if self.frame_sampler.should_sample(frame_count):
-                    # Get temporal context from XMem-style memory
-                    narrative_context = temporal_ctx.get_context_for_vlm()
-                    neighbor_timestamps = [
-                        c.timestamp for c in temporal_ctx.sensory
-                    ]
+            if self.frame_sampler.should_sample(frame_count):
+                # Get temporal context from XMem-style memory
+                narrative_context = temporal_ctx.get_context_for_vlm()
+                neighbor_timestamps = [
+                    c.timestamp for c in temporal_ctx.sensory
+                ]
 
-                    new_desc = await self._process_single_frame(
-                        video_path=path,
-                        frame_path=frame_path,
+                new_desc = await self._process_single_frame(
+                    video_path=path,
+                    frame_path=frame_path,
+                    timestamp=timestamp,
+                    index=frame_count,
+                    context=narrative_context,
+                    neighbor_timestamps=neighbor_timestamps,
+                )
+                if new_desc:
+                    # Add to temporal context memory
+                    t_ctx = TemporalContext(
                         timestamp=timestamp,
-                        index=frame_count,
-                        context=narrative_context,
-                        neighbor_timestamps=neighbor_timestamps,
+                        description=new_desc[:200],
+                        faces=list(self._face_clusters.keys())
+                        if hasattr(self, "_face_clusters")
+                        else [],
                     )
-                    if new_desc:
-                        # Add to temporal context memory
-                        t_ctx = TemporalContext(
-                            timestamp=timestamp,
-                            description=new_desc[:200],
-                            faces=list(self._face_clusters.keys())
-                            if hasattr(self, "_face_clusters")
-                            else [],
-                        )
-                        temporal_ctx.add_frame(t_ctx)
-                        
-                        # Add to Scenelet Builder
-                        # Use full description for scenelets
-                        s_ctx = TemporalContext(
-                            timestamp=timestamp,
-                            description=new_desc,
-                            faces=list(self._face_clusters.keys()) if hasattr(self, "_face_clusters") else [],
-                        )
-                        scenelet_builder.add_frame(s_ctx)
-
-                if job_id:
-                    if progress_tracker.is_paused(job_id):
-                        logger.info(
-                            f"Job {job_id} paused. Stopping frame loop."
-                        )
-                        break
-
-                    if progress_tracker.is_cancelled(job_id):
-                        logger.warning(
-                            f"Job {job_id} cancelled. Aborting pipeline."
-                        )
-                        return
-
-                    # Update Granular Stats
-                    # Use provided duration for 100% accuracy, fallback to metadata
-                    video_duration = total_duration
-                    if not video_duration:
-                        try:
-                            probe_data = self.prober.probe(path)
-                            video_duration = float(
-                                probe_data.get("format", {}).get(
-                                    "duration", 0.0
-                                )
-                            )
-                        except Exception:
-                            video_duration = 0.0
-
-                    interval = float(self.frame_interval_seconds)
-
-                    total_est_frames = (
-                        int(video_duration / interval) if video_duration else 0
+                    temporal_ctx.add_frame(t_ctx)
+                    
+                    # Add to Scenelet Builder
+                    # Use full description for scenelets
+                    s_ctx = TemporalContext(
+                        timestamp=timestamp,
+                        description=new_desc,
+                        faces=list(self._face_clusters.keys()) if hasattr(self, "_face_clusters") else [],
                     )
-                    current_ts = timestamp
-                    current_frame_index = (
-                        int(current_ts / interval)
-                        if interval > 0
-                        else frame_count
+                    scenelet_builder.add_frame(s_ctx)
+
+            if job_id:
+                if progress_tracker.is_paused(job_id):
+                    logger.info(
+                        f"Job {job_id} paused. Stopping frame loop."
                     )
+                    break
 
-                    status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
-
-                    progress_tracker.update_granular(
-                        job_id,
-                        processed_frames=current_frame_index,
-                        total_frames=total_est_frames,
-                        current_timestamp=current_ts,
-                        total_duration=video_duration,
+                if progress_tracker.is_cancelled(job_id):
+                    logger.warning(
+                        f"Job {job_id} cancelled. Aborting pipeline."
                     )
+                    return
 
-                    if frame_count % 5 == 0:
-                        progress = (
-                            55.0
-                            + min(
-                                40.0,
-                                (current_ts / (video_duration or 1)) * 40.0,
-                            )
-                            if video_duration
-                            else 55.0
-                        )
-                        progress_tracker.update(
-                            job_id,
-                            progress,
-                            stage="frames",
-                            message=status_msg,
-                        )
-
-                await asyncio.sleep(0.01)  # Minimal sleep for responsiveness
-            finally:
-                # Always delete the frame file after processing
-                if frame_path.exists():
+                # Update Granular Stats
+                # Use provided duration for 100% accuracy, fallback to metadata
+                video_duration = total_duration
+                if not video_duration:
                     try:
-                        frame_path.unlink()
+                        probe_data = self.prober.probe(path)
+                        video_duration = float(
+                            probe_data.get("format", {}).get(
+                                "duration", 0.0
+                            )
+                        )
                     except Exception:
-                        pass
+                        video_duration = 0.0
+
+                interval = float(self.frame_interval_seconds)
+
+                total_est_frames = (
+                    int(video_duration / interval) if video_duration else 0
+                )
+                current_ts = timestamp
+                current_frame_index = (
+                    int(current_ts / interval)
+                    if interval > 0
+                    else frame_count
+                )
+
+                status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
+
+                progress_tracker.update_granular(
+                    job_id,
+                    processed_frames=current_frame_index,
+                    total_frames=total_est_frames,
+                    current_timestamp=current_ts,
+                    total_duration=video_duration,
+                )
+
+                if frame_count % 5 == 0:
+                    progress = (
+                        55.0
+                        + min(
+                            40.0,
+                            (current_ts / (video_duration or 1)) * 40.0,
+                        )
+                        if video_duration
+                        else 55.0
+                    )
+                    progress_tracker.update(
+                        job_id,
+                        progress,
+                        stage="frames",
+                        message=status_msg,
+                    )
+
+            await asyncio.sleep(0.01)  # Minimal sleep for responsiveness
+            # Always delete the frame file after processing
+            if frame_path.exists():
+                try:
+                    frame_path.unlink()
+                except Exception:
+                    pass
 
             frame_count += 1
 
@@ -1408,15 +1420,31 @@ class IngestionPipeline:
 
             video_context = "\n".join(video_context_parts)
 
-            analysis = await self.vision.analyze_frame(
-                frame_path,
-                video_context=video_context,
-                identity_context=identity_context,
-                temporal_context=context,
-            )
-            if analysis:
-                description = analysis.to_search_content()
-                analysis.face_ids = [str(cid) for cid in face_cluster_ids]
+            # Prepare frame for vision analysis
+            with self.vision_analyzer.prepare_image(frame_path) as image_data:
+                # 1. OCR Extraction (Gated)
+                ocr_text = ""
+                if self.text_gate.has_text(image_data):
+                    try:
+                        ocr_result = await self.ocr_engine.extract_text(image_data)
+                        ocr_text = ocr_result.get("text", "")
+                    except Exception as e:
+                        logger.warning(f"OCR failed for frame {index}: {e}")
+
+                # 2. Vision Analysis (VLM)
+                # Pass neighbor frames and narrative context for better coherence
+                logger.info(
+                    f"Analyzing frame {index} at {timestamp:.2f}s (Context: {len(context)} items)"
+                )
+                analysis = await self.vision.analyze_frame(
+                    frame_path,
+                    video_context=video_context,
+                    identity_context=identity_context,
+                    temporal_context=context,
+                )
+                if analysis:
+                    description = analysis.to_search_content()
+                    analysis.face_ids = [str(cid) for cid in face_cluster_ids]
         except Exception as e:
             logger.warning(
                 f"Structured analysis failed: {e}, falling back to describe"
@@ -1582,6 +1610,7 @@ class IngestionPipeline:
                 timestamp=timestamp,
                 action=description,
                 payload=payload,
+                ocr_text=ocr_text,  # Add extracted text
             )
 
         return description

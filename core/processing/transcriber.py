@@ -271,24 +271,10 @@ class AudioTranscriber:
         subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
-    def _convert_and_cache_model(self, model_id: str) -> str:
-        """Downloads and converts a HuggingFace Whisper model to CTranslate2 format.
 
-        Implements high-speed downloads via hf_transfer and caches the converted
-        model for future use. Automatically repairs corrupted caches.
-    def _convert_and_cache_model(self, model_id: str) -> Path:
-        """Downloads and converts a HuggingFace model to CTranslate2 format.
+    @observe("transcriber_convert_model")
+    def _convert_to_ct2(self, model_id: str) -> Path:
 
-        Checks if a converted version already exists in the local cache. If not,
-        downloads, converts, and explicitly patches 'tokenizer.json' to ensure
-        compatibility with faster-whisper.
-
-        Args:
-            model_id: The HuggingFace model identifier (e.g., 'openai/whisper-large-v3').
-
-        Returns:
-            Path: The absolute path to the directory containing the converted model.
-        """
         model_name = model_id.split("/")[-1]
         ct2_output_dir = settings.model_cache_dir / f"ct2-{model_name}"
 
@@ -345,14 +331,7 @@ class AudioTranscriber:
 
     @observe("transcriber_load_model")
     def _load_model(self, model_key: str) -> None:
-        """Loads a Whisper model with optimized settings for the current device.
 
-        Attempts to load the requested model; falls back to smaller models in
-        the LOW_MEMORY_MODELS list if a memory-related error occurs.
-
-        Args:
-            model_key: The HuggingFace ID or local path of the model to load.
-        """
         # Check if already loaded with correct size
         if (
             AudioTranscriber._SHARED_MODEL is not None
