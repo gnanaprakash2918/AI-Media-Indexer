@@ -17,15 +17,14 @@ async def verify_mcp_server():
     """Verify MCP server by connecting and listing tools."""
     print("🚀 Starting MCP Verification...")
 
-    # Path to server script
-    server_script = os.path.join(project_root, "core", "agent", "server.py")
-
     env = os.environ.copy()
-    # Ensure project root is in PYTHONPATH for the subprocess
     env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
+    # Run as module to ensure relative imports work
     server_params = StdioServerParameters(
-        command=sys.executable, args=[server_script], env=env
+        command=sys.executable,
+        args=["-u", "-m", "core.agent.server"],
+        env=env,
     )
 
     try:
