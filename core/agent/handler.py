@@ -35,7 +35,14 @@ from a2a.types import (
 from a2a.utils.errors import ServerError
 from loguru import logger
 
-from core.agent.server import ingest_media, search_media
+from core.agent.server import (
+    ingest_media,
+    search_media,
+    agentic_search,
+    scenelet_search,
+    get_video_summary,
+    query_video_rag
+)
 
 DEFAULT_MODEL = os.getenv("MEDIA_AGENT_MODEL", "llama3.2:3b")
 
@@ -106,6 +113,82 @@ def _build_tool_schemas() -> list[dict[str, Any]]:
                 },
             },
         },
+    ] + _sota_search_tools()
+
+def _sota_search_tools() -> list[dict[str, Any]]:
+    """Returns schemas for the new SOTA search tools."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "agentic_search",
+                "description": (
+                    "Advanced natural language search with query expansion and identity resolution. "
+                    "Use this for finding specific objects, actions, clothing, or people."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query."},
+                        "limit": {"type": "integer", "default": 10},
+                        "use_expansion": {"type": "boolean", "default": True}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "scenelet_search",
+                "description": (
+                    "Search for temporal action sequences (e.g. 'running then jumping'). "
+                    "Returns time ranges."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Action query."},
+                        "limit": {"type": "integer", "default": 10},
+                        "video_path": {"type": "string", "description": "Optional video filter."}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_video_summary",
+                "description": "Get a hierarchical summary of a video's content (plot, events).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "video_path": {"type": "string", "description": "Path to video."},
+                        "force_regenerate": {"type": "boolean", "default": False}
+                    },
+                    "required": ["video_path"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "query_video_rag",
+                "description": (
+                    "Cognitive 'High IQ' search that answers questions using video content "
+                    "and external knowledge. Use for 'Why/How' questions."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Question or query."},
+                        "limit": {"type": "integer", "default": 10}
+                    },
+                    "required": ["query"]
+                }
+            }
+        }
     ]
 
 
@@ -315,6 +398,68 @@ class MediaAgentHandler(RequestHandler):
                     "media_agent_handler.ingest_error", exc_info=exc
                 )
                 return f"ingest_media failed with error: {exc}"
+
+        if name == "agentic_search":
+            try:
+                res = await agentic_search(
+                    query=args.get("query", ""),
+                    limit=int(args.get("limit", 10)),
+                    use_expansion=args.get("use_expansion", True)
+                )
+                # Format results broadly
+                count = res.get("result_count", 0)
+                reasoning = res.get("reasoning_chain", {})
+                hits = res.get("results", [])
+                
+                lines = [f"Found {count} results using agentic search."]
+                lines.append(f"Reasoning: {reasoning}")
+                for h in hits[:5]:
+                    lines.append(f"- {h.get('score', 0):.2f} | {h.get('video_name')}: {h.get('description')}")
+                return "\n".join(lines)
+            except Exception as e:
+                return f"agentic_search failed: {e}"
+
+        if name == "scenelet_search":
+            try:
+                res = await scenelet_search(
+                    query=args.get("query", ""),
+                    limit=int(args.get("limit", 10)),
+                    video_path=args.get("video_path")
+                )
+                hits = res.get("results", [])
+                lines = [f"Found {len(hits)} scenelets."]
+                for h in hits[:5]:
+                    lines.append(f"- {h.get('start_time'):.1f}s-{h.get('end_time'):.1f}s: {h.get('match_explanation')}")
+                return "\n".join(lines)
+            except Exception as e:
+                return f"scenelet_search failed: {e}"
+
+        if name == "get_video_summary":
+            try:
+                res = await get_video_summary(
+                    video_path=args.get("video_path"),
+                    force_regenerate=args.get("force_regenerate", False)
+                )
+                l1 = res.get("l1_summary", "No summary available.")
+                return f"Video Summary:\n{l1}"
+            except Exception as e:
+                return f"Summary failed: {e}"
+
+        if name == "query_video_rag":
+            try:
+                res = await query_video_rag(
+                    query=args.get("query", ""),
+                    limit=int(args.get("limit", 10))
+                )
+                # If RAG generated an answer, return it
+                if res.get("answer"):
+                    return f"Answer: {res.get('answer')}"
+                
+                # Otherwise list results
+                hits = res.get("results", [])
+                return f"Found {len(hits)} relevant segments for RAG context."
+            except Exception as e:
+                return f"RAG failed: {e}"
 
         logger.warning("media_agent_handler.unknown_tool", name=name)
         return f"Unknown tool: {name}"

@@ -144,6 +144,49 @@ async def agentic_search(
 
 
 @mcp.tool()
+async def scenelet_search(
+    query: Annotated[
+        str,
+        Field(
+            description="Natural language query for an action sequences "
+            "(e.g. 'person running then jumping', 'skateboarding trick').",
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results.",
+            ge=1,
+            le=50,
+        ),
+    ] = 10,
+    video_path: Annotated[
+        str | None,
+        Field(
+            description="Optional absolute path to filter by video.",
+        ),
+    ] = None,
+) -> dict:
+    """Search for temporal action sequences (scenelets).
+
+    This tool is best for finding specific activities or motions that happen
+    over time, rather than static frames. It returns time ranges (start/end).
+
+    Args:
+        query: Action-based query string.
+        limit: Max results.
+        video_path: Optional video filter.
+
+    Returns:
+        Dict with scenelet results including start/end times.
+    """
+    agent = _get_agentic_search()
+    return await agent.scenelet_search(
+        query, limit=limit, video_path=video_path
+    )
+
+
+@mcp.tool()
 async def query_video_rag(
     query: Annotated[
         str,

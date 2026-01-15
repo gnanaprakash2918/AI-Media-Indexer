@@ -49,6 +49,7 @@ async def verify_mcp_server():
                     "get_video_summary",
                     "enrich_identity",
                     "search_media",
+                    "scenelet_search",
                 ]
                 missing = [
                     t
