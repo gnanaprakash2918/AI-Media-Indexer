@@ -739,35 +739,66 @@ class SearchAgent:
         parsed = await self.parse_query(query)
         search_text = parsed.to_search_text() or query
 
-        candidates = self.db.search_frames(query=search_text, limit=limit * 2)
-
-        results_with_ranges = []
-        for cand in candidates:
-            ts = cand.get("timestamp", 0)
-            start_time = max(0, ts - 2.5)
-            end_time = ts + 2.5
-
-            actions = cand.get("actions", [])
-            entities = cand.get("entities", cand.get("entity_names", []))
-
-            action_str = ", ".join(actions[:3]) if actions else "activity"
-            entity_str = ", ".join(entities[:3]) if entities else "scene"
-
-            reasoning = f"Matched Sequence: {action_str} with {entity_str} from {start_time:.1f}s to {end_time:.1f}s"
-
-            results_with_ranges.append(
-                {
-                    **cand,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "reasoning": reasoning,
-                    "match_explanation": f"Action '{action_str}' detected at {ts:.1f}s",
-                }
+        try:
+            # Use dedicated Scenelet search from DB
+            results = self.db.search_scenelets(
+                query=search_text,
+                limit=limit,
+                video_path=video_path,
             )
+            
+            formatted_results = []
+            for r in results:
+                # Format for API consistency
+                start = r.get("start_time", 0.0)
+                end = r.get("end_time", 0.0)
+                text = r.get("text", "")
+                
+                formatted_results.append({
+                    **r,
+                    "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
+                    "match_explanation": f"Action sequence detected: {text[:50]}"
+                })
+                
+            return {
+                "query": query,
+                "search_type": "scenelet",
+                "results": formatted_results,
+                "result_count": len(formatted_results),
+            }
+            
+        except AttributeError:
+             # Fallback if DB method not ready (during migration)
+            log("[Scenelet Search] DB method not found, falling back to frame simulation")
+            candidates = self.db.search_frames(query=search_text, limit=limit * 2)
 
-        return {
-            "query": query,
-            "search_type": "scenelet",
-            "results": results_with_ranges[:limit],
-            "result_count": len(results_with_ranges[:limit]),
-        }
+            results_with_ranges = []
+            for cand in candidates:
+                ts = cand.get("timestamp", 0)
+                start_time = max(0, ts - 2.5)
+                end_time = ts + 2.5
+
+                actions = cand.get("actions", [])
+                entities = cand.get("entities", cand.get("entity_names", []))
+
+                action_str = ", ".join(actions[:3]) if actions else "activity"
+                entity_str = ", ".join(entities[:3]) if entities else "scene"
+
+                reasoning = f"Matched Sequence: {action_str} with {entity_str} from {start_time:.1f}s to {end_time:.1f}s"
+
+                results_with_ranges.append(
+                    {
+                        **cand,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "reasoning": reasoning,
+                        "match_explanation": f"Action '{action_str}' detected at {ts:.1f}s",
+                    }
+                )
+
+            return {
+                "query": query,
+                "search_type": "scenelet",
+                "results": results_with_ranges[:limit],
+                "result_count": len(results_with_ranges[:limit]),
+            }

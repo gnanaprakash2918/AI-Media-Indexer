@@ -712,9 +712,16 @@ class IngestionPipeline:
         from core.processing.temporal_context import (
             TemporalContext,
             TemporalContextManager,
+            SceneletBuilder,
         )
 
         temporal_ctx = TemporalContextManager(sensory_size=5)
+        
+        # Scenelet Builder (Sliding Window: 5s window, 2.5s stride)
+        scenelet_builder = SceneletBuilder(window_seconds=5.0, stride_seconds=2.5)
+        scenelet_builder.set_audio_segments(
+            self._get_audio_segments_for_video(str(path))
+        )
 
         async for frame_path in frame_generator:
             if job_id:
@@ -752,15 +759,23 @@ class IngestionPipeline:
                     )
                     if new_desc:
                         # Add to temporal context memory
-                        temporal_ctx.add_frame(
-                            TemporalContext(
-                                timestamp=timestamp,
-                                description=new_desc[:200],
-                                faces=list(self._face_clusters.keys())
-                                if hasattr(self, "_face_clusters")
-                                else [],
-                            )
+                        t_ctx = TemporalContext(
+                            timestamp=timestamp,
+                            description=new_desc[:200],
+                            faces=list(self._face_clusters.keys())
+                            if hasattr(self, "_face_clusters")
+                            else [],
                         )
+                        temporal_ctx.add_frame(t_ctx)
+                        
+                        # Add to Scenelet Builder
+                        # Use full description for scenelets
+                        s_ctx = TemporalContext(
+                            timestamp=timestamp,
+                            description=new_desc,
+                            faces=list(self._face_clusters.keys()) if hasattr(self, "_face_clusters") else [],
+                        )
+                        scenelet_builder.add_frame(s_ctx)
 
                 if job_id:
                     if progress_tracker.is_paused(job_id):
@@ -906,6 +921,27 @@ class IngestionPipeline:
                         )
             except Exception as e:
                 logger.warning(f"Track finalization failed: {e}")
+
+        # Build and Store Scenelets (Temporal Sequence Indexing)
+        try:
+            scenelets = scenelet_builder.build_scenelets()
+            logger.info(f"Building {len(scenelets)} temporal scenelets for {path.name}...")
+            
+            for sl in scenelets:
+                self.db.store_scenelet(
+                    media_path=str(path),
+                    start_time=sl.start_ts,
+                    end_time=sl.end_ts,
+                    content_text=sl.fused_content,
+                    payload={
+                        "entities": sl.all_entities,
+                        "actions": sl.all_actions,
+                        "audio_text": sl.audio_text,
+                    }
+                )
+            logger.info(f"Stored {len(scenelets)} scenelets successfully.")
+        except Exception as e:
+            logger.warning(f"Scenelet build/store failed: {e}")
 
         # Final cleanup
         del self.vision

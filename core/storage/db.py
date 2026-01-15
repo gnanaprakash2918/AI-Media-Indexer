@@ -72,6 +72,7 @@ class VectorDB:
     FACES_COLLECTION = "faces"
     VOICE_COLLECTION = "voice_segments"
     SCENES_COLLECTION = "scenes"  # Scene-level storage (production approach)
+    SCENELETS_COLLECTION = "media_scenelets"  # Sliding window (5s) for action search
     SUMMARIES_COLLECTION = "global_summaries"  # Hierarchical summaries (L1/L2)
 
     MEDIA_VECTOR_SIZE = settings.visual_embedding_dim
@@ -472,6 +473,28 @@ class VectorDB:
                     size=self.FACE_VECTOR_SIZE,
                     distance=models.Distance.EUCLID,
                 ),
+            )
+
+        if not self.client.collection_exists(self.SCENELETS_COLLECTION):
+            self.client.create_collection(
+                collection_name=self.SCENELETS_COLLECTION,
+                vectors_config={
+                    "content": models.VectorParams(
+                        size=self.MEDIA_VECTOR_SIZE,
+                        distance=models.Distance.COSINE,
+                    ),
+                },
+            )
+            # Create indexing for filters
+            self.client.create_payload_index(
+                collection_name=self.SCENELETS_COLLECTION,
+                field_name="media_path",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+            self.client.create_payload_index(
+                collection_name=self.SCENELETS_COLLECTION,
+                field_name="start_time",
+                field_schema=models.PayloadSchemaType.FLOAT,
             )
 
         if not self.client.collection_exists(self.VOICE_COLLECTION):
@@ -1663,6 +1686,94 @@ class VectorDB:
             f"Stored scene {start_time:.1f}-{end_time:.1f}s for {Path(media_path).name}"
         )
         return scene_id
+
+    @observe("db_store_scenelet")
+    def store_scenelet(
+        self,
+        *,
+        media_path: str,
+        start_time: float,
+        end_time: float,
+        content_text: str,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        """Store a sliding window scenelet.
+
+        Args:
+            media_path: Source video path.
+            start_time: Start timestamp.
+            end_time: End timestamp.
+            content_text: Fused text (Visual + Audio).
+            payload: Additional metadata.
+        """
+        vector = self.encode_texts(content_text or "scenelet")[0]
+        
+        scenelet_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{media_path}_sl_{start_time:.3f}"))
+        
+        full_payload = {
+            "media_path": media_path,
+            "start_time": start_time,
+            "end_time": end_time,
+            "text": content_text
+        }
+        if payload:
+            full_payload.update(payload)
+            
+        self.client.upsert(
+            collection_name=self.SCENELETS_COLLECTION,
+            points=[
+                models.PointStruct(
+                    id=scenelet_id,
+                    vector={"content": vector},
+                    payload=full_payload
+                )
+            ]
+        )
+        return scenelet_id
+
+    @observe("db_search_scenelets")
+    def search_scenelets(
+        self,
+        query: str,
+        limit: int = 10,
+        video_path: str | None = None,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search short temporal segments (scenelets)."""
+        query_vec = self.encode_texts(query, is_query=True)[0]
+        
+        conditions = []
+        if video_path:
+            conditions.append(
+                models.FieldCondition(
+                    key="media_path",
+                    match=models.MatchValue(value=video_path)
+                )
+            )
+            
+        q_filter = models.Filter(must=conditions) if conditions else None
+        
+        try:
+            resp = self.client.query_points(
+                collection_name=self.SCENELETS_COLLECTION,
+                query=query_vec,
+                using="content",
+                limit=limit,
+                query_filter=q_filter,
+                score_threshold=score_threshold
+            )
+            
+            results = []
+            for hit in resp.points:
+                results.append({
+                    "id": str(hit.id),
+                    "score": hit.score,
+                    **(hit.payload or {})
+                })
+            return results
+        except Exception as e:
+            log(f"Scenelet search failed: {e}")
+            return []
 
     @observe("db_search_scenes")
     def search_scenes(

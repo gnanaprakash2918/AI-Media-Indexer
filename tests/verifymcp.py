@@ -15,7 +15,7 @@ from mcp.client.stdio import stdio_client  # noqa: E402
 
 async def verify_mcp_server():
     """Verify MCP server by connecting and listing tools."""
-    print("🚀 Starting MCP Verification...")
+    print("Starting MCP Verification...")
 
     env = os.environ.copy()
     env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
@@ -57,7 +57,7 @@ async def verify_mcp_server():
                 ]
 
                 if missing:
-                    print(f"❌ Missing expected tools: {missing}")
+                    print(f"Missing expected tools: {missing}")
                     sys.exit(1)
                 else:
                     print("✅ All required Phase 10 tools present.")
@@ -66,7 +66,7 @@ async def verify_mcp_server():
                 print("✅ Verification Complete!")
 
     except Exception as e:
-        print(f"❌ Verification Failed: {e}")
+        print(f"Verification Failed: {e}")
         sys.exit(1)
 
 

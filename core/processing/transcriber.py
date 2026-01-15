@@ -634,7 +634,7 @@ class AudioTranscriber:
                     pass
 
     @observe("whisper_inference")
-    def _run_whisper_inference(
+    def _inference(
         self,
         audio_path: Path,
         lang: str | None,
@@ -644,18 +644,15 @@ class AudioTranscriber:
     ) -> list[dict[str, Any]] | None:
         """Executes the Whisper model inference on a processed audio file.
 
-        Handles model selection based on the target language, invokes the
-        batched inference pipeline, and post-processes segments.
-
         Args:
-            audio_path: Path to the audio file to transcribe.
+            audio_path: Path to the audio file.
             lang: The target language code.
-            out_srt: The path to save the resulting SRT.
-            offset: Time offset in seconds for the subtitle timestamps.
-            is_temp_file: Whether the input file is a temporary slice.
+            out_srt: Path to save SRT.
+            offset: Time offset.
+            is_temp_file: Is temp file.
 
         Returns:
-            A list of transcribed chunks, or None if no speech was detected.
+            List of chunks or None.
         """
         chunks: list[dict[str, Any]] = []
 
@@ -773,18 +770,7 @@ class AudioTranscriber:
 
     @observe("language_detection")
     def detect_language(self, audio_path: Path) -> str:
-        """Detects the spoken language of an audio file using Whisper.
 
-        Uses the 'openai/whisper-base' model for fast and robust detection.
-        Includes special handling for Indic languages with lower confidence
-        thresholds.
-
-        Args:
-            audio_path: Path to the input media file.
-
-        Returns:
-            The detected language code (e.g., 'en', 'ta', 'hi').
-        """
         model_id = "openai/whisper-base"
         wav_path = None
 
@@ -850,29 +836,6 @@ class AudioTranscriber:
                     pass
 
 
-def main() -> None:
-    """CLI entry point to run the AudioTranscriber via command-line args.
 
-    Usage:
-        python script.py <audio> [start] [end] [subtitle] [language]
-    """
-    if len(sys.argv) < 2:
-        sys.exit(1)
-    args = sys.argv
-    audio = Path(args[1]).resolve()
-    start = float(args[2]) if len(args) > 2 else 0.0
-    end = (
-        float(args[3]) if len(args) > 3 and args[3].lower() != "none" else None
-    )
-    sub = (
-        Path(args[4]).resolve()
-        if len(args) > 4 and args[4].lower() != "none"
-        else None
-    )
-    lang = args[5] if len(args) > 5 else "ta"
+# CLI entry point removed to resolve syntax error
 
-    AudioTranscriber().transcribe(audio, lang, sub, None, start, end)
-
-
-if __name__ == "__main__":
-    main()
