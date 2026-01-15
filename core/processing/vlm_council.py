@@ -1,9 +1,6 @@
-"""VLM Council for multi-model frame description with cross-critique.
+"""VLM Council for multi-model frame description.
 
-Implements parallel VLM generation + chairman synthesis per AGENTS.MD:
-- LLaVA, MiniCPM-V, Qwen2-VL, Gemini Flash (optional API)
-- Cross-critique matrix for quality scoring
-- Chairman synthesizes final description
+Prompts loaded from external files.
 """
 
 from __future__ import annotations
@@ -13,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from core.llm.vlm_factory import VLMClient, get_vlm_client
 from core.utils.logger import get_logger
+from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
     import numpy as np
@@ -40,32 +38,9 @@ class CouncilResult:
     reasoning: str = ""
 
 
-DENSE_MULTIMODAL_PROMPT = """Analyze this video frame exhaustively. Describe:
-
-1. **People**: Count, apparent gender, age range, clothing (colors, types),
-   accessories, posture, actions, expressions, identifiable features
-2. **Objects**: All visible objects, their colors, positions, brands if visible
-3. **Text**: Any visible text, signs, labels, captions (exact transcription)
-4. **Setting**: Indoor/outdoor, location type, lighting, time of day
-5. **Actions**: What is happening, motion, interactions between elements
-6. **Audio cues**: If this appears to be from a scene with dialogue/music/sounds
-
-Be extremely detailed. Include colors, positions, and relationships.
-Format as structured paragraphs, not bullet points."""
-
-
-SYNTHESIS_PROMPT = """You are the chairman of a VLM council. Multiple models
-analyzed the same frame. Synthesize the best description:
-
-{descriptions}
-
-Create one comprehensive description that:
-1. Includes all accurate observations from all models
-2. Resolves any contradictions by majority vote
-3. Uses the most specific and detailed phrasing
-4. Maintains factual accuracy over creativity
-
-Output only the synthesized description, nothing else."""
+# Load prompts from external files
+DENSE_MULTIMODAL_PROMPT = load_prompt("dense_multimodal")
+SYNTHESIS_PROMPT = load_prompt("vlm_synthesis")
 
 
 class VLMCouncil:

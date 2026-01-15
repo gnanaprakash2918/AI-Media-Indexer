@@ -1,4 +1,7 @@
-"""Natural language query parsing for structured intent extraction."""
+"""Natural language query parsing for structured intent extraction.
+
+Prompts loaded from external files.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from core.llm.text_factory import TextLLMClient, get_text_client
 from core.utils.logger import log
+from core.utils.prompt_loader import load_prompt
 
 
 class SearchIntent(BaseModel):
@@ -17,19 +21,8 @@ class SearchIntent(BaseModel):
     has_dialogue: bool = False
 
 
-QUERY_PARSE_PROMPT = """You are a search intent parser for a video search engine.
-Extract structured information from the user's search query.
-
-Rules:
-- identity_names: Extract exact names of people mentioned (e.g., "Prakash", "John")
-- visual_description: Extract visual elements (actions, objects, clothing, colors)
-- temporal_clues: Extract time indicators ("slow motion", "at the end", "beginning")
-- has_dialogue: True if query asks about speech/dialogue content
-
-User Query: {query}
-
-Return ONLY valid JSON matching this schema:
-{{"identity_names": [], "visual_description": "", "temporal_clues": "", "has_dialogue": false}}"""
+# Load from external file
+QUERY_PARSE_PROMPT = load_prompt("query_parse")
 
 
 class QueryParser:

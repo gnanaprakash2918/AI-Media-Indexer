@@ -1,10 +1,6 @@
 """Hierarchical Video Summarizer.
 
-Generates multi-level summaries for improved RAG:
-- L1: Full video summary ("What is the plot?")
-- L2: Scene/chapter summaries (5-minute chunks)
-
-Inspired by RAPTOR and Ragie's Summary Index approach.
+Prompts loaded from external files.
 """
 
 from __future__ import annotations
@@ -17,45 +13,13 @@ from pydantic import BaseModel, Field
 from config import settings
 from core.storage.db import VectorDB
 from core.utils.logger import log
+from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
 from llm.interface import LLMInterface
 
-SCENE_SUMMARY_PROMPT = """Summarize this 5-minute scene from a video.
-
-TRANSCRIPT:
-{transcript}
-
-VISUAL DESCRIPTIONS:
-{visual_descriptions}
-
-KEY ENTITIES:
-{entities}
-
-Provide a concise summary (3-5 sentences) covering:
-1. Main actions and events
-2. Key dialogue or spoken content
-3. Notable visual elements
-4. Any emotional tone or atmosphere
-
-SUMMARY:"""
-
-VIDEO_SUMMARY_PROMPT = """Create a comprehensive summary of this entire video.
-
-SCENE SUMMARIES:
-{scene_summaries}
-
-VIDEO METADATA:
-- Title: {title}
-- Duration: {duration}
-- Total Scenes: {scene_count}
-
-Write a cohesive summary (1-2 paragraphs) that:
-1. Describes the overall narrative or content
-2. Highlights key themes and main characters/subjects
-3. Notes the most significant moments
-4. Captures the tone and style
-
-SUMMARY:"""
+# Load prompts from external files
+SCENE_SUMMARY_PROMPT = load_prompt("scene_summary")
+VIDEO_SUMMARY_PROMPT = load_prompt("video_summary")
 
 
 class SummaryLevel:

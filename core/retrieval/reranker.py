@@ -1,10 +1,6 @@
 """Reranking Council for search result verification.
 
-Implements multi-model reranking per AGENTS.MD Council Architecture:
-- Cross-encoder (ms-marco-MiniLM) for text relevance
-- BGE-Reranker v2 for semantic scoring
-- VLM analysis for visual verification
-- Weighted RRF fusion for final ranking
+Prompts loaded from external files.
 """
 
 from __future__ import annotations
@@ -19,6 +15,7 @@ from pydantic import BaseModel
 from core.llm.vlm_factory import VLMClient, get_vlm_client
 from core.processing.scene_detector import extract_scene_frame
 from core.utils.logger import get_logger
+from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
     from core.retrieval.engine import SearchCandidate
@@ -46,13 +43,8 @@ class RankedResult:
     sources: dict = field(default_factory=dict)
 
 
-RERANK_PROMPT = """Look at these frames from a video segment.
-User is searching for: "{query}"
-
-Do these frames match the search query?
-Consider: people shown, actions, objects, clothing, and setting.
-
-Return ONLY JSON: {{"confidence": 0-100, "reason": "brief explanation"}}"""
+# Load from external file
+RERANK_PROMPT = load_prompt("rerank_frames")
 
 
 class RerankingCouncil:

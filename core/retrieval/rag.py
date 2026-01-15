@@ -1,13 +1,6 @@
 """VideoRAG Orchestrator - Cognitive Search for Video.
 
-Implements the Retrieve-Process-Answer loop for intelligent video search:
-1. Query Decomposition: Parse natural language into StructuredQuery
-2. Multi-Modal Search: Search visual, audio, and identity indexes
-3. External Enrichment: Fetch external knowledge when needed
-4. Answer Generation: Generate text answers with citations (for questions)
-
-This is the "High IQ" search layer that makes queries like
-"Why did he cry?" or "Find Prakash at the bowling alley" work correctly.
+Prompts loaded from external files.
 """
 
 from __future__ import annotations
@@ -27,55 +20,16 @@ from core.retrieval.schemas import (
 )
 from core.storage.db import VectorDB
 from core.utils.logger import log
+from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
 from llm.interface import LLMInterface
 
-# Query Decomposition Prompt
-QUERY_DECOMPOSITION_PROMPT = """You are a VideoRAG query analyzer. Given a user query about video content,
-decompose it into structured components for multi-modal search.
-
-Analyze the query and extract:
-1. VISUAL CUES: Things you can see (objects, actions, colors, clothing, locations)
-2. AUDIO CUES: Things you can hear (dialogue, sounds, music)
-3. TEXT CUES: On-screen text, names, titles
-4. IDENTITIES: Names of specific people
-5. TEMPORAL CUES: Time references (before, after, slowly, quickly)
-6. IS QUESTION: Is this a question requiring an answer, or a search for clips?
-7. NEEDS EXTERNAL: Does this need web search for context? (unknown people, locations, topics)
-
-Return a JSON object with these fields:
-{
-  "visual_cues": ["list of visual descriptions"],
-  "audio_cues": ["list of audio/dialogue cues"],
-  "text_cues": ["list of text to match"],
-  "identities": ["list of person names"],
-  "temporal_cues": ["list of time constraints"],
-  "is_question": true/false,
-  "requires_external_knowledge": true/false,
-  "scene_description": "dense combined description for semantic search"
-}
-
-USER QUERY: {query}
-
-Return ONLY valid JSON, no explanation."""
+# Load prompts from external files
+QUERY_DECOMPOSITION_PROMPT = load_prompt("rag_query_decomposition")
+ANSWER_GENERATION_PROMPT = load_prompt("rag_answer_generation")
 
 
-# Answer Generation Prompt
-ANSWER_GENERATION_PROMPT = """You are a video analysis assistant. Based on the retrieved video clips,
-answer the user's question with specific citations.
 
-QUESTION: {question}
-
-RETRIEVED CLIPS:
-{context}
-
-Instructions:
-1. Answer the question based ONLY on the provided clips
-2. Cite specific timestamps and video names
-3. If you cannot answer from the clips, say so
-4. Be concise but complete
-
-ANSWER:"""
 
 
 class QueryDecoupler:

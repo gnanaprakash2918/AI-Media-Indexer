@@ -1,6 +1,6 @@
-"""LLM-Based Multi-Agent Orchestrator with A2A Protocol Compliance.
+"""LLM-Based Multi-Agent Orchestrator.
 
-Uses LLM reasoning to route queries to appropriate agents based on their capability cards.
+Prompts loaded from external files.
 """
 
 import json
@@ -13,25 +13,12 @@ from core.agent.cards import (
     get_all_tool_schemas,
 )
 from core.utils.logger import log
+from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
     from llm.interface import LLMInterface
 
-ROUTER_PROMPT = """You are an AI orchestrator for a media indexing system. Given a user query, select the best tool(s) to execute.
-
-Available tools:
-{tools_json}
-
-User query: {query}
-
-Respond with JSON containing:
-- "tool": tool name to call
-- "parameters": dict of parameter values
-- "reasoning": brief explanation
-
-Example:
-{{"tool": "search_scenes", "parameters": {{"query": "person bowling", "person": "Prakash"}}, "reasoning": "User wants to find Prakash bowling, using scene search with identity filter"}}
-"""
+ROUTER_PROMPT = load_prompt("orchestrator_routing")
 
 
 class MultiAgentOrchestrator:
