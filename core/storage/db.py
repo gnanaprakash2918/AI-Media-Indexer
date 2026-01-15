@@ -74,6 +74,8 @@ class VectorDB:
     SCENES_COLLECTION = "scenes"  # Scene-level storage (production approach)
     SCENELETS_COLLECTION = "media_scenelets"  # Sliding window (5s) for action search
     SUMMARIES_COLLECTION = "global_summaries"  # Hierarchical summaries (L1/L2)
+    MASKLETS_COLLECTION = "masklets"
+
 
     MEDIA_VECTOR_SIZE = settings.visual_embedding_dim
     FACE_VECTOR_SIZE = 512  # InsightFace ArcFace
@@ -803,7 +805,7 @@ class VectorDB:
 
         try:
             self.client.upsert(
-                collection_name="masklets",
+                collection_name=self.MASKLETS_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=point_id,
@@ -814,6 +816,33 @@ class VectorDB:
             )
         except Exception as e:
             log(f"Failed to insert masklet: {e}", level="ERROR")
+
+    @observe("db_update_masklet")
+    def update_masklet(
+        self,
+        masklet_id: str,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Updates an existing masklet payload.
+
+        Args:
+            masklet_id: The ID of the masklet point.
+            updates: Dictionary of fields to update in the payload.
+
+        Returns:
+            True if successful.
+        """
+        try:
+            # We use set_payload to update specific fields without rewriting the whole point
+            self.client.set_payload(
+                collection_name=self.MASKLETS_COLLECTION,
+                payload=updates,
+                points=[masklet_id],
+            )
+            return True
+        except Exception as e:
+            log(f"Failed to update masklet {masklet_id}: {e}", level="ERROR")
+            return False
 
     @observe("db_search_frames")
     def search_frames(
