@@ -100,13 +100,20 @@ class GroundingPipeline:
                              # MVP: Store simplified polygon or bounding box in Payload.
                              
                              # Let's store BBox for MVP + center point.
+                             import numpy as np
                              y_indices, x_indices =  np.where(mask)
                              if len(y_indices) == 0: continue
                              
                              y_min, y_max = y_indices.min(), y_indices.max()
                              x_min, x_max = x_indices.min(), x_indices.max()
-                             
-                             bbox = [int(x_min), int(y_min), int(x_max), int(y_max)]
+
+                             h, w = mask.shape
+                             bbox_norm = [
+                                 int(x_min * 1000 / w),
+                                 int(y_min * 1000 / h),
+                                 int(x_max * 1000 / w),
+                                 int(y_max * 1000 / h),
+                             ]
                              
                              self.db.insert_masklet(
                                  video_path=str(path),
@@ -115,9 +122,10 @@ class GroundingPipeline:
                                  end_time=timestamp + (1.0/fps),
                                  confidence=1.0, # SAM is usually confident if prompted
                                  payload={
-                                     "bbox": bbox,
+                                     "bbox": bbox_norm,
                                      "frame_idx": int(frame_idx),
-                                     "obj_id": int(obj_id)
+                                     "obj_id": int(obj_id),
+                                     "resolution": [w, h]
                                  }
                              )
                              count += 1

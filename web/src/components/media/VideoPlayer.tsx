@@ -10,6 +10,9 @@ import {
   LinearProgress,
 } from '@mui/material';
 import { Close, Loop, AllInclusive } from '@mui/icons-material';
+import { useTheme } from '@mui/material/styles';
+import { useQuery } from '@tanstack/react-query';
+import { getMasklets } from '../../api/client';
 
 interface VideoPlayerProps {
   videoPath: string;
@@ -33,12 +36,30 @@ function InnerVideoPlayer({
   const [isFullVideo, setIsFullVideo] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const theme = useTheme();
+
+  // Fetch masklets for the video
+  const masklets = useQuery({
+    queryKey: ['masklets', videoPath],
+    queryFn: () => getMasklets(videoPath),
+    enabled: !!videoPath,
+  });
 
   // Calculate segment bounds
   const segmentStart = startTime ?? 0;
   const segmentEnd = endTime ?? (startTime ? startTime + 10 : 0);
   const segmentDuration = segmentEnd - segmentStart;
   const hasSegment = startTime !== undefined && startTime > 0;
+
+  const [currentTime, setCurrentTime] = useState(startTime ?? 0);
+
+  // Filter masklets active at the current percentage of playback
+  const activeMasklets = useMemo(() => {
+    if (!masklets.data) return [];
+    return masklets.data.filter((m: any) =>
+      currentTime >= m.start_time && currentTime <= m.end_time
+    );
+  }, [masklets.data, currentTime]);
 
   // Video URL - always use the direct media endpoint (no encoding)
   const videoUrl = useMemo(() => {
@@ -64,6 +85,7 @@ function InnerVideoPlayer({
     if (!video || isFullVideo || !hasSegment) return;
 
     const currentTime = video.currentTime;
+    setCurrentTime(currentTime);
 
     // Update progress bar
     const segmentProgress =
@@ -151,25 +173,69 @@ function InnerVideoPlayer({
                 </Typography>
               </Box>
             )}
-            <video
-              ref={videoRef}
-              controls // Always show controls - seeking is bounded by JS
-              autoPlay
-              playsInline
-              style={{
-                width: '100%',
-                maxHeight: '70vh',
-                display: 'block',
-                backgroundColor: '#000',
-              }}
-              onError={() => setError(true)}
-              onLoadedMetadata={handleLoadedMetadata}
-              onTimeUpdate={handleTimeUpdate}
-              onSeeking={handleSeeking}
-            >
-              <source src={videoUrl} type="video/mp4" />
-              Your browser does not support video playback.
-            </video>
+            <Box sx={{ position: 'relative' }}>
+              <video
+                ref={videoRef}
+                controls // Always show controls - seeking is bounded by JS
+                autoPlay
+                playsInline
+                style={{
+                  width: '100%',
+                  maxHeight: '70vh',
+                  display: 'block',
+                  backgroundColor: '#000',
+                }}
+                onError={() => setError(true)}
+                onLoadedMetadata={handleLoadedMetadata}
+                onTimeUpdate={handleTimeUpdate}
+                onSeeking={handleSeeking}
+              >
+                <source src={videoUrl} type="video/mp4" />
+                Your browser does not support video playback.
+              </video>
+
+              {/* Grounding Overlay */}
+              {!isFullVideo && activeMasklets.length > 0 && (
+                <svg
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    pointerEvents: 'none',
+                    zIndex: 2,
+                  }}
+                  viewBox="0 0 1000 1000"
+                  preserveAspectRatio="none"
+                >
+                  {activeMasklets.map((m: any, i: number) => (
+                    <g key={i}>
+                      <rect
+                        x={m.bbox[0]}
+                        y={m.bbox[1]}
+                        width={m.bbox[2] - m.bbox[0]}
+                        height={m.bbox[3] - m.bbox[1]}
+                        fill="none"
+                        stroke={theme.palette.primary.main}
+                        strokeWidth="2"
+                        style={{ filter: 'drop-shadow(0 0 4px rgba(0,0,0,0.5))' }}
+                      />
+                      <text
+                        x={m.bbox[0]}
+                        y={m.bbox[1] - 5}
+                        fill={theme.palette.primary.main}
+                        fontSize="24"
+                        fontWeight="bold"
+                        style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}
+                      >
+                        {m.concept}
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              )}
+            </Box>
           </>
         )}
       </DialogContent>

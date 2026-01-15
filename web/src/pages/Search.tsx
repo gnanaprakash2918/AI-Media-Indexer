@@ -16,9 +16,9 @@ import {
   Select,
   MenuItem,
 } from '@mui/material';
-import { Search as SearchIcon, PlayArrow } from '@mui/icons-material';
+import { Search as SearchIcon, PlayArrow, Psychology } from '@mui/icons-material';
 
-import { searchHybrid, getLibrary, type SearchResult } from '../api/client';
+import { searchHybrid, searchGranular, getLibrary, type SearchResult } from '../api/client';
 import { MediaCard } from '../components/media/MediaCard';
 
 interface SearchStats {
@@ -37,6 +37,7 @@ export default function SearchPage() {
   const [query, setQuery] = useState('');
   const [lastQuery, setLastQuery] = useState('');
   const [selectedVideo, setSelectedVideo] = useState<string>('');
+  const [deepSearch, setDeepSearch] = useState(false);
 
   // Fetch indexed videos for filter dropdown
   const { data: libraryData } = useQuery({
@@ -48,9 +49,12 @@ export default function SearchPage() {
     (m: { video_path: string }) => m.video_path,
   );
 
-  // Use hybrid search mutation
+  // Use hybrid or granular search
   const search = useMutation({
     mutationFn: async (q: string): Promise<SearchResponse> => {
+      if (deepSearch) {
+        return (await searchGranular(q, selectedVideo || undefined)) as SearchResponse;
+      }
       const response = await searchHybrid(q, selectedVideo || undefined);
       return response as SearchResponse;
     },
@@ -143,9 +147,9 @@ export default function SearchPage() {
           />
         </Box>
 
-        {/* Video Filter */}
-        {videos.length > 0 && (
-          <Box sx={{ maxWidth: 600, mx: 'auto', mt: 2 }}>
+        {/* Video Filter & Deep Search */}
+        <Box sx={{ maxWidth: 600, mx: 'auto', mt: 2, display: 'flex', gap: 2, justifyContent: 'center', alignItems: 'center' }}>
+          {videos.length > 0 && (
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel>Filter by Video</InputLabel>
               <Select
@@ -161,8 +165,20 @@ export default function SearchPage() {
                 ))}
               </Select>
             </FormControl>
+          )}
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="body2" color="text.secondary">Deep Search (AI Reasoning)</Typography>
+            <Chip
+              label={deepSearch ? "ON" : "OFF"}
+              color={deepSearch ? "primary" : "default"}
+              variant={deepSearch ? "filled" : "outlined"}
+              size="small"
+              onClick={() => setDeepSearch(!deepSearch)}
+              sx={{ fontWeight: 700 }}
+            />
           </Box>
-        )}
+        </Box>
       </Box>
 
       {/* Stats Bar */}

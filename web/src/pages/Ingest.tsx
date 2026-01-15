@@ -1,5 +1,5 @@
-import {useState, useEffect, useRef} from 'react';
-import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
+import { useState, useEffect, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   Typography,
@@ -18,6 +18,10 @@ import {
   ListItemText,
   IconButton,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   CloudUpload,
@@ -27,6 +31,8 @@ import {
   Delete,
   Pause,
   PlayArrow,
+  GpsFixed,
+  Description as SummaryIcon,
 } from '@mui/icons-material';
 
 import {
@@ -36,6 +42,8 @@ import {
   pauseJob,
   resumeJob,
   deleteJob,
+  triggerGrounding,
+  getVideoSummary,
 } from '../api/client';
 
 type JobStatus =
@@ -71,11 +79,15 @@ function JobCard({
   onCancel,
   onPause,
   onResume,
+  onGround,
+  onShowSummary,
 }: {
   job: Job;
   onCancel: (id: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
+  onGround: (path: string) => void;
+  onShowSummary: (path: string) => void;
 }) {
   const isRunning = job.status === 'running';
   const isPaused = job.status === 'paused';
@@ -100,7 +112,7 @@ function JobCard({
   }
 
   return (
-    <Paper sx={{p: 2, mb: 1.5, borderRadius: 2}}>
+    <Paper sx={{ p: 2, mb: 1.5, borderRadius: 2 }}>
       <Box
         sx={{
           display: 'flex',
@@ -114,7 +126,7 @@ function JobCard({
             variant="body2"
             fontWeight={600}
             noWrap
-            sx={{maxWidth: 300}}
+            sx={{ maxWidth: 300 }}
             title={job.file_path}
           >
             {fileName}
@@ -142,13 +154,13 @@ function JobCard({
 
       {(isRunning || isPaused) && (
         <>
-          <Box sx={{display: 'flex', alignItems: 'center', gap: 1, mb: 1}}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
             <LinearProgress
               variant="determinate"
               value={progress}
-              sx={{flex: 1, height: 6, borderRadius: 3}}
+              sx={{ flex: 1, height: 6, borderRadius: 3 }}
             />
-            <Typography variant="caption" fontWeight={600} sx={{minWidth: 35}}>
+            <Typography variant="caption" fontWeight={600} sx={{ minWidth: 35 }}>
               {Math.round(progress)}%
             </Typography>
           </Box>
@@ -159,7 +171,7 @@ function JobCard({
               alignItems: 'center',
             }}
           >
-            <Box sx={{display: 'flex', gap: 2}}>
+            <Box sx={{ display: 'flex', gap: 2 }}>
               {framesText && (
                 <Typography variant="caption" color="text.secondary">
                   {framesText}
@@ -207,15 +219,27 @@ function JobCard({
           </Box>
         </>
       )}
-      {job.status === 'failed' && job.error && (
-        <Typography variant="caption" color="error">
-          {job.error}
-        </Typography>
-      )}
-      {job.status === 'paused' && !job.message && (
-        <Typography variant="caption" color="warning.main">
-          Job is paused. Click resume to continue.
-        </Typography>
+      {job.status === 'completed' && (
+        <Box sx={{ display: 'flex', gap: 1, mt: 1, justifyContent: 'flex-end' }}>
+          <Button
+            size="small"
+            startIcon={<GpsFixed />}
+            onClick={() => onGround(job.file_path)}
+            variant="outlined"
+            color="primary"
+          >
+            Ground
+          </Button>
+          <Button
+            size="small"
+            startIcon={<SummaryIcon />}
+            onClick={() => onShowSummary(job.file_path)}
+            variant="outlined"
+            color="secondary"
+          >
+            Recap
+          </Button>
+        </Box>
       )}
     </Paper>
   );
@@ -227,6 +251,11 @@ export default function IngestPage() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [pendingJobs, setPendingJobs] = useState<string[]>([]);
+  const [summaryDialog, setSummaryDialog] = useState<{ open: boolean; path: string; data: any }>({
+    open: false,
+    path: '',
+    data: null,
+  });
   const queryClient = useQueryClient();
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -255,42 +284,58 @@ export default function IngestPage() {
       end?: number;
     }) => ingestMedia(data.path, data.hint, data.start, data.end),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['jobs']});
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
     },
   });
 
   const cancelMutation = useMutation({
     mutationFn: cancelJob,
-    onSuccess: () => queryClient.invalidateQueries({queryKey: ['jobs']}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
   });
 
   const pauseMutation = useMutation({
     mutationFn: pauseJob,
-    onSuccess: () => queryClient.invalidateQueries({queryKey: ['jobs']}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
   });
 
   const resumeMutation = useMutation({
     mutationFn: resumeJob,
-    onSuccess: () => queryClient.invalidateQueries({queryKey: ['jobs']}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteJob,
-    onSuccess: () => queryClient.invalidateQueries({queryKey: ['jobs']}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
   });
+
+  const groundMutation = useMutation({
+    mutationFn: (path: string) => triggerGrounding(path),
+    onSuccess: () => {
+      alert("Grounding pipeline triggered in background.");
+    }
+  });
+
+  const handleShowSummary = async (path: string) => {
+    try {
+      const data = await getVideoSummary(path);
+      setSummaryDialog({ open: true, path, data });
+    } catch (err) {
+      alert("No summary found for this video yet.");
+    }
+  };
 
   // SSE connection
   useEffect(() => {
     const es = new EventSource('http://localhost:8000/events');
     eventSourceRef.current = es;
-    es.onmessage = () => queryClient.invalidateQueries({queryKey: ['jobs']});
+    es.onmessage = () => queryClient.invalidateQueries({ queryKey: ['jobs'] });
     es.onerror = () => {
       es.close();
       setTimeout(() => {
         const newEs = new EventSource('http://localhost:8000/events');
         eventSourceRef.current = newEs;
         newEs.onmessage = () =>
-          queryClient.invalidateQueries({queryKey: ['jobs']});
+          queryClient.invalidateQueries({ queryKey: ['jobs'] });
       }, 5000);
     };
     return () => es.close();
@@ -304,7 +349,7 @@ export default function IngestPage() {
     const end = parseTime(endTime);
     validPaths.forEach(path => {
       setPendingJobs(prev => [...prev, path.trim()]);
-      ingestMutation.mutate({path: path.trim(), hint: mediaType, start, end});
+      ingestMutation.mutate({ path: path.trim(), hint: mediaType, start, end });
     });
     setPaths(['']);
     setStartTime('');
@@ -364,14 +409,14 @@ export default function IngestPage() {
       <Typography variant="h5" fontWeight={700} gutterBottom>
         Ingest Media
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{mb: 3}}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Add files or directories. Supports Windows and Linux paths.
       </Typography>
 
       {/* Input Form */}
-      <Paper sx={{p: 2, borderRadius: 2, mb: 3}}>
+      <Paper sx={{ p: 2, borderRadius: 2, mb: 3 }}>
         {paths.map((path, idx) => (
-          <Box key={idx} sx={{display: 'flex', gap: 1, mb: 1}}>
+          <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 1 }}>
             <TextField
               fullWidth
               size="small"
@@ -382,7 +427,7 @@ export default function IngestPage() {
                 input: {
                   startAdornment: (
                     <FolderOpen
-                      sx={{mr: 1, color: 'action.active'}}
+                      sx={{ mr: 1, color: 'action.active' }}
                       fontSize="small"
                     />
                   ),
@@ -401,7 +446,7 @@ export default function IngestPage() {
           </Box>
         ))}
 
-        <Box sx={{display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap'}}>
+        <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
           <Button
             size="small"
             startIcon={<Add />}
@@ -415,7 +460,7 @@ export default function IngestPage() {
             startIcon={<FolderOpen />}
             onClick={async () => {
               try {
-                const {browseFileSystem} = await import('../api/client');
+                const { browseFileSystem } = await import('../api/client');
                 const path = await browseFileSystem();
                 if (path) {
                   const newPaths = [...paths];
@@ -437,7 +482,7 @@ export default function IngestPage() {
           </Button>
           <TextField
             size="small"
-            sx={{width: 100}}
+            sx={{ width: 100 }}
             placeholder="0:00:00"
             label="Start"
             value={startTime}
@@ -445,13 +490,13 @@ export default function IngestPage() {
           />
           <TextField
             size="small"
-            sx={{width: 100}}
+            sx={{ width: 100 }}
             placeholder="(full)"
             label="End"
             value={endTime}
             onChange={e => setEndTime(e.target.value)}
           />
-          <FormControl size="small" sx={{minWidth: 120}}>
+          <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Type</InputLabel>
             <Select
               value={mediaType}
@@ -475,12 +520,12 @@ export default function IngestPage() {
         </Box>
 
         {ingestMutation.isError && (
-          <Alert severity="error" sx={{mt: 1.5}}>
+          <Alert severity="error" sx={{ mt: 1.5 }}>
             {(ingestMutation.error as Error)?.message || 'Failed to start'}
           </Alert>
         )}
         {deleteMutation.isError && (
-          <Alert severity="error" sx={{mt: 1.5}}>
+          <Alert severity="error" sx={{ mt: 1.5 }}>
             Failed to delete job: {(deleteMutation.error as Error)?.message}
           </Alert>
         )}
@@ -488,12 +533,12 @@ export default function IngestPage() {
 
       {/* Pending Jobs - Shows immediately after clicking ingest */}
       {pendingJobs.length > 0 && (
-        <Box sx={{mb: 3}}>
+        <Box sx={{ mb: 3 }}>
           <Typography variant="subtitle2" fontWeight={600} gutterBottom>
             Submitting... ({pendingJobs.length})
           </Typography>
           {pendingJobs.map((path, idx) => (
-            <Paper key={idx} sx={{p: 2, mb: 1.5, borderRadius: 2}}>
+            <Paper key={idx} sx={{ p: 2, mb: 1.5, borderRadius: 2 }}>
               <Box
                 sx={{
                   display: 'flex',
@@ -506,13 +551,13 @@ export default function IngestPage() {
                   variant="body2"
                   fontWeight={600}
                   noWrap
-                  sx={{maxWidth: '60%'}}
+                  sx={{ maxWidth: '60%' }}
                 >
                   {path.split(/[/\\]/).pop() || path}
                 </Typography>
                 <Chip size="small" label="submitting" color="warning" />
               </Box>
-              <LinearProgress sx={{height: 6, borderRadius: 3}} />
+              <LinearProgress sx={{ height: 6, borderRadius: 3 }} />
             </Paper>
           ))}
         </Box>
@@ -520,7 +565,7 @@ export default function IngestPage() {
 
       {/* Active Jobs */}
       {activeJobs.length > 0 && (
-        <Box sx={{mb: 3}}>
+        <Box sx={{ mb: 3 }}>
           <Typography variant="subtitle2" fontWeight={600} gutterBottom>
             Active Jobs ({activeJobs.length})
           </Typography>
@@ -531,6 +576,8 @@ export default function IngestPage() {
               onCancel={id => cancelMutation.mutate(id)}
               onPause={id => pauseMutation.mutate(id)}
               onResume={id => resumeMutation.mutate(id)}
+              onGround={path => groundMutation.mutate(path)}
+              onShowSummary={handleShowSummary}
             />
           ))}
         </Box>
@@ -542,7 +589,7 @@ export default function IngestPage() {
           <Typography variant="subtitle2" fontWeight={600} gutterBottom>
             History
           </Typography>
-          <Paper sx={{borderRadius: 2}}>
+          <Paper sx={{ borderRadius: 2 }}>
             <List dense disablePadding>
               {historyJobs.map((job: Job, idx: number) => (
                 <ListItem
@@ -574,7 +621,7 @@ export default function IngestPage() {
                         {job.status === 'failed' && ` - ${job.error}`}
                       </>
                     }
-                    sx={{mr: 4}}
+                    sx={{ mr: 4 }}
                   />
                   <Chip
                     size="small"
@@ -586,7 +633,7 @@ export default function IngestPage() {
                           ? 'error'
                           : 'default'
                     }
-                    sx={{mr: 2}}
+                    sx={{ mr: 2 }}
                   />
                 </ListItem>
               ))}
@@ -607,12 +654,63 @@ export default function IngestPage() {
               bgcolor: 'action.hover',
             }}
           >
-            <CloudUpload sx={{fontSize: 40, color: 'text.secondary', mb: 1}} />
+            <CloudUpload sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />
             <Typography color="text.secondary">
               No jobs yet. Add a file path above.
             </Typography>
           </Paper>
         )}
+      <Dialog
+        open={summaryDialog.open}
+        onClose={() => setSummaryDialog({ ...summaryDialog, open: false })}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 700, borderBottom: 1, borderColor: 'divider' }}>
+          AI Recap: {summaryDialog.path.split(/[/\\]/).pop()}
+        </DialogTitle>
+        <DialogContent sx={{ mt: 2 }}>
+          {summaryDialog.data && (
+            <Box>
+              <Typography variant="h6" gutterBottom color="primary" sx={{ fontWeight: 600 }}>
+                High-Level Summary
+              </Typography>
+              <Typography variant="body1" sx={{ mb: 3, fontStyle: 'italic', lineHeight: 1.6 }}>
+                "{summaryDialog.data.summary}"
+              </Typography>
+
+              {summaryDialog.data.entities && summaryDialog.data.entities.length > 0 && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle2" gutterBottom fontWeight={700}>
+                    Key Entities Detected
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    {summaryDialog.data.entities.map((e: string, i: number) => (
+                      <Chip key={i} label={e} size="small" variant="outlined" />
+                    ))}
+                  </Box>
+                </Box>
+              )}
+
+              {summaryDialog.data.storyline && (
+                <Box>
+                  <Typography variant="subtitle2" gutterBottom fontWeight={700}>
+                    Full Analysis
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                    {summaryDialog.data.storyline}
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
+          <Button onClick={() => setSummaryDialog({ ...summaryDialog, open: false })} variant="contained">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

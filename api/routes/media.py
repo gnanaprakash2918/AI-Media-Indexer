@@ -430,3 +430,17 @@ async def get_media_thumbnail(
         raise HTTPException(
             status_code=500, detail="Could not generate thumbnail"
         ) from e
+
+@router.get("/media/summary")
+async def get_video_summary(
+    path: Annotated[str, Query(...)],
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Retrieve the global summary for a video."""
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+    
+    summary = pipeline.db.get_global_summary(path)
+    if not summary:
+        raise HTTPException(status_code=404, detail="Summary not found")
+    return summary

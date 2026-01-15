@@ -247,6 +247,52 @@ export const searchByName = async (name: string, limit = 20) => {
   return res.data;
 };
 
+// Granular / Agentic Search
+export const searchGranular = async (
+  query: string,
+  videoPath?: string,
+  limit = 10,
+  enableRerank = true,
+) => {
+  const res = await apiClient.get('/api/search/granular', {
+    params: {
+      query,
+      video_path: videoPath,
+      limit,
+      enable_rerank: enableRerank,
+    },
+  });
+  return res.data;
+};
+
+// Grounding (SAM)
+export const triggerGrounding = async (videoPath: string, concepts?: string[]) => {
+  const res = await apiClient.post('/api/grounding/trigger', {
+    video_path: videoPath,
+    concepts,
+  });
+  return res.data;
+};
+
+export const updateMasklet = async (maskletId: string, updates: any) => {
+  const res = await apiClient.patch(`/api/masklets/${maskletId}`, updates);
+  return res.data;
+};
+
+export const getMasklets = async (videoPath: string, startTime?: number, endTime?: number) => {
+  const res = await apiClient.get('/api/media/masklets', {
+    params: { video_path: videoPath, start_time: startTime, end_time: endTime }
+  });
+  return res.data;
+};
+
+export const getVideoSummary = async (videoPath: string) => {
+  const res = await apiClient.get('/api/media/summary', {
+    params: { path: videoPath }
+  });
+  return res.data;
+};
+
 // Library
 export const getLibrary = async () => {
   const res = await apiClient.get('/library');

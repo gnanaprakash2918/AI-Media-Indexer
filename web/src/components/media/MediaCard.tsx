@@ -1,4 +1,4 @@
-import {useState, memo} from 'react';
+import { useState, memo } from 'react';
 import {
   PlayArrow,
   AccessTime,
@@ -32,8 +32,8 @@ import {
   Button,
   CircularProgress,
 } from '@mui/material';
-import {VideoPlayer} from './VideoPlayer';
-import {updateFrameDescription} from '../../api/client';
+import { VideoPlayer } from './VideoPlayer';
+import { updateFrameDescription } from '../../api/client';
 
 interface MediaResult {
   score: number;
@@ -70,7 +70,7 @@ interface MediaResult {
   matched_identity?: string;
 }
 
-export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
+export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }) {
   const theme = useTheme();
   const [playerOpen, setPlayerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -200,7 +200,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
                 backdropFilter: 'blur(4px)',
               }}
             >
-              <AccessTime sx={{fontSize: 14}} />
+              <AccessTime sx={{ fontSize: 14 }} />
               {formatTime(timeValue)}
             </Box>
           )}
@@ -220,7 +220,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
               {item.face_names!.slice(0, 2).map((name, i) => (
                 <Chip
                   key={i}
-                  icon={<Face sx={{fontSize: 14}} />}
+                  icon={<Face sx={{ fontSize: 14 }} />}
                   label={name}
                   size="small"
                   sx={{
@@ -249,7 +249,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
               opacity: 0,
               transition: 'opacity 0.2s',
               bgcolor: 'rgba(0,0,0,0.3)',
-              '&:hover': {opacity: 1},
+              '&:hover': { opacity: 1 },
             }}
           >
             <IconButton
@@ -260,12 +260,12 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
               sx={{
                 bgcolor: 'rgba(255,255,255,0.2)',
                 backdropFilter: 'blur(8px)',
-                '&:hover': {bgcolor: 'rgba(255,255,255,0.3)'},
+                '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' },
                 width: 56,
                 height: 56,
               }}
             >
-              <PlayArrow sx={{color: 'white', fontSize: 32}} />
+              <PlayArrow sx={{ color: 'white', fontSize: 32 }} />
             </IconButton>
             {item.id && (
               <Tooltip title="Edit Description (HITL)">
@@ -277,18 +277,18 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
                   sx={{
                     bgcolor: 'rgba(255,255,255,0.2)',
                     backdropFilter: 'blur(8px)',
-                    '&:hover': {bgcolor: 'rgba(255,200,100,0.4)'},
+                    '&:hover': { bgcolor: 'rgba(255,200,100,0.4)' },
                     ml: 1,
                   }}
                 >
-                  <Edit sx={{color: 'white'}} />
+                  <Edit sx={{ color: 'white' }} />
                 </IconButton>
               </Tooltip>
             )}
           </Box>
         </Box>
 
-        <CardContent sx={{flexGrow: 1, p: 2}}>
+        <CardContent sx={{ flexGrow: 1, p: 2 }}>
           {/* Score and Type Row */}
           <Box
             sx={{
@@ -332,15 +332,15 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
 
           {/* Speaker Names */}
           {hasSpeakers && (
-            <Box sx={{display: 'flex', gap: 0.5, mb: 1, flexWrap: 'wrap'}}>
+            <Box sx={{ display: 'flex', gap: 0.5, mb: 1, flexWrap: 'wrap' }}>
               {item.speaker_names!.map((name, i) => (
                 <Chip
                   key={i}
-                  icon={<Mic sx={{fontSize: 12}} />}
+                  icon={<Mic sx={{ fontSize: 12 }} />}
                   label={name}
                   size="small"
                   variant="outlined"
-                  sx={{height: 20, fontSize: '0.7rem'}}
+                  sx={{ height: 20, fontSize: '0.7rem' }}
                 />
               ))}
             </Box>
@@ -348,10 +348,10 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
 
           {/* Subtitle with time range */}
           {item.text && (
-            <Box sx={{bgcolor: 'action.hover', p: 1, borderRadius: 1, mb: 1}}>
+            <Box sx={{ bgcolor: 'action.hover', p: 1, borderRadius: 1, mb: 1 }}>
               <Typography
                 variant="body2"
-                sx={{fontStyle: 'italic', fontWeight: 500}}
+                sx={{ fontStyle: 'italic', fontWeight: 500 }}
               >
                 "{item.text}"
               </Typography>
@@ -383,7 +383,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
           )}
 
           {/* Search Explainability - Match Reason */}
-          {(item.match_reason || item.agent_thought) && (
+          {(item.match_reason || item.agent_thought || (item.match_reasons && item.match_reasons.length > 0)) && (
             <Box
               sx={{
                 mt: 1,
@@ -404,17 +404,35 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
               >
                 🎯 Match Reasoning
               </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{lineHeight: 1.4}}
-              >
-                {item.match_reason || item.agent_thought}
-              </Typography>
+
+              {item.match_reasons ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {item.match_reasons.map((reason, i) => (
+                    <Typography
+                      key={i}
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ lineHeight: 1.4, display: 'flex', alignItems: 'flex-start', gap: 0.5 }}
+                    >
+                      <span style={{ color: theme.palette.success.main }}>•</span>
+                      {reason}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ lineHeight: 1.4 }}
+                >
+                  {item.match_reason || item.agent_thought}
+                </Typography>
+              )}
+
               {item.matched_constraints &&
                 item.matched_constraints.length > 0 && (
                   <Box
-                    sx={{mt: 0.5, display: 'flex', gap: 0.5, flexWrap: 'wrap'}}
+                    sx={{ mt: 0.5, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}
                   >
                     {item.matched_constraints.map((c, i) => (
                       <Chip
@@ -435,10 +453,10 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
           )}
 
           <Collapse in={expanded}>
-            <Box sx={{mt: 1, pt: 1, borderTop: 1, borderColor: 'divider'}}>
+            <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
               {/* Entities */}
               {hasEntities && (
-                <Box sx={{mb: 1}}>
+                <Box sx={{ mb: 1 }}>
                   <Box
                     sx={{
                       display: 'flex',
@@ -447,18 +465,18 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
                       mb: 0.5,
                     }}
                   >
-                    <LocalOffer sx={{fontSize: 12, color: 'text.secondary'}} />
+                    <LocalOffer sx={{ fontSize: 12, color: 'text.secondary' }} />
                     <Typography variant="caption" color="text.secondary">
                       Entities
                     </Typography>
                   </Box>
-                  <Box sx={{display: 'flex', gap: 0.5, flexWrap: 'wrap'}}>
+                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                     {item.entities!.slice(0, 5).map((e, i) => (
                       <Chip
                         key={i}
                         label={e}
                         size="small"
-                        sx={{height: 18, fontSize: '0.65rem'}}
+                        sx={{ height: 18, fontSize: '0.65rem' }}
                       />
                     ))}
                   </Box>
@@ -468,9 +486,9 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
               {/* Scene Location */}
               {hasScene && (
                 <Box
-                  sx={{mb: 1, display: 'flex', alignItems: 'center', gap: 0.5}}
+                  sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}
                 >
-                  <Room sx={{fontSize: 12, color: 'text.secondary'}} />
+                  <Room sx={{ fontSize: 12, color: 'text.secondary' }} />
                   <Typography variant="caption">
                     {item.scene_location}
                   </Typography>
@@ -479,7 +497,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
 
               {/* Visible Text (OCR) */}
               {hasVisibleText && (
-                <Box sx={{mb: 1}}>
+                <Box sx={{ mb: 1 }}>
                   <Box
                     sx={{
                       display: 'flex',
@@ -488,7 +506,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
                       mb: 0.5,
                     }}
                   >
-                    <Visibility sx={{fontSize: 12, color: 'text.secondary'}} />
+                    <Visibility sx={{ fontSize: 12, color: 'text.secondary' }} />
                     <Typography variant="caption" color="text.secondary">
                       Visible Text
                     </Typography>
@@ -529,7 +547,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
           <Typography
             variant="caption"
             color="text.disabled"
-            sx={{mt: 1, display: 'block', fontFamily: 'monospace'}}
+            sx={{ mt: 1, display: 'block', fontFamily: 'monospace' }}
             noWrap
           >
             {baseName}
@@ -575,7 +593,7 @@ export const MediaCard = memo(function MediaCard({item}: {item: MediaResult}) {
             value={editDescription}
             onChange={e => setEditDescription(e.target.value)}
             placeholder="Describe what's actually in this frame..."
-            sx={{mt: 1}}
+            sx={{ mt: 1 }}
           />
         </DialogContent>
         <DialogActions>

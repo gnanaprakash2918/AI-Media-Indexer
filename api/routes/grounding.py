@@ -48,3 +48,16 @@ async def update_masklet(masklet_id: str, update: MaskletUpdate):
         raise HTTPException(status_code=404, detail="Masklet not found or update failed")
     
     return {"status": "updated", "masklet_id": masklet_id}
+    
+@router.get("/masklets")
+async def get_masklets(
+    video_path: str,
+    start_time: float | None = None,
+    end_time: float | None = None,
+):
+    """Retrieve masklets for a video and time range."""
+    try:
+        return db.get_masklets(video_path, start_time, end_time)
+    except Exception as e:
+        log.error(f"Failed to get masklets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -844,6 +844,86 @@ class VectorDB:
             log(f"Failed to update masklet {masklet_id}: {e}", level="ERROR")
             return False
 
+    def get_masklets(
+        self,
+        video_path: str,
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieves masklets for a specific video and optional time range.
+
+        Args:
+            video_path: Path to the source video.
+            start_time: Optional start search bound.
+            end_time: Optional end search bound.
+
+        Returns:
+            List of masklet payloads.
+        """
+        must_filters = [
+            models.FieldCondition(
+                key="video_path", match=models.MatchValue(value=video_path)
+            ),
+            models.FieldCondition(
+                key="type", match=models.MatchValue(value="masklet")
+            ),
+        ]
+
+        if start_time is not None:
+            must_filters.append(
+                models.FieldCondition(
+                    key="start_time", range=models.Range(gte=start_time)
+                )
+            )
+        if end_time is not None:
+            must_filters.append(
+                models.FieldCondition(
+                    key="end_time", range=models.Range(lte=end_time)
+                )
+            )
+
+        try:
+            results = self.client.scroll(
+                collection_name=self.MASKLETS_COLLECTION,
+                scroll_filter=models.Filter(must=must_filters),
+                limit=1000,
+            )
+            return [p.payload for p in results[0]]
+        except Exception as e:
+            log(f"Failed to fetch masklets: {e}", level="ERROR")
+            return []
+
+    def get_global_summary(self, video_path: str) -> dict[str, Any] | None:
+        """Retrieves the global summary for a specific video.
+
+        Args:
+            video_path: Path to the source video.
+
+        Returns:
+            Summary payload or None.
+        """
+        try:
+            results = self.client.scroll(
+                collection_name=self.SUMMARIES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="video_path", match=models.MatchValue(value=video_path)
+                        ),
+                        models.FieldCondition(
+                            key="level", match=models.MatchValue(value="L2") # L2 is global
+                        ),
+                    ]
+                ),
+                limit=1,
+            )
+            if results[0]:
+                return results[0][0].payload
+            return None
+        except Exception as e:
+            log(f"Failed to fetch summary: {e}", level="ERROR")
+            return None
+
     @observe("db_search_frames")
     def search_frames(
         self,
