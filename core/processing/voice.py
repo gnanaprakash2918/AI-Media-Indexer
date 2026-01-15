@@ -329,7 +329,7 @@ class VoiceProcessor:
             _, stderr = await process.communicate()
 
             if process.returncode != 0:
-                log.warning(f"FFmpeg conversion failed: {stderr.decode()}")
+                log.warning(f"FFmpeg conversion failed: {stderr.decode(errors='replace')}")
                 if temp_path.exists():
                     temp_path.unlink()
                 return None

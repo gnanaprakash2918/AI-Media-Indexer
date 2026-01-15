@@ -357,7 +357,7 @@ class IndicASRPipeline:
                 raise RuntimeError("Audio extraction produced empty file")
         except subprocess.CalledProcessError as e:
             log(
-                f"[IndicASR] FFmpeg failed: {e.stderr.decode() if e.stderr else 'unknown error'}"
+                f"[IndicASR] FFmpeg failed: {e.stderr.decode(errors='replace') if e.stderr else 'unknown error'}"
             )
             raise
 

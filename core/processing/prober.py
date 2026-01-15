@@ -138,6 +138,8 @@ class MediaProber:
                 stderr=subprocess.PIPE,
                 text=True,
                 shell=False,
+                encoding="utf-8",
+                errors="replace",
             )
 
             out, err = process.communicate()
