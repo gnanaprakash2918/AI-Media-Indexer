@@ -718,12 +718,62 @@ class SearchAgent:
             except Exception as e:
                 log(f"[SOTA Search] Re-ranking failed: {e}, using raw results")
 
-        # GOLD.md Compliance: Comprehensive Search Reasoning Trace
+        # GOLD.md Compliance: Comprehensive Search Reasoning Trace with Pipeline Steps
+        # Build detailed pipeline_steps for frontend debug panel
+        pipeline_steps = [
+            {
+                "step": "Query Parsing",
+                "status": "completed",
+                "detail": f"Extracted {len(parsed.entities) if hasattr(parsed, 'entities') and parsed.entities else 0} entities",
+                "data": {
+                    "original_query": query[:100],
+                    "entities_found": [e.name for e in parsed.entities] if hasattr(parsed, 'entities') and parsed.entities else [],
+                    "scene_description": parsed.scene_description[:100] if hasattr(parsed, 'scene_description') and parsed.scene_description else None,
+                }
+            },
+            {
+                "step": "Identity Resolution",
+                "status": "completed",
+                "detail": f"Matched {len(person_names)} names → {len(face_ids)} faces",
+                "data": {
+                    "names_searched": person_names,
+                    "faces_matched": len(face_ids),
+                }
+            },
+            {
+                "step": "Query Expansion",
+                "status": "completed",
+                "detail": f"Expanded to {len(search_text)} chars",
+                "data": {
+                    "expanded_text": search_text[:200] + "..." if len(search_text) > 200 else search_text,
+                }
+            },
+            {
+                "step": "Vector Search",
+                "status": "completed",
+                "detail": f"{'Fallback: ' + fallback_used if fallback_used else 'scenes'} → {len(candidates)} results",
+                "data": {
+                    "collection_searched": fallback_used or "scenes",
+                    "fallback_used": fallback_used is not None,
+                    "candidates_found": len(candidates),
+                }
+            },
+            {
+                "step": "LLM Reranking",
+                "status": "completed" if use_reranking else "skipped",
+                "detail": f"{'Applied' if use_reranking else 'Disabled'} → {len(candidates[:limit])} final results",
+                "data": {
+                    "enabled": use_reranking,
+                    "final_count": len(candidates[:limit]),
+                }
+            },
+        ]
+        
         reasoning_chain = {
             "step1_parse": f"Parsed '{query[:50]}...' → dynamic entities",
             "step2_identity": f"Resolved: {person_names} → {len(face_ids)} faces",
             "step3_expand": f"Search text: {search_text[:80]}...",
-            "step4_retrieve": f"Retrieved {len(candidates)} candidates",
+            "step4_retrieve": f"Retrieved {len(candidates)} candidates from {fallback_used or 'scenes'}",
             "step5_rerank": f"Reranking={use_reranking}, final={len(candidates[:limit])}",
         }
         log(f"[SOTA Search] Reasoning: {reasoning_chain}")
@@ -741,7 +791,9 @@ class SearchAgent:
             "result_count": len(candidates[:limit]),
             "search_type": "sota",
             "reranking_used": use_reranking,
+            "fallback_used": fallback_used,
             "reasoning_chain": reasoning_chain,
+            "pipeline_steps": pipeline_steps,
         }
 
     @observe("scenelet_search")

@@ -109,8 +109,20 @@ export const Voices: React.FC = () => {
         getVoiceSegments(undefined, 500),
         getVoiceClusters(),
       ]);
-      setSegments(segData.segments || []);
-      setClusters(clusterData.clusters || []);
+
+      // Filter out segments without audio_path (incomplete data)
+      const validSegments = (segData.segments || []).filter(
+        (s: VoiceSegment) => s.audio_path && s.speaker_label
+      );
+      setSegments(validSegments);
+
+      // Also filter segments within clusters
+      const validClusters = (clusterData.clusters || []).map((c: VoiceCluster) => ({
+        ...c,
+        segments: (c.segments || []).filter((s: VoiceSegment) => s.audio_path),
+        segment_count: (c.segments || []).filter((s: VoiceSegment) => s.audio_path).length,
+      })).filter((c: VoiceCluster) => c.segment_count > 0);  // Remove empty clusters
+      setClusters(validClusters);
 
       try {
         const names = await getAllNames();

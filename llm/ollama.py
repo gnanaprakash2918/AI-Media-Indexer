@@ -38,23 +38,35 @@ class OllamaLLM(LLMInterface):
     def __init__(
         self,
         model_name: str | None = None,
+        text_model_name: str | None = None,
         base_url_env: str = "OLLAMA_BASE_URL",
         prompt_dir: str = "./prompts",
     ):
-        """Initialize the Ollama AsyncClient.
+        """Initialize the Ollama AsyncClient with dual-model support.
 
         Args:
-            model_name: Optional model override.
+            model_name: Vision model for image analysis (default: llava:7b).
+            text_model_name: Text model for JSON/reranking (default: llama3.1).
             base_url_env: Environment variable name for the base URL.
             prompt_dir: Prompt template directory.
+        
+        Notes:
+            Ollama uses lazy loading - models are loaded/unloaded as needed,
+            so having two models configured doesn't consume extra VRAM unless
+            both are being used simultaneously.
         """
         super().__init__(prompt_dir=prompt_dir)
 
-        self.model = model_name or os.getenv("OLLAMA_MODEL", "llava:7b")
+        # Vision model for describe_image tasks (needs multimodal capability)
+        self.model = model_name or os.getenv("OLLAMA_VISION_MODEL", os.getenv("OLLAMA_MODEL", "llava:7b"))
+        
+        # Text model for structured JSON output (better at following schemas)
+        self.text_model = text_model_name or os.getenv("OLLAMA_TEXT_MODEL", "llama3.1")
+        
         base_url = os.getenv(base_url_env, "http://localhost:11434")
 
         print(
-            f"Initializing Ollama client with model={self.model}, base_url={base_url}"
+            f"Initializing Ollama client with vision_model={self.model}, text_model={self.text_model}, base_url={base_url}"
         )
 
         # Initialize class-level semaphore if not already done
@@ -182,7 +194,7 @@ class OllamaLLM(LLMInterface):
             for attempt in range(self.MAX_RETRIES):
                 try:
                     resp = await self.client.chat(
-                        model=self.model,
+                        model=self.text_model,  # Use text model for text generation
                         messages=[{"role": "user", "content": prompt}],
                         options={"temperature": kwargs.get("temperature", 0.0)},
                     )
@@ -240,7 +252,7 @@ class OllamaLLM(LLMInterface):
                     # Try Ollama 0.5+ schema-based format first
                     try:
                         resp = await self.client.chat(
-                            model=self.model,
+                            model=self.text_model,  # Use text model for structured JSON
                             messages=[{"role": "user", "content": full_prompt}],
                             options={"temperature": kwargs.get("temperature", 0.0)},
                             format=json_schema,  # Ollama 0.5+ native schema
@@ -250,7 +262,7 @@ class OllamaLLM(LLMInterface):
                         if "format" in str(schema_err) or "schema" in str(schema_err).lower():
                             print("[Ollama] Schema format not supported, using json mode")
                             resp = await self.client.chat(
-                                model=self.model,
+                                model=self.text_model,  # Use text model for structured JSON
                                 messages=[{"role": "user", "content": full_prompt}],
                                 options={"temperature": kwargs.get("temperature", 0.0)},
                                 format="json",  # Fallback to simple JSON mode

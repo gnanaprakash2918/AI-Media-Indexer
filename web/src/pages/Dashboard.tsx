@@ -41,13 +41,18 @@ import {
 } from '../api/client';
 
 interface Stats {
-  collections: {
-    media_segments: { points_count: number };
-    media_frames: { points_count: number };
-    faces: { points_count: number };
-    voice_segments: { points_count: number };
+  frames: number;
+  faces: number;
+  voice_segments: number;
+  videos: number;
+  // Legacy nested format (fallback)
+  collections?: {
+    media_segments?: { points_count: number };
+    media_frames?: { points_count: number };
+    faces?: { points_count: number };
+    voice_segments?: { points_count: number };
   };
-  jobs: {
+  jobs?: {
     active: number;
     completed: number;
     failed: number;
@@ -187,7 +192,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             title="Visual Frames"
-            value={data?.collections?.media_frames?.points_count ?? 0}
+            value={data?.frames ?? data?.collections?.media_frames?.points_count ?? 0}
             icon={<VideoLibrary />}
             color="#8b5cf6"
           />
@@ -195,7 +200,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             title="Faces Detected"
-            value={data?.collections?.faces?.points_count ?? 0}
+            value={data?.faces ?? data?.collections?.faces?.points_count ?? 0}
             icon={<Face />}
             color="#ec4899"
           />
@@ -203,7 +208,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             title="Voice Segments"
-            value={data?.collections?.voice_segments?.points_count ?? 0}
+            value={data?.voice_segments ?? data?.collections?.voice_segments?.points_count ?? 0}
             icon={<RecordVoiceOver />}
             color="#10b981"
           />

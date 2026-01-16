@@ -20,10 +20,18 @@ import { Search as SearchIcon, PlayArrow, Psychology } from '@mui/icons-material
 
 import { searchHybrid, searchGranular, getLibrary, type SearchResult } from '../api/client';
 import { MediaCard } from '../components/media/MediaCard';
+import { SearchDebugPanel } from '../components/search/SearchDebugPanel';
 
 interface SearchStats {
   total: number;
   duration_seconds: number;
+}
+
+interface PipelineStep {
+  step: string;
+  status: 'completed' | 'running' | 'pending' | 'skipped';
+  detail: string;
+  data?: Record<string, any>;
 }
 
 interface SearchResponse {
@@ -31,6 +39,11 @@ interface SearchResponse {
   video_filter: string | null;
   results: SearchResult[];
   stats: SearchStats;
+  // Debug/Transparency fields
+  pipeline_steps?: PipelineStep[];
+  reasoning_chain?: Record<string, string>;
+  search_text?: string;
+  fallback_used?: string | null;
 }
 
 export default function SearchPage() {
@@ -183,7 +196,7 @@ export default function SearchPage() {
 
       {/* Stats Bar */}
       {stats && (
-        <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
+        <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
           <strong>"{lastQuery}"</strong>: {stats.total} results
           {selectedVideo && (
             <> (filtered to {selectedVideo.split(/[/\\]/).pop()})</>
@@ -192,6 +205,18 @@ export default function SearchPage() {
             <> | Search time: {(stats.duration_seconds * 1000).toFixed(0)}ms</>
           )}
         </Alert>
+      )}
+
+      {/* Search Debug Panel - Shows pipeline transparency */}
+      {search.data?.pipeline_steps && search.data.pipeline_steps.length > 0 && (
+        <SearchDebugPanel
+          pipelineSteps={search.data.pipeline_steps}
+          reasoningChain={search.data.reasoning_chain}
+          searchText={search.data.search_text}
+          fallbackUsed={search.data.fallback_used}
+          durationMs={stats ? stats.duration_seconds * 1000 : undefined}
+          isLoading={search.isPending}
+        />
       )}
 
       {/* Results */}

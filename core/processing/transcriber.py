@@ -616,6 +616,7 @@ class AudioTranscriber:
         out_srt: Path,
         offset: float,
         is_temp_file: bool = False,
+        force_lyrics: bool = False,
     ) -> list[dict[str, Any]] | None:
         chunks: list[dict[str, Any]] = []
 
@@ -638,6 +639,7 @@ class AudioTranscriber:
 
             log(
                 f"[INFO] Running Inference on {audio_path} with {model_to_use}."
+                + (" (lyrics mode)" if force_lyrics else "")
             )
 
             # Language locking: detect once, force for all chunks
@@ -648,6 +650,10 @@ class AudioTranscriber:
                 else:
                     effective_lang = None  # Auto-detect on first run
 
+            # VAD settings: disable for lyrics mode to capture singing/music
+            vad_enabled = not force_lyrics
+            no_speech_thresh = 0.9 if force_lyrics else 0.6  # More permissive for lyrics
+            
             segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
                 str(audio_path),
                 batch_size=settings.batch_size,
@@ -655,17 +661,17 @@ class AudioTranscriber:
                 task="transcribe",
                 beam_size=3,
                 condition_on_previous_text=False,
-                initial_prompt=None,
+                initial_prompt="♪" if force_lyrics else None,  # Hint that this is music
                 repetition_penalty=1.2,
                 word_timestamps=True,
-                vad_filter=True,
+                vad_filter=vad_enabled,
                 vad_parameters={
-                    "min_speech_duration_ms": 100,  # Lowered to capture short utterances
-                    "min_silence_duration_ms": 500,
-                    "speech_pad_ms": 800,           # Increased padding context
-                    "threshold": 0.3,               # Lowered threshold for quiet speech
+                    "min_speech_duration_ms": 50 if force_lyrics else 100,
+                    "min_silence_duration_ms": 300 if force_lyrics else 500,
+                    "speech_pad_ms": 1000 if force_lyrics else 800,
+                    "threshold": 0.15 if force_lyrics else 0.3,
                 },
-                no_speech_threshold=0.6,
+                no_speech_threshold=no_speech_thresh,
                 log_prob_threshold=-1.0,
             )
 
@@ -740,9 +746,10 @@ class AudioTranscriber:
         out_srt: Path,
         offset: float,
         is_temp_file: bool = False,
+        force_lyrics: bool = False,
     ) -> list[dict[str, Any]] | None:
         """Alias for _inference for backwards compatibility."""
-        return self._inference(audio_path, lang, out_srt, offset, is_temp_file)
+        return self._inference(audio_path, lang, out_srt, offset, is_temp_file, force_lyrics)
 
     @observe("language_detection")
     def detect_language(self, audio_path: Path) -> str:

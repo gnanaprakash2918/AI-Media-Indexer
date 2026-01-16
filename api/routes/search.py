@@ -113,6 +113,11 @@ async def hybrid_search(
                 },
                 "parsed": result.get("parsed", {}),
                 "search_type": "sota",
+                # Debug/Transparency fields for frontend panel
+                "pipeline_steps": result.get("pipeline_steps", []),
+                "reasoning_chain": result.get("reasoning_chain", {}),
+                "search_text": result.get("search_text", q),
+                "fallback_used": result.get("fallback_used"),
             }
         else:
             # Fallback to Hybrid Search (Vector + Text)
@@ -561,6 +566,37 @@ async def granular_search(
         duration = time.perf_counter() - start_time_search
 
         # Build response
+        # Build pipeline_steps for debug panel
+        pipeline_steps = [
+            {
+                "step": "Query Decomposition",
+                "status": "completed",
+                "detail": f"Parsed {len(results[0].get('decomposed_constraints', []))} constraints" if results else "No constraints",
+                "data": {
+                    "word_count": word_count,
+                    "modalities": results[0].get("query_modalities", []) if results else [],
+                }
+            },
+            {
+                "step": "Multi-Vector Search",
+                "status": "completed",
+                "detail": f"Found {len(results)} candidates",
+                "data": {
+                    "collection": "media_frames",
+                    "enable_rerank": enable_rerank,
+                }
+            },
+            {
+                "step": "LLM Reranking",
+                "status": "completed" if enable_rerank else "skipped",
+                "detail": f"{'Applied' if enable_rerank else 'Disabled'} → {len(results)} final results",
+                "data": {
+                    "enabled": enable_rerank,
+                    "final_count": len(results),
+                }
+            },
+        ]
+
         response = {
             "query": query,
             "query_word_count": word_count,
@@ -572,6 +608,9 @@ async def granular_search(
                 "constraints_parsed": len(results[0].get("decomposed_constraints", [])) if results else 0,
                 "reranking_enabled": enable_rerank,
             },
+            # Debug/Transparency fields
+            "pipeline_steps": pipeline_steps,
+            "search_text": query,
         }
 
         if show_reasoning and results:

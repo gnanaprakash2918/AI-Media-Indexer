@@ -63,7 +63,7 @@ function InnerVideoPlayer({
 
   // Video URL - always use the direct media endpoint (no encoding)
   const videoUrl = useMemo(() => {
-    return `http://localhost:8000/stream?path=${encodeURIComponent(videoPath)}`;
+    return `http://localhost:8000/media?path=${encodeURIComponent(videoPath)}`;
   }, [videoPath]);
 
   // Handle video loaded - seek to segment start
@@ -144,16 +144,32 @@ function InnerVideoPlayer({
       <DialogContent sx={{ p: 0, position: 'relative' }}>
         {error ? (
           <Box sx={{ p: 4, textAlign: 'center' }}>
-            <Typography color="error">
-              Unable to play video. File may not be accessible.
+            <Typography color="error" gutterBottom>
+              Unable to play video
             </Typography>
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ mt: 1, display: 'block' }}
+              sx={{ display: 'block', mb: 1 }}
             >
-              Path: {videoPath}
+              Path: {videoPath || '(empty)'}
             </Typography>
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.7rem' }}
+            >
+              URL: {videoUrl}
+            </Typography>
+            {!videoPath && (
+              <Typography
+                variant="body2"
+                color="warning.main"
+                sx={{ mt: 2 }}
+              >
+                ⚠️ Video path is empty. This may be a data issue with scenelets.
+              </Typography>
+            )}
           </Box>
         ) : (
           <>
