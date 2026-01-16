@@ -232,6 +232,110 @@ class TemporalAnalyzer:
         log.info("[TimeSformer] Resources released")
 
 
+class TemporalMotionAnalyzer:
+    """Frame-level motion analysis for temporal queries.
+    
+    Complements TimeSformer action recognition with low-level motion
+    detection useful for queries like "pin wobbling 500-2000ms before falling".
+    
+    Usage:
+        analyzer = TemporalMotionAnalyzer()
+        result = analyzer.analyze_motion(frame1, frame2)
+        # {"motion_intensity": "moderate", "motion_score": 32.5}
+    """
+    
+    def __init__(
+        self,
+        motion_threshold_low: float = 10.0,
+        motion_threshold_high: float = 50.0,
+    ):
+        """Initialize motion analyzer."""
+        import cv2
+        self.cv2 = cv2
+        self.motion_threshold_low = motion_threshold_low
+        self.motion_threshold_high = motion_threshold_high
+    
+    def analyze_motion(
+        self,
+        frame1: np.ndarray,
+        frame2: np.ndarray,
+    ) -> dict[str, Any]:
+        """Analyze motion between two consecutive frames."""
+        gray1 = self._to_gray(frame1)
+        gray2 = self._to_gray(frame2)
+        
+        if gray1.shape != gray2.shape:
+            gray1 = self.cv2.resize(gray1, (gray2.shape[1], gray2.shape[0]))
+        
+        diff = self.cv2.absdiff(gray1, gray2)
+        motion_score = float(np.mean(diff))
+        
+        if motion_score < self.motion_threshold_low:
+            intensity = "static"
+        elif motion_score < self.motion_threshold_high:
+            intensity = "moderate"
+        else:
+            intensity = "high"
+        
+        return {
+            "motion_score": motion_score,
+            "motion_intensity": intensity,
+        }
+    
+    def detect_delayed_events(
+        self,
+        frames: list[np.ndarray],
+        fps: float = 30.0,
+        min_delay_ms: int = 500,
+        max_delay_ms: int = 2000,
+    ) -> list[dict[str, Any]]:
+        """Detect events with specific delays (e.g., 'wobbling 500-2000ms')."""
+        if len(frames) < 2:
+            return []
+        
+        delayed_events = []
+        frame_duration_ms = 1000 / fps
+        min_frames = int(min_delay_ms / frame_duration_ms)
+        max_frames = int(max_delay_ms / frame_duration_ms)
+        
+        moderate_start = None
+        moderate_start_idx = None
+        
+        for i in range(1, len(frames)):
+            motion = self.analyze_motion(frames[i-1], frames[i])
+            
+            if motion["motion_intensity"] == "moderate":
+                if moderate_start is None:
+                    moderate_start = i * frame_duration_ms
+                    moderate_start_idx = i
+            
+            elif motion["motion_intensity"] == "high":
+                if moderate_start is not None:
+                    delay_frames = i - moderate_start_idx
+                    if min_frames <= delay_frames <= max_frames:
+                        delayed_events.append({
+                            "type": "delayed_transition",
+                            "start_ms": moderate_start,
+                            "end_ms": i * frame_duration_ms,
+                            "delay_ms": i * frame_duration_ms - moderate_start,
+                        })
+                moderate_start = None
+                moderate_start_idx = None
+            
+            elif motion["motion_intensity"] == "static":
+                moderate_start = None
+                moderate_start_idx = None
+        
+        log.info(f"[Temporal] Found {len(delayed_events)} delayed events")
+        return delayed_events
+    
+    def _to_gray(self, frame: np.ndarray) -> np.ndarray:
+        """Convert frame to grayscale."""
+        if len(frame.shape) == 2:
+            return frame
+        return self.cv2.cvtColor(frame, self.cv2.COLOR_RGB2GRAY)
+
+
 def extract_temporal_clips(
     video_path: str,
     clip_duration: float = 5.0,

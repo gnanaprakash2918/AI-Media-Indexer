@@ -539,6 +539,119 @@ class IngestionPipeline:
             except Exception:
                 pass
 
+        # ============================================================
+        # CLAP AUDIO EVENT DETECTION: Previously dead code - now wired!
+        # Detects non-speech sounds: bells, cheers, sirens, applause, etc.
+        # ============================================================
+        try:
+            if self.enhanced_config and getattr(self.enhanced_config, 'enable_clap', False):
+                from core.processing.audio_events import AudioEventDetector
+                import librosa
+                
+                log("[CLAP] Starting audio event detection...")
+                audio_detector = AudioEventDetector()
+                
+                # Load audio for CLAP (16kHz mono)
+                try:
+                    audio_array, sr = librosa.load(str(path), sr=16000, mono=True)
+                    
+                    # Process in 2-second chunks to detect events with timestamps
+                    chunk_duration = 2.0
+                    chunk_samples = int(chunk_duration * sr)
+                    audio_events = []
+                    
+                    for i in range(0, len(audio_array), chunk_samples):
+                        chunk = audio_array[i:i + chunk_samples]
+                        if len(chunk) < sr:  # Skip chunks < 1 second
+                            continue
+                        
+                        start_time = i / sr
+                        events = await audio_detector.detect_events(
+                            chunk, 
+                            sample_rate=sr,
+                            top_k=3,
+                            threshold=0.25
+                        )
+                        
+                        for event in events:
+                            if event.get("event") not in ("speech", "silence"):
+                                audio_events.append({
+                                    "event": event["event"],
+                                    "confidence": event["confidence"],
+                                    "start": start_time,
+                                    "end": start_time + chunk_duration,
+                                })
+                    
+                    if audio_events:
+                        log(f"[CLAP] Detected {len(audio_events)} audio events: {[e['event'] for e in audio_events[:5]]}")
+                        # Store audio events in database
+                        for event in audio_events:
+                            self.db.insert_audio_event(
+                                media_path=str(path),
+                                event_type=event["event"],
+                                start_time=event["start"],
+                                end_time=event["end"],
+                                confidence=event["confidence"],
+                            )
+                    else:
+                        log("[CLAP] No non-speech audio events detected")
+                        
+                except Exception as e:
+                    log(f"[CLAP] Audio loading failed: {e}")
+        except Exception as e:
+            log(f"[CLAP] Audio event detection failed: {e}")
+
+        # ============================================================
+        # AUDIO LOUDNESS ANALYSIS: Detect loud moments (e.g., "92dB cheer")
+        # Uses pyloudnorm for ITU-R BS.1770-4 compliant loudness measurement
+        # ============================================================
+        try:
+            from core.processing.audio_levels import AudioLoudnessAnalyzer
+            
+            log("[Loudness] Starting audio level analysis...")
+            loudness_analyzer = AudioLoudnessAnalyzer()
+            
+            # Load audio if not already loaded
+            if 'audio_array' not in locals():
+                import librosa
+                audio_array, sr = librosa.load(str(path), sr=16000, mono=True)
+            
+            # Analyze overall loudness
+            loudness_result = await loudness_analyzer.analyze(audio_array)
+            log(f"[Loudness] Overall: {loudness_result['estimated_spl']} dB SPL ({loudness_result['loudness_category']})")
+            
+            # Detect loud moments (useful for queries like "crowd cheer at 92dB")
+            loud_moments = await loudness_analyzer.detect_loud_moments(
+                audio_array, 
+                threshold_spl=80,  # Detect moments above 80 dB
+            )
+            
+            if loud_moments:
+                log(f"[Loudness] Found {len(loud_moments)} loud moments")
+                # Store loud moments in database
+                for moment in loud_moments:
+                    self.db.insert_audio_event(
+                        media_path=str(path),
+                        event_type=f"loud_moment_{moment['category']}",
+                        start_time=moment["start"],
+                        end_time=moment["end"],
+                        confidence=0.9,  # High confidence for dB-based detection
+                        payload={"peak_spl": moment["peak_spl"]},
+                    )
+            
+            # Store overall loudness in media metadata
+            self.db.update_media_metadata(
+                media_path=str(path),
+                metadata={
+                    "loudness_lufs": loudness_result["lufs"],
+                    "peak_db": loudness_result["peak_db"],
+                    "estimated_spl": loudness_result["estimated_spl"],
+                    "loudness_category": loudness_result["loudness_category"],
+                },
+            )
+        except Exception as e:
+            log(f"[Loudness] Analysis failed: {e}")
+
         self._cleanup_memory()
 
     async def _detect_audio_language(self, path: Path) -> str:
@@ -1473,8 +1586,29 @@ class IngestionPipeline:
 
             video_context = "\n".join(video_context_parts)
 
-            # Initialize ocr_text outside try block to prevent unbound variable
+            # ============================================================
+            # OCR WIRING FIX: Previously dead code - now actually called!
+            # Uses text_gate to avoid running expensive OCR on frames without text
+            # ============================================================
             ocr_text = ""
+            ocr_boxes = []
+            try:
+                # Load frame as numpy array (Windows path safe)
+                frame_data = np.fromfile(str(frame_path), dtype=np.uint8)
+                frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
+                
+                if frame_img is not None:
+                    # Gate: Only run OCR if frame likely contains text (edge density check)
+                    if self.text_gate.has_text(frame_img):
+                        ocr_result = await self.ocr_engine.extract_text(frame_img)
+                        if ocr_result and ocr_result.get("text"):
+                            ocr_text = ocr_result["text"]
+                            ocr_boxes = ocr_result.get("boxes", [])
+                            logger.info(f"[OCR] Extracted: {ocr_text[:100]}...")
+                        else:
+                            logger.debug("[OCR] No text found in gated frame")
+            except Exception as e:
+                logger.warning(f"[OCR] Failed: {e}")
 
             # Run structured vision analysis
             analysis = await self.vision.analyze_frame(
@@ -1624,6 +1758,15 @@ class IngestionPipeline:
 
             if faces_metadata:
                 payload["faces"] = faces_metadata
+
+            # ============================================================
+            # OCR BOXES: Store bounding boxes for UI overlay
+            # Enables drawing text regions on video player
+            # ============================================================
+            if ocr_text:
+                payload["ocr_text"] = ocr_text
+            if ocr_boxes:
+                payload["ocr_boxes"] = ocr_boxes
 
             # 3e. Add temporal context for video-aware search (not isolated frames)
             # This enables queries like "pin falling slowly" by connecting adjacent frames
