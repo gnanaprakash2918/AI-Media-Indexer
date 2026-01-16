@@ -354,6 +354,20 @@ class IngestionPipeline:
         # Run ASR if no existing subtitles
         if not audio_segments:
             await resource_manager.throttle_if_needed("compute")
+            
+            # Content Classification (speech/music/silence detection)
+            use_lyrics_mode = False
+            try:
+                from core.processing.content_classifier import get_content_classifier
+                classifier = get_content_classifier()
+                content_regions = classifier.classify(path)
+                
+                if content_regions:
+                    use_lyrics_mode = classifier.should_use_lyrics_mode(content_regions)
+                    if use_lyrics_mode:
+                        log("[Audio] High music content detected - will use lyrics mode")
+            except Exception as e:
+                log(f"[Audio] Content classification skipped: {e}")
 
             # Auto-detect language if enabled
             detected_lang = "en"
@@ -438,7 +452,8 @@ class IngestionPipeline:
                         indic_transcriber.unload_model()
             else:
                 # Use Whisper for English and other languages
-                log(f"[Audio] Using Whisper turbo for '{detected_lang}'")
+                log(f"[Audio] Using Whisper turbo for '{detected_lang}'" + 
+                    (" (lyrics mode)" if use_lyrics_mode else ""))
                 try:
                     with AudioTranscriber() as transcriber:
                         async with RESOURCE_ARBITER.acquire(
@@ -446,10 +461,22 @@ class IngestionPipeline:
                         ):
                             audio_segments = (
                                 transcriber.transcribe(
-                                    path, language=detected_lang
+                                    path, language=detected_lang,
+                                    force_lyrics=use_lyrics_mode,
                                 )
                                 or []
                             )
+                            
+                            # Auto-retry with lyrics mode if no segments and wasn't already lyrics mode
+                            if not audio_segments and not use_lyrics_mode:
+                                log("[Audio] No segments found, retrying with lyrics mode...")
+                                audio_segments = (
+                                    transcriber.transcribe(
+                                        path, language=detected_lang,
+                                        force_lyrics=True,
+                                    )
+                                    or []
+                                )
                 except Exception as e:
                     log(f"[Audio] Whisper failed: {e}")
 

@@ -568,6 +568,7 @@ class AudioTranscriber:
         output_path: Path | None = None,
         start_time: float = 0.0,
         end_time: float | None = None,
+        force_lyrics: bool = False,
     ) -> list[dict[str, Any]] | None:
         if not audio_path.exists():
             log(f"[ERROR] Input file not found: {audio_path}")
@@ -576,8 +577,8 @@ class AudioTranscriber:
         lang = language or settings.language
         out_srt = output_path or audio_path.with_suffix(".srt")
 
-        # Existing Sidecar / Embedded Subtitles
-        if start_time == 0.0 and end_time is None:
+        # Existing Sidecar / Embedded Subtitles (skip for lyrics mode)
+        if start_time == 0.0 and end_time is None and not force_lyrics:
             if self._find_existing_subtitles(
                 audio_path, out_srt, subtitle_path, lang or "en"
             ):
@@ -600,6 +601,7 @@ class AudioTranscriber:
                 out_srt,
                 start_time,
                 is_sliced,
+                force_lyrics=force_lyrics,
             )
         finally:
             if is_sliced and proc_path.exists():
