@@ -52,6 +52,14 @@ export default function SearchPage() {
   const [selectedVideo, setSelectedVideo] = useState<string>('');
   const [deepSearch, setDeepSearch] = useState(false);
 
+  // Overlay visibility toggles
+  const [overlayToggles, setOverlayToggles] = useState({
+    faces: true,
+    text: true,
+    objects: true,
+    speakers: true,
+  });
+
   // Fetch indexed videos for filter dropdown
   const { data: libraryData } = useQuery({
     queryKey: ['library'],
@@ -191,6 +199,45 @@ export default function SearchPage() {
               sx={{ fontWeight: 700 }}
             />
           </Box>
+        </Box>
+
+        {/* Overlay Toggle Buttons */}
+        <Box sx={{ maxWidth: 600, mx: 'auto', mt: 2, display: 'flex', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ width: '100%', textAlign: 'center', mb: 0.5 }}>
+            Video Overlays:
+          </Typography>
+          <Chip
+            label="Faces"
+            size="small"
+            color={overlayToggles.faces ? "success" : "default"}
+            variant={overlayToggles.faces ? "filled" : "outlined"}
+            onClick={() => setOverlayToggles(prev => ({ ...prev, faces: !prev.faces }))}
+            sx={{ fontWeight: 600 }}
+          />
+          <Chip
+            label="Text/OCR"
+            size="small"
+            color={overlayToggles.text ? "info" : "default"}
+            variant={overlayToggles.text ? "filled" : "outlined"}
+            onClick={() => setOverlayToggles(prev => ({ ...prev, text: !prev.text }))}
+            sx={{ fontWeight: 600 }}
+          />
+          <Chip
+            label="Objects"
+            size="small"
+            color={overlayToggles.objects ? "error" : "default"}
+            variant={overlayToggles.objects ? "filled" : "outlined"}
+            onClick={() => setOverlayToggles(prev => ({ ...prev, objects: !prev.objects }))}
+            sx={{ fontWeight: 600 }}
+          />
+          <Chip
+            label="Speakers"
+            size="small"
+            color={overlayToggles.speakers ? "warning" : "default"}
+            variant={overlayToggles.speakers ? "filled" : "outlined"}
+            onClick={() => setOverlayToggles(prev => ({ ...prev, speakers: !prev.speakers }))}
+            sx={{ fontWeight: 600 }}
+          />
         </Box>
       </Box>
 

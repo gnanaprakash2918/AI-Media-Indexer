@@ -70,7 +70,7 @@ dependencies = [
     "easyocr>=1.7.1",
     "instructor>=1.13.0",
     "pytest>=9.0.2",
-    "pynvml>=11.5.0",
+    "nvidia-ml-py>=12.535.0",
     "celery[redis]>=5.3.6",
     "redis>=5.0.1",
     "sam3 @ git+https://github.com/facebookresearch/sam3.git",

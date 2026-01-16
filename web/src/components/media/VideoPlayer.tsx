@@ -12,7 +12,14 @@ import {
 import { Close, Loop, AllInclusive } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
-import { getMasklets } from '../../api/client';
+import { getMasklets, getOverlays, type VideoOverlays, type OverlayItem } from '../../api/client';
+
+export interface OverlayToggles {
+  faces: boolean;
+  text: boolean;
+  objects: boolean;
+  speakers: boolean;
+}
 
 interface VideoPlayerProps {
   videoPath: string;
@@ -20,16 +27,19 @@ interface VideoPlayerProps {
   endTime?: number;
   open: boolean;
   onClose: () => void;
+  overlayToggles?: OverlayToggles;
 }
 
 function InnerVideoPlayer({
   videoPath,
   startTime,
   endTime,
+  overlayToggles,
 }: {
   videoPath: string;
   startTime?: number;
   endTime?: number;
+  overlayToggles?: OverlayToggles;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState(false);
@@ -42,6 +52,13 @@ function InnerVideoPlayer({
   const masklets = useQuery({
     queryKey: ['masklets', videoPath],
     queryFn: () => getMasklets(videoPath),
+    enabled: !!videoPath,
+  });
+
+  // Fetch overlays for canvas visualization
+  const overlays = useQuery({
+    queryKey: ['overlays', videoPath],
+    queryFn: () => getOverlays(videoPath),
     enabled: !!videoPath,
   });
 
@@ -60,6 +77,40 @@ function InnerVideoPlayer({
       currentTime >= m.start_time && currentTime <= m.end_time
     );
   }, [masklets.data, currentTime]);
+
+  // Filter overlays active at current time (±0.5s tolerance)
+  const activeOverlays = useMemo(() => {
+    if (!overlays.data || !overlayToggles) return [];
+
+    const tolerance = 0.5;
+    const items: Array<OverlayItem & { type: string }> = [];
+
+    if (overlayToggles.faces && overlays.data.faces) {
+      overlays.data.faces
+        .filter((o: OverlayItem) => Math.abs(o.timestamp - currentTime) <= tolerance)
+        .forEach((o: OverlayItem) => items.push({ ...o, type: 'face' }));
+    }
+
+    if (overlayToggles.text && overlays.data.text_regions) {
+      overlays.data.text_regions
+        .filter((o: OverlayItem) => Math.abs(o.timestamp - currentTime) <= tolerance)
+        .forEach((o: OverlayItem) => items.push({ ...o, type: 'text' }));
+    }
+
+    if (overlayToggles.objects && overlays.data.objects) {
+      overlays.data.objects
+        .filter((o: OverlayItem) => Math.abs(o.timestamp - currentTime) <= tolerance)
+        .forEach((o: OverlayItem) => items.push({ ...o, type: 'object' }));
+    }
+
+    if (overlayToggles.speakers && overlays.data.active_speakers) {
+      overlays.data.active_speakers
+        .filter((o: OverlayItem) => Math.abs(o.timestamp - currentTime) <= tolerance)
+        .forEach((o: OverlayItem) => items.push({ ...o, type: 'speaker' }));
+    }
+
+    return items;
+  }, [overlays.data, overlayToggles, currentTime]);
 
   // Video URL - always use the direct media endpoint (no encoding)
   const videoUrl = useMemo(() => {
@@ -251,6 +302,51 @@ function InnerVideoPlayer({
                   ))}
                 </svg>
               )}
+
+              {/* Dynamic Overlays (Faces/Text/Objects/Speakers) */}
+              {activeOverlays.length > 0 && (
+                <svg
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    pointerEvents: 'none',
+                    zIndex: 3,
+                  }}
+                  viewBox="0 0 1920 1080"
+                  preserveAspectRatio="xMidYMid slice"
+                >
+                  {activeOverlays.map((o, i) => (
+                    <g key={`${o.type}-${i}`}>
+                      <rect
+                        x={o.bbox[0]}
+                        y={o.bbox[1]}
+                        width={o.bbox[2] - o.bbox[0]}
+                        height={o.bbox[3] - o.bbox[1]}
+                        fill="none"
+                        stroke={o.color}
+                        strokeWidth="3"
+                        strokeDasharray={o.type === 'speaker' ? '5,5' : 'none'}
+                        style={{ filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.7))' }}
+                      />
+                      {(o.label || o.text) && (
+                        <text
+                          x={o.bbox[0]}
+                          y={o.bbox[1] - 8}
+                          fill={o.color}
+                          fontSize="18"
+                          fontWeight="bold"
+                          style={{ textShadow: '0 0 4px rgba(0,0,0,0.9)' }}
+                        >
+                          {o.label || o.text}
+                        </text>
+                      )}
+                    </g>
+                  ))}
+                </svg>
+              )}
             </Box>
           </>
         )}
@@ -325,6 +421,7 @@ export function VideoPlayer({
   endTime,
   open,
   onClose,
+  overlayToggles,
 }: VideoPlayerProps) {
   return (
     <Dialog
@@ -364,6 +461,7 @@ export function VideoPlayer({
         videoPath={videoPath}
         startTime={startTime}
         endTime={endTime}
+        overlayToggles={overlayToggles}
       />
     </Dialog>
   );

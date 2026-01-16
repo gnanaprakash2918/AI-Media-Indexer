@@ -298,6 +298,43 @@ export const getVideoSummary = async (videoPath: string) => {
   return res.data;
 };
 
+// Overlays for video visualization
+export interface OverlayItem {
+  timestamp: number;
+  bbox: number[];
+  label?: string;
+  text?: string;
+  color: string;
+  confidence?: number;
+}
+
+export interface VideoOverlays {
+  video_id: string;
+  faces: OverlayItem[];
+  text_regions: OverlayItem[];
+  objects: OverlayItem[];
+  active_speakers: OverlayItem[];
+  clothing?: OverlayItem[];
+  loudness_events?: Array<{
+    timestamp: number;
+    spl_db: number;
+    lufs: number;
+    category: string;
+  }>;
+}
+
+export const getOverlays = async (
+  videoPath: string,
+  startTime?: number,
+  endTime?: number,
+): Promise<VideoOverlays> => {
+  const videoId = encodeURIComponent(videoPath);
+  const res = await apiClient.get(`/overlays/${videoId}`, {
+    params: { start_time: startTime, end_time: endTime }
+  });
+  return res.data;
+};
+
 // Library
 export const getLibrary = async () => {
   const res = await apiClient.get('/library');
