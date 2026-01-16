@@ -15,6 +15,7 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Tooltip,
 } from '@mui/material';
 import { Search as SearchIcon, PlayArrow, Psychology } from '@mui/icons-material';
 
@@ -120,11 +121,18 @@ export default function SearchPage() {
         <Typography
           variant="body1"
           color="text.secondary"
-          sx={{ maxWidth: 500, mx: 'auto', mb: 4 }}
+          sx={{ maxWidth: 500, mx: 'auto', mb: 2 }}
         >
           Search by visual description, spoken dialogue, or specific faces.
           <br />
           <strong>Press Enter or click the button to search.</strong>
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          sx={{ maxWidth: 600, mx: 'auto', mb: 3, display: 'block' }}
+        >
+          💡 Try: "Blue shirt", "Running fast", "Clock 10:00 AM", "Crowd cheering", "Person speaking"
         </Typography>
 
         {/* Search Bar - Now requires Enter */}
@@ -204,40 +212,48 @@ export default function SearchPage() {
         {/* Overlay Toggle Buttons */}
         <Box sx={{ maxWidth: 600, mx: 'auto', mt: 2, display: 'flex', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Typography variant="caption" color="text.secondary" sx={{ width: '100%', textAlign: 'center', mb: 0.5 }}>
-            Video Overlays:
+            Video Overlays (shown during playback):
           </Typography>
-          <Chip
-            label="Faces"
-            size="small"
-            color={overlayToggles.faces ? "success" : "default"}
-            variant={overlayToggles.faces ? "filled" : "outlined"}
-            onClick={() => setOverlayToggles(prev => ({ ...prev, faces: !prev.faces }))}
-            sx={{ fontWeight: 600 }}
-          />
-          <Chip
-            label="Text/OCR"
-            size="small"
-            color={overlayToggles.text ? "info" : "default"}
-            variant={overlayToggles.text ? "filled" : "outlined"}
-            onClick={() => setOverlayToggles(prev => ({ ...prev, text: !prev.text }))}
-            sx={{ fontWeight: 600 }}
-          />
-          <Chip
-            label="Objects"
-            size="small"
-            color={overlayToggles.objects ? "error" : "default"}
-            variant={overlayToggles.objects ? "filled" : "outlined"}
-            onClick={() => setOverlayToggles(prev => ({ ...prev, objects: !prev.objects }))}
-            sx={{ fontWeight: 600 }}
-          />
-          <Chip
-            label="Speakers"
-            size="small"
-            color={overlayToggles.speakers ? "warning" : "default"}
-            variant={overlayToggles.speakers ? "filled" : "outlined"}
-            onClick={() => setOverlayToggles(prev => ({ ...prev, speakers: !prev.speakers }))}
-            sx={{ fontWeight: 600 }}
-          />
+          <Tooltip title="Show green boxes around detected faces with names" arrow>
+            <Chip
+              label="🟢 Faces"
+              size="small"
+              color={overlayToggles.faces ? "success" : "default"}
+              variant={overlayToggles.faces ? "filled" : "outlined"}
+              onClick={() => setOverlayToggles(prev => ({ ...prev, faces: !prev.faces }))}
+              sx={{ fontWeight: 600 }}
+            />
+          </Tooltip>
+          <Tooltip title="Show blue boxes around detected text (OCR)" arrow>
+            <Chip
+              label="🔵 Text/OCR"
+              size="small"
+              color={overlayToggles.text ? "info" : "default"}
+              variant={overlayToggles.text ? "filled" : "outlined"}
+              onClick={() => setOverlayToggles(prev => ({ ...prev, text: !prev.text }))}
+              sx={{ fontWeight: 600 }}
+            />
+          </Tooltip>
+          <Tooltip title="Show red boxes around detected objects" arrow>
+            <Chip
+              label="🔴 Objects"
+              size="small"
+              color={overlayToggles.objects ? "error" : "default"}
+              variant={overlayToggles.objects ? "filled" : "outlined"}
+              onClick={() => setOverlayToggles(prev => ({ ...prev, objects: !prev.objects }))}
+              sx={{ fontWeight: 600 }}
+            />
+          </Tooltip>
+          <Tooltip title="Show yellow dashed boxes around active speakers" arrow>
+            <Chip
+              label="🟡 Speakers"
+              size="small"
+              color={overlayToggles.speakers ? "warning" : "default"}
+              variant={overlayToggles.speakers ? "filled" : "outlined"}
+              onClick={() => setOverlayToggles(prev => ({ ...prev, speakers: !prev.speakers }))}
+              sx={{ fontWeight: 600 }}
+            />
+          </Tooltip>
         </Box>
       </Box>
 

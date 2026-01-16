@@ -25,6 +25,50 @@ cp .env.example .env
 
 > For detailed architecture documentation, see [docs/architecture.md](docs/architecture.md)
 
+---
+
+## 🔥 Hyper-Granular Search Engine
+
+This system supports **open-vocabulary** hyper-granular queries that go far beyond basic text search.
+
+### Capabilities
+
+| Module | Technology | Capability |
+|--------|------------|------------|
+| **Clothing/Objects** | CLIP (Open-Vocab) | "cyan tuxedo", "Nike Air Max", any description |
+| **Action Recognition** | TimeSformer (Kinetics-400) | "running", "falling", "dancing", "hugging" |
+| **Audio Events** | CLAP (Open-Vocab) | "duck quacking", "siren", any sound description |
+| **Depth/Distance** | DepthAnything V2 | "person 2 meters away", "close-up" |
+| **Speed Estimation** | RAFT Optical Flow | "running fast", "walking slowly", ">30km/h" |
+| **Clock Reading** | OCR + Geometry | "clock showing 10:00 AM" |
+| **Active Speaker** | Lip Motion Analysis | "person speaking", "who is talking" |
+| **OCR Text** | PaddleOCR/EasyOCR | "Brunswick Sports visible", any on-screen text |
+| **Face Identity** | InsightFace + HITL | "Prakash", named individuals |
+| **Loudness** | pyloudnorm | ">90dB cheer", "loud explosion" |
+
+### Example Queries
+
+| Query | Modules Used |
+|-------|--------------|
+| "Person in red shirt running fast" | Clothing (CLIP) + Action (TimeSformer) |
+| "Crowd cheering > 90dB" | Audio Events (CLAP) + Loudness |
+| "Clock showing 3 PM in background" | Clock Reader + OCR |
+| "Prakash speaking near the door" | Face ID + Active Speaker + Depth |
+| "Blue car moving at high speed" | Clothing (CLIP) + Speed (RAFT) |
+| "Text 'EXIT' visible on sign" | OCR (PaddleOCR) |
+| "Person falling down stairs" | Action (TimeSformer) |
+
+### Video Overlay Visualization
+
+The frontend supports real-time overlay rendering:
+- 🟢 **Face Boxes** - Green bounding boxes with names
+- 🔵 **OCR Text** - Blue boxes around detected text
+- 🔴 **Objects** - Red boxes for detected objects
+- 🟡 **Active Speaker** - Yellow dashed boxes for speaking persons
+
+---
+
+
 ## Architecture Overview
 
 ```mermaid
