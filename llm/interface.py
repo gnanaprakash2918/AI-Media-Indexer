@@ -92,6 +92,18 @@ class LLMInterface(ABC):
         # Remove trailing commas before closing braces/brackets
         text = re.sub(r",\s*([}\]])", r"\1", text)
 
+        # Fix unescaped newlines in string values
+        text = re.sub(r'(?<!\\)\n(?=[^"]*"[^"]*$)', r'\\n', text)
+        
+        # Remove control characters that break JSON
+        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', text)
+        
+        # Fix common Ollama issue: key without quotes
+        text = re.sub(r'(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
+        
+        # Remove duplicate quotes
+        text = text.replace('""', '"')
+
         # Count braces and add missing closing braces
         open_braces = text.count("{") - text.count("}")
         open_brackets = text.count("[") - text.count("]")

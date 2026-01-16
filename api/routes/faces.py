@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from api.deps import get_pipeline
 from core.ingestion.pipeline import IngestionPipeline
@@ -74,7 +75,12 @@ async def get_face_clusters(
         ]
         
         # Sort by: main characters first, then by face_count descending
-        cluster_list.sort(key=lambda c: (not c["is_main"], -c["face_count"]))
+        # Sort by: Main first, then Named first, then Count
+        cluster_list.sort(key=lambda c: (
+            not c["is_main"],  # True (1) is last, False (0) is first
+            c["name"] is None or c["name"] == "Uncategorized Faces",  # Named first
+            -c["face_count"]
+        ))
 
         return {
             "clusters": cluster_list,
@@ -307,4 +313,55 @@ async def move_face_to_cluster(
         return {"status": "moved", "face_id": face_id, "cluster_id": cluster_id}
     except Exception as e:
         logger.error(f"[Faces] Move failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class ClusterNameRequest(BaseModel):
+    name: str
+
+
+@router.post("/faces/cluster/{cluster_id}/name")
+async def name_face_cluster(
+    cluster_id: int,
+    request: ClusterNameRequest,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Name a face cluster and propagate to search.
+
+    Args:
+        cluster_id: The ID of the cluster to name.
+        request: JSON body containing {"name": "New Name"}.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        # 1. Update Face Payloads (set "name")
+        # Find all faces with this cluster_id
+        from qdrant_client import models
+
+        pipeline.db.client.set_payload(
+            collection_name=pipeline.db.FACES_COLLECTION,
+            payload={"name": request.name},
+            points=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="cluster_id",
+                        match=models.MatchValue(value=cluster_id),
+                    )
+                ]
+            ),
+        )
+
+        # 2. Propagate to Frames (Search Index)
+        count = pipeline.db.re_embed_face_cluster_frames(cluster_id, request.name)
+
+        return {
+            "status": "updated",
+            "cluster_id": cluster_id,
+            "name": request.name,
+            "frames_updated": count,
+        }
+    except Exception as e:
+        logger.error(f"[Faces] App naming failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e

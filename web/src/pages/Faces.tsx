@@ -1,5 +1,5 @@
-import {useState} from 'react';
-import {useQuery, useMutation, useQueryClient} from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   Typography,
@@ -30,6 +30,7 @@ import {
   Divider,
   Card,
   CardContent,
+  Autocomplete,
 } from '@mui/material';
 import {
   Face,
@@ -48,7 +49,7 @@ import {
   Lightbulb,
   Close,
 } from '@mui/icons-material';
-import {motion} from 'framer-motion';
+import { motion } from 'framer-motion';
 
 import {
   getUnresolvedFaces,
@@ -61,6 +62,7 @@ import {
   moveFaceToCluster,
   createNewFaceCluster,
   setFaceMain,
+  getAllNames,
   apiClient,
 } from '../api/client';
 
@@ -117,7 +119,7 @@ function FaceCard({
   return (
     <Paper
       component={motion.div}
-      whileHover={{scale: 1.02}}
+      whileHover={{ scale: 1.02 }}
       sx={{
         p: compact ? 1 : 2,
         borderRadius: 2,
@@ -135,7 +137,7 @@ function FaceCard({
           top: 2,
           right: 2,
           opacity: 0.6,
-          '&:hover': {opacity: 1, color: 'error.main'},
+          '&:hover': { opacity: 1, color: 'error.main' },
         }}
         onClick={e => {
           e.stopPropagation();
@@ -153,7 +155,7 @@ function FaceCard({
             top: 2,
             left: 2,
             opacity: 0.6,
-            '&:hover': {opacity: 1},
+            '&:hover': { opacity: 1 },
           }}
           onClick={e => {
             e.stopPropagation();
@@ -172,7 +174,7 @@ function FaceCard({
             bottom: 2,
             right: 2,
             opacity: 0.6,
-            '&:hover': {opacity: 1, color: 'primary.main'},
+            '&:hover': { opacity: 1, color: 'primary.main' },
           }}
           onClick={e => {
             e.stopPropagation();
@@ -253,21 +255,21 @@ function ClusterCard({
           alignItems: 'center',
           p: 2,
           cursor: 'pointer',
-          '&:hover': {bgcolor: 'action.hover'},
+          '&:hover': { bgcolor: 'action.hover' },
         }}
         onClick={() => setExpanded(!expanded)}
       >
         <Avatar
           src={hasValidImage ? thumbUrl : undefined}
           onError={() => setImageError(true)}
-          sx={{width: 56, height: 56, mr: 2}}
+          sx={{ width: 56, height: 56, mr: 2 }}
         >
           <Face />
         </Avatar>
-        <Box sx={{flex: 1}}>
-          <Box sx={{display: 'flex', alignItems: 'center', gap: 1}}>
+        <Box sx={{ flex: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             {cluster.is_main && (
-              <Star sx={{color: 'warning.main', fontSize: 18}} />
+              <Star sx={{ color: 'warning.main', fontSize: 18 }} />
             )}
             {cluster.name ? (
               <Chip label={cluster.name} color="success" size="small" />
@@ -282,7 +284,7 @@ function ClusterCard({
             {cluster.is_main ? ' | Main Character' : ''}
           </Typography>
         </Box>
-        <Badge badgeContent={cluster.face_count} color="primary" sx={{mr: 2}}>
+        <Badge badgeContent={cluster.face_count} color="primary" sx={{ mr: 2 }}>
           <Groups />
         </Badge>
 
@@ -296,7 +298,7 @@ function ClusterCard({
                 e.stopPropagation();
                 onSetMain(cluster.cluster_id, !cluster.is_main);
               }}
-              sx={{mr: 1, color: cluster.is_main ? 'warning.main' : 'inherit'}}
+              sx={{ mr: 1, color: cluster.is_main ? 'warning.main' : 'inherit' }}
             >
               {cluster.is_main ? <Star /> : <StarBorder />}
             </IconButton>
@@ -312,9 +314,9 @@ function ClusterCard({
               e.stopPropagation();
               onMerge();
             }}
-            sx={{mr: 1}}
+            sx={{ mr: 1 }}
           >
-            <MoveUp fontSize="small" sx={{mr: 0.5}} /> Merge
+            <MoveUp fontSize="small" sx={{ mr: 0.5 }} /> Merge
           </Button>
         )}
 
@@ -325,23 +327,23 @@ function ClusterCard({
             e.stopPropagation();
             onLabelCluster(cluster.cluster_id);
           }}
-          sx={{mr: 1}}
+          sx={{ mr: 1 }}
         >
-          <Edit fontSize="small" sx={{mr: 0.5}} /> Label All
+          <Edit fontSize="small" sx={{ mr: 0.5 }} /> Label All
         </Button>
         {expanded ? <ExpandLess /> : <ExpandMore />}
       </Box>
       <Collapse in={expanded}>
         <Divider />
-        <Box sx={{p: 2, bgcolor: 'action.hover'}}>
+        <Box sx={{ p: 2, bgcolor: 'action.hover' }}>
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{mb: 1, display: 'block'}}
+            sx={{ mb: 1, display: 'block' }}
           >
             All faces in this cluster:
           </Typography>
-          <Box sx={{display: 'flex', gap: 1, flexWrap: 'wrap'}}>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
             {cluster.faces.map(face => (
               <FaceCard
                 key={face.id}
@@ -366,14 +368,20 @@ function LabelDialog({
   onClose,
   onSave,
   isLoading,
+  existingNames = [],
 }: {
   open: boolean;
   isCluster: boolean;
   onClose: () => void;
   onSave: (name: string) => void;
   isLoading: boolean;
+  existingNames?: string[];
 }) {
   const [name, setName] = useState('');
+  useEffect(() => {
+    if (open) setName('');
+  }, [open]);
+
   const handleSave = () => {
     if (name.trim()) {
       onSave(name.trim());
@@ -387,18 +395,25 @@ function LabelDialog({
         {isCluster ? 'Label Entire Cluster' : 'Label Face'}
       </DialogTitle>
       <DialogContent>
-        <Typography variant="body2" color="text.secondary" sx={{mb: 2}}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           {isCluster
             ? 'All faces in this cluster will be labeled.'
             : 'Label this specific face.'}
         </Typography>
-        <TextField
-          fullWidth
-          autoFocus
-          label="Name"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSave()}
+        <Autocomplete
+          freeSolo
+          options={existingNames}
+          inputValue={name}
+          onInputChange={(_, newValue) => setName(newValue)}
+          renderInput={params => (
+            <TextField
+              {...params}
+              autoFocus
+              label="Name"
+              placeholder="Enter or select name"
+              onKeyDown={e => e.key === 'Enter' && handleSave()}
+            />
+          )}
         />
       </DialogContent>
       <DialogActions>
@@ -499,10 +514,15 @@ export default function FacesPage() {
     queryFn: () => getNamedFaces(),
   });
 
+  const allNamesQuery = useQuery({
+    queryKey: ['identities', 'names'],
+    queryFn: () => getAllNames(),
+  });
+
   const suggestionsQuery = useQuery({
     queryKey: ['identity', 'suggestions'],
     queryFn: async () => {
-      const res = await apiClient.get<{suggestions: IdentitySuggestion[]}>(
+      const res = await apiClient.get<{ suggestions: IdentitySuggestion[] }>(
         '/identity/suggestions',
       );
       return res.data.suggestions || [];
@@ -511,19 +531,19 @@ export default function FacesPage() {
   });
 
   const labelClusterMutation = useMutation({
-    mutationFn: ({clusterId, name}: {clusterId: number; name: string}) =>
+    mutationFn: ({ clusterId, name }: { clusterId: number; name: string }) =>
       nameFaceCluster(clusterId, name),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
       setSelectedClusterId(null);
     },
   });
 
   const labelFaceMutation = useMutation({
-    mutationFn: ({faceId, name}: {faceId: string; name: string}) =>
+    mutationFn: ({ faceId, name }: { faceId: string; name: string }) =>
       nameSingleFace(faceId, name),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
       setSelectedFaceId(null);
     },
   });
@@ -531,15 +551,15 @@ export default function FacesPage() {
   const deleteMutation = useMutation({
     mutationFn: (faceId: string) => deleteFace(faceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
     },
   });
 
   const moveMutation = useMutation({
-    mutationFn: ({faceId, clusterId}: {faceId: string; clusterId: number}) =>
+    mutationFn: ({ faceId, clusterId }: { faceId: string; clusterId: number }) =>
       moveFaceToCluster(faceId, clusterId),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
       setMoveFaceId(null);
     },
   });
@@ -547,16 +567,16 @@ export default function FacesPage() {
   const newClusterMutation = useMutation({
     mutationFn: (faceIds: string[]) => createNewFaceCluster(faceIds),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
       setMoveFaceId(null);
     },
   });
 
   const setMainMutation = useMutation({
-    mutationFn: ({clusterId, isMain}: {clusterId: number; isMain: boolean}) =>
+    mutationFn: ({ clusterId, isMain }: { clusterId: number; isMain: boolean }) =>
       setFaceMain(clusterId, isMain),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
     },
   });
 
@@ -564,7 +584,7 @@ export default function FacesPage() {
     setIsClustering(true);
     try {
       await triggerFaceClustering();
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
     } finally {
       setIsClustering(false);
     }
@@ -600,20 +620,20 @@ export default function FacesPage() {
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
 
   const mergeClustersMutation = useMutation({
-    mutationFn: ({from, to}: {from: number; to: number}) =>
+    mutationFn: ({ from, to }: { from: number; to: number }) =>
       fetch(
         `http://localhost:8000/faces/merge?from_cluster=${from}&to_cluster=${to}`,
-        {method: 'POST'},
+        { method: 'POST' },
       ).then(res => res.json()),
     onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['faces']});
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
       setMergeSourceId(null);
     },
   });
 
   return (
     <Box>
-      <Box sx={{display: 'flex', alignItems: 'center', gap: 2, mb: 2}}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
         <Typography variant="h4" fontWeight={700}>
           Face Gallery
         </Typography>
@@ -631,10 +651,11 @@ export default function FacesPage() {
           </Button>
         </Tooltip>
       </Box>
-      <Typography variant="body2" color="text.secondary" sx={{mb: 2}}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         View all face occurrences or grouped clusters.
       </Typography>
 
+      {/* Smart Suggestions Panel */}
       {/* Smart Suggestions Panel */}
       {suggestionsQuery.data &&
         suggestionsQuery.data.filter(
@@ -642,14 +663,27 @@ export default function FacesPage() {
         ).length > 0 && (
           <Paper
             sx={{
-              p: 2,
               mb: 3,
               bgcolor: 'warning.main',
               color: 'warning.contrastText',
               borderRadius: 2,
+              overflow: 'hidden',
             }}
           >
-            <Box sx={{display: 'flex', alignItems: 'center', gap: 1, mb: 1.5}}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                p: 2,
+                cursor: 'pointer',
+                '&:hover': { bgcolor: 'warning.dark' },
+              }}
+              onClick={() => {
+                // Toggle logic (using local state which I need to add, or just always show summary)
+                // For now, let's just make it compact horizontal scroll
+              }}
+            >
               <Lightbulb />
               <Typography variant="subtitle1" fontWeight={600}>
                 Smart Suggestions
@@ -664,10 +698,26 @@ export default function FacesPage() {
                   ).length
                 }
                 size="small"
-                sx={{bgcolor: 'warning.dark', color: 'white'}}
+                sx={{ bgcolor: 'white', color: 'warning.main', fontWeight: 'bold' }}
               />
+              <Box sx={{ flex: 1 }} />
+              <Typography variant="caption" sx={{ mr: 1 }}>
+                Automated merge proposals based on timestamps and names
+              </Typography>
             </Box>
-            <Box sx={{display: 'flex', gap: 1, flexWrap: 'wrap'}}>
+
+            <Box
+              sx={{
+                display: 'flex',
+                gap: 2,
+                p: 2,
+                pt: 0,
+                overflowX: 'auto',
+                pb: 2,
+                '::-webkit-scrollbar': { height: 8 },
+                '::-webkit-scrollbar-thumb': { bgcolor: 'rgba(255,255,255,0.3)', borderRadius: 4 }
+              }}
+            >
               {suggestionsQuery.data
                 .filter(
                   s =>
@@ -675,36 +725,59 @@ export default function FacesPage() {
                       `${s.type}-${s.source}-${s.target}`,
                     ),
                 )
-                .slice(0, 5)
                 .map((s, i) => (
                   <Card
                     key={i}
-                    sx={{minWidth: 250, bgcolor: 'background.paper'}}
+                    sx={{
+                      minWidth: 260,
+                      maxWidth: 260,
+                      flexShrink: 0,
+                      bgcolor: 'background.paper',
+                      boxShadow: 3
+                    }}
                   >
-                    <CardContent sx={{p: 1.5, '&:last-child': {pb: 1.5}}}>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{display: 'block', mb: 0.5}}
-                      >
-                        {s.type === 'merge_face_voice'
-                          ? '🎤 Face-Voice Link'
-                          : s.type === 'tmdb_match'
-                            ? '🎬 TMDB Match'
-                            : '👥 Merge Faces'}
+                    <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: 'primary.main',
+                            fontWeight: 'bold',
+                            textTransform: 'uppercase',
+                            fontSize: '0.7rem'
+                          }}
+                        >
+                          {s.type === 'merge_face_voice'
+                            ? 'Face ↔ Voice'
+                            : s.type === 'tmdb_match'
+                              ? 'TMDB Match'
+                              : 'Face ↔ Face'}
+                        </Typography>
+                        <Chip
+                          label={`${Math.round(s.confidence * 100)}%`}
+                          size="small"
+                          color={s.confidence > 0.8 ? "success" : "warning"}
+                          sx={{ height: 20, fontSize: '0.7rem' }}
+                        />
+                      </Box>
+
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                        <Typography variant="body2" fontWeight={700} noWrap title={s.source}>
+                          {s.source}
+                        </Typography>
+                        <MoveUp sx={{ transform: 'rotate(90deg)', color: 'text.secondary', fontSize: 16 }} />
+                        <Typography variant="body2" fontWeight={700} noWrap title={s.target}>
+                          {s.target}
+                        </Typography>
+                      </Box>
+
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5, height: 20, overflow: 'hidden' }}>
+                        {s.reason}
                       </Typography>
-                      <Typography
-                        variant="body2"
-                        fontWeight={600}
-                        sx={{mb: 0.5}}
-                      >
-                        {s.source} → {s.target}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {s.reason} ({Math.round(s.confidence * 100)}%)
-                      </Typography>
-                      <Box sx={{mt: 1, display: 'flex', gap: 0.5}}>
+
+                      <Box sx={{ display: 'flex', gap: 1 }}>
                         <Button
+                          fullWidth
                           size="small"
                           variant="contained"
                           color="success"
@@ -719,32 +792,19 @@ export default function FacesPage() {
                                 to: s.target_id,
                               });
                             }
-                            setDismissedSuggestions(
-                              prev =>
-                                new Set([
-                                  ...prev,
-                                  `${s.type}-${s.source}-${s.target}`,
-                                ]),
-                            );
+                            setDismissedSuggestions(prev => new Set([...prev, `${s.type}-${s.source}-${s.target}`]));
                           }}
                         >
-                          <Check fontSize="small" /> Accept
+                          Accept
                         </Button>
-                        <Button
+                        <IconButton
                           size="small"
-                          variant="outlined"
                           onClick={() =>
-                            setDismissedSuggestions(
-                              prev =>
-                                new Set([
-                                  ...prev,
-                                  `${s.type}-${s.source}-${s.target}`,
-                                ]),
-                            )
+                            setDismissedSuggestions(prev => new Set([...prev, `${s.type}-${s.source}-${s.target}`]))
                           }
                         >
                           <Close fontSize="small" />
-                        </Button>
+                        </IconButton>
                       </Box>
                     </CardContent>
                   </Card>
@@ -779,7 +839,7 @@ export default function FacesPage() {
             iconPosition="start"
           />
         </Tabs>
-        <Box sx={{flex: 1}} />
+        <Box sx={{ flex: 1 }} />
         <TextField
           size="small"
           placeholder="Search..."
@@ -794,14 +854,14 @@ export default function FacesPage() {
               ),
             },
           }}
-          sx={{minWidth: 200}}
+          sx={{ minWidth: 200 }}
         />
       </Box>
 
       {isLoading ? (
         <Grid container spacing={2}>
-          {Array.from({length: 8}).map((_, i) => (
-            <Grid key={i} size={{xs: 6, sm: 4, md: 3, lg: 2}}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Grid key={i} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
               <Skeleton variant="rounded" height={160} />
             </Grid>
           ))}
@@ -820,14 +880,14 @@ export default function FacesPage() {
                 onMoveFace={setMoveFaceId}
                 onMerge={() => setMergeSourceId(cluster.cluster_id)}
                 onSetMain={(cid, isMain) =>
-                  setMainMutation.mutate({clusterId: cid, isMain})
+                  setMainMutation.mutate({ clusterId: cid, isMain })
                 }
               />
             ))}
           </Box>
         ) : (
-          <Paper sx={{p: 4, textAlign: 'center'}}>
-            <Groups sx={{fontSize: 48, color: 'text.secondary', mb: 2}} />
+          <Paper sx={{ p: 4, textAlign: 'center' }}>
+            <Groups sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
             <Typography variant="h6" color="text.secondary">
               No clusters yet
             </Typography>
@@ -835,7 +895,7 @@ export default function FacesPage() {
               variant="contained"
               startIcon={<AutoAwesome />}
               onClick={handleTriggerClustering}
-              sx={{mt: 2}}
+              sx={{ mt: 2 }}
             >
               Run Face Clustering
             </Button>
@@ -844,7 +904,7 @@ export default function FacesPage() {
       ) : filteredFaces.length > 0 ? (
         <Grid container spacing={2}>
           {filteredFaces.map((face, idx) => (
-            <Grid key={face.id || idx} size={{xs: 6, sm: 4, md: 3, lg: 2}}>
+            <Grid key={face.id || idx} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
               <FaceCard
                 face={face}
                 onLabel={setSelectedFaceId}
@@ -856,8 +916,8 @@ export default function FacesPage() {
           ))}
         </Grid>
       ) : (
-        <Paper sx={{p: 4, textAlign: 'center'}}>
-          <Face sx={{fontSize: 48, color: 'text.secondary', mb: 2}} />
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <Face sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
           <Typography variant="h6" color="text.secondary">
             No faces found
           </Typography>
@@ -865,29 +925,33 @@ export default function FacesPage() {
       )}
 
       <LabelDialog
-        open={selectedClusterId !== null}
-        isCluster
-        onClose={() => setSelectedClusterId(null)}
-        onSave={name =>
-          labelClusterMutation.mutate({clusterId: selectedClusterId!, name})
-        }
-        isLoading={labelClusterMutation.isPending}
+        open={!!selectedFaceId}
+        isCluster={false}
+        isLoading={labelFaceMutation.isPending}
+        existingNames={allNamesQuery.data || []}
+        onClose={() => setSelectedFaceId(null)}
+        onSave={name => {
+          if (selectedFaceId)
+            labelFaceMutation.mutate({ faceId: selectedFaceId, name });
+        }}
       />
       <LabelDialog
-        open={selectedFaceId !== null}
-        isCluster={false}
-        onClose={() => setSelectedFaceId(null)}
-        onSave={name =>
-          labelFaceMutation.mutate({faceId: selectedFaceId!, name})
-        }
-        isLoading={labelFaceMutation.isPending}
+        open={selectedClusterId !== null}
+        isCluster={true}
+        isLoading={labelClusterMutation.isPending}
+        existingNames={allNamesQuery.data || []}
+        onClose={() => setSelectedClusterId(null)}
+        onSave={name => {
+          if (selectedClusterId !== null)
+            labelClusterMutation.mutate({ clusterId: selectedClusterId, name });
+        }}
       />
       <MoveDialog
         open={moveFaceId !== null}
         clusters={clusters}
         onClose={() => setMoveFaceId(null)}
         onMove={clusterId =>
-          moveMutation.mutate({faceId: moveFaceId!, clusterId})
+          moveMutation.mutate({ faceId: moveFaceId!, clusterId })
         }
         onNewCluster={() => newClusterMutation.mutate([moveFaceId!])}
       />
@@ -900,7 +964,7 @@ export default function FacesPage() {
       >
         <DialogTitle>Merge Cluster</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{mb: 2}}>
+          <Typography variant="body2" sx={{ mb: 2 }}>
             Select a target cluster to merge into. Named clusters are shown
             first.
           </Typography>
@@ -943,7 +1007,7 @@ export default function FacesPage() {
                   </ListItemAvatar>
                   <ListItemText
                     primary={
-                      <Box sx={{display: 'flex', alignItems: 'center', gap: 1}}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {c.name || `Cluster #${c.cluster_id}`}
                         {c.name && (
                           <Chip
@@ -971,15 +1035,15 @@ export default function FacesPage() {
         onClose={() => setZoomFace(null)}
         maxWidth="md"
       >
-        <Box sx={{p: 2, textAlign: 'center'}}>
+        <Box sx={{ p: 2, textAlign: 'center' }}>
           {zoomFace?.thumbnail_path && (
             <Box
               component="img"
               src={`http://localhost:8000${zoomFace.thumbnail_path}`}
-              sx={{maxWidth: '80vw', maxHeight: '70vh', borderRadius: 2}}
+              sx={{ maxWidth: '80vw', maxHeight: '70vh', borderRadius: 2 }}
             />
           )}
-          <Typography variant="body2" sx={{mt: 1}}>
+          <Typography variant="body2" sx={{ mt: 1 }}>
             {zoomFace?.media_path?.split(/[/\\]/).pop()}
             {zoomFace?.timestamp !== undefined &&
               ` @ ${zoomFace.timestamp.toFixed(1)}s`}
@@ -991,10 +1055,10 @@ export default function FacesPage() {
         labelFaceMutation.isError ||
         deleteMutation.isError ||
         mergeClustersMutation.isError) && (
-        <Alert severity="error" sx={{mt: 2}}>
-          Operation failed.
-        </Alert>
-      )}
+          <Alert severity="error" sx={{ mt: 2 }}>
+            Operation failed.
+          </Alert>
+        )}
     </Box>
   );
 }

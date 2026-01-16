@@ -1068,7 +1068,7 @@ class VectorDB:
         self,
         embedding: list[float],
         threshold: float = 0.5,
-    ) -> tuple[str, float] | None:
+    ) -> tuple[str, int, float] | None:
         """Finds a matching global speaker identity for a given embedding.
 
         Performs a nearest-neighbor search in the voice collection.
@@ -1078,7 +1078,7 @@ class VectorDB:
             threshold: Similarity threshold for considering a match.
 
         Returns:
-            A tuple of (speaker_id, score) if a match is found, else None.
+            A tuple of (speaker_id, cluster_id, score) if a match is found, else None.
         """
         try:
             resp = self.client.query_points(
@@ -1090,12 +1090,11 @@ class VectorDB:
             if resp.points:
                 hit = resp.points[0]
                 payload = hit.payload or {}
-                return payload.get("speaker_id", "unknown"), hit.score
+                return payload.get("speaker_id", "unknown"), payload.get("voice_cluster_id", -1), hit.score
         except Exception:
             pass
         return None
 
-    @observe("db_upsert_speaker_embedding")
     def upsert_speaker_embedding(
         self,
         speaker_id: str,
@@ -1103,6 +1102,7 @@ class VectorDB:
         media_path: str,
         start: float,
         end: float,
+        voice_cluster_id: int = -1,
     ) -> None:
         """Stores a voice segment embedding linked to a global speaker ID.
 
@@ -1112,6 +1112,7 @@ class VectorDB:
             media_path: Path to the source media file.
             start: Start timestamp of the voice segment.
             end: End timestamp of the voice segment.
+            voice_cluster_id: The cluster ID this speaker belongs to.
         """
         import uuid
 
@@ -1129,6 +1130,7 @@ class VectorDB:
                         "start": start,
                         "end": end,
                         "type": "voice_sample",
+                        "voice_cluster_id": voice_cluster_id,
                     },
                 )
             ],
@@ -3978,7 +3980,7 @@ class VectorDB:
             )
             
             # Propagate to searchable frame metadata
-            self._propagate_speaker_name_to_frames(cluster_id, name)
+            self.re_embed_voice_cluster_frames(cluster_id, name)
             
             return 1  # Return 1 to indicate success
         except Exception as e:

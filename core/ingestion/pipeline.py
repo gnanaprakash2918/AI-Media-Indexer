@@ -578,11 +578,15 @@ class IngestionPipeline:
             # 1. Match against existing speakers
             # 2. Assign Global ID
             # 3. Persist specific samples for future matching
+            
+            import random # For cluster ID generation
 
             for _idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
                 global_speaker_id = f"unknown_{uuid.uuid4().hex[:8]}"
+                voice_cluster_id = -1
 
+                # Check Global Registry if embedding exists
                 # Check Global Registry if embedding exists
                 if seg.embedding is not None:
                     match = self.db.match_speaker(
@@ -590,22 +594,24 @@ class IngestionPipeline:
                         threshold=settings.voice_clustering_threshold
                     )
                     if match:
-                        global_speaker_id, _score = match
-                        # log(f"Matched speaker {seg.speaker_label} -> {global_speaker_id} ({score:.2f})")
+                        global_speaker_id, existing_cluster_id, _score = match
+                        voice_cluster_id = existing_cluster_id
+                        # If existing matched speaker has no cluster ID (-1), generate one?
+                        # Usually it should have one if we follow this new logic consistently.
+                        if voice_cluster_id == -1:
+                            voice_cluster_id = random.randint(100000, 999999)
                     else:
-                        # New Global Speaker
-                        # Use the first segment of this speaker as the "anchor"
-                        # We map local label (SPEAKER_00) to new Global ID?
-                        # Ideally we assume SPEAKER_00 in this video is consistent.
-                        # But we treat each segment independently for now to allow simple logic.
-                        # Better: Upsert this as a valid sample for this new ID
+                        # New Global Speaker -> New Cluster
                         global_speaker_id = f"SPK_{uuid.uuid4().hex[:12]}"
+                        voice_cluster_id = random.randint(100000, 999999)
+
                         self.db.upsert_speaker_embedding(
                             speaker_id=global_speaker_id,
                             embedding=seg.embedding,
                             media_path=str(path),
                             start=seg.start_time,
                             end=seg.end_time,
+                            voice_cluster_id=voice_cluster_id,
                         )
 
                 # ALWAYS extract audio clip for every segment (not just those with embeddings)
@@ -648,7 +654,7 @@ class IngestionPipeline:
 
                 # ALWAYS store voice segment (even if no embedding, use placeholder)
                 # Only store if we have an embedding (required by insert_voice_segment)
-                if seg.embedding is not None:
+                if seg.embedding is not None and audio_path:
                     self.db.insert_voice_segment(
                         media_path=str(path),
                         start=seg.start_time,
@@ -656,6 +662,7 @@ class IngestionPipeline:
                         speaker_label=global_speaker_id,  # Use Global ID
                         embedding=seg.embedding,
                         audio_path=audio_path,
+                        voice_cluster_id=voice_cluster_id,
                     )
                 else:
                     # Log segments without embeddings for debugging

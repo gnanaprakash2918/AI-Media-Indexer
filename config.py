@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     hf_token: str | None = Field(default=None, validation_alias="HF_TOKEN")
 
     frame_interval: float = Field(
-        default=1.0, description="Seconds between frames (0.5=2fps, 1.0=1fps)"
+        default=0.5, description="Seconds between frames (0.5=2fps, 1.0=1fps)"
     )
     batch_size: int = Field(default=24)
     device_override: Literal["cuda", "cpu", "mps"] | None = None
@@ -247,8 +247,8 @@ class Settings(BaseSettings):
         description="Min samples for core point (2=reduces noise/singlets)",
     )
     hdbscan_cluster_selection_epsilon: float = Field(
-        default=0.6,
-        description="Cluster selection epsilon for HDBSCAN (0.6=more aggressive merging)",
+        default=0.3,
+        description="Cluster selection epsilon for HDBSCAN (0.3=strict, 0.45=balanced, 0.6=aggressive)",
     )
 
     # Audio Processing

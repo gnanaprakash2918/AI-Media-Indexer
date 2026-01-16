@@ -263,9 +263,18 @@ class OllamaLLM(LLMInterface):
                     if not response_text:
                         raise RuntimeError("Empty response from Ollama")
 
-                    result = self.parse_json_response(response_text, schema)
-                    self._record_success()
-                    return result
+                    # With native JSON mode, try direct parse first (faster, cleaner)
+                    try:
+                        import json
+                        data = json.loads(response_text)
+                        result = schema.model_validate(data)
+                        self._record_success()
+                        return result
+                    except (json.JSONDecodeError, Exception):
+                        # Fall back to the more robust parse_json_response
+                        result = self.parse_json_response(response_text, schema)
+                        self._record_success()
+                        return result
                 except Exception as e:
                     if attempt < self.MAX_RETRIES - 1:
                         backoff = 2 ** (attempt + 1)

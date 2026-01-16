@@ -44,7 +44,27 @@ async def list_identities() -> dict:
     return {"identities": result, "total": len(result)}
 
 
-@router.get("/identity/suggestions")
+@router.get("/identities/names")
+async def list_all_names(
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Get all HITL-assigned names (faces and speakers).
+
+    Returns:
+        List of unique names.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        names = pipeline.db.get_all_hitl_names()
+        return {"names": sorted(list(names))}
+    except Exception as e:
+        logger.error(f"[Identities] List names failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/identities/suggestions")
 async def suggest_merges(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit_frames: int = 5000,

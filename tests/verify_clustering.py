@@ -93,6 +93,18 @@ def get_clusters():
             f"  - Cluster {c['cluster_id']}: {c['face_count']} faces. Name: {c['name']}"
         )
 
+def get_voice_clusters():
+    """List resulting voice clusters."""
+    print("Fetching Voice Clusters...")
+    res = requests.get(f"{BASE_URL}/voices/clusters")
+    data = res.json()
+    clusters = data.get("clusters", [])
+    print(f"Found {len(clusters)} voice clusters.")
+    for c in clusters:
+        print(
+            f"  - Voice Cluster {c['cluster_id']}: {c['segment_count']} segments. Name: {c['speaker_name']}"
+        )
+
 
 if __name__ == "__main__":
     if not wait_for_server():
@@ -107,3 +119,4 @@ if __name__ == "__main__":
     wait_for_job(VIDEO_PATH)
     trigger_clustering()
     get_clusters()
+    get_voice_clusters()

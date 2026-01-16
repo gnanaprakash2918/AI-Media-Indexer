@@ -124,6 +124,11 @@ export const getNamedFaces = async () => {
   return res.data;
 };
 
+export const getAllNames = async () => {
+  const res = await apiClient.get<{ names: string[] }>('/identities/names');
+  return res.data.names || [];
+};
+
 export const nameFaceCluster = async (clusterId: number, name: string) => {
   const res = await apiClient.post(`/faces/cluster/${clusterId}/name`, { name });
   return res.data;

@@ -248,7 +248,7 @@ class MultiVectorSearcher:
         for c in constraints:
             # Look for person/identity type constraints
             if c.constraint_type.lower() in ("person", "identity", "character", "face"):
-                cid = self.db.get_cluster_id_by_name(c.value)
+                cid = self.db.fuzzy_get_cluster_id_by_name(c.value)
                 if cid:
                     cluster_ids.append(cid)
                     log.info(f"[MultiVectorSearch] Resolved '{c.value}' → cluster {cid}")
@@ -358,59 +358,59 @@ class MultiVectorSearcher:
         Returns:
             Reranked candidates with LLM scores.
         """
-        import json
+        from pydantic import BaseModel, Field
+
+        # Define strict schema for LLM output
+        class RerankResult(BaseModel):
+            match_score: float = Field(
+                default=0.5, ge=0.0, le=1.0, description="How well this matches the query (0-1)"
+            )
+            reasoning: str = Field(default="", description="Why this result matches or doesn't")
+            constraints_checked: list[str] = Field(
+                default_factory=list, description="Query constraints that were verified"
+            )
+            missing: list[str] = Field(
+                default_factory=list, description="Query constraints not found in result"
+            )
 
         reranked = []
         for candidate in candidates[:15]:  # Limit LLM calls
-            description = (
-                candidate.get("action", "")
-                or candidate.get("description", "")
-                or candidate.get("dense_caption", "")
-            )
-
-            prompt = self._rerank_prompt.format(
-                query=query,
-                description=description[:500],
-                face_names=candidate.get("face_names", []),
-                location=candidate.get("location", "unknown"),
-                actions=candidate.get("action", ""),
-                visible_text=candidate.get("visible_text", []),
-            )
-
             try:
-                response = await self._llm.generate(prompt)
-                response_clean = response.replace("```json", "").replace("```", "").strip()
-                
-                # Try JSON parsing first
-                llm_score = 0.5
-                reasoning = ""
-                try:
-                    data = json.loads(response_clean)
-                    llm_score = data.get("match_score", 0.5)
-                    reasoning = data.get("reasoning", "")
-                    candidate["llm_constraints"] = data.get("constraints_checked", [])
-                    candidate["llm_missing"] = data.get("missing", [])
-                except json.JSONDecodeError:
-                    # Fallback: Try to extract match_score with regex
-                    import re
-                    score_match = re.search(r'"match_score"\s*:\s*([\d.]+)', response_clean)
-                    if score_match:
-                        llm_score = float(score_match.group(1))
-                    reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"]*)"', response_clean)
-                    if reasoning_match:
-                        reasoning = reasoning_match.group(1)
-                    log.debug(f"[MultiVectorSearch] JSON parse failed, used regex fallback. Score: {llm_score}")
+                description = (
+                    candidate.get("action", "")
+                    or candidate.get("description", "")
+                    or candidate.get("dense_caption", "")
+                )
 
-                candidate["llm_score"] = llm_score
-                candidate["llm_reasoning"] = reasoning
+                prompt = self._rerank_prompt.format(
+                    query=query,
+                    description=description[:500],
+                    face_names=candidate.get("face_names", []),
+                    location=candidate.get("location", "unknown"),
+                    actions=candidate.get("action", ""),
+                    visible_text=candidate.get("visible_text", []),
+                )
+
+                # Use native JSON mode via generate_structured
+                result = await self._llm.generate_structured(
+                    schema=RerankResult,
+                    prompt=prompt,
+                    system_prompt="You are a search result verifier. Score how well this result matches the query.",
+                )
+
+                candidate["llm_score"] = result.match_score
+                candidate["llm_reasoning"] = result.reasoning
+                candidate["llm_constraints"] = result.constraints_checked
+                candidate["llm_missing"] = result.missing
 
                 # Blend scores: 60% original, 40% LLM
                 original_score = candidate.get("combined_score", 0.5)
-                candidate["combined_score"] = original_score * 0.6 + llm_score * 0.4
+                candidate["combined_score"] = original_score * 0.6 + result.match_score * 0.4
 
                 reranked.append(candidate)
             except Exception as e:
                 log.debug(f"[MultiVectorSearch] Rerank failed for candidate: {e}")
+                # Keep candidate with original score on failure
                 reranked.append(candidate)
 
         return reranked

@@ -154,22 +154,30 @@ IMPORTANT RULES:
 
         enhanced_prompt = "\n".join(prompt_parts)
 
-        try:
-            analysis = await self.llm.describe_image_structured(
-                schema=FrameAnalysis,
-                prompt=enhanced_prompt,
-                image_path=image_path,
-            )
-            log(
-                f"[Vision] Structured analysis: {analysis.action[:50] if analysis.action else 'no action'}..."
-            )
-            return analysis
-        except Exception as e:
-            log(f"[Vision] Structured analysis failed for {image_path}: {e}")
-            log(
-                f"[Vision] Falling back to unstructured description for {image_path.name}"
-            )
-            return None
+        # Retry logic for robustness against Ollama timeouts/transient errors
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                analysis = await self.llm.describe_image_structured(
+                    schema=FrameAnalysis,
+                    prompt=enhanced_prompt,
+                    image_path=image_path,
+                )
+                log(
+                    f"[Vision] Structured analysis: {analysis.action[:50] if analysis.action else 'no action'}..."
+                )
+                return analysis
+            except Exception as e:
+                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                if attempt < max_retries - 1:
+                    log(f"[Vision] Structured analysis failed (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    log(f"[Vision] Structured analysis failed after {max_retries} attempts for {image_path}: {e}")
+                    log(
+                        f"[Vision] Falling back to unstructured description for {image_path.name}"
+                    )
+                    return None
 
     @observe("vision_describe")
     async def describe(

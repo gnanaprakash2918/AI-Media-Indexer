@@ -80,9 +80,12 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
   );
   const [saving, setSaving] = useState(false);
 
+  // Handle both video_path and media_path (scenelets use media_path)
+  const videoPath = item.video_path || (item as any).media_path || '';
+
   // Extract filename for thumbnail
-  const filename = item.video_path.split(/[/\\]/).pop();
-  const baseName = filename?.replace(/\\.[^/.]+$/, '') || '';
+  const filename = videoPath ? videoPath.split(/[/\\]/).pop() : 'unknown';
+  const baseName = filename?.replace(/\.[^/.]+$/, '') || '';
 
   // Use dynamic thumbnail if available, else fallback to static or placeholder
   const thumbnailUrl = item.thumbnail_url
@@ -571,7 +574,7 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
         </CardContent>
       </Card>
       <VideoPlayer
-        videoPath={item.video_path}
+        videoPath={videoPath}
         startTime={item.start ?? item.timestamp}
         endTime={item.end}
         open={playerOpen}

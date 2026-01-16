@@ -29,6 +29,7 @@ import {
   ListItemButton,
   ListItemText,
   Divider,
+  Autocomplete,
 } from '@mui/material';
 import {
   RecordVoiceOver,
@@ -51,6 +52,7 @@ import {
   createNewVoiceCluster,
   nameVoiceCluster,
   mergeVoiceClusters,
+  getAllNames,
 } from '../api/client';
 
 interface VoiceSegment {
@@ -95,6 +97,7 @@ export const Voices: React.FC = () => {
   );
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
   const [isMerging, setIsMerging] = useState(false);
+  const [availableNames, setAvailableNames] = useState<string[]>([]);
 
   useEffect(() => {
     loadData();
@@ -108,6 +111,13 @@ export const Voices: React.FC = () => {
       ]);
       setSegments(segData.segments || []);
       setClusters(clusterData.clusters || []);
+
+      try {
+        const names = await getAllNames();
+        setAvailableNames(names);
+      } catch (e) {
+        console.error("Failed to load names", e);
+      }
     } catch (err) {
       console.error(err);
       setError('Failed to load voice segments');
@@ -508,13 +518,21 @@ export const Voices: React.FC = () => {
               ? 'Enter a name for this entire voice cluster. This will update all segments in this cluster.'
               : 'Enter a name for this speaker segment.'}
           </Typography>
-          <TextField
-            fullWidth
-            autoFocus
-            label="Speaker Name"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleRename()}
+          <Autocomplete
+            freeSolo
+            options={availableNames}
+            inputValue={newName}
+            onInputChange={(_, newVal) => setNewName(newVal)}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                fullWidth
+                autoFocus
+                label="Speaker Name"
+                placeholder="Enter or select name"
+                onKeyDown={e => e.key === 'Enter' && handleRename()}
+              />
+            )}
           />
         </DialogContent>
         <DialogActions>

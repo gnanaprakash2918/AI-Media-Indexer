@@ -645,6 +645,8 @@ class SearchAgent:
                 log(f"[SOTA Search] Resolved '{name}' → {len(ids)} faces")
 
         # 3. Retrieve candidates via multi-vector search
+        # Use fallback chain: scenes → scenelets → frames
+        fallback_used = None
         try:
             # Use search_scenes as the explainable/SOTA method
             candidates = self.db.search_scenes(
@@ -673,7 +675,35 @@ class SearchAgent:
                 video_path=video_path,
                 search_mode="hybrid",
             )
-            log(f"[SOTA Search] Retrieved {len(candidates)} candidates")
+            log(f"[SOTA Search] Retrieved {len(candidates)} candidates from scenes")
+            
+            # Fallback 1: Try scenelets if scenes empty
+            if not candidates:
+                log("[SOTA Search] No scenes found, falling back to scenelets")
+                fallback_used = "scenelets"
+                try:
+                    candidates = self.db.search_scenelets(
+                        query=search_text,
+                        limit=limit * 3 if use_reranking else limit,
+                        video_path=video_path,
+                    )
+                    log(f"[SOTA Search] Retrieved {len(candidates)} candidates from scenelets")
+                except Exception as e:
+                    log(f"[SOTA Search] Scenelet search failed: {e}")
+                    candidates = []
+            
+            # Fallback 2: Try frame-level hybrid search if still empty
+            if not candidates:
+                log("[SOTA Search] No scenelets found, falling back to frames")
+                fallback_used = "frames"
+                face_cluster_id = face_ids[0] if face_ids else None
+                candidates = self.db.search_frames_hybrid(
+                    query=search_text,
+                    limit=limit * 3 if use_reranking else limit,
+                    face_cluster_id=face_cluster_id,
+                )
+                log(f"[SOTA Search] Retrieved {len(candidates)} candidates from frames")
+                
         except Exception as e:
             log(f"[SOTA Search] Search failed: {e}")
             candidates = []
