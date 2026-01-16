@@ -152,6 +152,7 @@ dependencies = [
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sentence-transformers" },
+    { name = "tf-keras" },
     { name = "torch", version = "2.5.1", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "torch", version = "2.5.1+cu124", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "torchaudio", version = "2.5.1", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
@@ -237,6 +238,7 @@ requires-dist = [
     { name = "sam3", git = "https://github.com/facebookresearch/sam3.git" },
     { name = "scikit-learn", specifier = ">=1.5.0" },
     { name = "sentence-transformers", specifier = ">=3.3.0" },
+    { name = "tf-keras", specifier = ">=2.16.0" },
     { name = "torch", specifier = "==2.5.1", index = "https://download.pytorch.org/whl/cu124" },
     { name = "torchaudio", specifier = "==2.5.1", index = "https://download.pytorch.org/whl/cu124" },
     { name = "torchvision", specifier = "==0.20.1", index = "https://download.pytorch.org/whl/cu124" },
@@ -7396,6 +7398,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/08/7d7b568b3fc2f5d1a70501eccef05829b5c5e7b09477a02a94fe456ce7c1/texterrors-1.0.12-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:3514134e3abec15a5dba39bc639dc3cf1596aa86677fe0dbedcd1b1a554bc4f0", size = 3661964, upload-time = "2025-11-22T17:41:59.534Z" },
     { url = "https://files.pythonhosted.org/packages/f9/94/95ed83977559e46837f6f5c35c9cf0f20305e8a206c9445a4c07394e8124/texterrors-1.0.12-cp312-cp312-win32.whl", hash = "sha256:b1cf56d57cd8bbb7a0528ce9937da068190c77936e54b8786e3be0b880230749", size = 592184, upload-time = "2025-11-22T17:42:00.879Z" },
     { url = "https://files.pythonhosted.org/packages/65/4d/3e7305ae07b621e61d98896c4ca7e96773fc4169f4bfae7f71ffc338cdef/texterrors-1.0.12-cp312-cp312-win_amd64.whl", hash = "sha256:dd6178255d0207df98681c27f3fc8fd56e2e931ac5e06ac8bb1d34ad8b1a6b55", size = 601484, upload-time = "2025-11-22T17:42:02.202Z" },
+]
+
+[[package]]
+name = "tf-keras"
+version = "2.18.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tensorflow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/a4/7d0acc28cde2b29b8114552ce3258dafdc6b2186d24bf8e912de713dd74f/tf_keras-2.18.0.tar.gz", hash = "sha256:ebf744519b322afead33086a2aba872245473294affd40973694f3eb7c7ad77d", size = 1260765, upload-time = "2024-10-24T22:58:06.652Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/ed/e08afca471299b04a34cd548e64e89d0153eda0e6cf9b715356777e24774/tf_keras-2.18.0-py3-none-any.whl", hash = "sha256:c431d04027eef790fcd3261cf7fdf93eb74f3cb32e05078b57b7f5a54bd53262", size = 1725427, upload-time = "2024-10-24T22:58:03.918Z" },
 ]
 
 [[package]]
