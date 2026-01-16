@@ -3,7 +3,6 @@
 import asyncio
 import json
 import threading
-from typing import Optional
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
@@ -38,8 +37,14 @@ def _run_file_dialog(result_holder: list, directory: bool = False):
                 title="Select Media File",
                 filetypes=[
                     ("All files", "*.*"),
-                    ("Video files", "*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.ts *.wmv *.flv"),
-                    ("Audio files", "*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.wma"),
+                    (
+                        "Video files",
+                        "*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.ts *.wmv *.flv",
+                    ),
+                    (
+                        "Audio files",
+                        "*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.wma",
+                    ),
                 ],
             )
         root.destroy()
@@ -51,7 +56,9 @@ def _run_file_dialog(result_holder: list, directory: bool = False):
 
 @router.get("/system/browse")
 async def browse_file_system(
-    directory: bool = Query(default=False, description="Select folder instead of file"),
+    directory: bool = Query(
+        default=False, description="Select folder instead of file"
+    ),
 ) -> dict:
     """Opens a native file dialog for the user to select a file or folder.
 
@@ -66,7 +73,9 @@ async def browse_file_system(
     result_holder: list = []
 
     # Run tkinter in a thread to avoid blocking the event loop
-    thread = threading.Thread(target=_run_file_dialog, args=(result_holder, directory))
+    thread = threading.Thread(
+        target=_run_file_dialog, args=(result_holder, directory)
+    )
     thread.start()
 
     # Wait for dialog with timeout
@@ -74,8 +83,6 @@ async def browse_file_system(
 
     path = result_holder[0] if result_holder else None
     return {"path": path}
-
-
 
 
 @router.get("/config/system")

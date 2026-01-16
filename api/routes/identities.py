@@ -15,6 +15,7 @@ from api.schemas import (
     NameFaceRequest,
 )
 from core.ingestion.pipeline import IngestionPipeline
+from core.utils.logger import logger
 
 router = APIRouter()
 
@@ -58,7 +59,7 @@ async def list_all_names(
 
     try:
         names = pipeline.db.get_all_hitl_names()
-        return {"names": sorted(list(names))}
+        return {"names": sorted(names)}
     except Exception as e:
         logger.error(f"[Identities] List names failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -78,7 +79,8 @@ async def suggest_merges(
     3. Face-NER matches (Entity Co-occurrence) - NEW!
 
     Args:
-        limit_frames: Number of recent frames to analyze for NER.
+        pipeline: Ingestion pipeline instance.
+        limit_frames: Number of recent frames to analyze for co-occurrence.
 
     Returns:
         List of suggestion objects with confidence and strict_mode flags.
@@ -91,13 +93,13 @@ async def suggest_merges(
 
         # 1. Gather Data
         # Face Clusters (Unresolved + Named)
-        face_clusters = pipeline.db.get_unresolved_faces(limit=1000)
+        # face_clusters = pipeline.db.get_unresolved_faces(limit=1000)
         # Also grab named ones if needed, but usually we merge unnamed -> named.
         # For simple version, let's stick to what get_unresolved_faces returns (which has times).
         # But wait, get_unresolved_faces returns list of faces, we need clusters.
         # Let's use get_face_clusters logic or fetch aggregated.
         # Ideally we want aggregated cluster info (times, name if exists).
-        
+
         # Re-using logic from faces.py get_face_clusters roughly:
         faces_raw = pipeline.db.get_unresolved_faces(limit=2000)
         # Group by cluster
@@ -105,11 +107,15 @@ async def suggest_merges(
         for f in faces_raw:
             cid = f.get("cluster_id")
             if cid not in clusters_map:
-                clusters_map[cid] = {"cluster_id": cid, "timestamps": [], "name": f.get("name")}
+                clusters_map[cid] = {
+                    "cluster_id": cid,
+                    "timestamps": [],
+                    "name": f.get("name"),
+                }
             ts = f.get("timestamp")
             if ts:
                 clusters_map[cid]["timestamps"].append(ts)
-        
+
         face_cluster_list = list(clusters_map.values())
 
         # Voice Clusters
@@ -119,15 +125,20 @@ async def suggest_merges(
             cid = v.get("voice_cluster_id")
             if cid:
                 if cid not in voice_map:
-                    voice_map[cid] = {"cluster_id": cid, "timestamps": [], "name": v.get("speaker_name")}
-                voice_map[cid]["timestamps"].append({
-                    "start": v.get("start"),
-                    "end": v.get("end")
-                })
+                    voice_map[cid] = {
+                        "cluster_id": cid,
+                        "timestamps": [],
+                        "name": v.get("speaker_name"),
+                    }
+                voice_map[cid]["timestamps"].append(
+                    {"start": v.get("start"), "end": v.get("end")}
+                )
         voice_cluster_list = list(voice_map.values())
 
         # NER Co-occurrences
-        entity_co = pipeline.db.get_entity_co_occurrences(limit_frames=limit_frames)
+        entity_co = pipeline.db.get_entity_co_occurrences(
+            limit_frames=limit_frames
+        )
 
         # 2. Link
         linker = get_identity_linker()
@@ -141,6 +152,8 @@ async def suggest_merges(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.post("/identities/{identity_id}/merge")
 async def merge_identities(identity_id: str, req: IdentityMergeRequest) -> dict:
     """Merges a source identity into a target identity cluster.
@@ -255,13 +268,17 @@ async def move_faces(
         raise HTTPException(status_code=503, detail="DB not ready")
 
     try:
-        # Use Qdrant's set_payload to update cluster_id for specified face IDs
+        from typing import Any, cast
 
-        pipeline.db.client.set_payload(
-            collection_name=pipeline.db.FACES_COLLECTION,
-            payload={"cluster_id": req.target_cluster_id},
-            points=req.face_ids,
-        )
+        # Use Qdrant's set_payload to update cluster_id for specified face IDs
+        if req.face_ids:
+            # Pylance strict check: Ensure valid list passed to constructor
+            points_list = cast(list[Any], req.face_ids)
+            pipeline.db.client.set_payload(
+                collection_name=pipeline.db.FACES_COLLECTION,
+                payload={"cluster_id": req.target_cluster_id},
+                points=points_list,
+            )
         return {
             "status": "moved",
             "count": len(req.face_ids),
@@ -341,13 +358,22 @@ async def name_face_cluster(
         # Convert cluster_id to int for proper DB matching
         cluster_int = int(cluster_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Cluster ID must be an integer") from None
+        raise HTTPException(
+            status_code=400, detail="Cluster ID must be an integer"
+        ) from None
 
     count = pipeline.db.set_face_name(cluster_int, req.name)
     if count == 0:
-        raise HTTPException(status_code=404, detail="Cluster not found or no faces updated")
+        raise HTTPException(
+            status_code=404, detail="Cluster not found or no faces updated"
+        )
 
-    return {"status": "updated", "cluster_id": cluster_id, "name": req.name, "faces_updated": count}
+    return {
+        "status": "updated",
+        "cluster_id": cluster_id,
+        "name": req.name,
+        "faces_updated": count,
+    }
 
 
 @router.post("/faces/cluster/{cluster_id}/main")
@@ -423,5 +449,9 @@ async def name_voice_cluster(
     if count == 0:
         raise HTTPException(status_code=404, detail="Voice cluster not found")
 
-    return {"status": "updated", "cluster_id": cluster_id, "name": req.name, "updated_segments": count}
-
+    return {
+        "status": "updated",
+        "cluster_id": cluster_id,
+        "name": req.name,
+        "updated_segments": count,
+    }

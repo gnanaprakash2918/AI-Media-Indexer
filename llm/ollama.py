@@ -49,7 +49,7 @@ class OllamaLLM(LLMInterface):
             text_model_name: Text model for JSON/reranking (default: llama3.1).
             base_url_env: Environment variable name for the base URL.
             prompt_dir: Prompt template directory.
-        
+
         Notes:
             Ollama uses lazy loading - models are loaded/unloaded as needed,
             so having two models configured doesn't consume extra VRAM unless
@@ -58,11 +58,15 @@ class OllamaLLM(LLMInterface):
         super().__init__(prompt_dir=prompt_dir)
 
         # Vision model for describe_image tasks (needs multimodal capability)
-        self.model = model_name or os.getenv("OLLAMA_VISION_MODEL", os.getenv("OLLAMA_MODEL", "llava:7b"))
-        
+        self.model = model_name or os.getenv(
+            "OLLAMA_VISION_MODEL", os.getenv("OLLAMA_MODEL", "llava:7b")
+        )
+
         # Text model for structured JSON output (better at following schemas)
-        self.text_model = text_model_name or os.getenv("OLLAMA_TEXT_MODEL", "llama3.1")
-        
+        self.text_model = text_model_name or os.getenv(
+            "OLLAMA_TEXT_MODEL", "llama3.1"
+        )
+
         base_url = os.getenv(base_url_env, "http://localhost:11434")
 
         print(
@@ -254,17 +258,30 @@ class OllamaLLM(LLMInterface):
                         resp = await self.client.chat(
                             model=self.text_model,  # Use text model for structured JSON
                             messages=[{"role": "user", "content": full_prompt}],
-                            options={"temperature": kwargs.get("temperature", 0.0)},
+                            options={
+                                "temperature": kwargs.get("temperature", 0.0)
+                            },
                             format=json_schema,  # Ollama 0.5+ native schema
                         )
                     except (TypeError, Exception) as schema_err:
                         # Fall back to simple JSON mode for older Ollama
-                        if "format" in str(schema_err) or "schema" in str(schema_err).lower():
-                            print("[Ollama] Schema format not supported, using json mode")
+                        if (
+                            "format" in str(schema_err)
+                            or "schema" in str(schema_err).lower()
+                        ):
+                            print(
+                                "[Ollama] Schema format not supported, using json mode"
+                            )
                             resp = await self.client.chat(
                                 model=self.text_model,  # Use text model for structured JSON
-                                messages=[{"role": "user", "content": full_prompt}],
-                                options={"temperature": kwargs.get("temperature", 0.0)},
+                                messages=[
+                                    {"role": "user", "content": full_prompt}
+                                ],
+                                options={
+                                    "temperature": kwargs.get(
+                                        "temperature", 0.0
+                                    )
+                                },
                                 format="json",  # Fallback to simple JSON mode
                             )
                         else:
@@ -278,6 +295,7 @@ class OllamaLLM(LLMInterface):
                     # With native JSON mode, try direct parse first (faster, cleaner)
                     try:
                         import json
+
                         data = json.loads(response_text)
                         result = schema.model_validate(data)
                         self._record_success()
@@ -505,7 +523,10 @@ Be specific with names (e.g., "Tesla Model 3" not "car", "Idly" not "food").
                             format=json_schema,  # Native schema format
                         )
                     except (TypeError, Exception) as schema_err:
-                        if "format" in str(schema_err) or "schema" in str(schema_err).lower():
+                        if (
+                            "format" in str(schema_err)
+                            or "schema" in str(schema_err).lower()
+                        ):
                             resp = await self.client.chat(
                                 model=self.model,
                                 messages=messages,

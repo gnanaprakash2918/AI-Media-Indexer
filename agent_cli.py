@@ -78,7 +78,7 @@ async def run_agent() -> None:
     """Main entrypoint: connect to MCP server and run interactive chat loop."""
     _print_banner()
 
-    async with stdio_client(SERVER_PARAMS) as (read, write):
+    async with stdio_client(SERVER_PARAMS) as (read, write):  # type: ignore
         async with ClientSession(read, write) as session:
             # 1. Initialize MCP session
             await session.initialize()

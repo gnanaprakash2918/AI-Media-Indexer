@@ -1,3 +1,5 @@
+"""Speed estimation using optical flow (RAFT)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +13,10 @@ log = get_logger(__name__)
 
 
 class SpeedEstimator:
+    """Estimates speed of objects or regions using optical flow."""
+
     def __init__(self, model_name: str = "raft-small"):
+        """Initialize speed estimator with RAFT model."""
         self.model_name = model_name
         self.model = None
         self._device = None
@@ -23,6 +28,7 @@ class SpeedEstimator:
             return self._device
         try:
             import torch
+
             return "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             return "cpu"
@@ -37,9 +43,10 @@ class SpeedEstimator:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-                async with RESOURCE_ARBITER.acquire("raft", vram_gb=0.5):  # Reduced with fp16
+                async with RESOURCE_ARBITER.acquire(
+                    "raft", vram_gb=0.5
+                ):  # Reduced with fp16
                     log.info("[SpeedEstimator] Loading RAFT optical flow...")
-                    import torch
                     import torchvision.models.optical_flow as of
 
                     device = self._get_device()
@@ -56,7 +63,9 @@ class SpeedEstimator:
                     self.model.eval()
                     self._device = device
                     self._transforms = weights.transforms()
-                    log.info(f"[SpeedEstimator] Loaded {self.model_name} on {device}")
+                    log.info(
+                        f"[SpeedEstimator] Loaded {self.model_name} on {device}"
+                    )
                     return True
 
             except ImportError as e:
@@ -71,6 +80,7 @@ class SpeedEstimator:
         frame1: np.ndarray,
         frame2: np.ndarray,
     ) -> dict[str, Any]:
+        """Compute optical flow between two frames."""
         if not await self._lazy_load():
             return {"flow": None, "error": "Model not loaded"}
 
@@ -81,21 +91,37 @@ class SpeedEstimator:
                 return {"flow": None, "error": "Frame shapes must match"}
 
             if len(frame1.shape) == 3 and frame1.shape[2] == 3:
-                f1 = torch.from_numpy(frame1).permute(2, 0, 1).unsqueeze(0).float()
-                f2 = torch.from_numpy(frame2).permute(2, 0, 1).unsqueeze(0).float()
+                f1 = (
+                    torch.from_numpy(frame1)
+                    .permute(2, 0, 1)
+                    .unsqueeze(0)
+                    .float()
+                )
+                f2 = (
+                    torch.from_numpy(frame2)
+                    .permute(2, 0, 1)
+                    .unsqueeze(0)
+                    .float()
+                )
             else:
                 return {"flow": None, "error": "Frames must be RGB"}
+
+            if self._transforms is None:
+                return {"flow": None, "error": "Transforms not loaded"}
 
             f1, f2 = self._transforms(f1, f2)
             f1 = f1.to(self._device)
             f2 = f2.to(self._device)
-            
+
             # Convert to fp16 if model is in fp16
             if self._device == "cuda":
                 f1 = f1.half()
                 f2 = f2.half()
 
             with torch.no_grad():
+                if self.model is None:
+                    return {"flow": None, "error": "Model lost"}
+
                 flow_predictions = self.model(f1, f2)
                 flow = flow_predictions[-1][0].cpu().numpy()
 
@@ -119,6 +145,7 @@ class SpeedEstimator:
         fps: float = 30.0,
         scale_px_per_meter: float = 100.0,
     ) -> dict[str, Any]:
+        """Estimate real-world speed from optical flow."""
         result = await self.compute_optical_flow(frame1, frame2)
         if result.get("error"):
             return result
@@ -149,7 +176,10 @@ class SpeedEstimator:
         fps: float = 30.0,
         scale_px_per_meter: float = 100.0,
     ) -> dict[str, Any]:
-        result = await self.estimate_speed(frame1, frame2, fps, scale_px_per_meter)
+        """Check if motion matches speed constraints."""
+        result = await self.estimate_speed(
+            frame1, frame2, fps, scale_px_per_meter
+        )
         if result.get("error"):
             return result
 
@@ -195,6 +225,7 @@ class SpeedEstimator:
         fps: float = 30.0,
         scale_px_per_meter: float = 100.0,
     ) -> dict[str, Any]:
+        """Estimate speed within a specific bounding box."""
         result = await self.compute_optical_flow(frame1, frame2)
         if result.get("error"):
             return result
@@ -224,11 +255,13 @@ class SpeedEstimator:
         }
 
     def cleanup(self) -> None:
+        """Release resources."""
         if self.model:
             del self.model
             self.model = None
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:

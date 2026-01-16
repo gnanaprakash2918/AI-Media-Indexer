@@ -231,8 +231,7 @@ class SearchAgent:
             "step5_results": f"Found {len(results)} scenes",
         }
         top_scores = [
-            {r.get("id", "?"): round(r.get("score", 0), 3)}
-            for r in results[:5]
+            {r.get("id", "?"): round(r.get("score", 0), 3)} for r in results[:5]
         ]
         log(f"[Search] Original: {query}")
         log(f"[Search] Expanded: {search_text}")
@@ -675,8 +674,10 @@ class SearchAgent:
                 video_path=video_path,
                 search_mode="hybrid",
             )
-            log(f"[SOTA Search] Retrieved {len(candidates)} candidates from scenes")
-            
+            log(
+                f"[SOTA Search] Retrieved {len(candidates)} candidates from scenes"
+            )
+
             # Fallback 1: Try scenelets if scenes empty
             if not candidates:
                 log("[SOTA Search] No scenes found, falling back to scenelets")
@@ -687,11 +688,13 @@ class SearchAgent:
                         limit=limit * 3 if use_reranking else limit,
                         video_path=video_path,
                     )
-                    log(f"[SOTA Search] Retrieved {len(candidates)} candidates from scenelets")
+                    log(
+                        f"[SOTA Search] Retrieved {len(candidates)} candidates from scenelets"
+                    )
                 except Exception as e:
                     log(f"[SOTA Search] Scenelet search failed: {e}")
                     candidates = []
-            
+
             # Fallback 2: Try frame-level hybrid search if still empty
             if not candidates:
                 log("[SOTA Search] No scenelets found, falling back to frames")
@@ -700,10 +703,14 @@ class SearchAgent:
                 candidates = self.db.search_frames_hybrid(
                     query=search_text,
                     limit=limit * 3 if use_reranking else limit,
-                    face_cluster_id=face_cluster_id,
+                    face_cluster_ids=[face_cluster_id]
+                    if face_cluster_id is not None
+                    else None,
                 )
-                log(f"[SOTA Search] Retrieved {len(candidates)} candidates from frames")
-                
+                log(
+                    f"[SOTA Search] Retrieved {len(candidates)} candidates from frames"
+                )
+
         except Exception as e:
             log(f"[SOTA Search] Search failed: {e}")
             candidates = []
@@ -727,9 +734,14 @@ class SearchAgent:
                 "detail": f"Extracted {len(parsed.entities) if hasattr(parsed, 'entities') and parsed.entities else 0} entities",
                 "data": {
                     "original_query": query[:100],
-                    "entities_found": [e.name for e in parsed.entities] if hasattr(parsed, 'entities') and parsed.entities else [],
-                    "scene_description": parsed.scene_description[:100] if hasattr(parsed, 'scene_description') and parsed.scene_description else None,
-                }
+                    "entities_found": [e.name for e in parsed.entities]
+                    if hasattr(parsed, "entities") and parsed.entities
+                    else [],
+                    "scene_description": parsed.scene_description[:100]
+                    if hasattr(parsed, "scene_description")
+                    and parsed.scene_description
+                    else None,
+                },
             },
             {
                 "step": "Identity Resolution",
@@ -738,15 +750,17 @@ class SearchAgent:
                 "data": {
                     "names_searched": person_names,
                     "faces_matched": len(face_ids),
-                }
+                },
             },
             {
                 "step": "Query Expansion",
                 "status": "completed",
                 "detail": f"Expanded to {len(search_text)} chars",
                 "data": {
-                    "expanded_text": search_text[:200] + "..." if len(search_text) > 200 else search_text,
-                }
+                    "expanded_text": search_text[:200] + "..."
+                    if len(search_text) > 200
+                    else search_text,
+                },
             },
             {
                 "step": "Vector Search",
@@ -756,7 +770,7 @@ class SearchAgent:
                     "collection_searched": fallback_used or "scenes",
                     "fallback_used": fallback_used is not None,
                     "candidates_found": len(candidates),
-                }
+                },
             },
             {
                 "step": "LLM Reranking",
@@ -765,10 +779,10 @@ class SearchAgent:
                 "data": {
                     "enabled": use_reranking,
                     "final_count": len(candidates[:limit]),
-                }
+                },
             },
         ]
-        
+
         reasoning_chain = {
             "step1_parse": f"Parsed '{query[:50]}...' → dynamic entities",
             "step2_identity": f"Resolved: {person_names} → {len(face_ids)} faces",
@@ -828,31 +842,37 @@ class SearchAgent:
                 limit=limit,
                 video_path=video_path,
             )
-            
+
             formatted_results = []
             for r in results:
                 # Format for API consistency
                 start = r.get("start_time", 0.0)
                 end = r.get("end_time", 0.0)
                 text = r.get("text", "")
-                
-                formatted_results.append({
-                    **r,
-                    "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
-                    "match_explanation": f"Action sequence detected: {text[:50]}"
-                })
-                
+
+                formatted_results.append(
+                    {
+                        **r,
+                        "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
+                        "match_explanation": f"Action sequence detected: {text[:50]}",
+                    }
+                )
+
             return {
                 "query": query,
                 "search_type": "scenelet",
                 "results": formatted_results,
                 "result_count": len(formatted_results),
             }
-            
+
         except AttributeError:
-             # Fallback if DB method not ready (during migration)
-            log("[Scenelet Search] DB method not found, falling back to frame simulation")
-            candidates = self.db.search_frames(query=search_text, limit=limit * 2)
+            # Fallback if DB method not ready (during migration)
+            log(
+                "[Scenelet Search] DB method not found, falling back to frame simulation"
+            )
+            candidates = self.db.search_frames(
+                query=search_text, limit=limit * 2
+            )
 
             results_with_ranges = []
             for cand in candidates:

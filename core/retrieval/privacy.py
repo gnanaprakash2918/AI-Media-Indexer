@@ -188,9 +188,7 @@ class PrivacyFilter:
                 log.info("[PrivacyFilter] User confirmed external search")
                 return True
             else:
-                log.info(
-                    "[PrivacyFilter] External search needs confirmation"
-                )
+                log.info("[PrivacyFilter] External search needs confirmation")
                 return False
 
         # mode == "all"

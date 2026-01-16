@@ -93,14 +93,14 @@ class LLMInterface(ABC):
         text = re.sub(r",\s*([}\]])", r"\1", text)
 
         # Fix unescaped newlines in string values
-        text = re.sub(r'(?<!\\)\n(?=[^"]*"[^"]*$)', r'\\n', text)
-        
+        text = re.sub(r'(?<!\\)\n(?=[^"]*"[^"]*$)', r"\\n", text)
+
         # Remove control characters that break JSON
-        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', text)
-        
+        text = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text)
+
         # Fix common Ollama issue: key without quotes
-        text = re.sub(r'(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
-        
+        text = re.sub(r"(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'\1"\2":', text)
+
         # Remove duplicate quotes
         text = text.replace('""', '"')
 

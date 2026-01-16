@@ -78,7 +78,18 @@ class IndicASRPipeline:
 
     # All supported Indic languages
     # Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi, Odia
-    INDIC_LANGUAGES = {"hi", "ta", "te", "kn", "ml", "bn", "mr", "gu", "pa", "or"}
+    INDIC_LANGUAGES = {
+        "hi",
+        "ta",
+        "te",
+        "kn",
+        "ml",
+        "bn",
+        "mr",
+        "gu",
+        "pa",
+        "or",
+    }
 
     # Lightweight HF model (~600MB, multilingual)
     HF_MODEL = "ai4bharat/indic-conformer-600m-multilingual"

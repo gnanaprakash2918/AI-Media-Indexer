@@ -189,7 +189,7 @@ class BraveCelebritySearch:
             resp = await client.get(
                 self.BASE_URL,
                 params={"q": "celebrity face", "count": limit},
-                headers={"X-Subscription-Token": self.api_key},
+                headers={"X-Subscription-Token": self.api_key or ""},
             )
             resp.raise_for_status()
             data = resp.json()

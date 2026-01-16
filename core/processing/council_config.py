@@ -29,18 +29,18 @@ log = get_logger(__name__)
 class ModelType(Enum):
     """Model type classification."""
 
-    OSS = "oss"          # Open source (local)
+    OSS = "oss"  # Open source (local)
     COMMERCIAL = "commercial"  # Paid API
-    HYBRID = "hybrid"    # Can be either
+    HYBRID = "hybrid"  # Can be either
 
 
 class CouncilMode(Enum):
     """Council operation mode."""
 
-    OSS_ONLY = "oss_only"          # Local models only
+    OSS_ONLY = "oss_only"  # Local models only
     COMMERCIAL_ONLY = "commercial_only"  # API models only
-    COMBINED = "combined"          # All available models
-    CUSTOM = "custom"              # Per-model selection
+    COMBINED = "combined"  # All available models
+    CUSTOM = "custom"  # Per-model selection
 
 
 @dataclass
@@ -332,7 +332,9 @@ class CouncilConfig:
         # Check for duplicates
         for existing in self.councils[council].models:
             if existing.name == model.name:
-                log.warning(f"[CouncilConfig] Model {model.name} already exists")
+                log.warning(
+                    f"[CouncilConfig] Model {model.name} already exists"
+                )
                 return False
 
         self.councils[council].models.append(model)

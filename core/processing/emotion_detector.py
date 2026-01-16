@@ -82,7 +82,7 @@ class FacialEmotionDetector:
             return True
 
         try:
-            from fer import FER
+            from fer import FER  # type: ignore
 
             self._fer = FER(mtcnn=True)
             log.info("[Emotion] FER model loaded")
@@ -150,8 +150,13 @@ class FacialEmotionDetector:
                 )
                 if isinstance(analysis, list):
                     for face in analysis:
-                        emotion_data = face.get("emotion", {})
-                        top_emotion = face.get("dominant_emotion", "neutral")
+                        # Pylance sometimes sees 'face' as compatible with list if analysis type is vague
+                        # Cast to dict to be safe
+                        face_dict = face if isinstance(face, dict) else {}
+                        emotion_data = face_dict.get("emotion", {})
+                        top_emotion = face_dict.get(
+                            "dominant_emotion", "neutral"
+                        )
                         confidence = emotion_data.get(top_emotion, 0) / 100.0
 
                         try:
@@ -180,7 +185,10 @@ class TextSentimentAnalyzer:
     Uses transformers sentiment pipeline.
     """
 
-    def __init__(self, model_name: str = "distilbert-base-uncased-finetuned-sst-2-english"):
+    def __init__(
+        self,
+        model_name: str = "distilbert-base-uncased-finetuned-sst-2-english",
+    ):
         """Initialize sentiment analyzer.
 
         Args:
@@ -226,8 +234,16 @@ class TextSentimentAnalyzer:
                 confidence=0.0,
             )
 
+        if self._pipeline is None:
+            return SentimentResult(sentiment=Sentiment.NEUTRAL, confidence=0.0)
+
         try:
-            result = self._pipeline(text[:512])[0]  # Truncate to max length
+            from typing import Any, cast
+
+            # Cast pipeline output to list to avoid Generator inference issues
+            raw_result = self._pipeline(text[:512])
+            result_list = cast(list[dict[str, Any]], raw_result)
+            result = result_list[0]  # Truncate to max length
             label = result["label"].lower()
             score = result["score"]
 

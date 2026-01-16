@@ -1,5 +1,5 @@
+"""Utility script to verify Qdrant collection statistics."""
 import requests
-import json
 
 base_url = "http://localhost:6333"
 collections = ["media_frames", "voice_segments", "faces", "scenes"]

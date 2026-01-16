@@ -1,7 +1,7 @@
 """BiometricArbitrator for face identity disambiguation.
 
 When InsightFace similarity is marginal (0.5-0.6), this module
-provides a secondary opinion using dlib to reduce false merges.
+provides a secondary opinion to reduce false merges.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class BiometricArbitrator:
     """Secondary face verification for marginal similarity cases.
 
     When primary InsightFace similarity is between 0.5-0.6, use a
-    secondary model (dlib) to decide whether to merge clusters.
+    secondary distance metric to decide whether to merge clusters.
 
     Usage:
         arbitrator = BiometricArbitrator()
@@ -31,46 +31,12 @@ class BiometricArbitrator:
     """
 
     # Similarity thresholds
-    CLEAR_MATCH = 0.6      # Above this = definitely same person
-    CLEAR_DIFF = 0.5       # Below this = definitely different
+    CLEAR_MATCH = 0.6  # Above this = definitely same person
+    CLEAR_DIFF = 0.5  # Below this = definitely different
     SECONDARY_THRESHOLD = 0.6  # dlib threshold for marginal cases
 
     def __init__(self):
         """Initialize the biometric arbitrator."""
-        self._dlib_model = None
-        self._init_lock = asyncio.Lock()
-        self._dlib_available = False
-
-    async def _lazy_load_dlib(self) -> bool:
-        """Load dlib face recognition model lazily.
-
-        Returns:
-            True if dlib is available and loaded.
-        """
-        if self._dlib_model is not None:
-            return self._dlib_available
-
-        async with self._init_lock:
-            if self._dlib_model is not None:
-                return self._dlib_available
-
-            try:
-                import dlib
-
-                # Check if model file exists
-                self._dlib_model = dlib.face_recognition_model_v1
-                self._dlib_available = True
-                log.info("[BiometricArbitrator] dlib loaded successfully")
-                return True
-
-            except ImportError:
-                log.warning("[BiometricArbitrator] dlib not installed")
-                self._dlib_available = False
-                return False
-            except Exception as e:
-                log.error(f"[BiometricArbitrator] dlib load failed: {e}")
-                self._dlib_available = False
-                return False
 
     def should_merge_sync(
         self,

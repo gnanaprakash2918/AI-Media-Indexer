@@ -1,3 +1,4 @@
+"""Hyper-granular search implementation using hybrid retrieval and VLM verification."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,6 +18,7 @@ PHYSICS_VERIFICATION_LIMIT = 20
 
 
 class IdentityConstraint(BaseModel):
+    """Filter for a specific person or face ID."""
     name: str | None = Field(default=None)
     face_id: int | None = Field(default=None)
     voice_id: int | None = Field(default=None)
@@ -24,6 +26,7 @@ class IdentityConstraint(BaseModel):
 
 
 class ClothingConstraint(BaseModel):
+    """Filter for specific clothing attributes."""
     body_part: Literal["upper", "lower", "footwear", "accessory"] = "upper"
     item: str = Field(default="")
     color: str = Field(default="")
@@ -33,6 +36,7 @@ class ClothingConstraint(BaseModel):
 
 
 class AudioConstraint(BaseModel):
+    """Filter for specific audio events or volume levels."""
     event_class: str = Field(default="")
     min_db: int | None = Field(default=None)
     max_db: int | None = Field(default=None)
@@ -40,19 +44,24 @@ class AudioConstraint(BaseModel):
 
 
 class TemporalConstraint(BaseModel):
-    constraint_type: Literal["delay", "duration", "sequence", "before", "after"] = "delay"
+    """Filter for temporal relationships between events."""
+    constraint_type: Literal[
+        "delay", "duration", "sequence", "before", "after"
+    ] = "delay"
     min_ms: int | None = Field(default=None)
     max_ms: int | None = Field(default=None)
     reference_event: str | None = Field(default=None)
 
 
 class TextConstraint(BaseModel):
+    """Filter for OCR or ASR text presence."""
     text: str = Field(default="")
     is_exact: bool = Field(default=False)
     location: Literal["sign", "shirt", "screen", "any"] = "any"
 
 
 class SpatialConstraint(BaseModel):
+    """Filter for object size, position, or distance."""
     measurement_type: Literal["distance", "size", "height", "area"] = "distance"
     value_cm: float | None = Field(default=None)
     min_cm: float | None = Field(default=None)
@@ -61,12 +70,14 @@ class SpatialConstraint(BaseModel):
 
 
 class ActionConstraint(BaseModel):
+    """Filter for specific visual actions or motion speed."""
     action: str = Field(default="")
     intensity: Literal["slow", "normal", "fast", "unknown"] = "unknown"
     result: str | None = Field(default=None)
 
 
 class HyperGranularQuery(BaseModel):
+    """Decomposed query with structured constraints."""
     original_query: str
     identities: list[IdentityConstraint] = Field(default_factory=list)
     clothing: list[ClothingConstraint] = Field(default_factory=list)
@@ -79,27 +90,38 @@ class HyperGranularQuery(BaseModel):
     reasoning: list[str] = Field(default_factory=list)
 
     def constraint_count(self) -> int:
-        return (len(self.identities) + len(self.clothing) + len(self.audio) +
-                len(self.temporal) + len(self.text) + len(self.spatial) + len(self.actions))
+        """Return total number of active constraints."""
+        return (
+            len(self.identities)
+            + len(self.clothing)
+            + len(self.audio)
+            + len(self.temporal)
+            + len(self.text)
+            + len(self.spatial)
+            + len(self.actions)
+        )
 
 
 def _load_prompt(name: str) -> str:
     from core.utils.prompt_loader import load_prompt
+
     return load_prompt(name)
 
 
 class HyperGranularSearcher:
+    """Orchestrator for multi-stage granular search."""
     def __init__(self, db: Any = None):
+        """Initialize the granular searcher."""
         self.db = db
         self._llm = None
-        
+
         self._custom_prompt = _load_prompt("hyper_granular_decomposition")
         if not self._custom_prompt:
             raise RuntimeError(
                 "CRITICAL: Prompt file 'hyper_granular_decomposition.txt' not found in prompts/ directory. "
                 "Cannot initialize HyperGranularSearcher."
             )
-        
+
         self._clothing_detector = None
         self._speed_estimator = None
         self._depth_estimator = None
@@ -109,37 +131,45 @@ class HyperGranularSearcher:
 
     def _get_clothing_detector(self):
         if self._clothing_detector is None:
-            from core.processing.clothing_attributes import ClothingAttributeDetector
+            from core.processing.clothing_attributes import (
+                ClothingAttributeDetector,
+            )
+
             self._clothing_detector = ClothingAttributeDetector()
         return self._clothing_detector
 
     def _get_speed_estimator(self):
         if self._speed_estimator is None:
             from core.processing.speed_estimation import SpeedEstimator
+
             self._speed_estimator = SpeedEstimator()
         return self._speed_estimator
 
     def _get_depth_estimator(self):
         if self._depth_estimator is None:
             from core.processing.depth_estimation import DepthEstimator
+
             self._depth_estimator = DepthEstimator()
         return self._depth_estimator
 
     def _get_clock_reader(self):
         if self._clock_reader is None:
             from core.processing.clock_reader import ClockReader
+
             self._clock_reader = ClockReader()
         return self._clock_reader
 
     def _get_active_speaker(self):
         if self._active_speaker is None:
             from core.processing.active_speaker import ActiveSpeakerDetector
+
             self._active_speaker = ActiveSpeakerDetector()
         return self._active_speaker
 
     def _get_temporal_analyzer(self):
         if self._temporal_analyzer is None:
             from core.processing.temporal import TemporalAnalyzer
+
             self._temporal_analyzer = TemporalAnalyzer()
         return self._temporal_analyzer
 
@@ -148,6 +178,7 @@ class HyperGranularSearcher:
             return True
         try:
             from llm.factory import LLMFactory
+
             self._llm = LLMFactory.create_llm(provider="ollama")
             log.info("[HyperGranular] LLM loaded")
             return True
@@ -156,18 +187,29 @@ class HyperGranularSearcher:
             return False
 
     async def decompose_query(self, query: str) -> HyperGranularQuery:
+        """Use LLM to break down natural language into structured constraints.
+
+        Args:
+            query: The user's natural language search query.
+
+        Returns:
+            Decomposed structured query object.
+        """
         result = HyperGranularQuery(original_query=query)
         result.reasoning.append(f"[1] Input: {len(query.split())} words")
 
-        if not await self._ensure_llm():
+        if not await self._ensure_llm() or self._llm is None:
             result.reasoning.append("[2] LLM unavailable, using fallback")
             return self._fallback_decompose(query, result)
 
         try:
             import json
+
             prompt = self._custom_prompt.format(query=query)
             response = await self._llm.generate(prompt)
-            response_clean = response.replace("```json", "").replace("```", "").strip()
+            response_clean = (
+                response.replace("```json", "").replace("```", "").strip()
+            )
             data = json.loads(response_clean)
 
             for item in data.get("identities", []):
@@ -186,8 +228,12 @@ class HyperGranularSearcher:
                 result.actions.append(ActionConstraint(**item))
 
             result.scene_description = data.get("scene_description", "")
-            result.reasoning.append(f"[2] LLM extracted {result.constraint_count()} constraints")
-            log.info(f"[HyperGranular] Decomposed: {result.constraint_count()} constraints")
+            result.reasoning.append(
+                f"[2] LLM extracted {result.constraint_count()} constraints"
+            )
+            log.info(
+                f"[HyperGranular] Decomposed: {result.constraint_count()} constraints"
+            )
 
         except Exception as e:
             log.warning(f"[HyperGranular] LLM parse failed: {e}")
@@ -196,14 +242,26 @@ class HyperGranularSearcher:
 
         return result
 
-    def _fallback_decompose(self, query: str, result: HyperGranularQuery) -> HyperGranularQuery:
+    def _fallback_decompose(
+        self, query: str, result: HyperGranularQuery
+    ) -> HyperGranularQuery:
         words = query.lower().split()
         for i, word in enumerate(words):
             if word[0].isupper() if word else False:
                 result.identities.append(IdentityConstraint(name=word))
-            if word in ("blue", "red", "green", "white", "black", "yellow", "orange"):
+            if word in (
+                "blue",
+                "red",
+                "green",
+                "white",
+                "black",
+                "yellow",
+                "orange",
+            ):
                 next_word = words[i + 1] if i + 1 < len(words) else ""
-                result.clothing.append(ClothingConstraint(color=word, item=next_word))
+                result.clothing.append(
+                    ClothingConstraint(color=word, item=next_word)
+                )
             if "db" in word:
                 try:
                     db_val = int("".join(filter(str.isdigit, word)))
@@ -213,11 +271,15 @@ class HyperGranularSearcher:
             if "ms" in word:
                 try:
                     ms_val = int("".join(filter(str.isdigit, word)))
-                    result.temporal.append(TemporalConstraint(min_ms=ms_val, max_ms=ms_val))
+                    result.temporal.append(
+                        TemporalConstraint(min_ms=ms_val, max_ms=ms_val)
+                    )
                 except ValueError:
                     pass
         result.scene_description = query
-        result.reasoning.append(f"[3] Fallback: {result.constraint_count()} constraints")
+        result.reasoning.append(
+            f"[3] Fallback: {result.constraint_count()} constraints"
+        )
         return result
 
     async def search(
@@ -226,16 +288,33 @@ class HyperGranularSearcher:
         limit: int = 20,
         video_path: str | None = None,
     ) -> list[dict]:
+        """Perform recursive structured search with verification.
+
+        Args:
+            query: The natural language search query.
+            limit: Maximum results to return.
+            video_path: Optional path to filter results by a specific video.
+
+        Returns:
+            List of matching frame results.
+        """
         decomposed = await self.decompose_query(query)
-        log.info(f"[HyperGranular] Search: {decomposed.constraint_count()} constraints")
+        log.info(
+            f"[HyperGranular] Search: {decomposed.constraint_count()} constraints"
+        )
 
         results: list[dict] = []
         if not self.db:
-            return [{"error": "No database configured", "decomposed": decomposed.model_dump()}]
+            return [
+                {
+                    "error": "No database configured",
+                    "decomposed": decomposed.model_dump(),
+                }
+            ]
 
         face_ids = self._resolve_identities(decomposed.identities)
-        audio_events = self._get_audio_constraints(decomposed.audio)
-        text_terms = [t.text for t in decomposed.text if t.text]
+        self._get_audio_constraints(decomposed.audio)
+        [t.text for t in decomposed.text if t.text]
 
         try:
             search_text = decomposed.scene_description or query
@@ -262,7 +341,9 @@ class HyperGranularSearcher:
 
         return results[:limit]
 
-    def _resolve_identities(self, identities: list[IdentityConstraint]) -> list[int]:
+    def _resolve_identities(
+        self, identities: list[IdentityConstraint]
+    ) -> list[int]:
         if not self.db:
             return []
         ids = []
@@ -271,13 +352,20 @@ class HyperGranularSearcher:
                 cid = self.db.fuzzy_get_cluster_id_by_name(identity.name)
                 if cid:
                     ids.append(cid)
-                    log.info(f"[HyperGranular] Resolved '{identity.name}' -> cluster {cid}")
+                    log.info(
+                        f"[HyperGranular] Resolved '{identity.name}' -> cluster {cid}"
+                    )
             if identity.face_id:
                 ids.append(identity.face_id)
         return ids
 
-    def _get_audio_constraints(self, audio: list[AudioConstraint]) -> list[dict]:
-        return [{"event": a.event_class, "min_db": a.min_db, "max_db": a.max_db} for a in audio]
+    def _get_audio_constraints(
+        self, audio: list[AudioConstraint]
+    ) -> list[dict]:
+        return [
+            {"event": a.event_class, "min_db": a.min_db, "max_db": a.max_db}
+            for a in audio
+        ]
 
     def _filter_by_constraints(
         self, results: list[dict], decomposed: HyperGranularQuery
@@ -286,8 +374,12 @@ class HyperGranularSearcher:
         for text_constraint in decomposed.text:
             if text_constraint.text:
                 term = text_constraint.text.lower()
-                filtered = [r for r in filtered if term in (r.get("ocr_text", "") or "").lower()
-                           or term in (r.get("action", "") or "").lower()]
+                filtered = [
+                    r
+                    for r in filtered
+                    if term in (r.get("ocr_text", "") or "").lower()
+                    or term in (r.get("action", "") or "").lower()
+                ]
         return filtered
 
     def _score_results(
@@ -298,12 +390,17 @@ class HyperGranularSearcher:
             constraint_matches = 0
             total_constraints = decomposed.constraint_count()
 
-            desc = (result.get("action", "") + " " + result.get("description", "")).lower()
+            desc = (
+                result.get("action", "") + " " + result.get("description", "")
+            ).lower()
             ocr = (result.get("ocr_text", "") or "").lower()
             faces = result.get("face_names", [])
 
             for identity in decomposed.identities:
-                if identity.name and identity.name.lower() in str(faces).lower():
+                if (
+                    identity.name
+                    and identity.name.lower() in str(faces).lower()
+                ):
                     constraint_matches += 1
 
             for clothing in decomposed.clothing:
@@ -325,7 +422,11 @@ class HyperGranularSearcher:
                         constraint_matches += 0.5
                     result["matched_action"] = action.action
 
-            match_ratio = constraint_matches / total_constraints if total_constraints > 0 else 0
+            match_ratio = (
+                constraint_matches / total_constraints
+                if total_constraints > 0
+                else 0
+            )
             result["hyper_score"] = base_score * 0.4 + match_ratio * 0.6
             result["constraint_matches"] = constraint_matches
             result["total_constraints"] = total_constraints
@@ -338,12 +439,24 @@ class HyperGranularSearcher:
         action_constraint: ActionConstraint,
         threshold: float = 0.3,
     ) -> dict:
+        """Verify if a specific action occurs across a sequence of frames.
+
+        Args:
+            frames: List of candidate frames.
+            action_constraint: The action to verify.
+            threshold: Confidence threshold.
+
+        Returns:
+            Verification result with confidence and detected labels.
+        """
         if not action_constraint.action or len(frames) < 4:
             return {"verified": False, "reason": "insufficient data"}
 
         try:
             analyzer = self._get_temporal_analyzer()
-            actions = await analyzer.analyze_clip(frames, top_k=5, threshold=0.1)
+            actions = await analyzer.analyze_clip(
+                frames, top_k=5, threshold=0.1
+            )
 
             target = action_constraint.action.lower()
             target_words = set(target.split())

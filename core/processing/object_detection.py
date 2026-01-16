@@ -7,11 +7,19 @@ Enables searching for objects with specific attributes like
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from core.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    YOLO = Any
+else:
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        YOLO = Any
 
 log = get_logger(__name__)
 
@@ -41,7 +49,7 @@ class ObjectDetector:
         """
         self.model_size = model_size
         self._device = device
-        self.model = None
+        self.model: YOLO | None = None
         self._init_lock = asyncio.Lock()
 
     def _get_device(self) -> str:
@@ -50,6 +58,7 @@ class ObjectDetector:
             return self._device
         try:
             import torch
+
             return "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             return "cpu"
@@ -75,13 +84,20 @@ class ObjectDetector:
                         f"[YOLO-World] Loading model size={self.model_size}"
                     )
 
-                    from ultralytics import YOLO
+                    try:
+                        from ultralytics import YOLO  # type: ignore
+                    except ImportError:
+                        # Fallback or strict requirement
+                        from ultralytics.models.yolo import (
+                            YOLO,
+                        )
 
                     model_name = f"yolov8{self.model_size}-worldv2.pt"
                     self.model = YOLO(model_name)
 
                     device = self._get_device()
                     self._device = device
+                    self.model.to(device) # type: ignore
 
                     log.info(f"[YOLO-World] Model loaded on {device}")
                     return True
@@ -119,11 +135,17 @@ class ObjectDetector:
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("yolo_world", vram_gb=1.0):
-                # Set custom classes for zero-shot detection
-                self.model.set_classes(classes)
+                model = self.model
+                if model is None:
+                    return []
 
-                # Run inference
-                results = self.model.predict(
+                # Force type narrowing for Pylance
+                assert model is not None
+
+                # Set custom classes for zero-shot detection
+                model.set_classes(classes)
+
+                results = model.predict(
                     frame,
                     conf=confidence,
                     verbose=False,
@@ -141,15 +163,21 @@ class ObjectDetector:
                         conf = float(boxes.conf[i])
                         bbox = boxes.xyxy[i].tolist()
 
-                        detections.append({
-                            "class": classes[cls_id] if cls_id < len(classes) else "unknown",
-                            "confidence": round(conf, 3),
-                            "bbox": bbox,  # [x1, y1, x2, y2]
-                            "class_id": cls_id,
-                        })
+                        detections.append(
+                            {
+                                "class": classes[cls_id]
+                                if cls_id < len(classes)
+                                else "unknown",
+                                "confidence": round(conf, 3),
+                                "bbox": bbox,  # [x1, y1, x2, y2]
+                                "class_id": cls_id,
+                            }
+                        )
 
                 if detections:
-                    log.debug(f"[YOLO-World] Detected {len(detections)} objects")
+                    log.debug(
+                        f"[YOLO-World] Detected {len(detections)} objects"
+                    )
 
                 return detections
 
@@ -172,11 +200,31 @@ class ObjectDetector:
             List of detected objects.
         """
         common_classes = [
-            "person", "car", "dog", "cat", "chair", "table",
-            "phone", "laptop", "book", "cup", "bottle",
-            "bicycle", "motorcycle", "bus", "truck",
-            "bird", "horse", "sheep", "cow", "elephant",
-            "tv", "keyboard", "mouse", "remote", "clock",
+            "person",
+            "car",
+            "dog",
+            "cat",
+            "chair",
+            "table",
+            "phone",
+            "laptop",
+            "book",
+            "cup",
+            "bottle",
+            "bicycle",
+            "motorcycle",
+            "bus",
+            "truck",
+            "bird",
+            "horse",
+            "sheep",
+            "cow",
+            "elephant",
+            "tv",
+            "keyboard",
+            "mouse",
+            "remote",
+            "clock",
         ]
         return await self.detect(frame, common_classes, confidence)
 
@@ -188,6 +236,7 @@ class ObjectDetector:
 
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:
@@ -226,7 +275,9 @@ class GroundingDINODetector:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-                async with RESOURCE_ARBITER.acquire("grounding_dino", vram_gb=2.0):
+                async with RESOURCE_ARBITER.acquire(
+                    "grounding_dino", vram_gb=2.0
+                ):
                     log.info("[GroundingDINO] Loading model...")
 
                     from transformers import (
@@ -236,11 +287,14 @@ class GroundingDINODetector:
 
                     model_id = "IDEA-Research/grounding-dino-tiny"
                     self.processor = AutoProcessor.from_pretrained(model_id)
-                    self.model = AutoModelForZeroShotObjectDetection.from_pretrained(
-                        model_id
+                    self.model = (
+                        AutoModelForZeroShotObjectDetection.from_pretrained(
+                            model_id
+                        )
                     )
 
                     import torch
+
                     device = self._device or (
                         "cuda" if torch.cuda.is_available() else "cpu"
                     )
@@ -279,6 +333,7 @@ class GroundingDINODetector:
         try:
             import torch
             from PIL import Image
+
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("grounding_dino", vram_gb=2.0):
@@ -289,6 +344,10 @@ class GroundingDINODetector:
                     image = frame
 
                 # Process inputs
+                if self.processor is None or self.model is None:
+                    return []
+
+                model = self.model
                 inputs = self.processor(
                     images=image,
                     text=query,
@@ -297,9 +356,12 @@ class GroundingDINODetector:
                 inputs = {k: v.to(self._device) for k, v in inputs.items()}
 
                 with torch.no_grad():
-                    outputs = self.model(**inputs)
+                    outputs = model(**inputs)
 
                 # Post-process
+                if self.processor is None:
+                    return []
+
                 results = self.processor.post_process_grounded_object_detection(
                     outputs,
                     inputs["input_ids"],
@@ -315,12 +377,16 @@ class GroundingDINODetector:
                     scores = result["scores"].tolist()
                     labels = result["labels"]
 
-                    for box, score, label in zip(boxes, scores, labels):
-                        detections.append({
-                            "class": label,
-                            "confidence": round(score, 3),
-                            "bbox": box,
-                        })
+                    for box, score, label in zip(
+                        boxes, scores, labels, strict=False
+                    ):
+                        detections.append(
+                            {
+                                "class": label,
+                                "confidence": round(score, 3),
+                                "bbox": box,
+                            }
+                        )
 
                 return detections
 
@@ -339,6 +405,7 @@ class GroundingDINODetector:
 
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:

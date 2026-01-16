@@ -17,6 +17,9 @@ async def get_library(
 ):
     """Get all indexed media in the library.
 
+    Args:
+        pipeline: Ingestion pipeline instance.
+
     Returns:
         List of indexed videos with metadata.
     """
@@ -24,7 +27,6 @@ async def get_library(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-
         # Get unique video paths from frames collection
         resp = pipeline.db.client.scroll(
             collection_name=pipeline.db.MEDIA_COLLECTION,
@@ -67,6 +69,7 @@ async def delete_from_library(
 
     Args:
         path: The video path to remove.
+        pipeline: Ingestion pipeline instance.
 
     Returns:
         Deletion confirmation.
@@ -152,6 +155,9 @@ async def get_stats(
 ):
     """Get system statistics.
 
+    Args:
+        pipeline: Ingestion pipeline instance.
+
     Returns:
         Counts of indexed items across collections.
     """
@@ -163,21 +169,27 @@ async def get_stats(
 
         # Count frames
         try:
-            info = pipeline.db.client.get_collection(pipeline.db.MEDIA_COLLECTION)
+            info = pipeline.db.client.get_collection(
+                pipeline.db.MEDIA_COLLECTION
+            )
             stats["frames"] = info.points_count
         except Exception:
             stats["frames"] = 0
 
         # Count faces
         try:
-            info = pipeline.db.client.get_collection(pipeline.db.FACES_COLLECTION)
+            info = pipeline.db.client.get_collection(
+                pipeline.db.FACES_COLLECTION
+            )
             stats["faces"] = info.points_count
         except Exception:
             stats["faces"] = 0
 
         # Count voice segments
         try:
-            info = pipeline.db.client.get_collection(pipeline.db.VOICE_COLLECTION)
+            info = pipeline.db.client.get_collection(
+                pipeline.db.VOICE_COLLECTION
+            )
             stats["voice_segments"] = info.points_count
         except Exception:
             stats["voice_segments"] = 0
@@ -234,6 +246,7 @@ async def search_by_name(
     Args:
         name: The person name to search for.
         limit: Maximum results.
+        pipeline: Ingestion pipeline instance.
 
     Returns:
         Frames containing the named person.

@@ -168,12 +168,16 @@ IMPORTANT RULES:
                 )
                 return analysis
             except Exception as e:
-                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
                 if attempt < max_retries - 1:
-                    log(f"[Vision] Structured analysis failed (attempt {attempt+1}/{max_retries}): {e}. Retrying in {wait_time}s...")
+                    log(
+                        f"[Vision] Structured analysis failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait_time}s..."
+                    )
                     await asyncio.sleep(wait_time)
                 else:
-                    log(f"[Vision] Structured analysis failed after {max_retries} attempts for {image_path}: {e}")
+                    log(
+                        f"[Vision] Structured analysis failed after {max_retries} attempts for {image_path}: {e}"
+                    )
                     log(
                         f"[Vision] Falling back to unstructured description for {image_path.name}"
                     )

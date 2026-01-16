@@ -13,20 +13,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class HardwareProfile(str, Enum):
     """Hardware profile for throughput tuning.
-    
+
     NOTE: Profiles affect ONLY batch sizes and parallelism.
     Model quality and accuracy are IDENTICAL across all profiles.
     """
-    
-    LAPTOP = "laptop"        # < 8GB VRAM
+
+    LAPTOP = "laptop"  # < 8GB VRAM
     WORKSTATION = "workstation"  # 8-20GB VRAM
-    SERVER = "server"        # > 20GB VRAM
-    CPU_ONLY = "cpu_only"    # No GPU
+    SERVER = "server"  # > 20GB VRAM
+    CPU_ONLY = "cpu_only"  # No GPU
 
 
 def get_hardware_profile() -> dict:
     """Detect hardware and return optimal settings.
-    
+
     Returns throughput settings based on available VRAM.
     NOTE: Model quality is NEVER reduced - only batch sizes change.
     """
@@ -39,7 +39,9 @@ def get_hardware_profile() -> dict:
     }
 
     if not torch.cuda.is_available():
-        logging.info("No GPU detected. Using CPU profile (full accuracy, slower).")
+        logging.info(
+            "No GPU detected. Using CPU profile (full accuracy, slower)."
+        )
         return profile
 
     profile["device"] = "cuda"

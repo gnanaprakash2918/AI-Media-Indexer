@@ -28,7 +28,7 @@ async def verify_mcp_server():
     )
 
     try:
-        async with stdio_client(server_params) as (read, write):
+        async with stdio_client(server_params) as (read, write):  # type: ignore
             async with ClientSession(read, write) as session:
                 # Initialize
                 await session.initialize()

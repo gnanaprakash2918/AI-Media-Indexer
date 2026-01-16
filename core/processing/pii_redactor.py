@@ -53,7 +53,9 @@ class PIIRedactor:
             pixelate_size: Pixel block size for pixelation.
         """
         self.mode = mode
-        self.blur_strength = blur_strength if blur_strength % 2 == 1 else blur_strength + 1
+        self.blur_strength = (
+            blur_strength if blur_strength % 2 == 1 else blur_strength + 1
+        )
         self.pixelate_size = pixelate_size
 
     async def redact_faces(
@@ -209,7 +211,10 @@ class PIIRedactor:
             h, w = roi.shape[:2]
             small = cv2.resize(
                 roi,
-                (max(1, w // self.pixelate_size), max(1, h // self.pixelate_size)),
+                (
+                    max(1, w // self.pixelate_size),
+                    max(1, h // self.pixelate_size),
+                ),
                 interpolation=cv2.INTER_LINEAR,
             )
             return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)

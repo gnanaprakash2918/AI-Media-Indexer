@@ -1,3 +1,4 @@
+"""Module for detecting and describing clothing attributes on persons."""
 from __future__ import annotations
 
 import asyncio
@@ -12,9 +13,11 @@ log = get_logger(__name__)
 
 
 class ClothingAttributeDetector:
+    """Detector for identifying clothing types, colors, and styles."""
     def __init__(self):
+        """Initialize the clothing attribute detector."""
         self.model = None
-        self.processor = None
+        self.processor: Any = None
         self._device = None
         self._init_lock = asyncio.Lock()
 
@@ -23,6 +26,7 @@ class ClothingAttributeDetector:
             return self._device
         try:
             import torch
+
             return "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             return "cpu"
@@ -37,15 +41,23 @@ class ClothingAttributeDetector:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-                async with RESOURCE_ARBITER.acquire("clothing_clip", vram_gb=1.5):
-                    log.info("[ClothingDetector] Loading CLIP for open-vocabulary detection...")
-                    import torch
+                async with RESOURCE_ARBITER.acquire(
+                    "clothing_clip", vram_gb=1.5
+                ):
+                    log.info(
+                        "[ClothingDetector] Loading CLIP for open-vocabulary detection..."
+                    )
+                    # Torch used for CLIP loading (Transformers requirement)
                     from transformers import CLIPModel, CLIPProcessor
 
                     device = self._get_device()
-                    self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-                    self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-                    self.model = self.model.to(device).eval()
+                    self.processor = CLIPProcessor.from_pretrained(
+                        "openai/clip-vit-base-patch32"
+                    )  # type: ignore
+                    self.model = CLIPModel.from_pretrained(
+                        "openai/clip-vit-base-patch32"
+                    )
+                    self.model = self.model.to(device).eval()  # type: ignore
                     self._device = device
                     log.info(f"[ClothingDetector] CLIP loaded on {device}")
                     return True
@@ -60,8 +72,17 @@ class ClothingAttributeDetector:
     async def match_description(
         self,
         image: np.ndarray | Path,
-        target_description: str,
+        description: str,
     ) -> dict[str, Any]:
+        """Match an image against a natural language clothing description.
+
+        Args:
+            image: Image array or path.
+            description: Description of the clothing.
+
+        Returns:
+            Dictionary with match score and potential attributes.
+        """
         if not await self._lazy_load():
             return {"score": 0.0, "error": "Model not loaded"}
 
@@ -77,10 +98,13 @@ class ClothingAttributeDetector:
                 img = image
 
             prompts = [
-                f"a person wearing {target_description}",
-                f"a photo of {target_description}",
-                target_description,
+                f"a person wearing {description}",
+                f"a photo of {description}",
+                description,
             ]
+
+            if self.model is None or self.processor is None:
+                return {"score": 0.0, "error": "Model initialization failed"}
 
             inputs = self.processor(
                 text=prompts, images=img, return_tensors="pt", padding=True
@@ -93,10 +117,12 @@ class ClothingAttributeDetector:
                 probs = torch.softmax(logits, dim=0).cpu().numpy()
 
             best_score = float(max(probs))
-            log.info(f"[ClothingDetector] '{target_description}' score: {best_score:.3f}")
+            log.info(
+                f"[ClothingDetector] '{description}' score: {best_score:.3f}"
+            )
 
             return {
-                "target": target_description,
+                "target": description,
                 "score": best_score,
                 "match": best_score > 0.25,
             }
@@ -113,6 +139,18 @@ class ClothingAttributeDetector:
         pattern: str | None = None,
         side: str | None = None,
     ) -> dict[str, Any]:
+        """Match an image against a set of clothing constraints.
+
+        Args:
+            image: Image array or path.
+            color: Desired clothing color.
+            item: Desired clothing item (e.g., "shirt", "pants").
+            pattern: Desired clothing pattern (e.g., "striped", "polka dot").
+            side: Desired side of the body (e.g., "left", "right").
+
+        Returns:
+            Dictionary with match score and potential attributes.
+        """
         parts = []
         if color:
             parts.append(color)
@@ -132,13 +170,21 @@ class ClothingAttributeDetector:
     async def compare_candidates(
         self,
         image: np.ndarray | Path,
-        candidate_descriptions: list[str],
+        candidates: list[str],
     ) -> list[dict[str, Any]]:
+        """Find the best matching clothing description from a list.
+
+        Args:
+            image: Input image.
+            candidates: List of possible descriptions.
+
+        Returns:
+            The most likely matching candidate.
+        """
         if not await self._lazy_load():
-            return [{"label": c, "score": 0.0} for c in candidate_descriptions]
+            return [{"label": c, "score": 0.0} for c in candidates]
 
         try:
-            import torch
             from PIL import Image
 
             if isinstance(image, Path):
@@ -148,7 +194,15 @@ class ClothingAttributeDetector:
             else:
                 img = image
 
-            prompts = [f"a person wearing {c}" for c in candidate_descriptions]
+            prompts = [f"a person wearing {c}" for c in candidates]
+
+            if self.model is None or self.processor is None:
+                return [
+                    {"label": c, "score": 0.0, "error": "Model not loaded"}
+                    for c in candidates
+                ]
+
+            import torch
 
             inputs = self.processor(
                 text=prompts, images=img, return_tensors="pt", padding=True
@@ -161,8 +215,8 @@ class ClothingAttributeDetector:
                 probs = torch.softmax(logits, dim=0).cpu().numpy()
 
             results = [
-                {"label": candidate_descriptions[i], "score": float(probs[i])}
-                for i in range(len(candidate_descriptions))
+                {"label": candidates[i], "score": float(probs[i])}
+                for i in range(len(candidates))
             ]
             results.sort(key=lambda x: x["score"], reverse=True)
 
@@ -170,9 +224,12 @@ class ClothingAttributeDetector:
 
         except Exception as e:
             log.error(f"[ClothingDetector] Comparison failed: {e}")
-            return [{"label": c, "score": 0.0, "error": str(e)} for c in candidate_descriptions]
+            return [
+                {"label": c, "score": 0.0, "error": str(e)} for c in candidates
+            ]
 
     def cleanup(self) -> None:
+        """Clear model from memory."""
         if self.model:
             del self.model
             self.model = None
@@ -181,6 +238,7 @@ class ClothingAttributeDetector:
             self.processor = None
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:

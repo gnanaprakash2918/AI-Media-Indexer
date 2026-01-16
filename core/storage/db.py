@@ -10,7 +10,7 @@ import time
 import uuid
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from huggingface_hub import snapshot_download
@@ -72,10 +72,13 @@ class VectorDB:
     FACES_COLLECTION = "faces"
     VOICE_COLLECTION = "voice_segments"
     SCENES_COLLECTION = "scenes"  # Scene-level storage (production approach)
-    SCENELETS_COLLECTION = "media_scenelets"  # Sliding window (5s) for action search
+    SCENELETS_COLLECTION = (
+        "media_scenelets"  # Sliding window (5s) for action search
+    )
     SUMMARIES_COLLECTION = "global_summaries"  # Hierarchical summaries (L1/L2)
     MASKLETS_COLLECTION = "masklets"
-
+    AUDIO_EVENTS_COLLECTION = "audio_events"
+    VIDEO_METADATA_COLLECTION = "video_metadata"
 
     MEDIA_VECTOR_SIZE = settings.visual_embedding_dim
     FACE_VECTOR_SIZE = 512  # InsightFace ArcFace
@@ -195,7 +198,12 @@ class VectorDB:
                 repo_id=self.MODEL_NAME,
                 local_dir=str(local_model_dir),
                 token=settings.hf_token,
-                ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.bin"], # Ignore PyTorch bin if safetensors exists
+                ignore_patterns=[
+                    "*.msgpack",
+                    "*.h5",
+                    "*.ot",
+                    "*.bin",
+                ],  # Ignore PyTorch bin if safetensors exists
             )
         except Exception as dl_exc:
             log(f"Snapshot Download Failed: {dl_exc}", level="error")
@@ -359,9 +367,16 @@ class VectorDB:
         try:
             return self.encode_texts(text, is_query=True)[0]
         except Exception as e:
-            log(f"Error generating embedding for '{text[:20]}...': {e}", level="ERROR")
+            log(
+                f"Error generating embedding for '{text[:20]}...': {e}",
+                level="ERROR",
+            )
             # Return zero vector as fallback to prevent crash
             return [0.0] * self.MEDIA_VECTOR_SIZE
+
+    def encode_text(self, text: str) -> list[float]:
+        """Encodes a single text string."""
+        return self.encode_texts(text, is_query=True)[0]
 
     def get_indexed_videos(self) -> list[str]:
         """Retrieves a list of all unique video paths currently indexed in the database.
@@ -464,28 +479,32 @@ class VectorDB:
                     distance=models.Distance.COSINE,
                 ),
             )
-            
+
             # Create Payload Indexes for fast filtering
             self.client.create_payload_index(
                 collection_name=self.MEDIA_COLLECTION,
                 field_name="video_path",
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
+            self._create_text_index(
+                collection_name=self.MEDIA_COLLECTION,
+                field_name="transcript",
+                type=models.TextIndexType.TEXT,
+                tokenizer=models.TokenizerType.WORD,
+            )
             self.client.create_payload_index(
                 collection_name=self.MEDIA_COLLECTION,
                 field_name="scan_id",
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
-            self.client.create_payload_index(
+            self._create_text_index(
                 collection_name=self.MEDIA_COLLECTION,
                 field_name="ocr_text",
-                field_schema=models.TextIndexParams(
-                    type="text",
-                    tokenizer=models.TokenizerType.WORD,
-                    min_token_len=2,
-                    max_token_len=20,
-                    lowercase=True,
-                ),
+                type=models.TextIndexType.TEXT,
+                tokenizer=models.TokenizerType.WORD,
+                min_token_len=2,
+                max_token_len=20,
+                lowercase=True,
             )
             log(
                 f"Created media_frames collection with dim={self.MEDIA_VECTOR_SIZE}"
@@ -589,21 +608,75 @@ class VectorDB:
         ]
         for field in text_fields:
             try:
-                self.client.create_payload_index(
+                self._create_text_index(
                     collection_name=self.MEDIA_COLLECTION,
                     field_name=field,
-                    field_schema=models.TextIndexParams(
-                        type="text",
-                        tokenizer=models.TokenizerType.WORD,
-                        min_token_len=2,
-                        lowercase=True,
-                    ),
+                    type=models.TextIndexType.TEXT,
+                    tokenizer=models.TokenizerType.WORD,
+                    min_token_len=2,
+                    lowercase=True,
                 )
             except Exception as e:
                 # Index might already exist
-                log(f"Index creation for {field} failed (likely exists): {e}", level="DEBUG")
+                log(
+                    f"Index creation for {field} failed (likely exists): {e}",
+                    level="DEBUG",
+                )
+
+        # Audio Events Collection
+        if not self.client.collection_exists(self.AUDIO_EVENTS_COLLECTION):
+            self.client.create_collection(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                vectors_config=models.VectorParams(
+                    size=1,  # Dummy vector, queries use payload filters
+                    distance=models.Distance.COSINE,
+                ),
+            )
+            self.client.create_payload_index(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                field_name="media_path",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+
+        # Video Metadata Collection
+        if not self.client.collection_exists(self.VIDEO_METADATA_COLLECTION):
+            self.client.create_collection(
+                collection_name=self.VIDEO_METADATA_COLLECTION,
+                vectors_config=models.VectorParams(
+                    size=1,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+            self.client.create_payload_index(
+                collection_name=self.VIDEO_METADATA_COLLECTION,
+                field_name="media_path",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
 
         log("Qdrant collections and indexes ensured")
+
+    def _create_text_index(
+        self,
+        collection_name: str,
+        field_name: str,
+        type: models.TextIndexType = models.TextIndexType.TEXT,
+        tokenizer: models.TokenizerType = models.TokenizerType.WORD,
+        min_token_len: int = 2,
+        max_token_len: int = 20,
+        lowercase: bool = True,
+    ) -> None:
+        """Helper to create a text payload index with common settings."""
+        self.client.create_payload_index(
+            collection_name=collection_name,
+            field_name=field_name,
+            field_schema=models.TextIndexParams(
+                type=type,
+                tokenizer=tokenizer,
+                min_token_len=min_token_len,
+                max_token_len=max_token_len,
+                lowercase=lowercase,
+            ),
+        )
 
     def list_collections(self) -> models.CollectionsResponse:
         """List all collections in the Qdrant instance."""
@@ -687,9 +760,9 @@ class VectorDB:
                     match=models.MatchAny(any=allowed_video_paths),
                 )
             )
-        
+
         if face_cluster_id is not None:
-             filter_conditions.append(
+            filter_conditions.append(
                 models.FieldCondition(
                     key="face_cluster_ids",
                     match=models.MatchValue(value=face_cluster_id),
@@ -698,60 +771,19 @@ class VectorDB:
 
         scroll_filter = None
         if filter_conditions:
-            scroll_filter = models.Filter(must=filter_conditions)
+            scroll_filter = models.Filter(
+                must=cast(list[models.Condition], filter_conditions)
+            )
 
-        results = self.client.search(
+        results = self.client.query_points(
             collection_name=self.MEDIA_COLLECTION,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=scroll_filter,
             limit=limit,
             score_threshold=score_threshold,
             with_payload=True,
-        )
-        return [point.payload for point in results]
-
-    def search_frames_hybrid(
-        self,
-        query: str,
-        limit: int = 20,
-        allowed_video_paths: list[str] | None = None,
-        face_cluster_id: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Search using hybrid fusion (Dense Vector + Sparse Keyword)."""
-        # Build filter conditions
-        filter_conditions = []
-        if allowed_video_paths:
-            filter_conditions.append(
-                models.FieldCondition(
-                    key="video_path",
-                    match=models.MatchAny(any=allowed_video_paths),
-                )
-            )
-        
-        if face_cluster_id is not None:
-             filter_conditions.append(
-                models.FieldCondition(
-                    key="face_cluster_ids",
-                    match=models.MatchValue(value=face_cluster_id),
-                )
-            )
-
-        search_filter = None
-        search_filter = None
-        if filter_conditions:
-            search_filter = models.Filter(must=filter_conditions)
-
-        query_vector = self.encode_text(query)
-
-        # Standard dense search with filters (acting as hybrid metadata+vector)
-        results = self.client.search(
-            collection_name=self.MEDIA_COLLECTION,
-            query_vector=query_vector,
-            query_filter=search_filter,
-            limit=limit,
-            with_payload=True,
-        )
-        return [point.payload for point in results]
+        ).points
+        return [point.payload for point in results if point.payload]
 
     @observe("db_search_media")
     def search_media(
@@ -853,11 +885,11 @@ class VectorDB:
                 "ocr_text": ocr_text,  # Store in payload
             }
         )
-        
+
         # Ensure scan_id is present if passed in payload
         # This fixes the filtering issue where scan_id was sometimes dropped
         if payload.get("scan_id"):
-             payload["scan_id"] = str(payload["scan_id"])
+            payload["scan_id"] = str(payload["scan_id"])
 
         self.client.upsert(
             collection_name=self.MEDIA_COLLECTION,
@@ -865,7 +897,6 @@ class VectorDB:
                 models.PointStruct(id=point_id, vector=vector, payload=payload)
             ],
         )
-
 
     @observe("db_insert_masklet")
     def insert_masklet(
@@ -983,10 +1014,16 @@ class VectorDB:
         try:
             results = self.client.scroll(
                 collection_name=self.MASKLETS_COLLECTION,
-                scroll_filter=models.Filter(must=must_filters),
+                scroll_filter=models.Filter(
+                    must=cast(list[models.Condition], must_filters)
+                ),
                 limit=1000,
             )
-            return [p.payload for p in results[0]]
+            # Ensure payloads are not None before returning
+            valid_payloads: list[dict[str, Any]] = [
+                p.payload for p in results[0] if p.payload is not None
+            ]
+            return valid_payloads
         except Exception as e:
             log(f"Failed to fetch masklets: {e}", level="ERROR")
             return []
@@ -1006,10 +1043,12 @@ class VectorDB:
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
-                            key="video_path", match=models.MatchValue(value=video_path)
+                            key="video_path",
+                            match=models.MatchValue(value=video_path),
                         ),
                         models.FieldCondition(
-                            key="level", match=models.MatchValue(value="L2") # L2 is global
+                            key="level",
+                            match=models.MatchValue(value="L2"),  # L2 is global
                         ),
                     ]
                 ),
@@ -1021,47 +1060,6 @@ class VectorDB:
         except Exception as e:
             log(f"Failed to fetch summary: {e}", level="ERROR")
             return None
-
-    @observe("db_search_frames")
-    def search_frames(
-        self,
-        query: str,
-        limit: int = 5,
-        score_threshold: float | None = None,
-    ) -> list[dict[str, Any]]:
-        """Performs a visual semantic search for frames matching the query.
-
-        Args:
-            query: Natural language description of the visual scene.
-            limit: Maximum number of results to retrieve.
-            score_threshold: Minimum cosine similarity score.
-
-        Returns:
-            A list of frame dictionaries with score, action, and timestamp.
-        """
-        query_vector = self.encode_texts(query, is_query=True)[0]
-
-        resp = self.client.query_points(
-            collection_name=self.MEDIA_COLLECTION,
-            query=query_vector,
-            limit=limit,
-            score_threshold=score_threshold,
-        )
-
-        results = []
-        for hit in resp.points:
-            payload = hit.payload or {}
-            results.append(
-                {
-                    "score": hit.score,
-                    "action": payload.get("action"),
-                    "timestamp": payload.get("timestamp"),
-                    "video_path": payload.get("video_path"),
-                    "type": payload.get("type", "visual"),
-                }
-            )
-
-        return results
 
     @observe("db_match_speaker")
     def match_speaker(
@@ -1090,7 +1088,11 @@ class VectorDB:
             if resp.points:
                 hit = resp.points[0]
                 payload = hit.payload or {}
-                return payload.get("speaker_id", "unknown"), payload.get("voice_cluster_id", -1), hit.score
+                return (
+                    payload.get("speaker_id", "unknown"),
+                    payload.get("voice_cluster_id", -1),
+                    hit.score,
+                )
         except Exception:
             pass
         return None
@@ -1322,20 +1324,26 @@ class VectorDB:
         try:
             # We use Qdrant's MatchText to find documents containing query terms.
             # This is much faster than scraping random frames.
-            
+
             # Fields to search
             text_fields = [
-                "action", "dialogue", "description", "entities", 
-                "visible_text", "face_names", "clothing_colors", 
-                "clothing_types", "accessories", "scene_location"
+                "action",
+                "dialogue",
+                "description",
+                "entities",
+                "visible_text",
+                "face_names",
+                "clothing_colors",
+                "clothing_types",
+                "accessories",
+                "scene_location",
             ]
-            
+
             should_conditions = []
             for field in text_fields:
                 should_conditions.append(
                     models.FieldCondition(
-                        key=field,
-                        match=models.MatchText(text=query)
+                        key=field, match=models.MatchText(text=query)
                     )
                 )
 
@@ -1351,7 +1359,7 @@ class VectorDB:
 
             keyword_filter = models.Filter(
                 should=should_conditions,
-                must=must_conditions if must_conditions else None
+                must=must_conditions if must_conditions else None,
             )
 
             # Scroll for matches (limit to 100 high-relevance matches)
@@ -1368,34 +1376,36 @@ class VectorDB:
             for rank, point in enumerate(scroll_resp[0]):
                 point_id = str(point.id)
                 rank_lists["keyword"][point_id] = rank + 1  # 1-based rank
-                
+
                 if point_id not in results_by_id:
                     payload = point.payload or {}
                     results_by_id[point_id] = {
                         "id": point_id,
                         "score": 0.0,
-                        "keyword_score": 1.0, # Placeholder info
+                        "keyword_score": 1.0,  # Placeholder info
                         "match_reasons": [],
                         **payload,
                     }
-                
+
                 # Try to determine WHY it matched for the UI
                 payload = results_by_id[point_id]
                 matched_fields = []
                 q_lower = query.lower().split()
-                
+
                 # Heuristic verify
                 for field in text_fields:
                     val = str(payload.get(field, "")).lower()
                     if any(w in val for w in q_lower if len(w) > 2):
                         matched_fields.append(field)
-                
+
                 if matched_fields:
                     results_by_id[point_id]["match_reasons"].append(
                         f"Keyword match: {', '.join(matched_fields[:3])}"
                     )
                 else:
-                    results_by_id[point_id]["match_reasons"].append("Text match")
+                    results_by_id[point_id]["match_reasons"].append(
+                        "Text match"
+                    )
 
             # === 2b. MASKLET SEARCH (Deep Video Understanding) ===
             # Search for SAM3-tracked concepts overlap with query
@@ -1599,56 +1609,179 @@ class VectorDB:
             # Get all named faces
             resp = self.client.scroll(
                 collection_name=self.FACES_COLLECTION,
-                scroll_filter=models.Filter(
-                    must_not=[
-                        models.IsNullCondition(
-                            is_null=models.PayloadField(key="name"),
-                        )
-                    ]
-                ),
-                limit=500,
-                with_payload=True,
+                limit=1000,
+                with_payload=["name", "cluster_id"],
+                with_vectors=False,
             )
+            best_match_id = None
+            best_ratio = 0.0
 
-            if not resp[0]:
-                return None
+            from difflib import SequenceMatcher
 
-            search_lower = name.lower().strip()
-            best_match = None
-            best_score = 0.0
+            search_lower = name.lower()
 
-            for point in resp[0]:
-                if not point.payload:
-                    continue
-                stored_name = point.payload.get("name")
-                if not stored_name:
+            for pt in resp[0]:
+                payload = pt.payload or {}
+                face_name = payload.get("name")
+                if not face_name:
                     continue
 
-                stored_lower = stored_name.lower().strip()
+                ratio = SequenceMatcher(
+                    None, search_lower, face_name.lower()
+                ).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_match_id = payload.get("cluster_id")
 
-                # Exact case-insensitive match
-                if search_lower == stored_lower:
-                    return point.payload.get("cluster_id")
+            if best_ratio >= threshold:
+                return best_match_id
 
-                # Substring match (partial name)
-                if search_lower in stored_lower or stored_lower in search_lower:
-                    score = len(search_lower) / max(len(stored_lower), 1)
-                    if score > best_score:
-                        best_score = score
-                        best_match = point.payload.get("cluster_id")
-                        continue
-
-                # Simple character overlap ratio (poor man's fuzzy)
-                common = sum(1 for c in search_lower if c in stored_lower)
-                ratio = common / max(len(search_lower), len(stored_lower), 1)
-                if ratio > best_score and ratio >= threshold:
-                    best_score = ratio
-                    best_match = point.payload.get("cluster_id")
-
-            return best_match if best_score >= threshold else None
-
+            return None
         except Exception:
             return None
+
+    def get_frames_by_video(
+        self,
+        video_path: str,
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve frames for a video with optional time range."""
+        must = [
+            models.FieldCondition(
+                key="video_path", match=models.MatchValue(value=video_path)
+            )
+        ]
+        if start_time is not None:
+            must.append(
+                models.FieldCondition(
+                    key="timestamp", range=models.Range(gte=start_time)
+                )
+            )
+        if end_time is not None:
+            must.append(
+                models.FieldCondition(
+                    key="timestamp", range=models.Range(lte=end_time)
+                )
+            )
+
+        frames = []
+        offset = None
+        while True:
+            results, offset = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=cast(list[models.Condition], must)
+                ),
+                limit=1000,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in results:
+                frames.append(point.payload or {})
+            if offset is None:
+                break
+        return sorted(frames, key=lambda x: x.get("timestamp", 0))
+
+    def get_loudness_events(
+        self,
+        video_path: str,
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve loudness events for a video."""
+        must = [
+            models.FieldCondition(
+                key="media_path", match=models.MatchValue(value=video_path)
+            )
+        ]
+        if start_time is not None:
+            must.append(
+                models.FieldCondition(
+                    key="start_time", range=models.Range(gte=start_time)
+                )
+            )
+        if end_time is not None:
+            must.append(
+                models.FieldCondition(
+                    key="end_time", range=models.Range(lte=end_time)
+                )
+            )
+
+        results, _ = self.client.scroll(
+            collection_name=self.AUDIO_EVENTS_COLLECTION,
+            scroll_filter=models.Filter(
+                must=cast(list[models.Condition], must)
+            ),
+            limit=1000,
+            with_payload=True,
+        )
+        # Filter for loudness events if mixed in audio_events
+        return [
+            p.payload
+            for p in results
+            if p.payload and "loud_moment" in str(p.payload.get("event", ""))
+        ]
+
+    def get_frame_by_id(self, frame_id: str) -> dict[str, Any] | None:
+        """Retrieve a specific frame by ID."""
+        try:
+            results = self.client.retrieve(
+                collection_name=self.MEDIA_COLLECTION,
+                ids=[frame_id],
+                with_payload=True,
+            )
+            if results:
+                return results[0].payload
+        except Exception:
+            pass
+        return None
+
+    def insert_audio_event(
+        self,
+        media_path: str,
+        event_type: str,
+        start_time: float,
+        end_time: float,
+        confidence: float,
+        payload: dict[str, Any] | None = None,
+    ):
+        """Insert generic audio event."""
+        unique_str = f"{media_path}_{event_type}_{start_time}"
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
+
+        data = {
+            "media_path": media_path,
+            "event": event_type,
+            "start_time": start_time,
+            "end_time": end_time,
+            "confidence": confidence,
+            **(payload or {}),
+        }
+
+        self.client.upsert(
+            collection_name=self.AUDIO_EVENTS_COLLECTION,
+            points=[
+                models.PointStruct(
+                    id=point_id, vector=[1.0], payload=data
+                )  # Dummy vector
+            ],
+        )
+
+    def update_media_metadata(self, media_path: str, metadata: dict[str, Any]):
+        """Update video-level metadata."""
+        unique_str = f"metadata_{media_path}"
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
+
+        data = {"media_path": media_path, **metadata}
+
+        self.client.upsert(
+            collection_name=self.VIDEO_METADATA_COLLECTION,
+            points=[
+                models.PointStruct(id=point_id, vector=[1.0], payload=data)
+            ],
+        )
 
     def get_face_ids_by_cluster(self, cluster_id: int) -> list[str]:
         """Get all face point IDs belonging to a cluster.
@@ -1934,27 +2067,29 @@ class VectorDB:
             payload: Additional metadata.
         """
         vector = self.encode_texts(content_text or "scenelet")[0]
-        
-        scenelet_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{media_path}_sl_{start_time:.3f}"))
-        
+
+        scenelet_id = str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, f"{media_path}_sl_{start_time:.3f}")
+        )
+
         full_payload = {
             "media_path": media_path,
             "start_time": start_time,
             "end_time": end_time,
-            "text": content_text
+            "text": content_text,
         }
         if payload:
             full_payload.update(payload)
-            
+
         self.client.upsert(
             collection_name=self.SCENELETS_COLLECTION,
             points=[
                 models.PointStruct(
                     id=scenelet_id,
                     vector={"content": vector},
-                    payload=full_payload
+                    payload=full_payload,
                 )
-            ]
+            ],
         )
         return scenelet_id
 
@@ -1968,18 +2103,17 @@ class VectorDB:
     ) -> list[dict[str, Any]]:
         """Search short temporal segments (scenelets)."""
         query_vec = self.encode_texts(query, is_query=True)[0]
-        
+
         conditions = []
         if video_path:
             conditions.append(
                 models.FieldCondition(
-                    key="media_path",
-                    match=models.MatchValue(value=video_path)
+                    key="media_path", match=models.MatchValue(value=video_path)
                 )
             )
-            
+
         q_filter = models.Filter(must=conditions) if conditions else None
-        
+
         try:
             resp = self.client.query_points(
                 collection_name=self.SCENELETS_COLLECTION,
@@ -1987,16 +2121,18 @@ class VectorDB:
                 using="content",
                 limit=limit,
                 query_filter=q_filter,
-                score_threshold=score_threshold
+                score_threshold=score_threshold,
             )
-            
+
             results = []
             for hit in resp.points:
-                results.append({
-                    "id": str(hit.id),
-                    "score": hit.score,
-                    **(hit.payload or {})
-                })
+                results.append(
+                    {
+                        "id": str(hit.id),
+                        "score": hit.score,
+                        **(hit.payload or {}),
+                    }
+                )
             return results
         except Exception as e:
             log(f"Scenelet search failed: {e}")
@@ -3869,7 +4005,9 @@ class VectorDB:
         except Exception:
             return None
 
-    def _propagate_speaker_name_to_frames(self, cluster_id: int, name: str) -> int:
+    def _propagate_speaker_name_to_frames(
+        self, cluster_id: int, name: str
+    ) -> int:
         """Propagate speaker name to all frames associated with this voice cluster.
 
         This ensures that when a speaker is named (e.g. "Speaker 1" -> "John"),
@@ -3902,7 +4040,7 @@ class VectorDB:
                 return 0
 
             updated_frames = 0
-            
+
             # Group by media path to minimize DB queries
             media_segments = {}
             for seg in segments:
@@ -3911,14 +4049,16 @@ class VectorDB:
                 if path:
                     if path not in media_segments:
                         media_segments[path] = []
-                    media_segments[path].append((payload.get("start", 0), payload.get("end", 0)))
+                    media_segments[path].append(
+                        (payload.get("start", 0), payload.get("end", 0))
+                    )
 
             # 2. Update frames for each media file
             for media_path, time_ranges in media_segments.items():
                 # Find frames within these time ranges
                 # This is an approximation; ideally we'd use exact timestamp matching,
                 # but for search metadata, coarse matching is sufficient.
-                
+
                 # Fetch all frames for this video
                 frames_resp = self.client.scroll(
                     collection_name=self.MEDIA_COLLECTION,
@@ -3930,7 +4070,7 @@ class VectorDB:
                             )
                         ]
                     ),
-                    limit=2000, # Assume max 2000 frames per video for now or iterate
+                    limit=2000,  # Assume max 2000 frames per video for now or iterate
                     with_payload=True,
                 )[0]
 
@@ -3942,14 +4082,20 @@ class VectorDB:
                         frame_id = str(frame.id)
                         payload = frame.payload or {}
                         face_names = payload.get("face_names", [])
-                        speaker_names = list({*payload.get("speaker_names", []), name})
-                        
-                        if self.update_frame_identity_text(frame_id, face_names, speaker_names):
+                        speaker_names = list(
+                            {*payload.get("speaker_names", []), name}
+                        )
+
+                        if self.update_frame_identity_text(
+                            frame_id, face_names, speaker_names
+                        ):
                             updated_frames += 1
-            
-            log(f"[HITL] Propagated speaker '{name}' to {updated_frames} frames")
+
+            log(
+                f"[HITL] Propagated speaker '{name}' to {updated_frames} frames"
+            )
             return updated_frames
-            
+
         except Exception as e:
             log(f"Failed to propagate speaker name: {e}")
             return 0
@@ -3978,10 +4124,10 @@ class VectorDB:
                     ]
                 ),
             )
-            
+
             # Propagate to searchable frame metadata
             self.re_embed_voice_cluster_frames(cluster_id, name)
-            
+
             return 1  # Return 1 to indicate success
         except Exception as e:
             log(f"set_speaker_name failed: {e}")
@@ -4757,17 +4903,19 @@ class VectorDB:
         except Exception:
             return 0
 
-    def get_entity_co_occurrences(self, limit_frames: int = 5000) -> dict[int, dict[str, int]]:
+    def get_entity_co_occurrences(
+        self, limit_frames: int = 5000
+    ) -> dict[int, dict[str, int]]:
         """Aggregates NER entities that co-occur with face clusters in frames.
-        
+
         Args:
             limit_frames: Number of recent frames to analyze.
-            
+
         Returns:
             Dict[cluster_id, Dict[entity_name, count]]
         """
         co_occurrences: dict[int, dict[str, int]] = {}
-        
+
         try:
             # Scroll recent frames with payloads
             resp = self.client.scroll(
@@ -4776,26 +4924,28 @@ class VectorDB:
                 with_payload=["face_cluster_ids", "entities"],
                 with_vectors=False,
             )[0]
-            
+
             for point in resp:
                 payload = point.payload or {}
                 cluster_ids = payload.get("face_cluster_ids", [])
                 entities = payload.get("entities", [])
-                
+
                 if not cluster_ids or not entities:
                     continue
-                                    
+
                 for cid in cluster_ids:
                     if cid not in co_occurrences:
                         co_occurrences[cid] = {}
-                    
+
                     for entity in entities:
                         # Skip if entity matches "Person" etc.
                         if entity.lower() in ("person", "man", "woman"):
                             continue
-                            
-                        co_occurrences[cid][entity] = co_occurrences[cid].get(entity, 0) + 1
-                        
+
+                        co_occurrences[cid][entity] = (
+                            co_occurrences[cid].get(entity, 0) + 1
+                        )
+
             return co_occurrences
         except Exception as e:
             log(f"get_entity_co_occurrences failed: {e}")

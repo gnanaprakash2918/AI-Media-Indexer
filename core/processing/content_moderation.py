@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from core.utils.logger import get_logger
 
@@ -100,11 +100,21 @@ class VisualContentModerator:
                 details={},
             )
 
+        if self._model is None:
+            return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={"error": -1.0},
+            )
+
         try:
             from PIL import Image
 
             img = Image.fromarray(frame)
-            result = self._model(img)
+            raw_result = self._model(img)
+            # Pylance considers pipeline output as Generator/Iterable, forcing list cast for subscripting
+            result = cast(list[dict[str, Any]], raw_result)
 
             flags = []
             details = {}
@@ -138,7 +148,7 @@ class VisualContentModerator:
                 is_safe=True,
                 flags=[ContentFlag.SAFE],
                 confidence=0.0,
-                details={"error": str(e)},
+                details={"error": -1.0},
             )
 
 
@@ -196,8 +206,17 @@ class TextContentModerator:
                 details={},
             )
 
+        if self._pipeline is None:
+            return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={"error": -1.0},
+            )
+
         try:
-            result = self._pipeline(text[:512])[0]
+            raw_result = self._pipeline(text[:512])
+            result = cast(list[dict[str, Any]], raw_result)[0]
             label = result["label"].lower()
             score = result["score"]
 
@@ -223,5 +242,5 @@ class TextContentModerator:
                 is_safe=True,
                 flags=[ContentFlag.SAFE],
                 confidence=0.0,
-                details={"error": str(e)},
+                details={"error": -1.0},
             )

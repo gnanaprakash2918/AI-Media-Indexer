@@ -198,7 +198,7 @@ class TextGatedOCR:
         # Compute edge density
         edge_density = np.sum(edges > 0) / edges.size
 
-        has_text = edge_density > self.edge_threshold
+        has_text = bool(edge_density > self.edge_threshold)
         if has_text:
             self.text_found_count += 1
 
@@ -206,7 +206,11 @@ class TextGatedOCR:
 
     def get_stats(self) -> dict[str, Any]:
         """Get gating statistics."""
-        rate = self.text_found_count / self.checks_count if self.checks_count else 0
+        rate = (
+            self.text_found_count / self.checks_count
+            if self.checks_count
+            else 0
+        )
         return {
             "total_checks": self.checks_count,
             "text_found": self.text_found_count,
@@ -289,9 +293,7 @@ class SceneChangeDetector:
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        hist = cv2.calcHist(
-            [hsv], [0, 1], None, [50, 60], [0, 180, 0, 256]
-        )
+        hist = cv2.calcHist([hsv], [0, 1], None, [50, 60], [0, 180, 0, 256])
         cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
         return hist
 

@@ -12,11 +12,9 @@ Features:
 """
 
 import gc
-import json
 import os
 import shutil
 import subprocess
-import sys
 import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -105,6 +103,7 @@ class AudioTranscriber:
         # Register with Resource Arbiter for VRAM management
         try:
             from core.utils.resource_arbiter import RESOURCE_ARBITER
+
             RESOURCE_ARBITER.register_model("whisper", self.unload_model)
         except ImportError:
             pass
@@ -115,7 +114,7 @@ class AudioTranscriber:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Called automatically when exiting the 'with' block.
-        
+
         NOTE: We DO NOT unload here anymore. We let ResourceArbiter handle it
         via the registered callback to allow caching across files.
         """
@@ -130,14 +129,25 @@ class AudioTranscriber:
         log("[INFO] Unloading Whisper model to free VRAM...")
 
         # 1. Delete the CTranslate2 model objects
+        # 1. Delete the CTranslate2 model objects
         if self._batched_model is not None:
             del self._batched_model
             self._batched_model = None
+
+        # Clear shared state
+        if AudioTranscriber._SHARED_BATCHED is not None:
+            del AudioTranscriber._SHARED_BATCHED
+            AudioTranscriber._SHARED_BATCHED = None
 
         if self._model is not None:
             del self._model
             self._model = None
             self._current_model_size = None
+
+        if AudioTranscriber._SHARED_MODEL is not None:
+            del AudioTranscriber._SHARED_MODEL
+            AudioTranscriber._SHARED_MODEL = None
+            AudioTranscriber._SHARED_SIZE = None
 
         # 2. Force Python's Garbage Collector to run
         gc.collect()
@@ -277,10 +287,8 @@ class AudioTranscriber:
         subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
-
     @observe("transcriber_convert_model")
     def _convert_to_ct2(self, model_id: str) -> Path:
-
         model_name = model_id.split("/")[-1]
         ct2_output_dir = settings.model_cache_dir / f"ct2-{model_name}"
 
@@ -303,8 +311,10 @@ class AudioTranscriber:
 
             # 2. Convert to CTranslate2
             # Handle newer transformers that don't accept dtype argument
-            quantization = "int8_float16" if settings.device == "cuda" else "int8"
-            
+            quantization = (
+                "int8_float16" if settings.device == "cuda" else "int8"
+            )
+
             try:
                 converter = ctranslate2.converters.TransformersConverter(
                     str(raw_model_dir),
@@ -322,7 +332,9 @@ class AudioTranscriber:
             except TypeError as te:
                 # Handle "unexpected keyword argument 'dtype'" error from newer transformers
                 if "dtype" in str(te):
-                    log("[WARN] dtype error detected, trying low_cpu_mem_usage workaround...")
+                    log(
+                        "[WARN] dtype error detected, trying low_cpu_mem_usage workaround..."
+                    )
                     # Force low_cpu_mem_usage=False to bypass dtype issue
                     converter = ctranslate2.converters.TransformersConverter(
                         str(raw_model_dir),
@@ -364,7 +376,6 @@ class AudioTranscriber:
 
     @observe("transcriber_load_model")
     def _load_model(self, model_key: str) -> None:
-
         # Check if already loaded with correct size
         if (
             AudioTranscriber._SHARED_MODEL is not None
@@ -375,7 +386,7 @@ class AudioTranscriber:
         # Unload if different size loaded?
         # Yes, we only support one model loaded at a time for Whisper
         if AudioTranscriber._SHARED_MODEL is not None:
-            AudioTranscriber.unload_model()
+            self.unload_model()
 
         # only log here, when we actually load weights
         log(
@@ -385,8 +396,11 @@ class AudioTranscriber:
 
         # Systran models are pre-converted CTranslate2 - no conversion needed
         # They can be loaded directly by WhisperModel from HuggingFace
-        is_preconverted = "systran" in model_key.lower() or "faster-whisper" in model_key.lower()
-        
+        is_preconverted = (
+            "systran" in model_key.lower()
+            or "faster-whisper" in model_key.lower()
+        )
+
         if is_preconverted:
             # Pass model ID directly - WhisperModel will download from HuggingFace
             final_model_path = model_key
@@ -402,7 +416,7 @@ class AudioTranscriber:
 
         try:
             AudioTranscriber._SHARED_MODEL = WhisperModel(
-                final_model_path,
+                str(final_model_path),
                 device=self.device,
                 compute_type=self.compute_type,
                 download_root=str(settings.model_cache_dir),
@@ -441,15 +455,17 @@ class AudioTranscriber:
                                 fallback_model
                             )
                             AudioTranscriber._SHARED_MODEL = WhisperModel(
-                                fallback_path,
+                                str(fallback_path),
                                 device="cpu",  # Force CPU for stability
                                 compute_type="int8",  # Use int8 for minimal memory
                                 download_root=str(settings.model_cache_dir),
                                 cpu_threads=2,
                                 num_workers=1,
                             )
-                            AudioTranscriber._SHARED_BATCHED = BatchedInferencePipeline(
-                                model=AudioTranscriber._SHARED_MODEL
+                            AudioTranscriber._SHARED_BATCHED = (
+                                BatchedInferencePipeline(
+                                    model=AudioTranscriber._SHARED_MODEL
+                                )
                             )
                             AudioTranscriber._SHARED_SIZE = fallback_model
                             log(
@@ -569,7 +585,23 @@ class AudioTranscriber:
         start_time: float = 0.0,
         end_time: float | None = None,
         force_lyrics: bool = False,
+        task: str = "transcribe",
     ) -> list[dict[str, Any]] | None:
+        """Transcribe audio using the Best-of-Council (BoC) strategy.
+
+        Args:
+            audio_path: Path to the audio file.
+            language: Override language detection.
+            subtitle_path: Path to existing subtitle file.
+            output_path: Path to save result.
+            start_time: Start offset in seconds.
+            end_time: End offset in seconds.
+            force_lyrics: Whether to prioritize music-based models.
+            task: Task to perform ('transcribe' or 'translate').
+
+        Returns:
+            Full transcription results including segments and words.
+        """
         if not audio_path.exists():
             log(f"[ERROR] Input file not found: {audio_path}")
             return None
@@ -654,8 +686,10 @@ class AudioTranscriber:
 
             # VAD settings: disable for lyrics mode to capture singing/music
             vad_enabled = not force_lyrics
-            no_speech_thresh = 0.9 if force_lyrics else 0.6  # More permissive for lyrics
-            
+            no_speech_thresh = (
+                0.9 if force_lyrics else 0.6
+            )  # More permissive for lyrics
+
             segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
                 str(audio_path),
                 batch_size=settings.batch_size,
@@ -663,7 +697,9 @@ class AudioTranscriber:
                 task="transcribe",
                 beam_size=3,
                 condition_on_previous_text=False,
-                initial_prompt="♪" if force_lyrics else None,  # Hint that this is music
+                initial_prompt="♪"
+                if force_lyrics
+                else None,  # Hint that this is music
                 repetition_penalty=1.2,
                 word_timestamps=True,
                 vad_filter=vad_enabled,
@@ -751,11 +787,20 @@ class AudioTranscriber:
         force_lyrics: bool = False,
     ) -> list[dict[str, Any]] | None:
         """Alias for _inference for backwards compatibility."""
-        return self._inference(audio_path, lang, out_srt, offset, is_temp_file, force_lyrics)
+        return self._inference(
+            audio_path, lang, out_srt, offset, is_temp_file, force_lyrics
+        )
 
     @observe("language_detection")
     def detect_language(self, audio_path: Path) -> str:
+        """Detect the dominant language in an audio file.
 
+        Args:
+            audio_path: Path to the audio file.
+
+        Returns:
+            ISO 639-1 language code.
+        """
         # Use Systran pre-converted model for language detection (no conversion needed)
         model_id = "Systran/faster-whisper-base"
         wav_path = None
@@ -822,6 +867,4 @@ class AudioTranscriber:
                     pass
 
 
-
 # CLI entry point removed to resolve syntax error
-

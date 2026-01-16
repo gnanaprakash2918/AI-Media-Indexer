@@ -6,6 +6,7 @@ Prompts loaded from external files.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.llm.vlm_factory import VLMClient, get_vlm_client
@@ -102,7 +103,7 @@ class VLMCouncil:
 
     async def analyze_frame(
         self,
-        frame: bytes | "np.ndarray",
+        frame: bytes | np.ndarray,
         prompt: str | None = None,
         use_synthesis: bool = True,
     ) -> CouncilResult:
@@ -125,8 +126,31 @@ class VLMCouncil:
                 desc = self.local_client.generate_caption_from_bytes(
                     frame, prompt
                 )
+            elif hasattr(
+                frame, "__array__"
+            ):  # Check for numpy array like object
+                try:
+                    from typing import Any, cast
+
+                    import cv2
+
+                    # Use Mat type hint or cast to Any to avoid strict overload issues
+                    # Pylance struggles with cv2.imencode overloads
+                    f_arr = cast(Any, frame)
+                    ret, buffer = cv2.imencode(".jpg", f_arr)
+                    if not ret or buffer is None:
+                        raise ValueError("Encoding failed")
+
+                    desc = self.local_client.generate_caption_from_bytes(
+                        buffer.tobytes(), prompt
+                    )
+                except Exception:
+                    # Fallback if cv2 fails or not available, though unlikely for this project
+                    log.warning("[VLMCouncil] Could not encode frame to bytes")
+                    desc = ""
             else:
-                desc = self.local_client.generate_caption(frame, prompt)
+                # Assume path string
+                desc = self.local_client.generate_caption(str(frame), prompt)
 
             responses.append(
                 VLMResponse(
@@ -179,9 +203,24 @@ class VLMCouncil:
                 synthesized = self.chairman.generate_caption_from_bytes(
                     frame, synth_prompt
                 )
+            elif hasattr(frame, "__array__"):
+                try:
+                    from typing import Any, cast
+
+                    import cv2
+
+                    f_arr = cast(Any, frame)
+                    ret, buffer = cv2.imencode(".jpg", f_arr)
+                    if not ret:
+                        raise ValueError("imencode failed")
+                    synthesized = self.chairman.generate_caption_from_bytes(
+                        buffer.tobytes(), synth_prompt
+                    )
+                except Exception:
+                    synthesized = ""
             else:
                 synthesized = self.chairman.generate_caption(
-                    frame, synth_prompt
+                    str(frame), synth_prompt
                 )
 
             avg_conf = sum(r.confidence for r in valid) / len(valid)
@@ -204,13 +243,13 @@ class VLMCouncil:
 
     async def analyze_frame_simple(
         self,
-        frame: bytes | "np.ndarray",
+        frame: "bytes | np.ndarray | str | Path",
         prompt: str | None = None,
     ) -> str:
         """Simple single-model analysis (fast mode).
 
         Args:
-            frame: Frame as bytes or numpy array.
+            frame: Frame as bytes, numpy array, or path.
             prompt: Custom prompt.
 
         Returns:
@@ -219,10 +258,32 @@ class VLMCouncil:
         prompt = prompt or DENSE_MULTIMODAL_PROMPT
         try:
             if isinstance(frame, bytes):
-                return self.local_client.generate_caption_from_bytes(
-                    frame, prompt
-                ) or ""
-            return self.local_client.generate_caption(frame, prompt) or ""
+                return (
+                    self.local_client.generate_caption_from_bytes(frame, prompt)
+                    or ""
+                )
+
+            if hasattr(frame, "__array__"):
+                try:
+                    from typing import Any, cast
+
+                    import cv2
+
+                    f_arr = cast(Any, frame)
+                    ret, buffer = cv2.imencode(".jpg", f_arr)
+                    if not ret or buffer is None:
+                        return ""
+                    return (
+                        self.local_client.generate_caption_from_bytes(
+                            buffer.tobytes(), prompt
+                        )
+                        or ""
+                    )
+                except Exception:
+                    return ""
+
+            # Assume path
+            return self.local_client.generate_caption(str(frame), prompt) or ""
         except Exception as e:
             log.error(f"[VLMCouncil] Simple analysis failed: {e}")
             return ""

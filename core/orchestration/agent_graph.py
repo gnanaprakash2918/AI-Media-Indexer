@@ -39,7 +39,6 @@ class AgentResponse:
     error: str = ""
 
 
-
 class AgentCard:
     """Capability card for an agent."""
 
@@ -220,12 +219,29 @@ class MultiAgentOrchestrator:
         # Ultra-complex queries (>50 words or many constraints)
         word_count = len(user_query.split())
         constraint_keywords = [
-            "wearing", "with", "while", "at", "on", "in",
-            "excluding", "without", "followed by", "after",
-            "before", "slowly", "quickly", "exactly",
-            "ms", "seconds", "minutes", "dB", "BPM",
+            "wearing",
+            "with",
+            "while",
+            "at",
+            "on",
+            "in",
+            "excluding",
+            "without",
+            "followed by",
+            "after",
+            "before",
+            "slowly",
+            "quickly",
+            "exactly",
+            "ms",
+            "seconds",
+            "minutes",
+            "dB",
+            "BPM",
         ]
-        constraint_count = sum(1 for kw in constraint_keywords if kw in query_lower)
+        constraint_count = sum(
+            1 for kw in constraint_keywords if kw in query_lower
+        )
 
         if word_count > 50 or constraint_count >= 5:
             logger.info(

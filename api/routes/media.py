@@ -106,7 +106,9 @@ async def get_face_thumbnail(
         raise
     except Exception as e:
         logger.error(f"Face thumbnail generation failed for {filename}: {e}")
-        logger.error(f"Debug Info: path={file_path}, media={media_path}, timestamp={timestamp}")
+        logger.error(
+            f"Debug Info: path={file_path}, media={media_path}, timestamp={timestamp}"
+        )
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -432,6 +434,7 @@ async def get_media_thumbnail(
             status_code=500, detail="Could not generate thumbnail"
         ) from e
 
+
 @router.get("/media/summary")
 async def get_video_summary(
     path: Annotated[str, Query(...)],
@@ -440,7 +443,7 @@ async def get_video_summary(
     """Retrieve the global summary for a video."""
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Database not ready")
-    
+
     summary = pipeline.db.get_global_summary(path)
     if not summary:
         raise HTTPException(status_code=404, detail="Summary not found")

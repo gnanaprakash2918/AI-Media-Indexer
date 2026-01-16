@@ -36,12 +36,12 @@ from a2a.utils.errors import ServerError
 from loguru import logger
 
 from core.agent.server import (
-    ingest_media,
-    search_media,
     agentic_search,
-    scenelet_search,
     get_video_summary,
-    query_video_rag
+    ingest_media,
+    query_video_rag,
+    scenelet_search,
+    search_media,
 )
 
 DEFAULT_MODEL = os.getenv("MEDIA_AGENT_MODEL", "llama3.2:3b")
@@ -115,6 +115,7 @@ def _build_tool_schemas() -> list[dict[str, Any]]:
         },
     ] + _sota_search_tools()
 
+
 def _sota_search_tools() -> list[dict[str, Any]]:
     """Returns schemas for the new SOTA search tools."""
     return [
@@ -129,13 +130,16 @@ def _sota_search_tools() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search query."},
+                        "query": {
+                            "type": "string",
+                            "description": "Search query.",
+                        },
                         "limit": {"type": "integer", "default": 10},
-                        "use_expansion": {"type": "boolean", "default": True}
+                        "use_expansion": {"type": "boolean", "default": True},
                     },
-                    "required": ["query"]
-                }
-            }
+                    "required": ["query"],
+                },
+            },
         },
         {
             "type": "function",
@@ -148,13 +152,19 @@ def _sota_search_tools() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Action query."},
+                        "query": {
+                            "type": "string",
+                            "description": "Action query.",
+                        },
                         "limit": {"type": "integer", "default": 10},
-                        "video_path": {"type": "string", "description": "Optional video filter."}
+                        "video_path": {
+                            "type": "string",
+                            "description": "Optional video filter.",
+                        },
                     },
-                    "required": ["query"]
-                }
-            }
+                    "required": ["query"],
+                },
+            },
         },
         {
             "type": "function",
@@ -164,12 +174,18 @@ def _sota_search_tools() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "video_path": {"type": "string", "description": "Path to video."},
-                        "force_regenerate": {"type": "boolean", "default": False}
+                        "video_path": {
+                            "type": "string",
+                            "description": "Path to video.",
+                        },
+                        "force_regenerate": {
+                            "type": "boolean",
+                            "default": False,
+                        },
                     },
-                    "required": ["video_path"]
-                }
-            }
+                    "required": ["video_path"],
+                },
+            },
         },
         {
             "type": "function",
@@ -182,13 +198,16 @@ def _sota_search_tools() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Question or query."},
-                        "limit": {"type": "integer", "default": 10}
+                        "query": {
+                            "type": "string",
+                            "description": "Question or query.",
+                        },
+                        "limit": {"type": "integer", "default": 10},
                     },
-                    "required": ["query"]
-                }
-            }
-        }
+                    "required": ["query"],
+                },
+            },
+        },
     ]
 
 
@@ -404,17 +423,19 @@ class MediaAgentHandler(RequestHandler):
                 res = await agentic_search(
                     query=args.get("query", ""),
                     limit=int(args.get("limit", 10)),
-                    use_expansion=args.get("use_expansion", True)
+                    use_expansion=args.get("use_expansion", True),
                 )
                 # Format results broadly
                 count = res.get("result_count", 0)
                 reasoning = res.get("reasoning_chain", {})
                 hits = res.get("results", [])
-                
+
                 lines = [f"Found {count} results using agentic search."]
                 lines.append(f"Reasoning: {reasoning}")
                 for h in hits[:5]:
-                    lines.append(f"- {h.get('score', 0):.2f} | {h.get('video_name')}: {h.get('description')}")
+                    lines.append(
+                        f"- {h.get('score', 0):.2f} | {h.get('video_name')}: {h.get('description')}"
+                    )
                 return "\n".join(lines)
             except Exception as e:
                 return f"agentic_search failed: {e}"
@@ -424,12 +445,14 @@ class MediaAgentHandler(RequestHandler):
                 res = await scenelet_search(
                     query=args.get("query", ""),
                     limit=int(args.get("limit", 10)),
-                    video_path=args.get("video_path")
+                    video_path=args.get("video_path"),
                 )
                 hits = res.get("results", [])
                 lines = [f"Found {len(hits)} scenelets."]
                 for h in hits[:5]:
-                    lines.append(f"- {h.get('start_time'):.1f}s-{h.get('end_time'):.1f}s: {h.get('match_explanation')}")
+                    lines.append(
+                        f"- {h.get('start_time'):.1f}s-{h.get('end_time'):.1f}s: {h.get('match_explanation')}"
+                    )
                 return "\n".join(lines)
             except Exception as e:
                 return f"scenelet_search failed: {e}"
@@ -438,7 +461,7 @@ class MediaAgentHandler(RequestHandler):
             try:
                 res = await get_video_summary(
                     video_path=args.get("video_path"),
-                    force_regenerate=args.get("force_regenerate", False)
+                    force_regenerate=args.get("force_regenerate", False),
                 )
                 l1 = res.get("l1_summary", "No summary available.")
                 return f"Video Summary:\n{l1}"
@@ -449,12 +472,12 @@ class MediaAgentHandler(RequestHandler):
             try:
                 res = await query_video_rag(
                     query=args.get("query", ""),
-                    limit=int(args.get("limit", 10))
+                    limit=int(args.get("limit", 10)),
                 )
                 # If RAG generated an answer, return it
                 if res.get("answer"):
                     return f"Answer: {res.get('answer')}"
-                
+
                 # Otherwise list results
                 hits = res.get("results", [])
                 return f"Found {len(hits)} relevant segments for RAG context."

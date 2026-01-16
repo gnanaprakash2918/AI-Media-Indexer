@@ -1,3 +1,5 @@
+"""Module for reading digital clocks from video frames."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +15,10 @@ log = get_logger(__name__)
 
 
 class ClockReader:
+    """Reads digital clocks from images using EasyOCR."""
+
     def __init__(self):
+        """Initialize OCR processor resources."""
         self._ocr = None
         self._init_lock = asyncio.Lock()
 
@@ -26,6 +31,7 @@ class ClockReader:
                 return True
             try:
                 from core.processing.ocr import EasyOCRProcessor
+
                 self._ocr = EasyOCRProcessor(langs=["en"], use_gpu=True)
                 log.info("[ClockReader] OCR initialized")
                 return True
@@ -33,8 +39,11 @@ class ClockReader:
                 log.error(f"[ClockReader] OCR init failed: {e}")
                 return False
 
-    async def read_digital_clock(self, image: np.ndarray | Path) -> dict[str, Any]:
-        if not await self._ensure_ocr():
+    async def read_digital_clock(
+        self, image: np.ndarray | Path
+    ) -> dict[str, Any]:
+        """Detect and read digital clock time from image."""
+        if not await self._ensure_ocr() or self._ocr is None:
             return {"time": None, "error": "OCR not loaded"}
 
         try:
@@ -69,13 +78,21 @@ class ClockReader:
                         "confidence": result.get("confidence", 0.0),
                     }
 
-            return {"time": None, "format": "digital", "raw_ocr": raw_text, "error": "No time pattern found"}
+            return {
+                "time": None,
+                "format": "digital",
+                "raw_ocr": raw_text,
+                "error": "No time pattern found",
+            }
 
         except Exception as e:
             log.error(f"[ClockReader] Digital read failed: {e}")
             return {"time": None, "error": str(e)}
 
-    async def read_analog_clock(self, image: np.ndarray | Path) -> dict[str, Any]:
+    async def read_analog_clock(
+        self, image: np.ndarray | Path
+    ) -> dict[str, Any]:
+        """Detect and read analog clock time from image."""
         try:
             import cv2
             from PIL import Image
@@ -104,7 +121,11 @@ class ClockReader:
             )
 
             if circles is None:
-                return {"time": None, "format": "analog", "error": "No clock face detected"}
+                return {
+                    "time": None,
+                    "format": "analog",
+                    "error": "No clock face detected",
+                }
 
             circle = circles[0][0]
             cx, cy, radius = int(circle[0]), int(circle[1]), int(circle[2])
@@ -120,7 +141,11 @@ class ClockReader:
             )
 
             if lines is None:
-                return {"time": None, "format": "analog", "error": "No hands detected"}
+                return {
+                    "time": None,
+                    "format": "analog",
+                    "error": "No hands detected",
+                }
 
             hands = []
             for line in lines:
@@ -132,7 +157,13 @@ class ClockReader:
                 if dist_to_center < radius * 0.3:
                     length = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
                     angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-                    hands.append({"length": length, "angle": angle, "coords": (x1, y1, x2, y2)})
+                    hands.append(
+                        {
+                            "length": length,
+                            "angle": angle,
+                            "coords": (x1, y1, x2, y2),
+                        }
+                    )
 
             hands.sort(key=lambda h: h["length"], reverse=True)
 
@@ -158,13 +189,18 @@ class ClockReader:
                     "confidence": 0.6,
                 }
 
-            return {"time": None, "format": "analog", "error": "Insufficient hands detected"}
+            return {
+                "time": None,
+                "format": "analog",
+                "error": "Insufficient hands detected",
+            }
 
         except Exception as e:
             log.error(f"[ClockReader] Analog read failed: {e}")
             return {"time": None, "error": str(e)}
 
     async def read_time(self, image: np.ndarray | Path) -> dict[str, Any]:
+        """Detect and read time (digital or analog) from image."""
         digital_result = await self.read_digital_clock(image)
         if digital_result.get("time"):
             return digital_result
@@ -173,15 +209,32 @@ class ClockReader:
         if analog_result.get("time"):
             return analog_result
 
-        return {"time": None, "error": "No clock detected (tried digital and analog)"}
+        return {
+            "time": None,
+            "error": "No clock detected (tried digital and analog)",
+        }
+
+    def cleanup(self) -> None:
+        """Clear OCR resources."""
+        self._ocr = None
+        log.info("[ClockReader] Resources released")
 
     async def matches_time_constraint(
         self,
         image: np.ndarray | Path,
-        target_time: str | None = None,
-        min_hour: int | None = None,
-        max_hour: int | None = None,
+        min_time: str | None = None,
+        max_time: str | None = None,
     ) -> dict[str, Any]:
+        """Check if the time visible in the image matches constraints.
+
+        Args:
+            image: Input image.
+            min_time: Minimum allowed time (HH:MM:SS or HH:MM).
+            max_time: Maximum allowed time (HH:MM:SS or HH:MM).
+
+        Returns:
+            Match result.
+        """
         result = await self.read_time(image)
         if result.get("error"):
             result["matches"] = False
@@ -190,24 +243,12 @@ class ClockReader:
         time_str = result.get("time", "")
         matches = True
 
-        if target_time:
-            matches = target_time.lower() in time_str.lower()
-
-        if min_hour is not None or max_hour is not None:
-            try:
-                hour_match = re.search(r"(\d{1,2}):", time_str)
-                if hour_match:
-                    hour = int(hour_match.group(1))
-                    if min_hour is not None and hour < min_hour:
-                        matches = False
-                    if max_hour is not None and hour > max_hour:
-                        matches = False
-            except ValueError:
+        if min_time or max_time:
+            # Simple lexicographical comparison for HH:MM:SS format
+            if min_time and time_str < min_time:
+                matches = False
+            if max_time and time_str > max_time:
                 matches = False
 
         result["matches"] = matches
         return result
-
-    def cleanup(self) -> None:
-        self._ocr = None
-        log.info("[ClockReader] Resources released")

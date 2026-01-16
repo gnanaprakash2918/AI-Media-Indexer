@@ -7,11 +7,17 @@ action embeddings from video clips using TimeSformer.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from core.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from transformers import (
+        AutoImageProcessor,
+        TimesformerForVideoClassification,
+    )
 
 log = get_logger(__name__)
 
@@ -41,9 +47,10 @@ class TemporalAnalyzer:
         """
         self.model_name = model_name
         self._device = device
-        self.model = None
-        self.processor = None
+        self.model: TimesformerForVideoClassification | None = None
+        self.processor: AutoImageProcessor | None = None
         self._init_lock = asyncio.Lock()
+        self._load_lock: asyncio.Lock | None = None
 
     def _get_device(self) -> str:
         """Get device to use."""
@@ -51,6 +58,7 @@ class TemporalAnalyzer:
             return self._device
         try:
             import torch
+
             return "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             return "cpu"
@@ -64,7 +72,10 @@ class TemporalAnalyzer:
         if self.model is not None:
             return True
 
-        async with self._init_lock:
+        if self._load_lock is None:
+            self._load_lock = asyncio.Lock()
+
+        async with self._load_lock:
             if self.model is not None:
                 return True
 
@@ -72,39 +83,43 @@ class TemporalAnalyzer:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
                 async with RESOURCE_ARBITER.acquire("timesformer", vram_gb=2.0):
-                    log.info(f"[TimeSformer] Loading {self.model_name}")
+                    log.info(f"[Temporal] Loading {self.model_name}")
 
-                    from transformers import (
-                        AutoImageProcessor,
-                        TimesformerForVideoClassification,
-                    )
+                import torch
+                from transformers import (
+                    AutoImageProcessor,
+                    TimesformerForVideoClassification,
+                )
 
-                    import torch
-                    
-                    self.processor = AutoImageProcessor.from_pretrained(
-                        self.model_name
-                    )
-                    # Load in fp16 to reduce VRAM by ~50%
-                    self.model = TimesformerForVideoClassification.from_pretrained(
-                        self.model_name,
-                        torch_dtype=torch.float16,
-                    )
+                self.processor = AutoImageProcessor.from_pretrained(
+                    self.model_name
+                )
 
-                    device = self._get_device()
-                    self.model.to(device)
-                    if device == "cuda":
-                        self.model.half()  # Ensure fp16 on GPU
-                    self.model.eval()
-                    self._device = device
+                # Correctly assign and cast
+                model_raw = TimesformerForVideoClassification.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.float16,
+                )
 
-                    log.info(f"[TimeSformer] Model loaded on {device}")
-                    return True
+                # Explicit cast to keep Pylance happy about PreTrainedModel compat
+                model = cast(TimesformerForVideoClassification, model_raw)
+
+                self.device = self._get_device()
+                # Cast to Module to ensure .to() is recognized correctly by Pylance
+                cast(torch.nn.Module, model).to(self.device)
+                if self.device == "cuda":
+                    model.half()
+                model.eval()
+                self.model = model
+
+                log.info(f"[Temporal] Model loaded on {self.device}")
+                return True
 
             except ImportError as e:
-                log.warning(f"[TimeSformer] transformers not available: {e}")
+                log.warning(f"[Temporal] transformers not available: {e}")
                 return False
             except Exception as e:
-                log.error(f"[TimeSformer] Failed to load: {e}")
+                log.error(f"[Temporal] Failed to load: {e}")
                 return False
 
     async def analyze_clip(
@@ -126,29 +141,38 @@ class TemporalAnalyzer:
         if not await self._lazy_load():
             return []
 
+        if self.model is None:
+            return []
+
         if len(frames) < 4:
-            log.warning("[TimeSformer] Need at least 4 frames")
+            log.warning("[Temporal] Need at least 4 frames")
             return []
 
         try:
-            import torch
+            import torch  # Import torch strictly here
+
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("timesformer", vram_gb=2.0):
                 # Sample 8 frames uniformly
-                indices = np.linspace(
-                    0, len(frames) - 1, num=8, dtype=int
-                )
+                indices = np.linspace(0, len(frames) - 1, num=8, dtype=int)
                 sampled = [frames[i] for i in indices]
 
                 # Process frames
-                inputs = self.processor(
+                if self.processor is None:
+                    return []
+
+                # The processor is callable, cast to Any to avoid Pylance complaint
+                proc = cast(Any, self.processor)
+                inputs = proc(
                     images=sampled,
                     return_tensors="pt",
                 )
-                inputs = {k: v.to(self._device) for k, v in inputs.items()}
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
                 with torch.no_grad():
+                    if self.model is None:
+                        return []
                     outputs = self.model(**inputs)
                     logits = outputs.logits
                     probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
@@ -159,19 +183,23 @@ class TemporalAnalyzer:
                 for idx in top_indices:
                     conf = float(probs[idx])
                     if conf >= threshold:
-                        label = self.model.config.id2label.get(idx, f"class_{idx}")
-                        results.append({
-                            "action": label,
-                            "confidence": round(conf, 3),
-                        })
+                        label = self.model.config.id2label.get(
+                            idx, f"class_{idx}"
+                        )
+                        results.append(
+                            {
+                                "action": label,
+                                "confidence": round(conf, 3),
+                            }
+                        )
 
                 if results:
-                    log.debug(f"[TimeSformer] Actions: {results}")
+                    log.debug(f"[Temporal] Actions: {results}")
 
                 return results
 
         except Exception as e:
-            log.error(f"[TimeSformer] Analysis failed: {e}")
+            log.error(f"[Temporal] Analysis failed: {e}")
             return []
 
     async def get_action_embedding(
@@ -189,24 +217,31 @@ class TemporalAnalyzer:
         if not await self._lazy_load():
             return None
 
+        if self.model is None:
+            return None
+
         if len(frames) < 4:
             return None
 
         try:
             import torch
+
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("timesformer", vram_gb=2.0):
                 indices = np.linspace(0, len(frames) - 1, num=8, dtype=int)
                 sampled = [frames[i] for i in indices]
 
-                inputs = self.processor(
+                proc = cast(Any, self.processor)
+                inputs = proc(
                     images=sampled,
                     return_tensors="pt",
                 )
-                inputs = {k: v.to(self._device) for k, v in inputs.items()}
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
                 with torch.no_grad():
+                    if self.model is None:
+                        return None
                     outputs = self.model(**inputs, output_hidden_states=True)
                     # Use last hidden state as embedding
                     hidden = outputs.hidden_states[-1]
@@ -216,7 +251,7 @@ class TemporalAnalyzer:
                 return embedding
 
         except Exception as e:
-            log.error(f"[TimeSformer] Embedding failed: {e}")
+            log.error(f"[Temporal] Embedding failed: {e}")
             return None
 
     def cleanup(self) -> None:
@@ -230,26 +265,27 @@ class TemporalAnalyzer:
 
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:
             pass
 
-        log.info("[TimeSformer] Resources released")
+        log.info("[Temporal] Resources released")
 
 
 class TemporalMotionAnalyzer:
     """Frame-level motion analysis for temporal queries.
-    
+
     Complements TimeSformer action recognition with low-level motion
     detection useful for queries like "pin wobbling 500-2000ms before falling".
-    
+
     Usage:
         analyzer = TemporalMotionAnalyzer()
         result = analyzer.analyze_motion(frame1, frame2)
         # {"motion_intensity": "moderate", "motion_score": 32.5}
     """
-    
+
     def __init__(
         self,
         motion_threshold_low: float = 10.0,
@@ -257,10 +293,11 @@ class TemporalMotionAnalyzer:
     ):
         """Initialize motion analyzer."""
         import cv2
+
         self.cv2 = cv2
         self.motion_threshold_low = motion_threshold_low
         self.motion_threshold_high = motion_threshold_high
-    
+
     def analyze_motion(
         self,
         frame1: np.ndarray,
@@ -269,25 +306,25 @@ class TemporalMotionAnalyzer:
         """Analyze motion between two consecutive frames."""
         gray1 = self._to_gray(frame1)
         gray2 = self._to_gray(frame2)
-        
+
         if gray1.shape != gray2.shape:
             gray1 = self.cv2.resize(gray1, (gray2.shape[1], gray2.shape[0]))
-        
+
         diff = self.cv2.absdiff(gray1, gray2)
         motion_score = float(np.mean(diff))
-        
+
         if motion_score < self.motion_threshold_low:
             intensity = "static"
         elif motion_score < self.motion_threshold_high:
             intensity = "moderate"
         else:
             intensity = "high"
-        
+
         return {
             "motion_score": motion_score,
             "motion_intensity": intensity,
         }
-    
+
     def detect_delayed_events(
         self,
         frames: list[np.ndarray],
@@ -298,43 +335,49 @@ class TemporalMotionAnalyzer:
         """Detect events with specific delays (e.g., 'wobbling 500-2000ms')."""
         if len(frames) < 2:
             return []
-        
+
         delayed_events = []
         frame_duration_ms = 1000 / fps
         min_frames = int(min_delay_ms / frame_duration_ms)
         max_frames = int(max_delay_ms / frame_duration_ms)
-        
+
         moderate_start = None
         moderate_start_idx = None
-        
+
         for i in range(1, len(frames)):
-            motion = self.analyze_motion(frames[i-1], frames[i])
-            
+            motion = self.analyze_motion(frames[i - 1], frames[i])
+
             if motion["motion_intensity"] == "moderate":
                 if moderate_start is None:
                     moderate_start = i * frame_duration_ms
                     moderate_start_idx = i
-            
+
             elif motion["motion_intensity"] == "high":
-                if moderate_start is not None:
+                if (
+                    moderate_start is not None
+                    and moderate_start_idx is not None
+                ):
                     delay_frames = i - moderate_start_idx
                     if min_frames <= delay_frames <= max_frames:
-                        delayed_events.append({
-                            "type": "delayed_transition",
-                            "start_ms": moderate_start,
-                            "end_ms": i * frame_duration_ms,
-                            "delay_ms": i * frame_duration_ms - moderate_start,
-                        })
+                        delayed_events.append(
+                            {
+                                "type": "delayed_transition",
+                                "start_ms": moderate_start,
+                                "end_ms": i * frame_duration_ms,
+                                "delay_ms": i * frame_duration_ms
+                                - moderate_start,
+                            }
+                        )
                 moderate_start = None
                 moderate_start_idx = None
-            
+
             elif motion["motion_intensity"] == "static":
                 moderate_start = None
                 moderate_start_idx = None
-        
+
         log.info(f"[Temporal] Found {len(delayed_events)} delayed events")
         return delayed_events
-    
+
     def _to_gray(self, frame: np.ndarray) -> np.ndarray:
         """Convert frame to grayscale."""
         if len(frame.shape) == 2:
@@ -365,7 +408,9 @@ def extract_temporal_clips(
         return []
 
     video_fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    _total_frames = int(
+        cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    )  # Prefix with _ to unused
     frame_interval = int(video_fps / fps)
     frames_per_clip = int(clip_duration * fps)
 
@@ -396,7 +441,5 @@ def extract_temporal_clips(
 
     cap.release()
 
-    log.info(
-        f"[Temporal] Extracted {len(clips)} clips from {video_path}"
-    )
+    log.info(f"[Temporal] Extracted {len(clips)} clips from {video_path}")
     return clips

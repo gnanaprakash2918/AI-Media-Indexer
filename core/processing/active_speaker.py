@@ -1,7 +1,7 @@
+"""Module for active speaker detection using audio-visual cues."""
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -12,7 +12,10 @@ log = get_logger(__name__)
 
 
 class ActiveSpeakerDetector:
+    """Detects active speakers using audio-visual cues."""
+
     def __init__(self):
+        """Initialize active speaker detector."""
         self._face_detector = None
         self._lip_model = None
         self._device = None
@@ -23,6 +26,7 @@ class ActiveSpeakerDetector:
             return self._device
         try:
             import torch
+
             return "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             return "cpu"
@@ -35,7 +39,9 @@ class ActiveSpeakerDetector:
             if self._lip_model is not None:
                 return True
             try:
-                log.info("[ActiveSpeaker] Using motion-based lip detection (lightweight)")
+                log.info(
+                    "[ActiveSpeaker] Using motion-based lip detection (lightweight)"
+                )
                 self._lip_model = "motion_based"
                 self._device = self._get_device()
                 log.info(f"[ActiveSpeaker] Initialized on {self._device}")
@@ -75,6 +81,7 @@ class ActiveSpeakerDetector:
         frame2: np.ndarray,
         face_bbox: tuple[int, int, int, int],
     ) -> dict[str, Any]:
+        """Detect if lips are moving between two frames."""
         if not await self._lazy_load():
             return {"is_speaking": False, "error": "Model not loaded"}
 
@@ -85,7 +92,10 @@ class ActiveSpeakerDetector:
             lip2 = self._extract_lip_region(frame2, face_bbox)
 
             if lip1 is None or lip2 is None:
-                return {"is_speaking": False, "error": "Could not extract lip region"}
+                return {
+                    "is_speaking": False,
+                    "error": "Could not extract lip region",
+                }
 
             if lip1.shape != lip2.shape:
                 lip2 = cv2.resize(lip2, (lip1.shape[1], lip1.shape[0]))
@@ -103,13 +113,17 @@ class ActiveSpeakerDetector:
             motion_threshold = 5.0
             is_speaking = motion_score > motion_threshold
 
-            log.debug(f"[ActiveSpeaker] Lip motion score: {motion_score:.2f}, speaking: {is_speaking}")
+            log.debug(
+                f"[ActiveSpeaker] Lip motion score: {motion_score:.2f}, speaking: {is_speaking}"
+            )
 
             return {
                 "is_speaking": is_speaking,
                 "motion_score": motion_score,
                 "threshold": motion_threshold,
-                "confidence": min(motion_score / 20.0, 1.0) if is_speaking else 0.0,
+                "confidence": min(motion_score / 20.0, 1.0)
+                if is_speaking
+                else 0.0,
             }
 
         except Exception as e:
@@ -122,6 +136,7 @@ class ActiveSpeakerDetector:
         frame2: np.ndarray,
         face_bboxes: list[tuple[int, int, int, int]],
     ) -> list[dict[str, Any]]:
+        """Detect speaking activity for multiple faces."""
         results = []
         for i, bbox in enumerate(face_bboxes):
             result = await self.detect_lip_motion(frame1, frame2, bbox)
@@ -130,7 +145,9 @@ class ActiveSpeakerDetector:
             results.append(result)
 
         speaking_faces = [r for r in results if r.get("is_speaking")]
-        log.info(f"[ActiveSpeaker] {len(speaking_faces)}/{len(face_bboxes)} faces speaking")
+        log.info(
+            f"[ActiveSpeaker] {len(speaking_faces)}/{len(face_bboxes)} faces speaking"
+        )
 
         return results
 
@@ -141,6 +158,7 @@ class ActiveSpeakerDetector:
         face_bbox: tuple[int, int, int, int],
         should_be_speaking: bool = True,
     ) -> dict[str, Any]:
+        """Check if face matches the speaking constraint."""
         result = await self.detect_lip_motion(frame1, frame2, face_bbox)
         is_speaking = result.get("is_speaking", False)
 
@@ -152,6 +170,7 @@ class ActiveSpeakerDetector:
         return result
 
     def cleanup(self) -> None:
+        """Release resources."""
         self._lip_model = None
         self._face_detector = None
         log.info("[ActiveSpeaker] Resources released")

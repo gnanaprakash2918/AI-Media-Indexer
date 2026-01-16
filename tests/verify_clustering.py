@@ -93,6 +93,7 @@ def get_clusters():
             f"  - Cluster {c['cluster_id']}: {c['face_count']} faces. Name: {c['name']}"
         )
 
+
 def get_voice_clusters():
     """List resulting voice clusters."""
     print("Fetching Voice Clusters...")

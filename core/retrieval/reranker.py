@@ -151,10 +151,17 @@ class RerankingCouncil:
         if self._cross_encoder:
             try:
                 pairs = [
-                    (query, c.description or c.transcript or "")
+                    (
+                        query,
+                        str(
+                            c.payload.get("description", "")
+                            or c.payload.get("transcript", "")
+                            or ""
+                        ),
+                    )
                     for c in candidates
                 ]
-                ce_scores = self._cross_encoder.predict(pairs)
+                ce_scores = self._cross_encoder.predict(list(pairs))
                 for i, score in enumerate(ce_scores):
                     scores[i]["cross"] = float(score)
                     scores[i]["candidate"] = candidates[i]
@@ -165,15 +172,24 @@ class RerankingCouncil:
         if self._bge_reranker:
             try:
                 pairs = [
-                    [query, c.description or c.transcript or ""]
+                    (
+                        query,
+                        str(
+                            c.payload.get("description", "")
+                            or c.payload.get("transcript", "")
+                            or ""
+                        ),
+                    )
                     for c in candidates
                 ]
                 bge_scores = self._bge_reranker.compute_score(pairs)
-                if isinstance(bge_scores, (int, float)):
-                    bge_scores = [bge_scores]
-                for i, score in enumerate(bge_scores):
-                    scores[i]["bge"] = float(score)
-                    scores[i]["candidate"] = candidates[i]
+                bge_scores = self._bge_reranker.compute_score(pairs)
+                if bge_scores is not None:
+                    if isinstance(bge_scores, (int, float)):
+                        bge_scores = [bge_scores]
+                    for i, score in enumerate(bge_scores):
+                        scores[i]["bge"] = float(score)
+                        scores[i]["candidate"] = candidates[i]
             except Exception as e:
                 log.warning(f"[RerankCouncil] BGE-Reranker failed: {e}")
 
@@ -193,9 +209,7 @@ class RerankingCouncil:
             if data["candidate"] is None:
                 continue
             final = (
-                w_ce * data["cross"]
-                + w_bge * data["bge"]
-                + w_vlm * data["vlm"]
+                w_ce * data["cross"] + w_bge * data["bge"] + w_vlm * data["vlm"]
             )
             results.append(
                 RankedResult(
@@ -219,7 +233,6 @@ class RerankingCouncil:
             f"weights=({w_ce:.2f}, {w_bge:.2f}, {w_vlm:.2f})"
         )
         return results
-
 
     def rerank(
         self,

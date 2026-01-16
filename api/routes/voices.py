@@ -1,6 +1,6 @@
 """API routes for voice/speaker HITL operations."""
 
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -15,7 +15,9 @@ router = APIRouter()
 @router.get("/voices")
 async def get_voice_segments(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
-    media_path: Annotated[str | None, Query(description="Filter by media")] = None,
+    media_path: Annotated[
+        str | None, Query(description="Filter by media")
+    ] = None,
     limit: int = 100,
 ):
     """Get all voice segments.
@@ -23,6 +25,7 @@ async def get_voice_segments(
     Args:
         media_path: Optional filter for specific video.
         limit: Maximum segments to return.
+        pipeline: Ingestion pipeline instance.
 
     Returns:
         List of voice segments with speaker info.
@@ -47,6 +50,9 @@ async def get_voice_clusters(
 ):
     """Get all voice segments grouped by cluster.
 
+    Args:
+        pipeline: Ingestion pipeline instance.
+
     Returns:
         Dictionary with clusters and their segments.
     """
@@ -65,19 +71,23 @@ async def get_voice_clusters(
                     name = seg["speaker_name"]
                     break
 
-            clusters.append({
-                "cluster_id": cluster_id,
-                "speaker_name": name,  # Frontend expects speaker_name
-                "segment_count": len(segments),
-                "representative": segments[0] if segments else None,
-                "segments": segments,  # All segments, not just 5
-            })
+            clusters.append(
+                {
+                    "cluster_id": cluster_id,
+                    "speaker_name": name,  # Frontend expects speaker_name
+                    "segment_count": len(segments),
+                    "representative": segments[0] if segments else None,
+                    "segments": segments,  # All segments, not just 5
+                }
+            )
 
         # Sort by: Named first (not None and not "Uncategorized"), then Segment Count
-        clusters.sort(key=lambda c: (
-            c["speaker_name"] is None,  # False (0) comes first
-            -c["segment_count"]
-        ))
+        clusters.sort(
+            key=lambda c: (
+                c["speaker_name"] is None,  # False (0) comes first
+                -c["segment_count"],
+            )
+        )
 
         return {
             "clusters": clusters,
@@ -99,6 +109,7 @@ async def merge_voice_clusters(
     Args:
         source_cluster_id: Cluster to merge FROM.
         target_cluster_id: Cluster to merge INTO.
+        pipeline: Ingestion pipeline instance.
 
     Returns:
         Merge status and count.
@@ -106,9 +117,13 @@ async def merge_voice_clusters(
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
-    count = pipeline.db.merge_voice_clusters(source_cluster_id, target_cluster_id)
+    count = pipeline.db.merge_voice_clusters(
+        source_cluster_id, target_cluster_id
+    )
     if count == 0:
-        raise HTTPException(status_code=404, detail="No segments found to merge")
+        raise HTTPException(
+            status_code=404, detail="No segments found to merge"
+        )
 
     return {
         "status": "merged",
@@ -127,6 +142,7 @@ async def delete_voice_segment(
 
     Args:
         segment_id: The segment ID to delete.
+        pipeline: Ingestion pipeline instance.
 
     Returns:
         Deletion confirmation.
@@ -135,9 +151,13 @@ async def delete_voice_segment(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
+        from qdrant_client import models
+
         pipeline.db.client.delete(
             collection_name=pipeline.db.VOICE_COLLECTION,
-            points_selector=[segment_id],
+            points_selector=models.PointIdsList(
+                points=cast(list[Any], [segment_id])
+            ),
         )
         return {"status": "deleted", "segment_id": segment_id}
     except Exception as e:
@@ -151,6 +171,9 @@ async def trigger_voice_clustering(
 ):
     """Trigger re-clustering of all voice segments.
 
+    Args:
+        pipeline: Ingestion pipeline instance.
+
     Returns:
         Clustering status.
     """
@@ -163,7 +186,10 @@ async def trigger_voice_clustering(
         stats = await cluster_voices(pipeline.db)
         return {"status": "completed", **stats}
     except ImportError:
-        return {"status": "not_available", "message": "Voice clustering module not found"}
+        return {
+            "status": "not_available",
+            "message": "Voice clustering module not found",
+        }
     except Exception as e:
         logger.error(f"[Voices] Clustering failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -178,6 +204,7 @@ async def create_new_voice_cluster(
 
     Args:
         segment_ids: List of segment IDs to move.
+        pipeline: Ingestion pipeline instance.
 
     Returns:
         New cluster ID.
@@ -187,12 +214,15 @@ async def create_new_voice_cluster(
 
     try:
         import random
+
         new_cluster_id = random.randint(10000, 99999)
+
+        from qdrant_client import models
 
         pipeline.db.client.set_payload(
             collection_name=pipeline.db.VOICE_COLLECTION,
             payload={"voice_cluster_id": new_cluster_id},
-            points=segment_ids,
+            points=models.PointIdsList(points=cast(list[Any], segment_ids)),
         )
 
         return {
@@ -208,7 +238,7 @@ async def create_new_voice_cluster(
 @router.put("/voices/{segment_id}/cluster")
 async def move_voice_to_cluster(
     segment_id: str,
-    cluster_id: Annotated[int, Query(..., description="Target cluster ID")],
+    cluster_id: Annotated[int, Query(..., description="Target cluster ID")],  # noqa: B008
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
     """Move a voice segment to a different cluster.
@@ -216,6 +246,7 @@ async def move_voice_to_cluster(
     Args:
         segment_id: The segment to move.
         cluster_id: Target cluster ID.
+        pipeline: Ingestion pipeline instance.
 
     Returns:
         Move confirmation.
@@ -224,18 +255,25 @@ async def move_voice_to_cluster(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
+        from qdrant_client import models
+
         pipeline.db.client.set_payload(
             collection_name=pipeline.db.VOICE_COLLECTION,
             payload={"voice_cluster_id": cluster_id},
-            points=[segment_id],
+            points=models.PointIdsList(points=cast(list[Any], [segment_id])),
         )
-        return {"status": "moved", "segment_id": segment_id, "cluster_id": cluster_id}
+        return {
+            "status": "moved",
+            "segment_id": segment_id,
+            "cluster_id": cluster_id,
+        }
     except Exception as e:
         logger.error(f"[Voices] Move failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 class ClusterNameRequest(BaseModel):
+    """Request schema for naming a voice cluster."""
     name: str
 
 
@@ -250,6 +288,7 @@ async def name_voice_cluster(
     Args:
         cluster_id: The ID of the cluster to name.
         request: JSON body containing {"name": "New Name"}.
+        pipeline: Ingestion pipeline instance.
     """
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
@@ -274,7 +313,9 @@ async def name_voice_cluster(
         )
 
         # 2. Propagate to Frames (Search Index)
-        count = pipeline.db.re_embed_voice_cluster_frames(cluster_id, request.name)
+        count = pipeline.db.re_embed_voice_cluster_frames(
+            cluster_id, request.name
+        )
 
         return {
             "status": "updated",

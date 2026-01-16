@@ -8,14 +8,12 @@ import asyncio
 import gc
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import torch
 
-
-
 if TYPE_CHECKING:
-    from core.utils.cancellation import CancellationToken
+    pass
 
 
 @dataclass
@@ -27,7 +25,7 @@ class ModelVRAM:
     insightface: float = 1.5
     vlm_7b: float = 6.0
     vlm_3b: float = 3.0
-    timesformer: float = 1.0   # fp16
+    timesformer: float = 1.0  # fp16
     nv_embed_v2: float = 4.0
     yolo_world: float = 1.0
     pyannote: float = 1.5
@@ -53,30 +51,30 @@ class ResourceArbiter:
         """
         if total_vram_gb is None and torch.cuda.is_available():
             try:
-                total_vram_gb = (
-                    torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                )
+                total_vram_gb = torch.cuda.get_device_properties(
+                    0
+                ).total_memory / (1024**3)
             except Exception:
                 total_vram_gb = 8.0
 
         self.total_vram = total_vram_gb or 8.0
         self.current_usage = 0.0
         self._lock = asyncio.Lock()
-        
+
         # Track loaded models and their unload callbacks
         # Format: {model_name: {"vram": float, "unload_fn": callable, "last_used": float}}
         self.registry: dict[str, dict] = {}
         self._gpu_semaphore = asyncio.Semaphore(1)
         self._initialized = True
 
-    def register_model(self, model_name: str, unload_fn: callable) -> None:
+    def register_model(self, model_name: str, unload_fn: Callable) -> None:
         """Register a model's unload function for VRAM management."""
         if model_name not in self.registry:
             self.registry[model_name] = {
                 "vram": 0.0,
                 "unload_fn": unload_fn,
                 "last_used": 0.0,
-                "active": False
+                "active": False,
             }
 
     @asynccontextmanager
@@ -93,11 +91,12 @@ class ResourceArbiter:
             vram_gb: Approximate VRAM required in GB.
             job_id: Optional job ID for cancellation support.
         """
+        import time
+
         from core.utils.cancellation import (
             CancellationError,
             get_or_create_token,
         )
-        import time
 
         token = get_or_create_token(job_id) if job_id else None
 
@@ -111,15 +110,15 @@ class ResourceArbiter:
                 # If not registered with callback, just track basic usage
                 self.registry[model_name] = {
                     "vram": vram_gb,
-                    "unload_fn": None, 
+                    "unload_fn": None,
                     "last_used": time.time(),
-                    "active": False
+                    "active": False,
                 }
-            
+
             # Wait for VRAM availability (simple greedy approach)
             # Reserve 10% buffer
             limit = self.total_vram * 0.9
-            
+
             while self.current_usage + vram_gb > limit:
                 # Try to offload least recent INACTIVE model
                 offloaded = await self._offload_least_recent()
@@ -144,46 +143,44 @@ class ResourceArbiter:
                 # Mark as inactive but keep "loaded" in VRAM until pushed out
                 # We do NOT subtract `current_usage` immediately because the weights are still in VRAM
                 # usage is only reduced when we actually `unload()` via `_offload_least_recent`
-                
+
                 # Correction: For this simplified version where we don't know *exact* pytorch caching,
                 # we maintain the high-water mark logic.
-                
+
                 self.registry[model_name]["active"] = False
                 self.registry[model_name]["last_used"] = time.time()
 
     async def _offload_least_recent(self) -> bool:
         """Finds and unloads the least recently used inactive model."""
-        import time
-        
         candidates = [
-            (name, data) 
-            for name, data in self.registry.items() 
+            (name, data)
+            for name, data in self.registry.items()
             if not data["active"] and data["unload_fn"]
         ]
-        
+
         if not candidates:
             return False
 
         # Sort by last_used (oldest first)
         candidates.sort(key=lambda x: x[1]["last_used"])
-        
+
         name, data = candidates[0]
         unload_fn = data["unload_fn"]
         vram = data["vram"]
-        
+
         try:
             # Call the unload callback
             if asyncio.iscoroutinefunction(unload_fn):
                 await unload_fn()
             else:
                 unload_fn()
-                
+
             self.current_usage = max(0, self.current_usage - vram)
-            # Remove from registry or check "loaded" flag? 
+            # Remove from registry or check "loaded" flag?
             # Ideally we keep it in registry but mark as unloaded.
             # For now, simplistic approach: leave in registry, but usage is what matters.
             # We assume unload_fn clears the memory.
-            
+
             self._cleanup_vram()
             return True
         except Exception:
@@ -207,11 +204,13 @@ class ResourceArbiter:
             "total_vram_gb": self.total_vram,
             "current_usage_gb": self.current_usage,
             "available_gb": self.total_vram - self.current_usage,
-            "models": {k: {"active": v["active"], "last": v["last_used"]} for k,v in self.registry.items()},
+            "models": {
+                k: {"active": v["active"], "last": v["last_used"]}
+                for k, v in self.registry.items()
+            },
         }
 
 
 # Global singleton instance
 RESOURCE_ARBITER = ResourceArbiter()
 GPU_SEMAPHORE = RESOURCE_ARBITER._gpu_semaphore  # Backward compatibility
-

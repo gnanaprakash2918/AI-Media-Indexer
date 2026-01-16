@@ -48,10 +48,11 @@ async def hybrid_search(
 
     Args:
         q: The natural language search query.
-        video_path: Optional path to filter results by a specific video.
         limit: Maximum number of results to return.
-        use_reranking: Whether to enable the second-stage LLM verification.
         pipeline: The core ingestion pipeline instance.
+        video_path: Optional path to filter results by a specific video.
+        use_reranking: Whether to enable the second-stage LLM verification.
+        face_cluster_id: Optional filter for a specific face cluster.
 
     Returns:
         A dictionary containing ranked results, parsed query info, and stats.
@@ -540,7 +541,9 @@ async def granular_search(
 
     start_time_search = time.perf_counter()
     word_count = len(query.split())
-    logger.info(f"[GranularSearch] Query: {word_count} words | video: {video_path}")
+    logger.info(
+        f"[GranularSearch] Query: {word_count} words | video: {video_path}"
+    )
 
     try:
         # Use enhanced MultiVectorSearcher
@@ -560,8 +563,12 @@ async def granular_search(
             ts = hit.get("timestamp", hit.get("start_time", 0))
             if video:
                 safe_path = quote(str(video))
-                hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
-                hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                hit["thumbnail_url"] = (
+                    f"/media/thumbnail?path={safe_path}&time={ts}"
+                )
+                hit["playback_url"] = (
+                    f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                )
 
         duration = time.perf_counter() - start_time_search
 
@@ -571,11 +578,15 @@ async def granular_search(
             {
                 "step": "Query Decomposition",
                 "status": "completed",
-                "detail": f"Parsed {len(results[0].get('decomposed_constraints', []))} constraints" if results else "No constraints",
+                "detail": f"Parsed {len(results[0].get('decomposed_constraints', []))} constraints"
+                if results
+                else "No constraints",
                 "data": {
                     "word_count": word_count,
-                    "modalities": results[0].get("query_modalities", []) if results else [],
-                }
+                    "modalities": results[0].get("query_modalities", [])
+                    if results
+                    else [],
+                },
             },
             {
                 "step": "Multi-Vector Search",
@@ -584,7 +595,7 @@ async def granular_search(
                 "data": {
                     "collection": "media_frames",
                     "enable_rerank": enable_rerank,
-                }
+                },
             },
             {
                 "step": "LLM Reranking",
@@ -593,7 +604,7 @@ async def granular_search(
                 "data": {
                     "enabled": enable_rerank,
                     "final_count": len(results),
-                }
+                },
             },
         ]
 
@@ -605,7 +616,11 @@ async def granular_search(
             "stats": {
                 "total": len(results),
                 "duration_seconds": round(duration, 3),
-                "constraints_parsed": len(results[0].get("decomposed_constraints", [])) if results else 0,
+                "constraints_parsed": len(
+                    results[0].get("decomposed_constraints", [])
+                )
+                if results
+                else 0,
                 "reranking_enabled": enable_rerank,
             },
             # Debug/Transparency fields
@@ -615,8 +630,12 @@ async def granular_search(
 
         if show_reasoning and results:
             response["reasoning_trace"] = results[0].get("reasoning_trace", [])
-            response["decomposed_constraints"] = results[0].get("decomposed_constraints", [])
-            response["query_modalities"] = results[0].get("query_modalities", [])
+            response["decomposed_constraints"] = results[0].get(
+                "decomposed_constraints", []
+            )
+            response["query_modalities"] = results[0].get(
+                "query_modalities", []
+            )
 
         logger.info(
             f"[GranularSearch] Returned {len(results)} results in {duration:.3f}s"
@@ -634,6 +653,6 @@ async def granular_search(
         }
     except Exception as e:
         logger.error(f"[GranularSearch] Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Granular search failed: {e}") from e
-
-
+        raise HTTPException(
+            status_code=500, detail=f"Granular search failed: {e}"
+        ) from e

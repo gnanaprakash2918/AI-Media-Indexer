@@ -91,6 +91,9 @@ class OCRProcessor:
         if not await self._lazy_load():
             return {"text": "", "boxes": [], "lines": [], "confidence": 0.0}
 
+        if self.ocr is None:
+            return {"text": "", "boxes": [], "lines": [], "confidence": 0.0}
+
         try:
             result = self.ocr.ocr(frame, cls=True)
 
@@ -109,7 +112,13 @@ class OCRProcessor:
             for line in result[0]:
                 box = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
                 text = line[1][0]
-                conf = line[1][1]
+                if not text or len(text) < 2:
+                    continue
+                # Cast confidence to float for comparison
+                try:
+                    conf = float(line[1][1])
+                except (ValueError, IndexError, TypeError):
+                    conf = 0.0
 
                 if conf >= min_confidence:
                     lines.append(text)
@@ -214,6 +223,9 @@ class EasyOCRProcessor:
         if not await self._lazy_load():
             return {"text": "", "boxes": [], "confidence": 0.0}
 
+        if self.reader is None:
+            return {"text": "", "boxes": [], "confidence": 0.0}
+
         try:
             result = self.reader.readtext(frame)
 
@@ -222,10 +234,16 @@ class EasyOCRProcessor:
             confidences = []
 
             for bbox, text, conf in result:
-                if conf >= min_confidence:
+                # Cast confidence to float for comparison
+                try:
+                    conf_val = float(conf)
+                except (ValueError, TypeError):
+                    conf_val = 0.0
+
+                if conf_val >= min_confidence:
                     lines.append(text)
                     boxes.append(bbox)
-                    confidences.append(conf)
+                    confidences.append(conf_val)
 
             full_text = " ".join(lines)
             avg_conf = sum(confidences) / len(confidences) if confidences else 0

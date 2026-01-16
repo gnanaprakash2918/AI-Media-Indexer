@@ -176,10 +176,7 @@ class HybridSearcher:
             scores[doc_id]["keyword_score"] = kw_score
 
         # Sort by fused score
-        fused = [
-            {"id": doc_id, **data}
-            for doc_id, data in scores.items()
-        ]
+        fused = [{"id": doc_id, **data} for doc_id, data in scores.items()]
         fused.sort(key=lambda x: x["rrf_score"], reverse=True)
 
         return fused
@@ -215,10 +212,12 @@ class HybridSearcher:
                 if frame.get("ocr_text"):
                     text_parts.append(frame["ocr_text"])
                 if text_parts:
-                    documents.append({
-                        "id": doc_id,
-                        "text": " ".join(text_parts),
-                    })
+                    documents.append(
+                        {
+                            "id": doc_id,
+                            "text": " ".join(text_parts),
+                        }
+                    )
 
             count = self.keyword_index.build_from_documents(documents)
             log.info(f"[Hybrid] Built BM25 index with {count} documents")

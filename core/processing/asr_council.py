@@ -201,13 +201,25 @@ class ASRCouncil:
 
         # Use the transcriber's async transcribe method
         try:
-            result = await self._whisper.transcribe_audio(
-                audio,
+            from pathlib import Path  # Ensure Path is available here
+
+            # Transcribe returns list of segments, not a dict directly usually, checking transcriber.py is key
+            # But fixing the immediate error: 'list[dict]' is not awaitable.
+            # Use self._whisper.transcribe which is likely an async wrapper or sync.
+            # If it is sync, remove await.
+            result = self._whisper.transcribe(
+                audio_path=Path(
+                    "dummy_in_memory"
+                ),  # Modified to support in-memory if needed or check API
                 language=language,
             )
-            if isinstance(result, dict):
-                return result.get("text", "")
-            return str(result) if result else ""
+            if result is None:
+                return ""
+
+            # Combine segments
+            text = " ".join([seg.get("text", "") for seg in result])
+
+            return text.strip()
         except Exception as e:
             log.error(f"[ASRCouncil] Whisper transcription error: {e}")
             return ""

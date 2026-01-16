@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from core.processing.audio_events import AudioEventDetector
     from core.processing.biometric_arbitrator import BiometricArbitrator
     from core.processing.frame_sampling import SmartFrameSampler, TextGatedOCR
-    from core.processing.ocr import OCRProcessor
     from core.processing.object_detection import ObjectDetector
+    from core.processing.ocr import OCRProcessor
     from core.processing.temporal import TemporalAnalyzer
     from core.retrieval.hybrid import HybridSearcher
     from core.retrieval.privacy import PrivacyFilter
@@ -90,6 +90,7 @@ class EnhancedPipelineConfig:
             return None
         if self._frame_sampler is None:
             from core.processing.frame_sampling import SmartFrameSampler
+
             self._frame_sampler = SmartFrameSampler(
                 motion_threshold=30.0,
                 min_analyze_interval=5,
@@ -104,6 +105,7 @@ class EnhancedPipelineConfig:
             return None
         if self._text_gate is None:
             from core.processing.frame_sampling import TextGatedOCR
+
             self._text_gate = TextGatedOCR(edge_threshold=0.02)
             log.info("[Integration] TextGatedOCR enabled")
         return self._text_gate
@@ -115,6 +117,7 @@ class EnhancedPipelineConfig:
             return None
         if self._audio_detector is None:
             from core.processing.audio_events import AudioEventDetector
+
             self._audio_detector = AudioEventDetector()
             log.info("[Integration] CLAP AudioEventDetector enabled")
         return self._audio_detector
@@ -126,6 +129,7 @@ class EnhancedPipelineConfig:
             return None
         if self._ocr is None:
             from core.processing.ocr import OCRProcessor
+
             self._ocr = OCRProcessor(lang="en", use_gpu=True)
             log.info("[Integration] OCRProcessor enabled")
         return self._ocr
@@ -137,6 +141,7 @@ class EnhancedPipelineConfig:
             return None
         if self._object_detector is None:
             from core.processing.object_detection import ObjectDetector
+
             self._object_detector = ObjectDetector(model_size="m")
             log.info("[Integration] YOLO-World ObjectDetector enabled")
         return self._object_detector
@@ -148,6 +153,7 @@ class EnhancedPipelineConfig:
             return None
         if self._temporal is None:
             from core.processing.temporal import TemporalAnalyzer
+
             self._temporal = TemporalAnalyzer()
             log.info("[Integration] TimeSformer TemporalAnalyzer enabled")
         return self._temporal
@@ -165,6 +171,7 @@ class EnhancedPipelineConfig:
             return None
         if self._hybrid_searcher is None:
             from core.retrieval.hybrid import HybridSearcher
+
             self._hybrid_searcher = HybridSearcher(db, self.bm25_path)
             log.info("[Integration] HybridSearcher enabled")
         return self._hybrid_searcher
@@ -173,6 +180,7 @@ class EnhancedPipelineConfig:
         """Get standalone BM25 keyword index."""
         if self._keyword_index is None:
             from core.storage.keyword_index import KeywordIndex
+
             self._keyword_index = KeywordIndex(self.bm25_path)
             self._keyword_index.load()
             log.info("[Integration] KeywordIndex enabled")
@@ -208,35 +216,40 @@ def get_enhanced_config() -> EnhancedPipelineConfig:
 def get_resource_arbiter() -> ResourceArbiter:
     """Get the global ResourceArbiter for VRAM management."""
     from core.utils.resource_arbiter import RESOURCE_ARBITER
+
     return RESOURCE_ARBITER
 
 
 def get_cancellation_token(job_id: str) -> CancellationToken:
     """Get or create a cancellation token for a job."""
     from core.utils.cancellation import get_or_create_token
+
     return get_or_create_token(job_id)
 
 
 def cancel_job(job_id: str) -> bool:
     """Cancel a running job."""
     from core.utils.cancellation import cancel_job as _cancel
+
     return _cancel(job_id)
 
 
 def safe_path(path_str: str | Path) -> Path:
     """Get a Windows-safe path."""
     from core.utils.filesystem import safe_path as _safe
+
     return _safe(path_str)
 
 
 def get_biometric_arbitrator() -> "BiometricArbitrator":
     """Get the global BiometricArbitrator for face verification."""
     from core.processing.biometric_arbitrator import BIOMETRIC_ARBITRATOR
+
     return BIOMETRIC_ARBITRATOR
 
 
 def get_privacy_filter() -> "PrivacyFilter":
     """Get the global PrivacyFilter for personal/movie mode."""
     from core.retrieval.privacy import PRIVACY_FILTER
-    return PRIVACY_FILTER
 
+    return PRIVACY_FILTER

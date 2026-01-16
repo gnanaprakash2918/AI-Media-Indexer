@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def safe_path(path_str: str | Path) -> Path:
-    """Convert path string to a Windows-safe Path object.
+    r"""Convert path string to a Windows-safe Path object.
 
     Handles:
     - Long paths (>260 chars) via \\\\?\\ prefix
@@ -86,9 +86,28 @@ def sanitize_filename(filename: str, max_length: int = 200) -> str:
 
     # Handle reserved Windows names
     reserved = {
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
     }
     name_upper = os.path.splitext(filename)[0].upper()
     if name_upper in reserved:

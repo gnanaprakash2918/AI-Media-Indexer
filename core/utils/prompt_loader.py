@@ -34,7 +34,9 @@ def load_prompt(name: str) -> str:
     prompt_file = PROMPTS_DIR / f"{name}.txt"
     if prompt_file.exists():
         content = prompt_file.read_text(encoding="utf-8")
-        log.debug(f"[PromptLoader] Loaded prompt: {name} ({len(content)} chars)")
+        log.debug(
+            f"[PromptLoader] Loaded prompt: {name} ({len(content)} chars)"
+        )
         return content
     else:
         log.warning(f"[PromptLoader] Prompt file not found: {prompt_file}")

@@ -255,24 +255,21 @@ class ProgressTracker:
             if job_id not in self._cache:
                 return
             job = self._cache[job_id]
-            
+
             # Merge with existing
             current = job.checkpoint_data or {}
             updated = {**current, **data}
             job.checkpoint_data = updated
-            
+
             # Persist immediately
             try:
                 job_manager.update_job(
-                    job_id,
-                    checkpoint_data=updated,
-                    last_heartbeat=time.time()
+                    job_id, checkpoint_data=updated, last_heartbeat=time.time()
                 )
             except Exception:
                 pass
-                
-        # Optional: Broadcast if needed (usually internal state)
 
+        # Optional: Broadcast if needed (usually internal state)
 
     def complete(
         self, job_id: str, message: str = "Processing complete"

@@ -1,8 +1,9 @@
+"""Module for estimated depth and object distance from 2D images."""
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -12,7 +13,9 @@ log = get_logger(__name__)
 
 
 class DepthEstimator:
+    """Estimator for monocular depth and relative object distance."""
     def __init__(self, model_name: str = "depth-anything-v2-small"):
+        """Initialize the depth estimator."""
         self.model_name = model_name
         self.model = None
         self._device = None
@@ -23,6 +26,7 @@ class DepthEstimator:
             return self._device
         try:
             import torch
+
             return "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             return "cpu"
@@ -37,7 +41,9 @@ class DepthEstimator:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-                async with RESOURCE_ARBITER.acquire("depth", vram_gb=1.0):  # Reduced from 1.5 with fp16
+                async with RESOURCE_ARBITER.acquire(
+                    "depth", vram_gb=1.0
+                ):  # Reduced from 1.5 with fp16
                     log.info(f"[DepthEstimator] Loading {self.model_name}...")
                     import torch
                     from transformers import pipeline
@@ -48,7 +54,9 @@ class DepthEstimator:
                         "depth-estimation",
                         model="depth-anything/Depth-Anything-V2-Small-hf",
                         device=0 if device == "cuda" else -1,
-                        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                        torch_dtype=torch.float16
+                        if device == "cuda"
+                        else torch.float32,
                     )
                     self._device = device
                     log.info(f"[DepthEstimator] Loaded on {device}")
@@ -61,8 +69,19 @@ class DepthEstimator:
                 return False
 
     async def estimate_depth(self, image: np.ndarray | Path) -> dict[str, Any]:
+        """Generate a depth map for the given image.
+
+        Args:
+            image: Input image array or path.
+
+        Returns:
+            Dictionary containing the depth map and metadata.
+        """
         if not await self._lazy_load():
             return {"depth_map": None, "error": "Model not loaded"}
+
+        if self.model is None:
+            return {"depth_map": None, "error": "Model not initialized"}
 
         try:
             from PIL import Image
@@ -74,7 +93,8 @@ class DepthEstimator:
             else:
                 img = image
 
-            result = self.model(img)
+            raw_result = self.model(img)
+            result = cast(dict[str, Any], raw_result)
             depth_map = np.array(result["depth"])
 
             stats = {
@@ -84,7 +104,9 @@ class DepthEstimator:
                 "std_depth": float(np.std(depth_map)),
             }
 
-            log.info(f"[DepthEstimator] Range: {stats['min_depth']:.2f} - {stats['max_depth']:.2f}")
+            log.info(
+                f"[DepthEstimator] Range: {stats['min_depth']:.2f} - {stats['max_depth']:.2f}"
+            )
             return {"depth_map": depth_map, "stats": stats}
 
         except Exception as e:
@@ -98,6 +120,17 @@ class DepthEstimator:
         focal_length_px: float = 1000.0,
         real_height_cm: float = 170.0,
     ) -> dict[str, Any]:
+        """Estimate the relative distance of an object within a bounding box.
+
+        Args:
+            image: Source image.
+            bbox: Object bounding box (x1, y1, x2, y2).
+            focal_length_px: Camera focal length in pixels.
+            real_height_cm: Real height of the object in centimeters.
+
+        Returns:
+            Distance estimate and confidence.
+        """
         result = await self.estimate_depth(image)
         if result.get("error"):
             return result
@@ -114,7 +147,9 @@ class DepthEstimator:
             return {"distance_cm": None, "error": "Invalid bbox"}
 
         median_depth = float(np.median(region_depth))
-        estimated_distance_cm = (focal_length_px * real_height_cm) / ((y2 - y1) + 1)
+        estimated_distance_cm = (focal_length_px * real_height_cm) / (
+            (y2 - y1) + 1
+        )
 
         return {
             "relative_depth": median_depth,
@@ -133,6 +168,20 @@ class DepthEstimator:
         focal_length_px: float = 1000.0,
         real_height_cm: float = 170.0,
     ) -> dict[str, Any]:
+        """Check if an object's distance falls within specified bounds.
+
+        Args:
+            image: Input image.
+            bbox: Object bounding box (x1, y1, x2, y2).
+            min_distance_m: Minimum allowed distance in meters.
+            max_distance_m: Maximum allowed distance in meters.
+            semantic_distance: Semantic distance descriptor (e.g., "close", "far").
+            focal_length_px: Camera focal length in pixels.
+            real_height_cm: Real height of the object in centimeters.
+
+        Returns:
+            Dictionary with match result and distance details.
+        """
         result = await self.estimate_object_distance(
             image, bbox, focal_length_px, real_height_cm
         )
@@ -174,11 +223,13 @@ class DepthEstimator:
         }
 
     def cleanup(self) -> None:
+        """Clear model from memory."""
         if self.model:
             del self.model
             self.model = None
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:

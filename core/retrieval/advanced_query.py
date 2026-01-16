@@ -131,6 +131,8 @@ class AdvancedQueryDecomposer:
 
         # Use LLM for decomposition
         if self._prompt_template and await self._ensure_llm():
+            if self._llm is None:  # Pylance strict check
+                return result
             try:
                 import json
 
@@ -159,7 +161,9 @@ class AdvancedQueryDecomposer:
                 result.spatial_relations = data.get("spatial_relations", [])
                 result.exclusions = data.get("exclusions", [])
                 result.scene_description = data.get("scene_description", "")
-                result.modalities_required = data.get("modalities_required", ["visual"])
+                result.modalities_required = data.get(
+                    "modalities_required", ["visual"]
+                )
 
                 result.reasoning_steps.append(
                     f"[2] LLM extracted {len(result.constraints)} constraints"
@@ -232,7 +236,9 @@ class MultiVectorSearcher:
             log.warning(f"[MultiVectorSearch] LLM load failed: {e}")
             return False
 
-    def _resolve_identities(self, constraints: list[QueryConstraint]) -> list[int]:
+    def _resolve_identities(
+        self, constraints: list[QueryConstraint]
+    ) -> list[int]:
         """Resolve identity constraints to cluster IDs.
 
         Args:
@@ -247,11 +253,18 @@ class MultiVectorSearcher:
         cluster_ids = []
         for c in constraints:
             # Look for person/identity type constraints
-            if c.constraint_type.lower() in ("person", "identity", "character", "face"):
+            if c.constraint_type.lower() in (
+                "person",
+                "identity",
+                "character",
+                "face",
+            ):
                 cid = self.db.fuzzy_get_cluster_id_by_name(c.value)
                 if cid:
                     cluster_ids.append(cid)
-                    log.info(f"[MultiVectorSearch] Resolved '{c.value}' → cluster {cid}")
+                    log.info(
+                        f"[MultiVectorSearch] Resolved '{c.value}' → cluster {cid}"
+                    )
 
         return cluster_ids
 
@@ -295,12 +308,16 @@ class MultiVectorSearcher:
                     query=search_text,
                     limit=limit * 3,  # Get more for reranking
                     video_paths=video_path,
-                    face_cluster_ids=face_cluster_ids if face_cluster_ids else None,
+                    face_cluster_ids=face_cluster_ids
+                    if face_cluster_ids
+                    else None,
                 )
             except Exception as e:
                 log.warning(f"[MultiVectorSearch] Hybrid search failed: {e}")
                 # Fallback to basic search
-                results = self.db.search_frames(query=search_text, limit=limit * 2)
+                results = self.db.search_frames(
+                    query=search_text, limit=limit * 2
+                )
 
         # Step 5: Apply exclusions
         for exclusion in decomposed.exclusions:
@@ -314,7 +331,9 @@ class MultiVectorSearcher:
 
         # Step 6: Score by constraint matches (pre-rerank scoring)
         for result in results:
-            desc = (result.get("action", "") + " " + result.get("description", "")).lower()
+            desc = (
+                result.get("action", "") + " " + result.get("description", "")
+            ).lower()
             matches = 0
             matched_list = []
             for constraint in decomposed.constraints:
@@ -327,8 +346,17 @@ class MultiVectorSearcher:
             result["combined_score"] = base_score * (1 + matches * 0.15)
 
         # Step 7: LLM Reranking (if enabled and LLM available)
-        if enable_rerank and results and await self._ensure_llm() and self._rerank_prompt:
-            results = await self._llm_rerank(query, results[:limit * 2], decomposed)
+        if (
+            enable_rerank
+            and results
+            and await self._ensure_llm()
+            and self._rerank_prompt
+        ):
+            if self._llm is None:
+                return results[:limit]
+            results = await self._llm_rerank(
+                query, results[: limit * 2], decomposed
+            )
 
         # Step 8: Sort by combined score and limit
         results.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
@@ -337,7 +365,9 @@ class MultiVectorSearcher:
         # Step 9: Add reasoning trace and metadata
         for result in final_results:
             result["reasoning_trace"] = decomposed.reasoning_steps
-            result["decomposed_constraints"] = [c.to_dict() for c in decomposed.constraints]
+            result["decomposed_constraints"] = [
+                c.to_dict() for c in decomposed.constraints
+            ]
             result["query_modalities"] = decomposed.modalities_required
 
         return final_results
@@ -363,14 +393,21 @@ class MultiVectorSearcher:
         # Define strict schema for LLM output
         class RerankResult(BaseModel):
             match_score: float = Field(
-                default=0.5, ge=0.0, le=1.0, description="How well this matches the query (0-1)"
+                default=0.5,
+                ge=0.0,
+                le=1.0,
+                description="How well this matches the query (0-1)",
             )
-            reasoning: str = Field(default="", description="Why this result matches or doesn't")
+            reasoning: str = Field(
+                default="", description="Why this result matches or doesn't"
+            )
             constraints_checked: list[str] = Field(
-                default_factory=list, description="Query constraints that were verified"
+                default_factory=list,
+                description="Query constraints that were verified",
             )
             missing: list[str] = Field(
-                default_factory=list, description="Query constraints not found in result"
+                default_factory=list,
+                description="Query constraints not found in result",
             )
 
         reranked = []
@@ -391,6 +428,9 @@ class MultiVectorSearcher:
                     visible_text=candidate.get("visible_text", []),
                 )
 
+                if self._llm is None:
+                    continue
+
                 # Use native JSON mode via generate_structured
                 result = await self._llm.generate_structured(
                     schema=RerankResult,
@@ -405,13 +445,16 @@ class MultiVectorSearcher:
 
                 # Blend scores: 60% original, 40% LLM
                 original_score = candidate.get("combined_score", 0.5)
-                candidate["combined_score"] = original_score * 0.6 + result.match_score * 0.4
+                candidate["combined_score"] = (
+                    original_score * 0.6 + result.match_score * 0.4
+                )
 
                 reranked.append(candidate)
             except Exception as e:
-                log.debug(f"[MultiVectorSearch] Rerank failed for candidate: {e}")
+                log.debug(
+                    f"[MultiVectorSearch] Rerank failed for candidate: {e}"
+                )
                 # Keep candidate with original score on failure
                 reranked.append(candidate)
 
         return reranked
-

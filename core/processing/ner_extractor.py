@@ -105,6 +105,8 @@ class VideoNERExtractor:
                 import json
 
                 prompt = self._prompt_template.format(text=text)
+                if self._llm is None:
+                    return []
                 response = await self._llm.generate(prompt)
 
                 # Parse JSON response

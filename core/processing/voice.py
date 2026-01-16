@@ -34,8 +34,8 @@ from pyannote.core import Segment  # noqa: E402
 
 from config import settings  # noqa: E402
 from core.schemas import SpeakerSegment  # noqa: E402
-from core.utils.resource_arbiter import GPU_SEMAPHORE  # noqa: E402
 from core.utils.logger import get_logger  # noqa: E402
+from core.utils.resource_arbiter import GPU_SEMAPHORE  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -329,7 +329,9 @@ class VoiceProcessor:
             _, stderr = await process.communicate()
 
             if process.returncode != 0:
-                log.warning(f"FFmpeg conversion failed: {stderr.decode(errors='replace')}")
+                log.warning(
+                    f"FFmpeg conversion failed: {stderr.decode(errors='replace')}"
+                )
                 if temp_path.exists():
                     temp_path.unlink()
                 return None

@@ -50,9 +50,11 @@ async def get_job_status(job_id: str) -> dict:
 
     return {
         "job_id": job.job_id,
-        "status": job.status.value if hasattr(job.status, "value") else job.status,
+        "status": job.status.value
+        if hasattr(job.status, "value")
+        else job.status,
         "progress": job.progress,
-        "stage": job.stage.value if hasattr(job.stage, "value") else str(job.stage),
+        "stage": job.pipeline_stage,
         "message": job.message,
         "file_path": job.file_path,
     }

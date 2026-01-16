@@ -22,7 +22,10 @@ from core.processing.ocr import EasyOCRProcessor
 from core.processing.prober import MediaProbeError, MediaProber
 from core.processing.scene_detector import detect_scenes, extract_scene_frame
 from core.processing.segmentation import Sam3Tracker
-from core.processing.temporal_context import SceneletBuilder, TemporalContextManager
+from core.processing.temporal_context import (
+    SceneletBuilder,
+    TemporalContextManager,
+)
 from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
 from core.processing.vision import VisionAnalyzer
@@ -66,9 +69,11 @@ class IngestionPipeline:
         self.audio_transcriber = AudioTranscriber()
         self.prober = MediaProber()
         self.sam_tracker = Sam3Tracker()
-        self.metadata_engine = MetadataEngine(tmdb_api_key=settings.tmdb_api_key)
+        self.metadata_engine = MetadataEngine(
+            tmdb_api_key=settings.tmdb_api_key
+        )
         self.voice_processor = VoiceProcessor()
-        
+
         # OCR Components
         self.ocr_engine = EasyOCRProcessor(langs=["en"], use_gpu=True)
         self.text_gate = TextGatedOCR()
@@ -232,7 +237,9 @@ class IngestionPipeline:
                 await retry(lambda: self._process_audio(path))
                 self._cleanup_memory("audio_complete")  # Unload Whisper
                 # Checkpoint audio completion
-                progress_tracker.save_checkpoint(job_id, {"audio_complete": True})
+                progress_tracker.save_checkpoint(
+                    job_id, {"audio_complete": True}
+                )
             progress_tracker.update(
                 job_id, 30.0, stage="audio", message="Audio complete"
             )
@@ -249,7 +256,9 @@ class IngestionPipeline:
                 await retry(lambda: self._process_voice(path))
                 self._cleanup_memory("voice_complete")  # Unload Pyannote
                 # Checkpoint voice completion
-                progress_tracker.save_checkpoint(job_id, {"voice_complete": True})
+                progress_tracker.save_checkpoint(
+                    job_id, {"voice_complete": True}
+                )
             progress_tracker.update(
                 job_id, 50.0, stage="voice", message="Voice complete"
             )
@@ -354,18 +363,25 @@ class IngestionPipeline:
         # Run ASR if no existing subtitles
         if not audio_segments:
             await resource_manager.throttle_if_needed("compute")
-            
+
             # Content Classification (speech/music/silence detection)
             use_lyrics_mode = False
             try:
-                from core.processing.content_classifier import get_content_classifier
+                from core.processing.content_classifier import (
+                    get_content_classifier,
+                )
+
                 classifier = get_content_classifier()
                 content_regions = classifier.classify(path)
-                
+
                 if content_regions:
-                    use_lyrics_mode = classifier.should_use_lyrics_mode(content_regions)
+                    use_lyrics_mode = classifier.should_use_lyrics_mode(
+                        content_regions
+                    )
                     if use_lyrics_mode:
-                        log("[Audio] High music content detected - will use lyrics mode")
+                        log(
+                            "[Audio] High music content detected - will use lyrics mode"
+                        )
             except Exception as e:
                 log(f"[Audio] Content classification skipped: {e}")
 
@@ -452,8 +468,10 @@ class IngestionPipeline:
                         indic_transcriber.unload_model()
             else:
                 # Use Whisper for English and other languages
-                log(f"[Audio] Using Whisper turbo for '{detected_lang}'" + 
-                    (" (lyrics mode)" if use_lyrics_mode else ""))
+                log(
+                    f"[Audio] Using Whisper turbo for '{detected_lang}'"
+                    + (" (lyrics mode)" if use_lyrics_mode else "")
+                )
                 try:
                     with AudioTranscriber() as transcriber:
                         async with RESOURCE_ARBITER.acquire(
@@ -461,18 +479,22 @@ class IngestionPipeline:
                         ):
                             audio_segments = (
                                 transcriber.transcribe(
-                                    path, language=detected_lang,
+                                    path,
+                                    language=detected_lang,
                                     force_lyrics=use_lyrics_mode,
                                 )
                                 or []
                             )
-                            
+
                             # Auto-retry with lyrics mode if no segments and wasn't already lyrics mode
                             if not audio_segments and not use_lyrics_mode:
-                                log("[Audio] No segments found, retrying with lyrics mode...")
+                                log(
+                                    "[Audio] No segments found, retrying with lyrics mode..."
+                                )
                                 audio_segments = (
                                     transcriber.transcribe(
-                                        path, language=detected_lang,
+                                        path,
+                                        language=detected_lang,
                                         force_lyrics=True,
                                     )
                                     or []
@@ -544,46 +566,79 @@ class IngestionPipeline:
         # Detects non-speech sounds: bells, cheers, sirens, applause, etc.
         # ============================================================
         try:
-            if self.enhanced_config and getattr(self.enhanced_config, 'enable_clap', False):
-                from core.processing.audio_events import AudioEventDetector
+            if self.enhanced_config and getattr(
+                self.enhanced_config, "enable_clap", False
+            ):
                 import librosa
-                
+
+                from core.processing.audio_events import AudioEventDetector
+
                 log("[CLAP] Starting audio event detection...")
                 audio_detector = AudioEventDetector()
-                
+
                 # Load audio for CLAP (16kHz mono)
                 try:
-                    audio_array, sr = librosa.load(str(path), sr=16000, mono=True)
-                    
+                    audio_array, sr = librosa.load(
+                        str(path), sr=16000, mono=True
+                    )
+
                     # Process in 2-second chunks to detect events with timestamps
                     chunk_duration = 2.0
                     chunk_samples = int(chunk_duration * sr)
                     audio_events = []
-                    
+
                     for i in range(0, len(audio_array), chunk_samples):
-                        chunk = audio_array[i:i + chunk_samples]
+                        chunk = audio_array[i : i + chunk_samples]
                         if len(chunk) < sr:  # Skip chunks < 1 second
                             continue
-                        
+
                         start_time = i / sr
                         events = await audio_detector.detect_events(
-                            chunk, 
-                            sample_rate=sr,
+                            chunk,
+                            sample_rate=int(sr),
                             top_k=3,
-                            threshold=0.25
+                            threshold=0.25,
+                            target_classes=[
+                                "applause",
+                                "cheering",
+                                "laughter",
+                                "crowd",
+                                "music",
+                                "singing",
+                                "scary music",
+                                "happy music",
+                                "siren",
+                                "explosion",
+                                "gunshot",
+                                "glass breaking",
+                                "dog barking",
+                                "cat meowing",
+                                "bird chirping",
+                                "thunder",
+                                "rain",
+                                "ocean waves",
+                                "wind",
+                                "footsteps",
+                                "door slamming",
+                                "car engine",
+                            ],
                         )
-                        
+
                         for event in events:
                             if event.get("event") not in ("speech", "silence"):
-                                audio_events.append({
-                                    "event": event["event"],
-                                    "confidence": event["confidence"],
-                                    "start": start_time,
-                                    "end": start_time + chunk_duration,
-                                })
-                    
+                                audio_events.append(
+                                    {
+                                        "event": event["event"],
+                                        "confidence": event["confidence"],
+                                        "start": start_time,
+                                        "end": start_time + chunk_duration,
+                                    }
+                                )
+
                     if audio_events:
-                        log(f"[CLAP] Detected {len(audio_events)} audio events: {[e['event'] for e in audio_events[:5]]}")
+                        log(
+                            f"[CLAP] Detected {len(audio_events)} audio events: {[e['event'] for e in audio_events[:5]]}"
+                        )
                         # Store audio events in database
                         for event in audio_events:
                             self.db.insert_audio_event(
@@ -595,7 +650,7 @@ class IngestionPipeline:
                             )
                     else:
                         log("[CLAP] No non-speech audio events detected")
-                        
+
                 except Exception as e:
                     log(f"[CLAP] Audio loading failed: {e}")
         except Exception as e:
@@ -607,25 +662,28 @@ class IngestionPipeline:
         # ============================================================
         try:
             from core.processing.audio_levels import AudioLoudnessAnalyzer
-            
+
             log("[Loudness] Starting audio level analysis...")
             loudness_analyzer = AudioLoudnessAnalyzer()
-            
+
             # Load audio if not already loaded
-            if 'audio_array' not in locals():
+            if "audio_array" not in locals():
                 import librosa
+
                 audio_array, sr = librosa.load(str(path), sr=16000, mono=True)
-            
+
             # Analyze overall loudness
             loudness_result = await loudness_analyzer.analyze(audio_array)
-            log(f"[Loudness] Overall: {loudness_result['estimated_spl']} dB SPL ({loudness_result['loudness_category']})")
-            
+            log(
+                f"[Loudness] Overall: {loudness_result['estimated_spl']} dB SPL ({loudness_result['loudness_category']})"
+            )
+
             # Detect loud moments (useful for queries like "crowd cheer at 92dB")
             loud_moments = await loudness_analyzer.detect_loud_moments(
-                audio_array, 
+                audio_array,
                 threshold_spl=80,  # Detect moments above 80 dB
             )
-            
+
             if loud_moments:
                 log(f"[Loudness] Found {len(loud_moments)} loud moments")
                 # Store loud moments in database
@@ -638,7 +696,7 @@ class IngestionPipeline:
                         confidence=0.9,  # High confidence for dB-based detection
                         payload={"peak_spl": moment["peak_spl"]},
                     )
-            
+
             # Store overall loudness in media metadata
             self.db.update_media_metadata(
                 media_path=str(path),
@@ -718,8 +776,8 @@ class IngestionPipeline:
             # 1. Match against existing speakers
             # 2. Assign Global ID
             # 3. Persist specific samples for future matching
-            
-            import random # For cluster ID generation
+
+            import random  # For cluster ID generation
 
             for _idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
@@ -730,8 +788,8 @@ class IngestionPipeline:
                 # Check Global Registry if embedding exists
                 if seg.embedding is not None:
                     match = self.db.match_speaker(
-                        seg.embedding, 
-                        threshold=settings.voice_clustering_threshold
+                        seg.embedding,
+                        threshold=settings.voice_clustering_threshold,
                     )
                     if match:
                         global_speaker_id, existing_cluster_id, _score = match
@@ -777,20 +835,20 @@ class IngestionPipeline:
                             "error",
                             str(clip_file),
                         ]
-                        result = subprocess.run(
-                            cmd,
-                            capture_output=True,
-                            text=True
+                        subprocess.run(
+                            cmd, capture_output=True, text=True
                         )
-                        if result.returncode != 0:
-                            log(f"[Voice] FFmpeg failed for {clip_name}: {result.stderr}")
-
-                    if clip_file.exists():
-                        audio_path = f"/thumbnails/voices/{clip_name}"
-                    else:
-                        log(f"[Voice] Audio clip missing after ffmpeg: {clip_file}")
                 except Exception as e:
-                    log(f"[Voice] Audio extraction error: {e}")
+                    logger.warning(
+                        f"[Voice] FFmpeg failed for {clip_name}: {e}"
+                    )
+
+            if clip_file.exists():
+                audio_path = f"/thumbnails/voices/{clip_name}"
+            else:
+                logger.warning(
+                    f"[Voice] Audio clip missing after ffmpeg: {clip_file}"
+                )
 
                 # ALWAYS store voice segment (even if no embedding, use placeholder)
                 # Only store if we have an embedding (required by insert_voice_segment)
@@ -806,7 +864,9 @@ class IngestionPipeline:
                     )
                 else:
                     # Log segments without embeddings for debugging
-                    log(f"[Voice] Segment {seg.start_time:.2f}-{seg.end_time:.2f}s has no embedding, audio_path={audio_path}")
+                    logger.warning(
+                        f"[Voice] Segment {seg.start_time:.2f}-{seg.end_time:.2f}s has no embedding, audio_path={audio_path}"
+                    )
         finally:
             if self.voice:
                 self.voice.cleanup()
@@ -882,14 +942,14 @@ class IngestionPipeline:
         # XMem-style temporal context for video coherence
         from core.processing.temporal_context import (
             TemporalContext,
-            TemporalContextManager,
-            SceneletBuilder,
         )
 
         temporal_ctx = TemporalContextManager(sensory_size=5)
-        
+
         # Scenelet Builder (Sliding Window: 5s window, 2.5s stride)
-        scenelet_builder = SceneletBuilder(window_seconds=5.0, stride_seconds=2.5)
+        scenelet_builder = SceneletBuilder(
+            window_seconds=5.0, stride_seconds=2.5
+        )
         scenelet_builder.set_audio_segments(
             self._get_audio_segments_for_video(str(path))
         )
@@ -937,21 +997,21 @@ class IngestionPipeline:
                         else [],
                     )
                     temporal_ctx.add_frame(t_ctx)
-                    
+
                     # Add to Scenelet Builder
                     # Use full description for scenelets
                     s_ctx = TemporalContext(
                         timestamp=timestamp,
                         description=new_desc,
-                        faces=list(self._face_clusters.keys()) if hasattr(self, "_face_clusters") else [],
+                        faces=list(self._face_clusters.keys())
+                        if hasattr(self, "_face_clusters")
+                        else [],
                     )
                     scenelet_builder.add_frame(s_ctx)
 
             if job_id:
                 if progress_tracker.is_paused(job_id):
-                    logger.info(
-                        f"Job {job_id} paused. Stopping frame loop."
-                    )
+                    logger.info(f"Job {job_id} paused. Stopping frame loop.")
                     break
 
                 if progress_tracker.is_cancelled(job_id):
@@ -967,9 +1027,7 @@ class IngestionPipeline:
                     try:
                         probe_data = self.prober.probe(path)
                         video_duration = float(
-                            probe_data.get("format", {}).get(
-                                "duration", 0.0
-                            )
+                            probe_data.get("format", {}).get("duration", 0.0)
                         )
                     except Exception:
                         video_duration = 0.0
@@ -981,9 +1039,7 @@ class IngestionPipeline:
                 )
                 current_ts = timestamp
                 current_frame_index = (
-                    int(current_ts / interval)
-                    if interval > 0
-                    else frame_count
+                    int(current_ts / interval) if interval > 0 else frame_count
                 )
 
                 status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
@@ -1094,8 +1150,10 @@ class IngestionPipeline:
         # Build and Store Scenelets (Temporal Sequence Indexing)
         try:
             scenelets = scenelet_builder.build_scenelets()
-            logger.info(f"Building {len(scenelets)} temporal scenelets for {path.name}...")
-            
+            logger.info(
+                f"Building {len(scenelets)} temporal scenelets for {path.name}..."
+            )
+
             for sl in scenelets:
                 self.db.store_scenelet(
                     media_path=str(path),
@@ -1106,7 +1164,7 @@ class IngestionPipeline:
                         "entities": sl.all_entities,
                         "actions": sl.all_actions,
                         "audio_text": sl.audio_text,
-                    }
+                    },
                 )
             logger.info(f"Stored {len(scenelets)} scenelets successfully.")
         except Exception as e:
@@ -1376,12 +1434,16 @@ class IngestionPipeline:
                     import numpy as np
 
                     if not frame_path.exists():
-                        logger.warning(f"[Thumb] Frame file missing: {frame_path}")
+                        logger.warning(
+                            f"[Thumb] Frame file missing: {frame_path}"
+                        )
                     else:
                         img_data = np.fromfile(str(frame_path), dtype=np.uint8)
                         img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
                         if img is None:
-                            logger.warning(f"[Thumb] cv2.imdecode failed for {frame_path}")
+                            logger.warning(
+                                f"[Thumb] cv2.imdecode failed for {frame_path}"
+                            )
                         else:
                             top, right, bottom, left = face.bbox
                             face_w = right - left
@@ -1431,11 +1493,20 @@ class IngestionPipeline:
                                         face_crop,
                                         [cv2.IMWRITE_JPEG_QUALITY, 95],
                                     )
-                                    if thumb_file.exists() and thumb_file.stat().st_size > 0:
-                                        thumb_path = f"/thumbnails/faces/{thumb_name}"
-                                        logger.debug(f"[Thumb] Created: {thumb_path}")
+                                    if (
+                                        thumb_file.exists()
+                                        and thumb_file.stat().st_size > 0
+                                    ):
+                                        thumb_path = (
+                                            f"/thumbnails/faces/{thumb_name}"
+                                        )
+                                        logger.debug(
+                                            f"[Thumb] Created: {thumb_path}"
+                                        )
                                     else:
-                                        logger.warning(f"Thumbnail file empty/missing after write: {thumb_file}")
+                                        logger.warning(
+                                            f"Thumbnail file empty/missing after write: {thumb_file}"
+                                        )
                                 except cv2.error as e:
                                     logger.warning(
                                         f"Thumbnail save skipped (OpenCV error): {e}"
@@ -1596,11 +1667,13 @@ class IngestionPipeline:
                 # Load frame as numpy array (Windows path safe)
                 frame_data = np.fromfile(str(frame_path), dtype=np.uint8)
                 frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
-                
+
                 if frame_img is not None:
                     # Gate: Only run OCR if frame likely contains text (edge density check)
                     if self.text_gate.has_text(frame_img):
-                        ocr_result = await self.ocr_engine.extract_text(frame_img)
+                        ocr_result = await self.ocr_engine.extract_text(
+                            frame_img
+                        )
                         if ocr_result and ocr_result.get("text"):
                             ocr_text = ocr_result["text"]
                             ocr_boxes = ocr_result.get("boxes", [])
@@ -1789,7 +1862,10 @@ class IngestionPipeline:
 
             # Generate a proper UUID for Qdrant (file paths are not valid point IDs)
             import uuid
-            frame_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_path}_{timestamp:.3f}"))
+
+            frame_id = str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"{video_path}_{timestamp:.3f}")
+            )
 
             self.db.upsert_media_frame(
                 point_id=frame_id,

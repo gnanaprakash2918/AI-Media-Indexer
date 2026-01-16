@@ -29,9 +29,6 @@ QUERY_DECOMPOSITION_PROMPT = load_prompt("rag_query_decomposition")
 ANSWER_GENERATION_PROMPT = load_prompt("rag_answer_generation")
 
 
-
-
-
 class QueryDecoupler:
     """Decomposes complex queries into structured multi-modal components.
 
