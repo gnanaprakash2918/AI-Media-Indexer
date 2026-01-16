@@ -60,17 +60,24 @@ async def get_face_clusters(
                 clusters[cid] = []
             clusters[cid].append(face)
 
+        # Build cluster info list
+        cluster_list = [
+            {
+                "cluster_id": cid,
+                "name": "Uncategorized Faces" if cid == -1 else (cluster_faces[0].get("name") if cluster_faces else None),
+                "face_count": len(cluster_faces),
+                "representative": cluster_faces[0] if cluster_faces else None,
+                "is_main": any(f.get("is_main") for f in cluster_faces),
+                "faces": cluster_faces[:5],  # Representative samples
+            }
+            for cid, cluster_faces in clusters.items()
+        ]
+        
+        # Sort by: main characters first, then by face_count descending
+        cluster_list.sort(key=lambda c: (not c["is_main"], -c["face_count"]))
+
         return {
-            "clusters": [
-                {
-                    "cluster_id": cid,
-                    "name": faces[0].get("name") if faces else None,
-                    "count": len(faces),
-                    "is_main": any(f.get("is_main") for f in faces),
-                    "faces": faces[:5],  # Representative samples
-                }
-                for cid, faces in clusters.items()
-            ],
+            "clusters": cluster_list,
             "total_clusters": len(clusters),
         }
     except Exception as e:

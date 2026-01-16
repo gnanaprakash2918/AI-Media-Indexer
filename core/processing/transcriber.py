@@ -77,11 +77,17 @@ class AudioTranscriber:
     fallback to smaller models on memory-constrained systems.
     """
 
-    # Smaller fallback models for memory-constrained systems
+    # Class-level shared model state (singleton pattern for VRAM efficiency)
+    _SHARED_MODEL: WhisperModel | None = None
+    _SHARED_BATCHED: BatchedInferencePipeline | None = None
+    _SHARED_SIZE: str | None = None
+    _FALLBACK_ATTEMPTED: bool = False
+
+    # Smaller fallback models for memory-constrained systems (pre-converted, no conversion needed)
     LOW_MEMORY_MODELS = [
-        "distil-whisper/distil-medium.en",  # ~500MB, English only
-        "openai/whisper-small",  # ~250MB, multilingual
-        "openai/whisper-base",  # ~140MB, multilingual
+        "Systran/faster-distil-whisper-medium.en",  # ~500MB, English only
+        "Systran/faster-whisper-small",  # ~250MB, multilingual
+        "Systran/faster-whisper-base",  # ~140MB, multilingual
     ]
 
     def __init__(self) -> None:
@@ -296,21 +302,44 @@ class AudioTranscriber:
             raw_model_dir = Path(raw_model_dir)
 
             # 2. Convert to CTranslate2
-            converter = ctranslate2.converters.TransformersConverter(
-                str(raw_model_dir),
-                copy_files=[
-                    "tokenizer.json",
-                    "preprocessor_config.json",
-                    "tokenizer_config.json",
-                ],
-            )
-            converter.convert(
-                str(ct2_output_dir),
-                force=True,
-                quantization="int8_float16"
-                if settings.device == "cuda"
-                else "int8",
-            )
+            # Handle newer transformers that don't accept dtype argument
+            quantization = "int8_float16" if settings.device == "cuda" else "int8"
+            
+            try:
+                converter = ctranslate2.converters.TransformersConverter(
+                    str(raw_model_dir),
+                    copy_files=[
+                        "tokenizer.json",
+                        "preprocessor_config.json",
+                        "tokenizer_config.json",
+                    ],
+                )
+                converter.convert(
+                    str(ct2_output_dir),
+                    force=True,
+                    quantization=quantization,
+                )
+            except TypeError as te:
+                # Handle "unexpected keyword argument 'dtype'" error from newer transformers
+                if "dtype" in str(te):
+                    log("[WARN] dtype error detected, trying low_cpu_mem_usage workaround...")
+                    # Force low_cpu_mem_usage=False to bypass dtype issue
+                    converter = ctranslate2.converters.TransformersConverter(
+                        str(raw_model_dir),
+                        copy_files=[
+                            "tokenizer.json",
+                            "preprocessor_config.json",
+                            "tokenizer_config.json",
+                        ],
+                        low_cpu_mem_usage=False,
+                    )
+                    converter.convert(
+                        str(ct2_output_dir),
+                        force=True,
+                        quantization=quantization,
+                    )
+                else:
+                    raise
 
             # 3. CRITICAL: Manually patch tokenizer.json if missing or corrupt
             # faster-whisper requires specific config files
@@ -328,6 +357,10 @@ class AudioTranscriber:
         except Exception as e:
             log(f"[ERROR] Model download/conversion failed: {e}")
             raise RuntimeError(f"Could not prepare {model_id}.") from e
+
+    def _convert_and_cache_model(self, model_id: str) -> Path:
+        """Alias for _convert_to_ct2 for backwards compatibility."""
+        return self._convert_to_ct2(model_id)
 
     @observe("transcriber_load_model")
     def _load_model(self, model_key: str) -> None:
@@ -350,7 +383,17 @@ class AudioTranscriber:
             f"({self.device}, Compute: {self.compute_type})..."
         )
 
-        final_model_path = self._convert_and_cache_model(model_key)
+        # Systran models are pre-converted CTranslate2 - no conversion needed
+        # They can be loaded directly by WhisperModel from HuggingFace
+        is_preconverted = "systran" in model_key.lower() or "faster-whisper" in model_key.lower()
+        
+        if is_preconverted:
+            # Pass model ID directly - WhisperModel will download from HuggingFace
+            final_model_path = model_key
+            log(f"[INFO] Using pre-converted model: {model_key}")
+        else:
+            # Need to convert openai/whisper models to CTranslate2 format
+            final_model_path = self._convert_and_cache_model(model_key)
 
         # Memory-efficient settings
         cpu_threads = min(
@@ -636,6 +679,8 @@ class AudioTranscriber:
                 log(f"[INFO] Language locked to: {self._locked_language}")
 
             for segment in segments:
+                if (segment.end - segment.start) < 0.2:
+                    continue
                 if segment.words:
                     current_words = []
                     seg_start = segment.words[0].start
@@ -688,10 +733,22 @@ class AudioTranscriber:
             log(f"[ERROR] Inference failed: {e}")
             raise
 
+    def _run_whisper_inference(
+        self,
+        audio_path: Path,
+        lang: str | None,
+        out_srt: Path,
+        offset: float,
+        is_temp_file: bool = False,
+    ) -> list[dict[str, Any]] | None:
+        """Alias for _inference for backwards compatibility."""
+        return self._inference(audio_path, lang, out_srt, offset, is_temp_file)
+
     @observe("language_detection")
     def detect_language(self, audio_path: Path) -> str:
 
-        model_id = "openai/whisper-base"
+        # Use Systran pre-converted model for language detection (no conversion needed)
+        model_id = "Systran/faster-whisper-base"
         wav_path = None
 
         try:

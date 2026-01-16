@@ -380,13 +380,29 @@ class MultiVectorSearcher:
             try:
                 response = await self._llm.generate(prompt)
                 response_clean = response.replace("```json", "").replace("```", "").strip()
-                data = json.loads(response_clean)
+                
+                # Try JSON parsing first
+                llm_score = 0.5
+                reasoning = ""
+                try:
+                    data = json.loads(response_clean)
+                    llm_score = data.get("match_score", 0.5)
+                    reasoning = data.get("reasoning", "")
+                    candidate["llm_constraints"] = data.get("constraints_checked", [])
+                    candidate["llm_missing"] = data.get("missing", [])
+                except json.JSONDecodeError:
+                    # Fallback: Try to extract match_score with regex
+                    import re
+                    score_match = re.search(r'"match_score"\s*:\s*([\d.]+)', response_clean)
+                    if score_match:
+                        llm_score = float(score_match.group(1))
+                    reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"]*)"', response_clean)
+                    if reasoning_match:
+                        reasoning = reasoning_match.group(1)
+                    log.debug(f"[MultiVectorSearch] JSON parse failed, used regex fallback. Score: {llm_score}")
 
-                llm_score = data.get("match_score", 0.5)
                 candidate["llm_score"] = llm_score
-                candidate["llm_reasoning"] = data.get("reasoning", "")
-                candidate["llm_constraints"] = data.get("constraints_checked", [])
-                candidate["llm_missing"] = data.get("missing", [])
+                candidate["llm_reasoning"] = reasoning
 
                 # Blend scores: 60% original, 40% LLM
                 original_score = candidate.get("combined_score", 0.5)

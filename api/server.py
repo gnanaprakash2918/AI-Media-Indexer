@@ -187,6 +187,7 @@ def create_app() -> FastAPI:
 
     # Mount static files for default thumbnails/assets
     thumb_dir = settings.cache_dir / "thumbnails"
+    thumb_dir.mkdir(parents=True, exist_ok=True)  # Create dir if not exists
     app.mount(
         "/thumbnails", StaticFiles(directory=str(thumb_dir)), name="thumbnails"
     )
@@ -194,13 +195,16 @@ def create_app() -> FastAPI:
     return app
 
 
+# Create module-level app for "uvicorn api.server:app" imports
+app = create_app()
+
+
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "api.server:create_app",
+        "api.server:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        factory=True,
     )

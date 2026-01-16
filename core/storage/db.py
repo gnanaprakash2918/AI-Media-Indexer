@@ -195,7 +195,7 @@ class VectorDB:
                 repo_id=self.MODEL_NAME,
                 local_dir=str(local_model_dir),
                 token=settings.hf_token,
-                ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
+                ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.bin"], # Ignore PyTorch bin if safetensors exists
             )
         except Exception as dl_exc:
             log(f"Snapshot Download Failed: {dl_exc}", level="error")
@@ -654,6 +654,104 @@ class VectorDB:
             collection_name=self.MEDIA_SEGMENTS_COLLECTION,
             points=points,
         )
+
+    @observe("db_search_media")
+    def search_frames(
+        self,
+        query: str,
+        limit: int = 10,
+        score_threshold: float = 0.25,
+        allowed_video_paths: list[str] | None = None,
+        face_cluster_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search for frames using text query.
+
+        Args:
+            query: The search text.
+            limit: Max results.
+            score_threshold: Min similarity score.
+            allowed_video_paths: Optional list of video paths to restrict search.
+            face_cluster_id: Optional filter for specific face cluster.
+
+        Returns:
+            A list of payload dictionaries containing frame metadata.
+        """
+        query_vector = self.encode_text(query)
+
+        # Build filter conditions
+        filter_conditions = []
+        if allowed_video_paths:
+            filter_conditions.append(
+                models.FieldCondition(
+                    key="video_path",
+                    match=models.MatchAny(any=allowed_video_paths),
+                )
+            )
+        
+        if face_cluster_id is not None:
+             filter_conditions.append(
+                models.FieldCondition(
+                    key="face_cluster_ids",
+                    match=models.MatchValue(value=face_cluster_id),
+                )
+            )
+
+        scroll_filter = None
+        if filter_conditions:
+            scroll_filter = models.Filter(must=filter_conditions)
+
+        results = self.client.search(
+            collection_name=self.MEDIA_COLLECTION,
+            query_vector=query_vector,
+            query_filter=scroll_filter,
+            limit=limit,
+            score_threshold=score_threshold,
+            with_payload=True,
+        )
+        return [point.payload for point in results]
+
+    def search_frames_hybrid(
+        self,
+        query: str,
+        limit: int = 20,
+        allowed_video_paths: list[str] | None = None,
+        face_cluster_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search using hybrid fusion (Dense Vector + Sparse Keyword)."""
+        # Build filter conditions
+        filter_conditions = []
+        if allowed_video_paths:
+            filter_conditions.append(
+                models.FieldCondition(
+                    key="video_path",
+                    match=models.MatchAny(any=allowed_video_paths),
+                )
+            )
+        
+        if face_cluster_id is not None:
+             filter_conditions.append(
+                models.FieldCondition(
+                    key="face_cluster_ids",
+                    match=models.MatchValue(value=face_cluster_id),
+                )
+            )
+
+        search_filter = None
+        search_filter = None
+        if filter_conditions:
+            search_filter = models.Filter(must=filter_conditions)
+
+        query_vector = self.encode_text(query)
+
+        # Standard dense search with filters (acting as hybrid metadata+vector)
+        results = self.client.search(
+            collection_name=self.MEDIA_COLLECTION,
+            query_vector=query_vector,
+            query_filter=search_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return [point.payload for point in results]
 
     @observe("db_search_media")
     def search_media(
@@ -1685,6 +1783,7 @@ class VectorDB:
         speaker_label: str,
         embedding: list[float],
         audio_path: str | None = None,
+        voice_cluster_id: int = -1,
     ) -> None:
         """Insert a voice segment embedding.
 
@@ -1695,6 +1794,7 @@ class VectorDB:
             speaker_label: Label or ID of the speaker.
             embedding: The voice embedding vector.
             audio_path: Path to the extracted audio clip.
+            voice_cluster_id: The cluster ID for grouping (-1 = unclustered).
 
         Raises:
             ValueError: If the embedding dimension does not match `VOICE_VECTOR_SIZE`.
@@ -1720,6 +1820,7 @@ class VectorDB:
                         "speaker_label": speaker_label,
                         "embedding_version": "wespeaker_resnet34_v1_l2",
                         "audio_path": audio_path,
+                        "voice_cluster_id": voice_cluster_id,
                     },
                 )
             ],
@@ -3460,11 +3561,13 @@ class VectorDB:
                 results.append(
                     {
                         "id": str(point.id),
+                        "media_path": payload.get("media_path"),
                         "start": payload.get("start", 0),
                         "end": payload.get("end", 0),
                         "cluster_id": payload.get("cluster_id"),
                         "speaker_label": payload.get("speaker_label"),
                         "speaker_name": payload.get("speaker_name"),
+                        "audio_path": payload.get("audio_path"),
                     }
                 )
             return results
@@ -3533,6 +3636,7 @@ class VectorDB:
                         "end": payload.get("end"),
                         "speaker_label": payload.get("speaker_label"),
                         "speaker_name": payload.get("speaker_name"),
+                        "audio_path": payload.get("audio_path"),
                         "voice_cluster_id": cluster_id,
                     }
                 )

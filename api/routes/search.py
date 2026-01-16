@@ -29,14 +29,17 @@ router = APIRouter()
 @router.get("/search/hybrid")
 async def hybrid_search(
     q: Annotated[str, Query(..., description="Search query")],
-    limit: Annotated[int, Query(20, description="Maximum results")],
-    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    limit: Annotated[int, Query(description="Maximum results")] = 20,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)] = None,
     video_path: Annotated[
-        str | None, Query(None, description="Optional video filter")
+        str | None, Query(description="Optional video filter")
     ] = None,
     use_reranking: Annotated[
-        bool, Query(True, description="Use LLM re-ranking for higher accuracy")
+        bool, Query(description="Use LLM re-ranking for higher accuracy")
     ] = True,
+    face_cluster_id: Annotated[
+        int | None, Query(description="Filter by specific face cluster ID")
+    ] = None,
 ) -> dict:
     """Performs a SOTA hybrid search with identity resolution and re-ranking.
 
@@ -206,14 +209,12 @@ async def search(
     search_type: Annotated[
         str,
         Query(
-            default="all",
             description="Type of search: all, dialogue, visual, voice",
         ),
     ] = "all",
     video_path: Annotated[
         str | None,
         Query(
-            default=None,
             description="Filter results to specific video path",
         ),
     ] = None,
@@ -444,7 +445,7 @@ async def scene_search(
     limit: int = 20,
     use_expansion: bool = True,
     video_path: Annotated[
-        str | None, Query(None, description="Filter to specific video")
+        str | None, Query(description="Filter to specific video")
     ] = None,
 ):
     """Production-grade scene-level search for complex queries."""
@@ -494,10 +495,6 @@ async def scene_search(
             "query": q,
             "error": str(e),
             "fallback": True,
-        return {
-            "query": q,
-            "error": str(e),
-            "fallback": True,
             "results": pipeline.db.search_frames_hybrid(query=q, limit=limit),
         }
 
@@ -508,7 +505,7 @@ async def granular_search(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit: int = 20,
     video_path: Annotated[
-        str | None, Query(None, description="Filter to specific video")
+        str | None, Query(description="Filter to specific video")
     ] = None,
     show_reasoning: bool = True,
     enable_rerank: bool = True,

@@ -254,7 +254,7 @@ export const searchGranular = async (
   limit = 10,
   enableRerank = true,
 ) => {
-  const res = await apiClient.get('/api/search/granular', {
+  const res = await apiClient.post('/search/granular', null, {
     params: {
       query,
       video_path: videoPath,

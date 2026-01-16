@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import threading
+from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
 from config import settings
@@ -17,6 +19,63 @@ from core.utils.logger import logger
 from core.utils.progress import progress_tracker
 
 router = APIRouter()
+
+
+def _run_file_dialog(result_holder: list, directory: bool = False):
+    """Run tkinter file dialog in a separate thread (required on Windows)."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()  # Hide root window
+        root.attributes("-topmost", True)  # Bring dialog to front
+
+        if directory:
+            path = filedialog.askdirectory(title="Select Folder")
+        else:
+            path = filedialog.askopenfilename(
+                title="Select Media File",
+                filetypes=[
+                    ("All files", "*.*"),
+                    ("Video files", "*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.ts *.wmv *.flv"),
+                    ("Audio files", "*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.wma"),
+                ],
+            )
+        root.destroy()
+        result_holder.append(path if path else None)
+    except Exception as e:
+        logger.error(f"File dialog error: {e}")
+        result_holder.append(None)
+
+
+@router.get("/system/browse")
+async def browse_file_system(
+    directory: bool = Query(default=False, description="Select folder instead of file"),
+) -> dict:
+    """Opens a native file dialog for the user to select a file or folder.
+
+    This uses tkinter which must run in a separate thread on Windows.
+
+    Args:
+        directory: If True, opens folder picker. Otherwise opens file picker.
+
+    Returns:
+        Dictionary with selected 'path' or null if cancelled.
+    """
+    result_holder: list = []
+
+    # Run tkinter in a thread to avoid blocking the event loop
+    thread = threading.Thread(target=_run_file_dialog, args=(result_holder, directory))
+    thread.start()
+
+    # Wait for dialog with timeout
+    await asyncio.get_event_loop().run_in_executor(None, thread.join, 60)
+
+    path = result_holder[0] if result_holder else None
+    return {"path": path}
+
+
 
 
 @router.get("/config/system")

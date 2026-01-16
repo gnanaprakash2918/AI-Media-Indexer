@@ -62,6 +62,7 @@ class AdvancedSearchRequest(BaseModel):
     min_confidence: float = 0.0
     video_path: str | None = None
     person_filter: list[str] | None = None  # Filter by person names
+    face_cluster_id: int | None = None  # Filter by specific face cluster ID
 
 
 class IdentityMergeRequest(BaseModel):

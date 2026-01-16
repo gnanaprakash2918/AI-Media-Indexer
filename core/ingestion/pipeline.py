@@ -608,40 +608,47 @@ class IngestionPipeline:
                             end=seg.end_time,
                         )
 
-                    # Extract audio clip
-                    try:
-                        clip_name = f"{safe_stem}_{seg.start_time:.2f}_{seg.end_time:.2f}.mp3"
-                        clip_file = thumb_dir / clip_name
+                # ALWAYS extract audio clip for every segment (not just those with embeddings)
+                try:
+                    clip_name = f"{safe_stem}_{seg.start_time:.2f}_{seg.end_time:.2f}.mp3"
+                    clip_file = thumb_dir / clip_name
 
-                        if not clip_file.exists():
-                            cmd = [
-                                "ffmpeg",
-                                "-y",
-                                "-i",
-                                str(path),
-                                "-ss",
-                                str(seg.start_time),
-                                "-to",
-                                str(seg.end_time),
-                                "-q:a",
-                                "2",  # High quality MP3
-                                "-map",
-                                "a",
-                                "-loglevel",
-                                "error",
-                                str(clip_file),
-                            ]
-                            subprocess.run(
-                                cmd,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                            )
+                    if not clip_file.exists():
+                        cmd = [
+                            "ffmpeg",
+                            "-y",
+                            "-i",
+                            str(path),
+                            "-ss",
+                            str(seg.start_time),
+                            "-to",
+                            str(seg.end_time),
+                            "-q:a",
+                            "2",  # High quality MP3
+                            "-map",
+                            "a",
+                            "-loglevel",
+                            "error",
+                            str(clip_file),
+                        ]
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True
+                        )
+                        if result.returncode != 0:
+                            log(f"[Voice] FFmpeg failed for {clip_name}: {result.stderr}")
 
-                        if clip_file.exists():
-                            audio_path = f"/thumbnails/voices/{clip_name}"
-                    except Exception:
-                        pass
+                    if clip_file.exists():
+                        audio_path = f"/thumbnails/voices/{clip_name}"
+                    else:
+                        log(f"[Voice] Audio clip missing after ffmpeg: {clip_file}")
+                except Exception as e:
+                    log(f"[Voice] Audio extraction error: {e}")
 
+                # ALWAYS store voice segment (even if no embedding, use placeholder)
+                # Only store if we have an embedding (required by insert_voice_segment)
+                if seg.embedding is not None:
                     self.db.insert_voice_segment(
                         media_path=str(path),
                         start=seg.start_time,
@@ -650,6 +657,9 @@ class IngestionPipeline:
                         embedding=seg.embedding,
                         audio_path=audio_path,
                     )
+                else:
+                    # Log segments without embeddings for debugging
+                    log(f"[Voice] Segment {seg.start_time:.2f}-{seg.end_time:.2f}s has no embedding, audio_path={audio_path}")
         finally:
             if self.voice:
                 self.voice.cleanup()
@@ -1218,68 +1228,77 @@ class IngestionPipeline:
                     import cv2
                     import numpy as np
 
-                    img_data = np.fromfile(str(frame_path), dtype=np.uint8)
-                    img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
-                    if img is not None:
-                        top, right, bottom, left = face.bbox
-                        face_w = right - left
-                        face_h = bottom - top
+                    if not frame_path.exists():
+                        logger.warning(f"[Thumb] Frame file missing: {frame_path}")
+                    else:
+                        img_data = np.fromfile(str(frame_path), dtype=np.uint8)
+                        img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
+                        if img is None:
+                            logger.warning(f"[Thumb] cv2.imdecode failed for {frame_path}")
+                        else:
+                            top, right, bottom, left = face.bbox
+                            face_w = right - left
+                            face_h = bottom - top
 
-                        # More generous padding (25%) for better face context
-                        pad_w = int(face_w * 0.25)
-                        pad_h = int(face_h * 0.25)
+                            # More generous padding (25%) for better face context
+                            pad_w = int(face_w * 0.25)
+                            pad_h = int(face_h * 0.25)
 
-                        # Less aggressive upward shift
-                        shift_up = int(face_h * 0.05)
+                            # Less aggressive upward shift
+                            shift_up = int(face_h * 0.05)
 
-                        y1 = max(0, top - pad_h - shift_up)
-                        y2 = min(img.shape[0], bottom + pad_h - shift_up)
-                        x1 = max(0, left - pad_w)
-                        x2 = min(img.shape[1], right + pad_w)
+                            y1 = max(0, top - pad_h - shift_up)
+                            y2 = min(img.shape[0], bottom + pad_h - shift_up)
+                            x1 = max(0, left - pad_w)
+                            x2 = min(img.shape[1], right + pad_w)
 
-                        face_crop = img[y1:y2, x1:x2]
+                            face_crop = img[y1:y2, x1:x2]
 
-                        # Larger minimum size for HD quality
-                        min_size = 256
-                        crop_h, crop_w = face_crop.shape[:2]
+                            # Larger minimum size for HD quality
+                            min_size = 256
+                            crop_h, crop_w = face_crop.shape[:2]
 
-                        if crop_h > 10 and crop_w > 10:
-                            if crop_h < min_size or crop_w < min_size:
-                                scale = max(
-                                    min_size / crop_h, min_size / crop_w
+                            if crop_h > 10 and crop_w > 10:
+                                if crop_h < min_size or crop_w < min_size:
+                                    scale = max(
+                                        min_size / crop_h, min_size / crop_w
+                                    )
+                                    new_w = int(crop_w * scale)
+                                    new_h = int(crop_h * scale)
+                                    face_crop = cv2.resize(
+                                        face_crop,
+                                        (new_w, new_h),
+                                        interpolation=cv2.INTER_LANCZOS4,
+                                    )
+
+                                # Use slightly lower quality (95) to save memory/space, explicit int cast for resize
+                                thumb_name = (
+                                    f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
                                 )
-                                new_w = int(crop_w * scale)
-                                new_h = int(crop_h * scale)
-                                face_crop = cv2.resize(
-                                    face_crop,
-                                    (new_w, new_h),
-                                    interpolation=cv2.INTER_LANCZOS4,
-                                )
+                                thumb_file = thumb_dir / thumb_name
 
-                            # Use slightly lower quality (95) to save memory/space, explicit int cast for resize
-                            thumb_name = (
-                                f"{safe_stem}_{timestamp:.2f}_{idx}.jpg"
-                            )
-                            thumb_file = thumb_dir / thumb_name
-
-                            try:
-                                # Pre-check memory availability or just robust try/catch
-                                cv2.imwrite(
-                                    str(thumb_file),
-                                    face_crop,
-                                    [cv2.IMWRITE_JPEG_QUALITY, 95],
-                                )
-                                thumb_path = f"/thumbnails/faces/{thumb_name}"
-                            except cv2.error as e:
-                                logger.warning(
-                                    f"Thumbnail save skipped (OpenCV error): {e}"
-                                )
-                                # Clean up if partial write happened
-                                if (
-                                    thumb_file.exists()
-                                    and thumb_file.stat().st_size == 0
-                                ):
-                                    thumb_file.unlink()
+                                try:
+                                    # Pre-check memory availability or just robust try/catch
+                                    cv2.imwrite(
+                                        str(thumb_file),
+                                        face_crop,
+                                        [cv2.IMWRITE_JPEG_QUALITY, 95],
+                                    )
+                                    if thumb_file.exists() and thumb_file.stat().st_size > 0:
+                                        thumb_path = f"/thumbnails/faces/{thumb_name}"
+                                        logger.debug(f"[Thumb] Created: {thumb_path}")
+                                    else:
+                                        logger.warning(f"Thumbnail file empty/missing after write: {thumb_file}")
+                                except cv2.error as e:
+                                    logger.warning(
+                                        f"Thumbnail save skipped (OpenCV error): {e}"
+                                    )
+                                    # Clean up if partial write happened
+                                    if (
+                                        thumb_file.exists()
+                                        and thumb_file.stat().st_size == 0
+                                    ):
+                                        thumb_file.unlink()
 
                 except (MemoryError, cv2.error) as e:
                     logger.warning(
@@ -1420,31 +1439,19 @@ class IngestionPipeline:
 
             video_context = "\n".join(video_context_parts)
 
-            # Prepare frame for vision analysis
-            with self.vision_analyzer.prepare_image(frame_path) as image_data:
-                # 1. OCR Extraction (Gated)
-                ocr_text = ""
-                if self.text_gate.has_text(image_data):
-                    try:
-                        ocr_result = await self.ocr_engine.extract_text(image_data)
-                        ocr_text = ocr_result.get("text", "")
-                    except Exception as e:
-                        logger.warning(f"OCR failed for frame {index}: {e}")
+            # Initialize ocr_text outside try block to prevent unbound variable
+            ocr_text = ""
 
-                # 2. Vision Analysis (VLM)
-                # Pass neighbor frames and narrative context for better coherence
-                logger.info(
-                    f"Analyzing frame {index} at {timestamp:.2f}s (Context: {len(context)} items)"
-                )
-                analysis = await self.vision.analyze_frame(
-                    frame_path,
-                    video_context=video_context,
-                    identity_context=identity_context,
-                    temporal_context=context,
-                )
-                if analysis:
-                    description = analysis.to_search_content()
-                    analysis.face_ids = [str(cid) for cid in face_cluster_ids]
+            # Run structured vision analysis
+            analysis = await self.vision.analyze_frame(
+                frame_path,
+                video_context=video_context,
+                identity_context=identity_context,
+                temporal_context=context,
+            )
+            if analysis:
+                description = analysis.to_search_content()
+                analysis.face_ids = [str(cid) for cid in face_cluster_ids]
         except Exception as e:
             logger.warning(
                 f"Structured analysis failed: {e}, falling back to describe"
@@ -1603,8 +1610,12 @@ class IngestionPipeline:
 
             vector = self.db.encode_texts(full_text)[0]
 
+            # Generate a proper UUID for Qdrant (file paths are not valid point IDs)
+            import uuid
+            frame_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_path}_{timestamp:.3f}"))
+
             self.db.upsert_media_frame(
-                point_id=f"{video_path}_{timestamp:.3f}",
+                point_id=frame_id,
                 vector=vector,
                 video_path=str(video_path),
                 timestamp=timestamp,

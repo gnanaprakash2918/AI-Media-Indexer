@@ -10,6 +10,9 @@ name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [project]
 name = "ai-media-indexer"
 version = "0.1.0"
@@ -37,7 +40,7 @@ dependencies = [
     "python-magic-bin>=0.4.14; sys_platform == 'win32'",
     "ruff>=0.6.0",
     "scikit-learn>=1.5.0",
-    "transformers>=4.48.0",
+    "transformers==4.46.3",
     "torch==2.5.1",
     "torchaudio==2.5.1",
     "torchvision==0.20.1",
@@ -70,6 +73,7 @@ dependencies = [
     "pynvml>=11.5.0",
     "celery[redis]>=5.3.6",
     "redis>=5.0.1",
+    "sam3 @ git+https://github.com/facebookresearch/sam3.git",
     # "brave-search>=0.1.0", # Removed due to httpx conflict
 ]
 

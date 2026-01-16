@@ -43,10 +43,8 @@ async def list_identities() -> dict:
         )
     return {"identities": result, "total": len(result)}
 
-    return {"identities": result, "total": len(result)}
 
-
-@router.get("/identities/suggest-merges")
+@router.get("/identity/suggestions")
 async def suggest_merges(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit_frames: int = 5000,
@@ -319,11 +317,17 @@ async def name_face_cluster(
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline invalid")
 
-    success = pipeline.db.set_face_name(cluster_id, req.name)
-    if not success:
-        raise HTTPException(status_code=404, detail="Cluster not found")
+    try:
+        # Convert cluster_id to int for proper DB matching
+        cluster_int = int(cluster_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Cluster ID must be an integer") from None
 
-    return {"status": "updated", "id": cluster_id, "name": req.name}
+    count = pipeline.db.set_face_name(cluster_int, req.name)
+    if count == 0:
+        raise HTTPException(status_code=404, detail="Cluster not found or no faces updated")
+
+    return {"status": "updated", "cluster_id": cluster_id, "name": req.name, "faces_updated": count}
 
 
 @router.post("/faces/cluster/{cluster_id}/main")

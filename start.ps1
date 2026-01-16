@@ -772,7 +772,9 @@ if (-not $SkipOllama) {
     }
     
     # Check if model exists, pull if not
-    $modelList = ollama list 2>&1
+    # Note: ollama list returns an array, we join to string for reliable matching
+    $modelListRaw = ollama list 2>&1
+    $modelList = ($modelListRaw | Out-String)
     if ($modelList -notmatch [regex]::Escape($ollamaModel)) {
         Write-Host "  Model '$ollamaModel' not found. Pulling..." -ForegroundColor Yellow
         ollama pull $ollamaModel

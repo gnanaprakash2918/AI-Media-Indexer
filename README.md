@@ -2,6 +2,29 @@
 
 Commercial-grade AI engine for hyper-specific video search using identity, visual semantics, and audio.
 
+## Quick Start
+
+```powershell
+# Prerequisites: Python 3.12+, Node.js 18+, Docker Desktop, Ollama
+
+# 1. Clone and enter directory
+git clone https://github.com/your-org/AI-Media-Indexer.git
+cd AI-Media-Indexer
+
+# 2. Copy environment file and configure
+cp .env.example .env
+
+# 3. Start everything (Docker services + Backend + Frontend)
+./start.ps1 -Quick
+```
+
+**Services:**
+- Frontend: [http://localhost:3000](http://localhost:3000)
+- Backend API: [http://localhost:8000](http://localhost:8000)
+- API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+> For detailed architecture documentation, see [docs/architecture.md](docs/architecture.md)
+
 ## Architecture Overview
 
 ```mermaid

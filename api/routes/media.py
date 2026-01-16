@@ -105,7 +105,8 @@ async def get_face_thumbnail(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Face thumbnail generation failed: {e}")
+        logger.error(f"Face thumbnail generation failed for {filename}: {e}")
+        logger.error(f"Debug Info: path={file_path}, media={media_path}, timestamp={timestamp}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -191,7 +192,7 @@ async def get_voice_audio(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/media")
+@router.get("/media", response_model=None)
 async def stream_media(
     request: Request,
     path: Annotated[str, Query(...)],
@@ -294,8 +295,8 @@ async def stream_segment(
     path: Annotated[str, Query(...)],
     start: Annotated[float, Query(..., description="Start time in seconds")],
     end: Annotated[
-        float,
-        Query(None, description="End time in seconds (default: start + 10)"),
+        float | None,
+        Query(description="End time in seconds (default: start + 10)"),
     ] = None,
 ) -> FileResponse:
     """Extracts and streams a specific video segment with local caching.

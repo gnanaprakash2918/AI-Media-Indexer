@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("/voices")
 async def get_voice_segments(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
-    media_path: Annotated[str | None, Query(None, description="Filter by media")] = None,
+    media_path: Annotated[str | None, Query(description="Filter by media")] = None,
     limit: int = 100,
 ):
     """Get all voice segments.
@@ -66,10 +66,14 @@ async def get_voice_clusters(
 
             clusters.append({
                 "cluster_id": cluster_id,
-                "name": name,
-                "count": len(segments),
-                "segments": segments[:5],  # Representative samples
+                "speaker_name": name,  # Frontend expects speaker_name
+                "segment_count": len(segments),
+                "representative": segments[0] if segments else None,
+                "segments": segments,  # All segments, not just 5
             })
+
+        # Sort by: named speakers first, then by segment_count descending
+        clusters.sort(key=lambda c: (c["speaker_name"] is None, -c["segment_count"]))
 
         return {
             "clusters": clusters,

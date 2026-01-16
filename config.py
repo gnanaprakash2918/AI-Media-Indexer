@@ -175,25 +175,26 @@ class Settings(BaseSettings):
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
     language: str | None = "ta"
+    # Use Systran pre-converted models (faster-whisper compatible, no conversion needed)
     whisper_model_map: dict[str, list[str]] = {
         "ta": [
-            # "ai4bharat/indicconformer",
-            "openai/whisper-large-v3-turbo",
-            "openai/whisper-large-v2",
-            "openai/whisper-medium",  # ~1.5GB, good balance
-            "openai/whisper-small",  # ~500MB, faster and lighter
+            # Pre-converted faster-whisper models (no ctranslate2 conversion needed)
+            "Systran/faster-whisper-large-v3-turbo",
+            "Systran/faster-whisper-large-v3",
+            "Systran/faster-whisper-medium",
+            "Systran/faster-whisper-small",
         ],
         "en": [
-            "openai/whisper-large-v3-turbo",
-            "openai/whisper-large-v2",
-            "distil-whisper/distil-large-v3",
-            "distil-whisper/distil-medium.en",  # ~500MB, optimized for English
-            "openai/whisper-small",  # ~500MB, multilingual fallback
+            "Systran/faster-whisper-large-v3-turbo",
+            "Systran/faster-whisper-large-v3",
+            "Systran/faster-distil-whisper-large-v3",
+            "Systran/faster-distil-whisper-medium.en",
+            "Systran/faster-whisper-small",
         ],
     }
 
-    # Fallback for memory-constrained systems
-    fallback_model_id: str = "openai/whisper-small"
+    # Fallback for memory-constrained systems (pre-converted)
+    fallback_model_id: str = "Systran/faster-whisper-small"
 
     # Frame Processing Settings
     frame_sample_ratio: int = Field(

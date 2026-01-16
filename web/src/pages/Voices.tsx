@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Typography,
@@ -233,10 +233,10 @@ export const Voices: React.FC = () => {
     setMoveDialogOpen(true);
   };
 
-  const SegmentRow = ({seg}: {seg: VoiceSegment}) => (
+  const SegmentRow = ({ seg }: { seg: VoiceSegment }) => (
     <TableRow>
       <TableCell
-        sx={{maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis'}}
+        sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}
       >
         {seg.media_path.split(/[/\\]/).pop()}
       </TableCell>
@@ -260,7 +260,7 @@ export const Voices: React.FC = () => {
           <audio
             controls
             src={`http://localhost:8000${seg.audio_path}`}
-            style={{height: 28, width: 160}}
+            style={{ height: 28, width: 160 }}
           />
         ) : (
           <Typography variant="caption" color="text.secondary">
@@ -297,8 +297,8 @@ export const Voices: React.FC = () => {
   );
 
   return (
-    <Container maxWidth="lg" sx={{mt: 4, mb: 4}}>
-      <Box sx={{display: 'flex', alignItems: 'center', gap: 2, mb: 2}}>
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
         <RecordVoiceOver fontSize="large" color="primary" />
         <Typography variant="h4">Voice Intelligence</Typography>
         <Tooltip title="Run DBSCAN clustering">
@@ -315,17 +315,17 @@ export const Voices: React.FC = () => {
           </Button>
         </Tooltip>
       </Box>
-      <Typography variant="body2" color="text.secondary" sx={{mb: 3}}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         View all voice segments or grouped clusters.
       </Typography>
 
       {error && (
-        <Alert severity="error" sx={{mb: 2}} onClose={() => setError(null)}>
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{mb: 2}}>
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
         <Tab label={`All Segments (${segments.length})`} />
         <Tab
           label={`Clusters (${clusters.length})`}
@@ -361,8 +361,8 @@ export const Voices: React.FC = () => {
           </TableContainer>
         )
       ) : clusters.length === 0 ? (
-        <Paper sx={{p: 4, textAlign: 'center'}}>
-          <Groups sx={{fontSize: 48, color: 'text.secondary', mb: 2}} />
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <Groups sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
           <Typography variant="h6" color="text.secondary">
             No voice clusters found
           </Typography>
@@ -371,7 +371,7 @@ export const Voices: React.FC = () => {
             startIcon={<AutoAwesome />}
             onClick={handleTriggerClustering}
             disabled={isClustering}
-            sx={{mt: 2}}
+            sx={{ mt: 2 }}
           >
             Cluster Voices
           </Button>
@@ -379,26 +379,26 @@ export const Voices: React.FC = () => {
       ) : (
         <Box>
           {clusters.map(cluster => (
-            <Paper key={cluster.cluster_id} sx={{mb: 2, overflow: 'hidden'}}>
+            <Paper key={cluster.cluster_id} sx={{ mb: 2, overflow: 'hidden' }}>
               <Box
                 sx={{
                   display: 'flex',
                   alignItems: 'center',
                   p: 2,
                   cursor: 'pointer',
-                  '&:hover': {bgcolor: 'action.hover'},
+                  '&:hover': { bgcolor: 'action.hover' },
                 }}
                 onClick={() => toggleClusterExpand(cluster.cluster_id)}
               >
                 <Badge
                   badgeContent={cluster.segment_count}
                   color="primary"
-                  sx={{mr: 2}}
+                  sx={{ mr: 2 }}
                 >
                   <RecordVoiceOver />
                 </Badge>
                 <Box
-                  sx={{flex: 1, display: 'flex', alignItems: 'center', gap: 2}}
+                  sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 2 }}
                 >
                   <Box>
                     {cluster.speaker_name ? (
@@ -407,6 +407,10 @@ export const Voices: React.FC = () => {
                         color="success"
                         size="small"
                       />
+                    ) : cluster.cluster_id === -1 ? (
+                      <Typography variant="body1" fontWeight={600} color="text.secondary">
+                        Unclustered Voices
+                      </Typography>
                     ) : (
                       <Typography variant="body1" fontWeight={600}>
                         Voice Cluster #{cluster.cluster_id}
@@ -431,7 +435,7 @@ export const Voices: React.FC = () => {
                         cluster.speaker_name || '',
                       );
                     }}
-                    sx={{mr: 1}}
+                    sx={{ mr: 1 }}
                   >
                     Rename
                   </Button>
@@ -452,7 +456,7 @@ export const Voices: React.FC = () => {
                   <audio
                     controls
                     src={`http://localhost:8000${cluster.representative.audio_path}`}
-                    style={{height: 28, width: 140, marginRight: 16}}
+                    style={{ height: 28, width: 140, marginRight: 16 }}
                     onClick={e => e.stopPropagation()}
                   />
                 )}
@@ -499,7 +503,7 @@ export const Voices: React.FC = () => {
           {isClusterRename ? 'Rename Voice Cluster' : 'Rename Speaker'}
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{mb: 2}}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {isClusterRename
               ? 'Enter a name for this entire voice cluster. This will update all segments in this cluster.'
               : 'Enter a name for this speaker segment.'}
@@ -547,7 +551,7 @@ export const Voices: React.FC = () => {
                 onClick={() => handleMoveToCluster(c.cluster_id)}
               >
                 <ListItemText
-                  primary={c.speaker_name || `Cluster #${c.cluster_id}`}
+                  primary={c.speaker_name || (c.cluster_id === -1 ? 'Unclustered Voices' : `Cluster #${c.cluster_id}`)}
                   secondary={`${c.segment_count} segments`}
                 />
               </ListItemButton>
@@ -568,12 +572,12 @@ export const Voices: React.FC = () => {
       >
         <DialogTitle>Merge Voice Cluster</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{mb: 2}}>
+          <Typography variant="body2" sx={{ mb: 2 }}>
             Select a target cluster to merge into. Named clusters are shown
             first.
           </Typography>
           {isMerging ? (
-            <Box sx={{display: 'flex', justifyContent: 'center', p: 4}}>
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
               <CircularProgress />
             </Box>
           ) : (
@@ -605,9 +609,9 @@ export const Voices: React.FC = () => {
                     <ListItemText
                       primary={
                         <Box
-                          sx={{display: 'flex', alignItems: 'center', gap: 1}}
+                          sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
                         >
-                          {c.speaker_name || `Voice Cluster #${c.cluster_id}`}
+                          {c.speaker_name || (c.cluster_id === -1 ? 'Unclustered Voices' : `Voice Cluster #${c.cluster_id}`)}
                           {c.speaker_name && (
                             <Chip
                               size="small"

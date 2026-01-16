@@ -112,6 +112,18 @@ def setup_logger() -> None:
         _logger.handlers = [InterceptHandler()]
         _logger.propagate = False
 
+    class ShardingFilter(logging.Filter):
+        def filter(self, record):
+            msg = record.getMessage()
+            if "The following layers were not sharded" in msg:
+                return False
+            # Suppress specific dtype warning if ctranslate2 logic triggers it
+            if "unexpected keyword argument 'dtype'" in msg:
+                return False
+            return True
+
+    sharding_filter = ShardingFilter()
+
     # Suppress noisy ML frameworks per GOLD.md compliance (console: INFO+, file: full DEBUG)
     noisy_ml_frameworks = (
         "speechbrain",
@@ -120,6 +132,7 @@ def setup_logger() -> None:
         "nemo.collections",
         "transformers",
         "transformers.modeling_utils",
+        "accelerate",  # Added accelerate
         "torch",
         "torch.distributed",
         "torch.cuda",
@@ -137,6 +150,7 @@ def setup_logger() -> None:
     for framework in noisy_ml_frameworks:
         framework_logger = logging.getLogger(framework)
         framework_logger.setLevel(logging.WARNING)
+        framework_logger.addFilter(sharding_filter)
 
 
 def bind_context(
