@@ -90,6 +90,10 @@ from api.routes import (
     system,
     voices,
 )
+try:
+    from api.routes import overlays
+except ImportError:
+    overlays = None
 from config import settings
 from core.ingestion.jobs import job_manager
 from core.ingestion.pipeline import IngestionPipeline
@@ -184,6 +188,8 @@ def create_app() -> FastAPI:
     app.include_router(faces.router, tags=["Faces"])
     app.include_router(voices.router, tags=["Voices"])
     app.include_router(library.router, tags=["Library"])
+    if overlays:
+        app.include_router(overlays.router, tags=["Overlays"])
 
     # Mount static files for default thumbnails/assets
     thumb_dir = settings.cache_dir / "thumbnails"
