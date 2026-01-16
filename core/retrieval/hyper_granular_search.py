@@ -80,43 +80,21 @@ class HyperGranularQuery(BaseModel):
 
 
 def _load_prompt(name: str) -> str:
-    prompt_file = PROMPTS_DIR / f"{name}.txt"
-    if prompt_file.exists():
-        return prompt_file.read_text(encoding="utf-8")
-    return ""
-
-
-DECOMPOSITION_PROMPT = '''Decompose this query into structured constraints. Return JSON only.
-
-Query: {query}
-
-Output schema:
-{{
-  "identities": [{{"name": "...", "face_id": null}}],
-  "clothing": [{{"body_part": "upper|lower|footwear|accessory", "item": "...", "color": "...", "pattern": "...", "side": "left|right|both|unknown"}}],
-  "audio": [{{"event_class": "...", "min_db": null, "max_db": null}}],
-  "temporal": [{{"constraint_type": "delay|duration|sequence", "min_ms": null, "max_ms": null, "reference_event": "..."}}],
-  "text": [{{"text": "...", "location": "sign|shirt|screen|any"}}],
-  "spatial": [{{"measurement_type": "distance|size", "value_cm": null, "reference": "..."}}],
-  "actions": [{{"action": "...", "intensity": "slow|normal|fast|unknown", "result": "..."}}],
-  "scene_description": "dense semantic description for vector search"
-}}
-
-Examples:
-- "Prakash blue t-shirt" -> identities: [name: Prakash], clothing: [body_part: upper, color: blue, item: t-shirt]
-- "92dB cheer" -> audio: [event_class: cheer, min_db: 92]
-- "500ms delay before fall" -> temporal: [constraint_type: delay, min_ms: 500, reference_event: fall]
-- "Brunswick Sports sign" -> text: [text: Brunswick Sports, location: sign]
-- "red sneaker left foot" -> clothing: [body_part: footwear, color: red, item: sneaker, side: left]
-
-JSON only, no markdown:'''
+    from core.utils.prompt_loader import load_prompt
+    return load_prompt(name)
 
 
 class HyperGranularSearcher:
     def __init__(self, db: Any = None):
         self.db = db
         self._llm = None
-        self._custom_prompt = _load_prompt("hyper_granular_decomposition") or DECOMPOSITION_PROMPT
+        
+        self._custom_prompt = _load_prompt("hyper_granular_decomposition")
+        if not self._custom_prompt:
+            raise RuntimeError(
+                "CRITICAL: Prompt file 'hyper_granular_decomposition.txt' not found in prompts/ directory. "
+                "Cannot initialize HyperGranularSearcher."
+            )
 
     async def _ensure_llm(self) -> bool:
         if self._llm is not None:
