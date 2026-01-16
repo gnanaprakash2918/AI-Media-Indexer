@@ -11,6 +11,8 @@ debug_*.py
 debug_*.log
 test_debug.py
 verify_fixes.py
+.agents/
+.agent/
 
 # Langfuse local data
 langfuse_data/

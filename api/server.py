@@ -2,13 +2,28 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import warnings
 
 # Configure TensorFlow BEFORE any imports that trigger TF loading
 # This disables oneDNN ops that cause "slightly different numerical results" info messages
-# and suppresses deprecated API warnings from tf-keras
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")  # 0=all, 1=no INFO, 2=no WARNING
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # 0=all, 1=no INFO, 2=no WARNING
+
+# Suppress tf_keras deprecation warnings (Python-level logging)
+class TFKerasFilter(logging.Filter):
+    """Filters out tf_keras deprecation warnings from logs."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "tf.losses.sparse_softmax_cross_entropy" in msg:
+            return False
+        if "tf_keras" in msg and "deprecated" in msg.lower():
+            return False
+        return True
+
+logging.getLogger().addFilter(TFKerasFilter())
+warnings.filterwarnings("ignore", message=".*deprecated.*", module="tf_keras")
 
 import asyncio
 import sys

@@ -23,7 +23,7 @@ from typing import Any
 import ctranslate2.converters
 import torch
 from faster_whisper import BatchedInferencePipeline, WhisperModel
-from huggingface_hub import snapshot_download
+from huggingface_hub import login, snapshot_download
 
 from config import settings
 from core.processing.text_utils import parse_srt
@@ -35,6 +35,14 @@ warnings.filterwarnings("ignore")
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+# Auto-login to HuggingFace if token is available
+_hf_token = os.getenv("HF_TOKEN") or getattr(settings, "hf_token", None)
+if _hf_token:
+    try:
+        login(token=_hf_token, add_to_git_credential=False)
+    except Exception:
+        pass  # Already logged in or token invalid
 
 
 def get_transcriber(language: str | None = None):

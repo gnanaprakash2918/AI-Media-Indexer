@@ -200,17 +200,17 @@ class Settings(BaseSettings):
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
     language: str | None = "ta"
-    # Use Systran pre-converted models (faster-whisper compatible, no conversion needed)
+    # Use pre-converted faster-whisper CTranslate2 models (no conversion needed)
     whisper_model_map: dict[str, list[str]] = {
         "ta": [
-            # Pre-converted faster-whisper models (no ctranslate2 conversion needed)
-            "Systran/faster-whisper-large-v3-turbo",
+            # Pre-converted faster-whisper models (deepdml has the turbo version)
+            "deepdml/faster-whisper-large-v3-turbo-ct2",
             "Systran/faster-whisper-large-v3",
             "Systran/faster-whisper-medium",
             "Systran/faster-whisper-small",
         ],
         "en": [
-            "Systran/faster-whisper-large-v3-turbo",
+            "deepdml/faster-whisper-large-v3-turbo-ct2",
             "Systran/faster-whisper-large-v3",
             "Systran/faster-distil-whisper-large-v3",
             "Systran/faster-distil-whisper-medium.en",
