@@ -85,10 +85,51 @@ param(
     [switch]$Integrated,
     [switch]$NoInteractive,
     
+    # Help
+    [switch]$Help,
+    
     # Agent mode
     [switch]$Agent,
     [string]$AgentTask = "analyze"
 )
+
+# Show help and exit
+if ($Help) {
+    Write-Host ""
+    Write-Host "AI-Media-Indexer Startup Script" -ForegroundColor Cyan
+    Write-Host "================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "USAGE:" -ForegroundColor Yellow
+    Write-Host "  ./start.ps1 [flags]"
+    Write-Host ""
+    Write-Host "QUICK START MODES:" -ForegroundColor Yellow
+    Write-Host "  -Quick          Fast start (skip cleanup, keep all data)"
+    Write-Host "  -Fresh          Clear caches, keep indexed videos"
+    Write-Host "  -Nuclear        Wipe ALL data (caches + Qdrant)"
+    Write-Host "  -Full           Nuclear + Venv + Images + Indic ASR"
+    Write-Host ""
+    Write-Host "FEATURE FLAGS:" -ForegroundColor Yellow
+    Write-Host "  -Distributed    Enable Redis + Celery workers (parallel processing)"
+    Write-Host "  -InstallIndic   Install NeMo for Tamil/Hindi transcription"
+    Write-Host "  -Integrated     Run in single terminal (vs separate windows)"
+    Write-Host ""
+    Write-Host "GRANULAR FLAGS:" -ForegroundColor Yellow
+    Write-Host "  -RecreateVenv   Delete and recreate virtual environment"
+    Write-Host "  -PullImages     Pull latest Docker images"
+    Write-Host "  -NukeQdrant     Delete Qdrant data directory"
+    Write-Host "  -SkipOllama     Skip Ollama startup"
+    Write-Host "  -SkipDocker     Skip all Docker operations"
+    Write-Host "  -SkipClean      Skip cache cleanup"
+    Write-Host "  -NoInteractive  Skip menu, use defaults"
+    Write-Host ""
+    Write-Host "EXAMPLES:" -ForegroundColor Yellow
+    Write-Host "  ./start.ps1 -Quick                    # Fastest startup"
+    Write-Host "  ./start.ps1 -Nuclear -Distributed     # Fresh start + parallel workers"
+    Write-Host "  ./start.ps1 -Fresh -InstallIndic      # Clear caches + Tamil support"
+    Write-Host "  ./start.ps1 -Nuclear -RecreateVenv    # Complete reset"
+    Write-Host ""
+    exit 0
+}
 
 $ErrorActionPreference = "Continue"
 $ProjectRoot = $PSScriptRoot
