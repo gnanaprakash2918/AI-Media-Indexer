@@ -16,6 +16,7 @@ class SpeedEstimator:
         self.model = None
         self._device = None
         self._init_lock = asyncio.Lock()
+        self._transforms = None
 
     def _get_device(self) -> str:
         if self._device:
@@ -121,25 +122,61 @@ class SpeedEstimator:
         mean_speed_m_s = (mean_px / scale_px_per_meter) / time_interval
         max_speed_m_s = (max_px / scale_px_per_meter) / time_interval
 
-        if mean_speed_m_s < 0.1:
-            category = "stationary"
-        elif mean_speed_m_s < 1.0:
-            category = "slow"
-        elif mean_speed_m_s < 5.0:
-            category = "walking"
-        elif mean_speed_m_s < 10.0:
-            category = "running"
-        else:
-            category = "fast"
-
         return {
             "mean_speed_m_s": mean_speed_m_s,
             "max_speed_m_s": max_speed_m_s,
             "mean_speed_km_h": mean_speed_m_s * 3.6,
             "max_speed_km_h": max_speed_m_s * 3.6,
-            "category": category,
             "mean_velocity_px": mean_px,
             "max_velocity_px": max_px,
+        }
+
+    async def matches_speed_constraint(
+        self,
+        frame1: np.ndarray,
+        frame2: np.ndarray,
+        min_speed_km_h: float | None = None,
+        max_speed_km_h: float | None = None,
+        semantic_speed: str | None = None,
+        fps: float = 30.0,
+        scale_px_per_meter: float = 100.0,
+    ) -> dict[str, Any]:
+        result = await self.estimate_speed(frame1, frame2, fps, scale_px_per_meter)
+        if result.get("error"):
+            return result
+
+        speed = result["mean_speed_km_h"]
+
+        if semantic_speed:
+            semantic_lower = semantic_speed.lower()
+            if semantic_lower in ("stationary", "still", "stopped"):
+                min_speed_km_h = min_speed_km_h or 0.0
+                max_speed_km_h = max_speed_km_h or 0.5
+            elif semantic_lower in ("slow", "walking", "crawling"):
+                min_speed_km_h = min_speed_km_h or 0.5
+                max_speed_km_h = max_speed_km_h or 5.0
+            elif semantic_lower in ("normal", "jogging", "moderate"):
+                min_speed_km_h = min_speed_km_h or 5.0
+                max_speed_km_h = max_speed_km_h or 15.0
+            elif semantic_lower in ("fast", "running", "quick"):
+                min_speed_km_h = min_speed_km_h or 15.0
+                max_speed_km_h = max_speed_km_h or 50.0
+            elif semantic_lower in ("very fast", "sprinting", "racing"):
+                min_speed_km_h = min_speed_km_h or 30.0
+                max_speed_km_h = None
+
+        matches = True
+        if min_speed_km_h is not None and speed < min_speed_km_h:
+            matches = False
+        if max_speed_km_h is not None and speed > max_speed_km_h:
+            matches = False
+
+        return {
+            "matches": matches,
+            "speed_km_h": speed,
+            "min_constraint": min_speed_km_h,
+            "max_constraint": max_speed_km_h,
+            "semantic_speed": semantic_speed,
         }
 
     async def estimate_region_speed(
@@ -173,6 +210,7 @@ class SpeedEstimator:
 
         return {
             "region_mean_speed_m_s": mean_speed_m_s,
+            "region_mean_speed_km_h": mean_speed_m_s * 3.6,
             "region_max_velocity_px": max_px,
             "bbox": bbox,
         }

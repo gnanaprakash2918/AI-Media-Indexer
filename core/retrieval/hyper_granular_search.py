@@ -95,6 +95,42 @@ class HyperGranularSearcher:
                 "CRITICAL: Prompt file 'hyper_granular_decomposition.txt' not found in prompts/ directory. "
                 "Cannot initialize HyperGranularSearcher."
             )
+        
+        self._clothing_detector = None
+        self._speed_estimator = None
+        self._depth_estimator = None
+        self._clock_reader = None
+        self._active_speaker = None
+
+    def _get_clothing_detector(self):
+        if self._clothing_detector is None:
+            from core.processing.clothing_attributes import ClothingAttributeDetector
+            self._clothing_detector = ClothingAttributeDetector()
+        return self._clothing_detector
+
+    def _get_speed_estimator(self):
+        if self._speed_estimator is None:
+            from core.processing.speed_estimation import SpeedEstimator
+            self._speed_estimator = SpeedEstimator()
+        return self._speed_estimator
+
+    def _get_depth_estimator(self):
+        if self._depth_estimator is None:
+            from core.processing.depth_estimation import DepthEstimator
+            self._depth_estimator = DepthEstimator()
+        return self._depth_estimator
+
+    def _get_clock_reader(self):
+        if self._clock_reader is None:
+            from core.processing.clock_reader import ClockReader
+            self._clock_reader = ClockReader()
+        return self._clock_reader
+
+    def _get_active_speaker(self):
+        if self._active_speaker is None:
+            from core.processing.active_speaker import ActiveSpeakerDetector
+            self._active_speaker = ActiveSpeakerDetector()
+        return self._active_speaker
 
     async def _ensure_llm(self) -> bool:
         if self._llm is not None:
