@@ -37,15 +37,18 @@ class DepthEstimator:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-                async with RESOURCE_ARBITER.acquire("depth", vram_gb=1.5):
+                async with RESOURCE_ARBITER.acquire("depth", vram_gb=1.0):  # Reduced from 1.5 with fp16
                     log.info(f"[DepthEstimator] Loading {self.model_name}...")
+                    import torch
                     from transformers import pipeline
 
                     device = self._get_device()
+                    # Load in fp16 to reduce VRAM by ~50%
                     self.model = pipeline(
                         "depth-estimation",
                         model="depth-anything/Depth-Anything-V2-Small-hf",
                         device=0 if device == "cuda" else -1,
+                        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
                     )
                     self._device = device
                     log.info(f"[DepthEstimator] Loaded on {device}")

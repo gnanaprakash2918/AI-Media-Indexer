@@ -37,7 +37,7 @@ class SpeedEstimator:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-                async with RESOURCE_ARBITER.acquire("raft", vram_gb=1.0):
+                async with RESOURCE_ARBITER.acquire("raft", vram_gb=0.5):  # Reduced with fp16
                     log.info("[SpeedEstimator] Loading RAFT optical flow...")
                     import torch
                     import torchvision.models.optical_flow as of
@@ -50,7 +50,10 @@ class SpeedEstimator:
                         weights = of.Raft_Small_Weights.DEFAULT
                         self.model = of.raft_small(weights=weights)
 
-                    self.model = self.model.to(device).eval()
+                    self.model = self.model.to(device)
+                    if device == "cuda":
+                        self.model = self.model.half()  # fp16 to reduce VRAM
+                    self.model.eval()
                     self._device = device
                     self._transforms = weights.transforms()
                     log.info(f"[SpeedEstimator] Loaded {self.model_name} on {device}")
@@ -86,6 +89,11 @@ class SpeedEstimator:
             f1, f2 = self._transforms(f1, f2)
             f1 = f1.to(self._device)
             f2 = f2.to(self._device)
+            
+            # Convert to fp16 if model is in fp16
+            if self._device == "cuda":
+                f1 = f1.half()
+                f2 = f2.half()
 
             with torch.no_grad():
                 flow_predictions = self.model(f1, f2)

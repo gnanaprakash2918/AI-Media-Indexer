@@ -20,18 +20,20 @@ if TYPE_CHECKING:
 
 @dataclass
 class ModelVRAM:
-    """Approximate VRAM usage per model in GB."""
+    """Approximate VRAM usage per model in GB (fp16 where applicable)."""
 
     whisper_large: float = 3.0
     whisper_small: float = 1.0
     insightface: float = 1.5
     vlm_7b: float = 6.0
     vlm_3b: float = 3.0
-    timesformer: float = 2.0
+    timesformer: float = 1.0   # fp16
     nv_embed_v2: float = 4.0
     yolo_world: float = 1.0
     pyannote: float = 1.5
     clap: float = 1.0
+    depth_anything: float = 1.0  # fp16
+    raft: float = 0.5  # fp16
 
 
 class ResourceArbiter:

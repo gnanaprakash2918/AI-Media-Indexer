@@ -11,6 +11,10 @@ log = get_logger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
+# Cascade filtering: Physics modules (TimeSformer/Depth/RAFT) should only run
+# on top-N candidates from vector search. This prevents OOM on large result sets.
+PHYSICS_VERIFICATION_LIMIT = 20
+
 
 class IdentityConstraint(BaseModel):
     name: str | None = Field(default=None)

@@ -79,15 +79,21 @@ class TemporalAnalyzer:
                         TimesformerForVideoClassification,
                     )
 
+                    import torch
+                    
                     self.processor = AutoImageProcessor.from_pretrained(
                         self.model_name
                     )
+                    # Load in fp16 to reduce VRAM by ~50%
                     self.model = TimesformerForVideoClassification.from_pretrained(
-                        self.model_name
+                        self.model_name,
+                        torch_dtype=torch.float16,
                     )
 
                     device = self._get_device()
                     self.model.to(device)
+                    if device == "cuda":
+                        self.model.half()  # Ensure fp16 on GPU
                     self.model.eval()
                     self._device = device
 
