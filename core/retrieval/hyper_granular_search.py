@@ -101,6 +101,7 @@ class HyperGranularSearcher:
         self._depth_estimator = None
         self._clock_reader = None
         self._active_speaker = None
+        self._temporal_analyzer = None
 
     def _get_clothing_detector(self):
         if self._clothing_detector is None:
@@ -131,6 +132,12 @@ class HyperGranularSearcher:
             from core.processing.active_speaker import ActiveSpeakerDetector
             self._active_speaker = ActiveSpeakerDetector()
         return self._active_speaker
+
+    def _get_temporal_analyzer(self):
+        if self._temporal_analyzer is None:
+            from core.processing.temporal import TemporalAnalyzer
+            self._temporal_analyzer = TemporalAnalyzer()
+        return self._temporal_analyzer
 
     async def _ensure_llm(self) -> bool:
         if self._llm is not None:
@@ -305,9 +312,66 @@ class HyperGranularSearcher:
                 if text.text and text.text.lower() in ocr:
                     constraint_matches += 1
 
+            for action in decomposed.actions:
+                if action.action:
+                    action_lower = action.action.lower()
+                    if action_lower in desc:
+                        constraint_matches += 1
+                    elif any(kw in desc for kw in action_lower.split()):
+                        constraint_matches += 0.5
+                    result["matched_action"] = action.action
+
             match_ratio = constraint_matches / total_constraints if total_constraints > 0 else 0
             result["hyper_score"] = base_score * 0.4 + match_ratio * 0.6
             result["constraint_matches"] = constraint_matches
             result["total_constraints"] = total_constraints
 
         return results
+
+    async def verify_action_with_frames(
+        self,
+        frames: list,
+        action_constraint: ActionConstraint,
+        threshold: float = 0.3,
+    ) -> dict:
+        if not action_constraint.action or len(frames) < 4:
+            return {"verified": False, "reason": "insufficient data"}
+
+        try:
+            analyzer = self._get_temporal_analyzer()
+            actions = await analyzer.analyze_clip(frames, top_k=5, threshold=0.1)
+
+            target = action_constraint.action.lower()
+            target_words = set(target.split())
+
+            for detected in actions:
+                detected_label = detected["action"].lower().replace("_", " ")
+                detected_words = set(detected_label.split())
+
+                if target in detected_label or detected_label in target:
+                    return {
+                        "verified": True,
+                        "detected_action": detected["action"],
+                        "confidence": detected["confidence"],
+                        "method": "exact_match",
+                    }
+
+                overlap = len(target_words & detected_words)
+                if overlap > 0 and detected["confidence"] >= threshold:
+                    return {
+                        "verified": True,
+                        "detected_action": detected["action"],
+                        "confidence": detected["confidence"],
+                        "word_overlap": overlap,
+                        "method": "partial_match",
+                    }
+
+            return {
+                "verified": False,
+                "detected_actions": [a["action"] for a in actions],
+                "target": action_constraint.action,
+            }
+
+        except Exception as e:
+            log.warning(f"[HyperGranular] Action verification failed: {e}")
+            return {"verified": False, "error": str(e)}
