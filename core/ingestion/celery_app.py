@@ -24,6 +24,10 @@ celery_app.conf.update(
     worker_concurrency=settings.max_concurrent_jobs,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    # Long-form video support (18+ hours)
+    task_time_limit=86400,  # 24 hours hard limit
+    task_soft_time_limit=82800,  # 23 hours soft limit (graceful cleanup)
+    worker_max_tasks_per_child=50,  # Restart worker every 50 tasks (memory fragmentation prevention)
 )
 
 if __name__ == "__main__":
