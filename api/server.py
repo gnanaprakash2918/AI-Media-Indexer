@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import os
+
+# Configure TensorFlow BEFORE any imports that trigger TF loading
+# This disables oneDNN ops that cause "slightly different numerical results" info messages
+# and suppresses deprecated API warnings from tf-keras
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")  # 0=all, 1=no INFO, 2=no WARNING
+
 import asyncio
 import sys
 from contextlib import asynccontextmanager
