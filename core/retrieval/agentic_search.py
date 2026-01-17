@@ -535,8 +535,8 @@ class SearchAgent:
         reranked = []
 
         for candidate in candidates[
-            : top_k * 2
-        ]:  # Check more candidates than needed
+            : min(5, top_k)
+        ]:  # LLM rerank top 5 only for speed
             description = (
                 candidate.get("description", "")
                 or candidate.get("dense_caption", "")
@@ -558,35 +558,52 @@ class SearchAgent:
 
                 class RerankResult(BaseModel):
                     match_score: float = Field(default=0.5)
-                    constraints_checked: list[dict] = Field(
+                    constraints_checked: list[str] = Field(
                         default_factory=list
                     )
                     reasoning: str = Field(default="")
                     missing: list[str] = Field(default_factory=list)
 
-                result = await self.llm.generate_structured(
-                    schema=RerankResult,
-                    prompt=prompt,
-                    system_prompt="You are a video search result verifier. Return JSON only.",
-                )
+                # Try structured generation with retry
+                result = None
+                for attempt in range(2):
+                    try:
+                        result = await self.llm.generate_structured(
+                            schema=RerankResult,
+                            prompt=prompt,
+                            system_prompt="You are a video search result verifier. Return ONLY valid JSON with match_score, reasoning, constraints_checked, and missing fields.",
+                        )
+                        break
+                    except Exception as retry_err:
+                        if attempt == 0:
+                            log(f"[Rerank] Retry after parse error: {retry_err}")
+                            continue
+                        raise
+
+                if result is None:
+                    raise ValueError("LLM returned no result after retries")
+
+                # Apply penalty for missing constraints
+                missing_penalty = len(result.missing) * 0.1
+                adjusted_score = max(0.0, result.match_score - missing_penalty)
 
                 # Merge LLM verification with candidate
-                candidate["llm_score"] = result.match_score
+                candidate["llm_score"] = adjusted_score
                 candidate["llm_reasoning"] = result.reasoning
-                candidate["constraints_satisfied"] = [
-                    c for c in result.constraints_checked if c.get("satisfied")
-                ]
+                candidate["constraints_satisfied"] = result.constraints_checked
                 candidate["constraints_missing"] = result.missing
+                # Weight: 30% original vector score, 70% LLM verification
                 candidate["combined_score"] = (
-                    candidate.get("score", 0) * 0.4  # Vector similarity
-                    + result.match_score * 0.6  # LLM verification
+                    candidate.get("score", 0) * 0.3  # Vector similarity
+                    + adjusted_score * 0.7  # LLM verification (higher weight)
                 )
                 reranked.append(candidate)
 
             except Exception as e:
-                # If LLM fails, keep original score
+                # If LLM fails, keep original score but add small penalty
                 log(f"[Rerank] LLM verification failed: {e}")
-                candidate["combined_score"] = candidate.get("score", 0)
+                candidate["combined_score"] = candidate.get("score", 0) * 0.8
+                candidate["llm_reasoning"] = f"Verification failed: {str(e)[:50]}"
                 reranked.append(candidate)
 
         # Sort by combined score

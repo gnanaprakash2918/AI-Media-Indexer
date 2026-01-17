@@ -331,6 +331,7 @@ class MultiVectorSearcher:
             ]
 
         # Step 6: Score by constraint matches (pre-rerank scoring)
+        total_constraints = len(decomposed.constraints) if decomposed.constraints else 1
         for result in results:
             desc = (
                 result.get("action", "") + " " + result.get("description", "")
@@ -344,7 +345,9 @@ class MultiVectorSearcher:
             result["constraint_matches"] = matches
             result["matched_constraints"] = matched_list
             base_score = result.get("rrf_score", result.get("score", 0.5))
-            result["combined_score"] = base_score * (1 + matches * 0.15)
+            # Increase weight per match and add bonus for matching most constraints
+            match_ratio = matches / total_constraints
+            result["combined_score"] = base_score * (1 + matches * 0.25 + match_ratio * 0.3)
 
         # Step 7: LLM Reranking (if enabled and LLM available)
         if (
@@ -412,7 +415,7 @@ class MultiVectorSearcher:
             )
 
         reranked = []
-        for candidate in candidates[:15]:  # Limit LLM calls
+        for candidate in candidates[:5]:  # Limit to 5 LLM calls for speed (~1min vs 4min)
             try:
                 description = (
                     candidate.get("action", "")
@@ -432,30 +435,48 @@ class MultiVectorSearcher:
                 if self._llm is None:
                     continue
 
-                # Use native JSON mode via generate_structured
-                result = await self._llm.generate_structured(
-                    schema=RerankResult,
-                    prompt=prompt,
-                    system_prompt="You are a search result verifier. Score how well this result matches the query.",
-                )
+                # Try with retry for robustness
+                result = None
+                for attempt in range(2):
+                    try:
+                        result = await self._llm.generate_structured(
+                            schema=RerankResult,
+                            prompt=prompt,
+                            system_prompt="You are a search result verifier. Return ONLY valid JSON with match_score, reasoning, constraints_checked, and missing fields.",
+                        )
+                        break
+                    except Exception as retry_err:
+                        if attempt == 0:
+                            log.debug(f"[MultiVectorSearch] Retry rerank: {retry_err}")
+                            continue
+                        raise
 
-                candidate["llm_score"] = result.match_score
+                if result is None:
+                    raise ValueError("LLM returned no result")
+
+                # Penalize missing constraints
+                missing_penalty = len(result.missing) * 0.1
+                adjusted_score = max(0.0, result.match_score - missing_penalty)
+
+                candidate["llm_score"] = adjusted_score
                 candidate["llm_reasoning"] = result.reasoning
                 candidate["llm_constraints"] = result.constraints_checked
                 candidate["llm_missing"] = result.missing
 
-                # Blend scores: 60% original, 40% LLM
+                # Blend scores: 30% original, 70% LLM (LLM is more precise)
                 original_score = candidate.get("combined_score", 0.5)
                 candidate["combined_score"] = (
-                    original_score * 0.6 + result.match_score * 0.4
+                    original_score * 0.3 + adjusted_score * 0.7
                 )
 
                 reranked.append(candidate)
             except Exception as e:
-                log.debug(
+                log.warning(
                     f"[MultiVectorSearch] Rerank failed for candidate: {e}"
                 )
-                # Keep candidate with original score on failure
+                # Keep candidate with original score but penalize slightly
+                candidate["combined_score"] = candidate.get("combined_score", 0.5) * 0.85
+                candidate["llm_reasoning"] = f"Verification failed: {str(e)[:40]}"
                 reranked.append(candidate)
 
         return reranked

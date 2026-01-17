@@ -7,7 +7,7 @@ export const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000,
+  timeout: 300000,  // 5 minutes - search with LLM reranking can be slow
 });
 
 // Health & Status
@@ -41,7 +41,7 @@ export const searchMedia = async (
   return res.data;
 };
 
-// Hybrid Search (100% accuracy with HITL identity integration)
+// Hybrid Search with LLM reranking for accuracy
 export const searchHybrid = async (
   query: string,
   videoPath?: string,

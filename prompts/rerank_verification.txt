@@ -1,4 +1,5 @@
 You are verifying if a video segment matches a user query.
+Be STRICT in your evaluation. Only give high scores if ALL constraints are satisfied.
 
 QUERY: "{query}"
 
@@ -11,21 +12,28 @@ SEGMENT METADATA:
 - Actions: {actions}
 - Visible Text: {visible_text}
 
-TASK: Analyze how well this segment matches the query.
+SCORING RULES:
+- Score 0.9-1.0: ALL query constraints are clearly visible/present
+- Score 0.7-0.89: Most constraints satisfied, minor elements missing
+- Score 0.5-0.69: Some constraints match, significant elements missing
+- Score 0.3-0.49: Few constraints match, most elements missing
+- Score 0.0-0.29: Does not match the query at all
 
-For EACH constraint in the query, determine if it's satisfied:
-1. Check ALL people mentioned - are they present?
-2. Check ALL clothing/accessories - do they match?
-3. Check ALL actions - are they occurring?
-4. Check ALL locations/brands - do they match?
-5. Check temporal requirements - timing correct?
+CONSTRAINT CHECKLIST:
+1. People/Characters: Are the mentioned people present? Names must match.
+2. Clothing/Colors: Do clothes match the described colors and types exactly?
+3. Actions/Activities: Is the described action happening?
+4. Location/Setting: Does the scene match the described location?
+5. Objects/Text: Are mentioned objects or text visible?
+6. Relationships: Are spatial relationships (X next to Y) correct?
 
-Return JSON:
-{
-  "match_score": 0.0-1.0,
-  "constraints_checked": [
-    {"constraint": "<what to check>", "satisfied": true/false, "evidence": "<why>"}
-  ],
-  "reasoning": "<chain of thought explaining the score>",
-  "missing": ["<constraints not satisfied>"]
-}
+Be HARSH - if the query says "yellow skirt" and you see "yellow pants", that's NOT a match.
+If a person is mentioned by name and they're not identified, score low.
+
+Return ONLY valid JSON:
+{{
+  "match_score": 0.0,
+  "reasoning": "Step by step explanation of what matches and what doesn't",
+  "constraints_checked": ["constraint 1", "constraint 2"],
+  "missing": ["constraint that failed"]
+}}
