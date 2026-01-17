@@ -14,10 +14,9 @@ import subprocess
 import unicodedata
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, cast
+from typing import Any
 
 import torch
-from omegaconf import DictConfig
 
 # Backend 1: HuggingFace Transformers (lightweight, cross-platform)
 
@@ -60,7 +59,7 @@ from core.utils.logger import log
 # Log NeMo availability at module load
 if not HAS_NEMO:
     log(
-        "[IndicASR] NVIDIA NeMo not installed. For SOTA Indic ASR, run: pip install nemo_toolkit[asr]"
+        "[IndicASR] NVIDIA NeMo not installed. For SOTA Indic ASR, run: uv pip install nemo_toolkit[asr]"
     )
     log("[IndicASR] Falling back to HuggingFace Whisper for transcription.")
 
@@ -166,8 +165,8 @@ class IndicASRPipeline:
 
         raise ImportError(
             "No ASR backend available. Install one of:\n"
-            "  pip install transformers  # Lightweight (~600MB model)\n"
-            "  pip install nemo_toolkit[asr]  # Heavy (5GB+ models)"
+            "  uv pip install transformers  # Lightweight (~600MB model)\n"
+            "  uv pip install nemo_toolkit[asr]  # Heavy (5GB+ models)"
         )
 
     def load_model(self) -> None:
@@ -279,37 +278,16 @@ class IndicASRPipeline:
             )
             assert nemo_ckpt_path, "NeMo checkpoint download failed"
 
-            from omegaconf import open_dict
-
-            model_cfg = nemo_asr.models.ASRModel.restore_from(  # type: ignore
+            # Use restore_from directly - it handles all config and weights properly
+            # This is more robust than manually loading config + state_dict
+            self.model = nemo_asr.models.ASRModel.restore_from(  # type: ignore
                 restore_path=nemo_ckpt_path,
-                return_config=True,
+                map_location=self.device,
             )
 
-            with open_dict(model_cfg):  # type: ignore
-                if hasattr(model_cfg, "tokenizer"):
-                    if "dir" not in model_cfg.tokenizer:  # type: ignore
-                        model_cfg.tokenizer.dir = "tokenizers"  # type: ignore
-                    if "type" not in model_cfg.tokenizer:  # type: ignore
-                        model_cfg.tokenizer.type = "bpe"  # type: ignore
-                if hasattr(model_cfg, "decoding"):
-                    model_cfg.decoding.preserve_alignments = False  # type: ignore
-
-            self.model = (
-                nemo_asr.models.EncDecHybridRNNTCTCBPEModel.from_config_dict(  # type: ignore
-                    config=cast(DictConfig, model_cfg)
-                )
-            )
-            state_dict = torch.load(nemo_ckpt_path, map_location=self.device)
-            if "state_dict" in state_dict:
-                self.model.load_state_dict(
-                    state_dict["state_dict"], strict=False
-                )
-
-            self.model.to(self.device)
             self.model.freeze()  # type: ignore
             log(
-                f"[IndicASR] NeMo model loaded on {self.device} (config patched)"
+                f"[IndicASR] NeMo model loaded on {self.device}"
             )
         except Exception as e:
             log(f"[IndicASR] Failed to load NeMo model: {e}")

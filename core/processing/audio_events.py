@@ -19,6 +19,7 @@ class AudioEventDetector:
         self.processor = None
         self._device: str | None = device
         self._init_lock = asyncio.Lock()
+        self._load_failed = False  # Prevents retry spam on permanent failures
 
     def _get_device(self) -> str:
         if self._device:
@@ -34,37 +35,43 @@ class AudioEventDetector:
         if self.model is not None:
             return True
 
+        # Don't retry if we already failed (prevents spam)
+        if self._load_failed:
+            return False
+
         async with self._init_lock:
             if self.model is not None:
                 return True
 
+            if self._load_failed:
+                return False
+
             try:
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                log.info("[CLAP] Loading model...")
 
-                async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
-                    log.info("[CLAP] Loading model...")
+                from transformers import ClapModel, ClapProcessor
 
-                    from transformers import ClapModel, ClapProcessor
+                self.processor = ClapProcessor.from_pretrained(
+                    "laion/clap-htsat-unfused"
+                )
+                self.model = ClapModel.from_pretrained(
+                    "laion/clap-htsat-unfused"
+                )
 
-                    self.processor = ClapProcessor.from_pretrained(
-                        "laion/clap-htsat-unfused"
-                    )
-                    self.model = ClapModel.from_pretrained(
-                        "laion/clap-htsat-unfused"
-                    )
+                device = self._get_device()
+                self.model.to(device)  # type: ignore
+                self._device = device
 
-                    device = self._get_device()
-                    self.model.to(device)  # type: ignore
-                    self._device = device
-
-                    log.info(f"[CLAP] Model loaded on {device}")
-                    return True
+                log.info(f"[CLAP] Model loaded on {device}")
+                return True
 
             except ImportError as e:
                 log.warning(f"[CLAP] transformers not available: {e}")
+                self._load_failed = True
                 return False
             except Exception as e:
                 log.error(f"[CLAP] Failed to load model: {e}")
+                self._load_failed = True
                 return False
 
     async def detect_events(
@@ -93,8 +100,11 @@ class AudioEventDetector:
             )
             return []
 
+        log.info("[CLAP] detect_events: calling _lazy_load")
         if not await self._lazy_load():
+            log.info("[CLAP] detect_events: _lazy_load returned False")
             return []
+        log.info("[CLAP] detect_events: _lazy_load completed successfully")
 
         if self.model is None or self.processor is None:
             return []
@@ -107,7 +117,23 @@ class AudioEventDetector:
 
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
+            # CLAP expects 48kHz audio - resample BEFORE acquiring GPU lock
+            # to avoid blocking the async event loop
+            target_sr = 48000
+            if sample_rate != target_sr:
+                log.info(f"[CLAP] Resampling audio from {sample_rate}Hz to {target_sr}Hz...")
+                import librosa
+                audio_segment = librosa.resample(
+                    audio_segment.astype(np.float32),
+                    orig_sr=sample_rate,
+                    target_sr=target_sr
+                )
+                sample_rate = target_sr
+                log.info("[CLAP] Resampling complete")
+
+            log.info("[CLAP] Acquiring GPU for CLAP detection...")
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
+                log.info("[CLAP] GPU acquired, processing...")
                 device = self._device or "cpu"
 
                 text_inputs = self.processor(  # type: ignore
@@ -126,6 +152,7 @@ class AudioEventDetector:
                     k: v.to(device) for k, v in audio_inputs.items()
                 }
 
+                log.debug("[CLAP] Running inference...")
                 with torch.no_grad():
                     text_embeds = self.model.get_text_features(**text_inputs)
                     audio_embeds = self.model.get_audio_features(**audio_inputs)
@@ -139,6 +166,7 @@ class AudioEventDetector:
 
                     similarity = (audio_embeds @ text_embeds.T).squeeze(0)
                     probs = similarity.softmax(dim=-1).cpu().numpy()
+                log.debug("[CLAP] Inference complete")
 
             results = []
             top_indices = probs.argsort()[::-1][:top_k]

@@ -235,11 +235,14 @@ class IngestionPipeline:
                     job_id, 5.0, stage="audio", message="Processing audio"
                 )
                 await retry(lambda: self._process_audio(path))
+                logger.info("[Pipeline] _process_audio completed, running cleanup...")
                 self._cleanup_memory("audio_complete")  # Unload Whisper
+                logger.info("[Pipeline] Audio cleanup done, saving checkpoint...")
                 # Checkpoint audio completion
                 progress_tracker.save_checkpoint(
                     job_id, {"audio_complete": True}
                 )
+            logger.info("[Pipeline] Audio phase complete, moving to voice processing...")
             progress_tracker.update(
                 job_id, 30.0, stage="audio", message="Audio complete"
             )
@@ -578,9 +581,12 @@ class IngestionPipeline:
 
                 # Load audio for CLAP (16kHz mono)
                 try:
-                    audio_array, sr = librosa.load(
-                        str(path), sr=16000, mono=True
+                    log("[CLAP] Loading audio file with librosa...")
+                    # Run librosa.load in a thread to verify if it blocks
+                    audio_array, sr = await asyncio.to_thread(
+                        librosa.load, str(path), sr=16000, mono=True
                     )
+                    log(f"[CLAP] Audio loaded: {len(audio_array)} samples, {sr}Hz")
 
                     # Process in 2-second chunks to detect events with timestamps
                     chunk_duration = 2.0

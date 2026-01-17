@@ -134,9 +134,16 @@ class AudioTranscriber:
         Performs a full cleanup of CTranslate2 objects, triggers garbage
         collection, and clears the PyTorch CUDA cache to reclaim VRAM.
         """
+        # Guard: only log and unload if a model is actually loaded
+        if (
+            self._model is None
+            and self._batched_model is None
+            and AudioTranscriber._SHARED_MODEL is None
+        ):
+            return  # Nothing to unload
+
         log("[INFO] Unloading Whisper model to free VRAM...")
 
-        # 1. Delete the CTranslate2 model objects
         # 1. Delete the CTranslate2 model objects
         if self._batched_model is not None:
             del self._batched_model
@@ -815,11 +822,11 @@ class AudioTranscriber:
 
         try:
             # Ensure model is loaded (handles download/conversion)
-            if self._current_model_size != model_id:
+            if AudioTranscriber._SHARED_SIZE != model_id:
                 self._load_model(model_id)
 
             # Use the underlying model directly for detection (no batching needed)
-            if not self._model:
+            if AudioTranscriber._SHARED_MODEL is None:
                 raise RuntimeError("Model not initialized")
 
             # Extract first 30s as WAV to avoid container/codec issues (Opus, etc)
@@ -836,7 +843,7 @@ class AudioTranscriber:
             # NOTE: 'detect_language' task is sometimes rejected by CTranslate2 models.
             # The robust way with faster-whisper is to run 'transcribe' on a short segment
             # and check info.language.
-            _, info = self._model.transcribe(
+            _, info = AudioTranscriber._SHARED_MODEL.transcribe(
                 str(wav_path),
                 task="transcribe",  # Changed from 'detect_language'
                 beam_size=5,
