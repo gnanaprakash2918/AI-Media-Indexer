@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from core.knowledge.schemas import ParsedQuery
+from core.retrieval.reranker import RerankingCouncil, SearchCandidate
 from core.utils.logger import log
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
@@ -54,6 +55,7 @@ class SearchAgent:
         self.llm = llm or LLMFactory.create_llm()
         self._hybrid_searcher = None
         self._enable_hybrid = enable_hybrid
+        self._council = None
 
     @property
     def hybrid_searcher(self):
@@ -67,6 +69,13 @@ class SearchAgent:
             except Exception as e:
                 log(f"[Search] HybridSearcher init failed: {e}")
         return self._hybrid_searcher
+
+    @property
+    def council(self) -> RerankingCouncil:
+        """Lazy-load RerankingCouncil."""
+        if self._council is None:
+            self._council = RerankingCouncil()
+        return self._council
 
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:
@@ -732,15 +741,61 @@ class SearchAgent:
             log(f"[SOTA Search] Search failed: {e}")
             candidates = []
 
-        # 4. Re-rank with LLM verification (optional but recommended)
+        # 4. Re-rank with Reranking Council (VLM + CrossEncoder)
         if use_reranking and candidates:
             try:
-                candidates = await self.rerank_with_llm(
-                    query, candidates, top_k=limit
+                # Convert to SearchCandidate objects
+                sc_candidates = []
+                for c in candidates:
+                    video_p = c.get("video_path") or c.get("media_path") or ""
+                    
+                    # Handle scene vs frame timestamps
+                    start = c.get("start_time")
+                    end = c.get("end_time")
+                    if start is None:
+                        ts = float(c.get("timestamp", 0))
+                        start = max(0, ts - 2.0)
+                        end = ts + 2.0
+
+                    sc_candidates.append(
+                        SearchCandidate(
+                            video_path=str(video_p),
+                            start_time=float(start or 0),
+                            end_time=float(end or 0),
+                            score=float(c.get("score", 0)),
+                            payload=c
+                        )
+                    )
+
+                # Execute Council Rerank
+                ranked_results = await self.council.council_rerank(
+                    query=query,
+                    candidates=sc_candidates,
+                    max_candidates=limit,
+                    use_vlm=True
                 )
-                log(f"[SOTA Search] Re-ranked to {len(candidates)} results")
+                
+                # Convert back to dicts
+                reranked_candidates = []
+                for r in ranked_results:
+                    cand_dict = r.candidate.payload.copy()
+                    cand_dict["combined_score"] = r.final_score
+                    cand_dict["llm_reasoning"] = r.vlm_reason or "Verified by Council"
+                    cand_dict["council_scores"] = {
+                        "vlm": r.vlm_confidence,
+                        "cross": r.cross_encoder_score,
+                        "bge": r.bge_score
+                    }
+                    reranked_candidates.append(cand_dict)
+
+                candidates = reranked_candidates
+                log(f"[SOTA Search] Council re-ranked to {len(candidates)} results")
             except Exception as e:
-                log(f"[SOTA Search] Re-ranking failed: {e}, using raw results")
+                import traceback
+                log(f"[SOTA Search] Council re-ranking failed: {e}")
+                log(traceback.format_exc())
+                if candidates:
+                    log(f"Sample candidate payload: {candidates[0].keys()}")
 
         # GOLD.md Compliance: Comprehensive Search Reasoning Trace with Pipeline Steps
         # Build detailed pipeline_steps for frontend debug panel

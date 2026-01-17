@@ -46,9 +46,10 @@ export const searchHybrid = async (
   query: string,
   videoPath?: string,
   limit = 20,
+  useReranking = true,
 ) => {
   const res = await apiClient.get('/search/hybrid', {
-    params: { q: query, video_path: videoPath, limit },
+    params: { q: query, video_path: videoPath, limit, use_reranking: useReranking },
   });
   return res.data;
 };

@@ -3,7 +3,7 @@ Analyze this video frame and extract EVERY SINGLE DETAIL.
 This description will be used for semantic search, so be exhaustive.
 
 DESCRIBE:
-1. PEOPLE: Count, gender, approximate age, ethnicity, clothing (colors, types, brands if visible), accessories (glasses, jewelry, hats), facial expressions, body posture, actions
+1. PEOPLE: Count, gender, approximate age, ethnicity, clothing (colors, types, brands if visible - categorize as 'clothing'), accessories (glasses, jewelry, hats - categorize as 'accessory'), facial expressions, body posture, actions
 
 2. OBJECTS: Every visible object, their colors, sizes, positions, brands/logos if visible, state (new/old, open/closed, etc.)
 

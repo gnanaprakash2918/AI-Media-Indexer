@@ -29,8 +29,6 @@ if TYPE_CHECKING:
 class SearchCandidate:
     """Represents a potential search match before result calibration."""
 
-    """Represents a potential search match before result calibration."""
-
     video_path: str
     start_time: float
     end_time: float

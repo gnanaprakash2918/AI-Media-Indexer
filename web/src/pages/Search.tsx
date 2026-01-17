@@ -52,6 +52,7 @@ export default function SearchPage() {
   const [lastQuery, setLastQuery] = useState('');
   const [selectedVideo, setSelectedVideo] = useState<string>('');
   const [deepSearch, setDeepSearch] = useState(false);
+  const [useReranking, setUseReranking] = useState(true);
 
   // Overlay visibility toggles
   const [overlayToggles, setOverlayToggles] = useState({
@@ -75,9 +76,9 @@ export default function SearchPage() {
   const search = useMutation({
     mutationFn: async (q: string): Promise<SearchResponse> => {
       if (deepSearch) {
-        return (await searchGranular(q, selectedVideo || undefined)) as SearchResponse;
+        return (await searchGranular(q, selectedVideo || undefined, 10, useReranking)) as SearchResponse;
       }
-      const response = await searchHybrid(q, selectedVideo || undefined);
+      const response = await searchHybrid(q, selectedVideo || undefined, 20, useReranking);
       return response as SearchResponse;
     },
   });
@@ -206,6 +207,20 @@ export default function SearchPage() {
               onClick={() => setDeepSearch(!deepSearch)}
               sx={{ fontWeight: 700 }}
             />
+          </Box>
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="body2" color="text.secondary">LLM Rerank</Typography>
+            <Tooltip title="Verify results with Vision LLM (Slower but more accurate)">
+              <Chip
+                label={useReranking ? "ON" : "OFF"}
+                color={useReranking ? "secondary" : "default"}
+                variant={useReranking ? "filled" : "outlined"}
+                size="small"
+                onClick={() => setUseReranking(!useReranking)}
+                sx={{ fontWeight: 700 }}
+              />
+            </Tooltip>
           </Box>
         </Box>
 

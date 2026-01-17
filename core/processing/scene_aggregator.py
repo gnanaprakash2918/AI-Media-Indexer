@@ -187,7 +187,7 @@ class SceneAggregator:
                 for entity in structured.get("entities", []):
                     if isinstance(entity, dict):
                         category = entity.get("category", "").lower()
-                        if category in ("clothing", "apparel", "wear"):
+                        if category in ("clothing", "apparel", "wear", "attire", "outfit"):
                             name = entity.get("name", "")
                             details = entity.get("visual_details", "")
                             for fid in face_ids:

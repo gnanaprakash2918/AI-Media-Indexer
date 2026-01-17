@@ -17,8 +17,6 @@ from core.processing.scene_detector import extract_scene_frame
 from core.utils.logger import get_logger
 from core.utils.prompt_loader import load_prompt
 
-if TYPE_CHECKING:
-    from core.retrieval.engine import SearchCandidate
 
 log = get_logger(__name__)
 
@@ -28,6 +26,17 @@ class RerankScore(BaseModel):
 
     confidence: int = 0
     reason: str = ""
+
+
+@dataclass
+class SearchCandidate:
+    """Represents a potential search match before result calibration."""
+
+    video_path: str
+    start_time: float
+    end_time: float
+    score: float
+    payload: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -298,11 +307,22 @@ class RerankingCouncil:
             return frames
 
         duration = candidate.end_time - candidate.start_time
-        timestamps = [
-            candidate.start_time,
-            candidate.start_time + duration / 2,
-            candidate.end_time - 0.1 if duration > 0.2 else candidate.end_time,
-        ]
+        
+        # Adaptive sampling: More frames for longer clips to catch dynamic actions
+        # Min 3 frames (start, mid, end) for short clips
+        # Max 8 frames for long clips to prevent OOM/timeouts
+        # Stride ~3-5 seconds ideally
+        
+        num_frames = 3
+        if duration > 5.0:
+            num_frames = min(8, int(duration / 3.0))
+            num_frames = max(3, num_frames)
+            
+        step = duration / (num_frames - 1) if num_frames > 1 else 0
+        timestamps = [candidate.start_time + i * step for i in range(num_frames)]
+        
+        # Ensure last frame is slightly before end to avoid seeking past EOF
+        timestamps[-1] = max(candidate.start_time, candidate.end_time - 0.1)
 
         for ts in timestamps:
             frame_bytes = extract_scene_frame(path, ts)
