@@ -10,7 +10,20 @@ from enum import Enum
 from threading import Lock
 from typing import Any
 
+import numpy as np
+
 from core.utils.logger import logger
+
+
+def _numpy_safe_serializer(obj: Any) -> Any:
+    """Convert numpy types to JSON-serializable Python types."""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Unable to serialize {type(obj)}")
 
 
 class JobStatus(str, Enum):
@@ -198,7 +211,7 @@ class JobManager:
                 if k == "status" and isinstance(v, JobStatus):
                     v = v.value
                 elif k == "checkpoint_data" and isinstance(v, dict):
-                    v = json.dumps(v)
+                    v = json.dumps(v, default=_numpy_safe_serializer)
                 updates.append(f"{k} = ?")
                 values.append(v)
 

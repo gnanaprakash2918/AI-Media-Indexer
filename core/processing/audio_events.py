@@ -100,11 +100,11 @@ class AudioEventDetector:
             )
             return []
 
-        log.info("[CLAP] detect_events: calling _lazy_load")
+        log.debug("[CLAP] detect_events: calling _lazy_load")
         if not await self._lazy_load():
-            log.info("[CLAP] detect_events: _lazy_load returned False")
+            log.debug("[CLAP] detect_events: _lazy_load returned False")
             return []
-        log.info("[CLAP] detect_events: _lazy_load completed successfully")
+        log.debug("[CLAP] detect_events: _lazy_load completed successfully")
 
         if self.model is None or self.processor is None:
             return []
@@ -121,7 +121,7 @@ class AudioEventDetector:
             # to avoid blocking the async event loop
             target_sr = 48000
             if sample_rate != target_sr:
-                log.info(f"[CLAP] Resampling audio from {sample_rate}Hz to {target_sr}Hz...")
+                log.debug(f"[CLAP] Resampling audio from {sample_rate}Hz to {target_sr}Hz...")
                 import librosa
                 audio_segment = librosa.resample(
                     audio_segment.astype(np.float32),
@@ -129,11 +129,11 @@ class AudioEventDetector:
                     target_sr=target_sr
                 )
                 sample_rate = target_sr
-                log.info("[CLAP] Resampling complete")
+                log.debug("[CLAP] Resampling complete")
 
-            log.info("[CLAP] Acquiring GPU for CLAP detection...")
+            log.debug("[CLAP] Acquiring GPU for CLAP detection...")
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
-                log.info("[CLAP] GPU acquired, processing...")
+                log.debug("[CLAP] GPU acquired, processing...")
                 device = self._device or "cpu"
 
                 text_inputs = self.processor(  # type: ignore
@@ -188,6 +188,128 @@ class AudioEventDetector:
         except Exception as e:
             log.error(f"[CLAP] Detection failed: {e}")
             return []
+
+    async def detect_events_batch(
+        self,
+        audio_chunks: list[tuple[np.ndarray, float]],
+        target_classes: list[str],
+        sample_rate: int = 16000,
+        top_k: int = 3,
+        threshold: float = 0.3,
+    ) -> list[list[dict]]:
+        """Detect audio events in multiple chunks with a single GPU acquisition.
+
+        This is significantly more efficient than calling detect_events() in a loop,
+        as it resamples all audio upfront and processes all chunks in one GPU session.
+
+        Args:
+            audio_chunks: List of (audio_segment, start_time) tuples.
+            target_classes: A list of target event classes to detect.
+            sample_rate: The sampling rate of the audio.
+            top_k: The number of top events to return per chunk.
+            threshold: The confidence threshold for detection.
+
+        Returns:
+            List of detected events per chunk, each with labels and confidence scores.
+        """
+        if not target_classes:
+            log.warning("[CLAP] No target classes provided")
+            return [[] for _ in audio_chunks]
+
+        if not audio_chunks:
+            return []
+
+        if not await self._lazy_load():
+            return [[] for _ in audio_chunks]
+
+        if self.model is None or self.processor is None:
+            return [[] for _ in audio_chunks]
+
+        try:
+            import torch
+
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+
+            # CLAP expects 48kHz audio - resample ALL chunks BEFORE acquiring GPU
+            target_sr = 48000
+            resampled_chunks = []
+            log.info(f"[CLAP] Batch: Resampling {len(audio_chunks)} chunks from {sample_rate}Hz to {target_sr}Hz...")
+
+            import librosa
+
+            for audio_segment, start_time in audio_chunks:
+                if audio_segment.size == 0:
+                    resampled_chunks.append((np.array([]), start_time))
+                    continue
+
+                if sample_rate != target_sr:
+                    resampled = librosa.resample(
+                        audio_segment.astype(np.float32),
+                        orig_sr=sample_rate,
+                        target_sr=target_sr,
+                    )
+                else:
+                    resampled = audio_segment.astype(np.float32)
+                resampled_chunks.append((resampled, start_time))
+
+            log.info("[CLAP] Batch: Resampling complete")
+
+            # Single GPU acquisition for ALL chunks
+            log.info(f"[CLAP] Batch: Acquiring GPU for {len(resampled_chunks)} chunks...")
+            async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
+                log.info("[CLAP] Batch: GPU acquired, processing all chunks...")
+                device = self._device or "cpu"
+
+                # Pre-compute text embeddings ONCE for all chunks
+                text_inputs = self.processor(  # type: ignore
+                    text=target_classes,
+                    return_tensors="pt",
+                    padding=True,
+                )
+                text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
+
+                with torch.no_grad():
+                    text_embeds = self.model.get_text_features(**text_inputs)
+                    text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
+
+                all_results: list[list[dict]] = []
+
+                for audio_segment, _start_time in resampled_chunks:
+                    if audio_segment.size == 0:
+                        all_results.append([])
+                        continue
+
+                    audio_inputs = self.processor(  # type: ignore
+                        audios=audio_segment,
+                        sampling_rate=target_sr,
+                        return_tensors="pt",
+                    )
+                    audio_inputs = {k: v.to(device) for k, v in audio_inputs.items()}
+
+                    with torch.no_grad():
+                        audio_embeds = self.model.get_audio_features(**audio_inputs)
+                        audio_embeds = audio_embeds / audio_embeds.norm(dim=-1, keepdim=True)
+
+                        similarity = (audio_embeds @ text_embeds.T).squeeze(0)
+                        probs = similarity.softmax(dim=-1).cpu().numpy()
+
+                    results = []
+                    top_indices = probs.argsort()[::-1][:top_k]
+                    for idx in top_indices:
+                        conf = float(probs[idx])
+                        if conf >= threshold:
+                            results.append({
+                                "event": target_classes[idx],
+                                "confidence": round(conf, 3),
+                            })
+                    all_results.append(results)
+
+                log.info(f"[CLAP] Batch: Processed {len(all_results)} chunks")
+                return all_results
+
+        except Exception as e:
+            log.error(f"[CLAP] Batch detection failed: {e}")
+            return [[] for _ in audio_chunks]
 
     async def match_audio_description(
         self,

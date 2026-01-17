@@ -74,6 +74,52 @@ interface Job {
   duration?: number;
 }
 
+// Pipeline stage labels for human-readable display
+const STAGE_LABELS: Record<string, { label: string; icon: string; order: number }> = {
+  init: { label: 'Initializing', icon: '⚙️', order: 0 },
+  extract: { label: 'Extracting Audio', icon: '🎵', order: 1 },
+  transcribe: { label: 'Transcribing', icon: '📝', order: 2 },
+  diarize: { label: 'Speaker Diarization', icon: '🗣️', order: 3 },
+  voice_embed: { label: 'Voice Embeddings', icon: '🎤', order: 4 },
+  face_detect: { label: 'Face Detection', icon: '👤', order: 5 },
+  face_track: { label: 'Face Tracking', icon: '🔗', order: 6 },
+  vlm_caption: { label: 'Frame Analysis (VLM)', icon: '🖼️', order: 7 },
+  index: { label: 'Indexing', icon: '📊', order: 8 },
+  complete: { label: 'Complete', icon: '✅', order: 9 },
+};
+
+// Get all stages in order
+const ORDERED_STAGES = Object.entries(STAGE_LABELS)
+  .sort(([, a], [, b]) => a.order - b.order)
+  .map(([key]) => key);
+
+// Format seconds to MM:SS or HH:MM:SS
+function formatTime(seconds: number): string {
+  if (!seconds || seconds < 0) return '00:00';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Calculate ETA based on video timestamp (more accurate than frame count)
+function calculateETA(
+  currentTimestamp: number | undefined,
+  totalDuration: number | undefined
+): string | null {
+  if (!currentTimestamp || !totalDuration || currentTimestamp < 10) return null;
+  const remaining = totalDuration - currentTimestamp;
+  if (remaining <= 0) return null;
+  // Rough estimate: processing speed is ~0.5x to 2x realtime
+  // Use 1x realtime as conservative estimate
+  if (remaining < 60) return `~${Math.ceil(remaining)}s left`;
+  if (remaining < 3600) return `~${Math.ceil(remaining / 60)}m left`;
+  return `~${Math.round(remaining / 3600)}h left`;
+}
+
 function JobCard({
   job,
   onCancel,
@@ -93,26 +139,29 @@ function JobCard({
   const isPaused = job.status === 'paused';
   const fileName = job.file_path.split(/[/\\]/).pop() || job.file_path;
 
+  // Get current stage info
+  const currentStage = job.pipeline_stage || 'init';
+  const stageInfo = STAGE_LABELS[currentStage] || STAGE_LABELS.init;
+  const currentStageIndex = ORDERED_STAGES.indexOf(currentStage);
+
   // Granular Stats
-  const framesText =
-    job.processed_frames !== undefined && job.total_frames
-      ? `Frames: ${job.processed_frames} / ${job.total_frames}`
-      : '';
+  const hasFrameData = job.processed_frames !== undefined && job.total_frames;
+  const hasTimeData = job.timestamp !== undefined && job.duration;
 
-  const timeText =
-    job.timestamp !== undefined && job.duration
-      ? `Time: ${new Date(job.timestamp * 1000).toISOString().substr(11, 8)} / ${new Date(job.duration * 1000).toISOString().substr(11, 8)}`
-      : '';
-
-  // Calculate accurate percentage if available
+  // Calculate accurate percentage based on timestamp (most reliable)
   let progress = job.progress;
-  if (job.duration && job.timestamp) {
+  if (hasTimeData && job.duration && job.timestamp !== undefined) {
     progress = (job.timestamp / job.duration) * 100;
-    // Adjust for stage coverage if needed, but timestamp is best indicator for user
   }
+
+  // ETA calculation (based on video timestamp, not frame count)
+  const eta = hasTimeData
+    ? calculateETA(job.timestamp, job.duration)
+    : null;
 
   return (
     <Paper sx={{ p: 2, mb: 1.5, borderRadius: 2 }}>
+      {/* Header: Filename + Status */}
       <Box
         sx={{
           display: 'flex',
@@ -121,19 +170,32 @@ function JobCard({
           mb: 1,
         }}
       >
-        <Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography
             variant="body2"
             fontWeight={600}
             noWrap
-            sx={{ maxWidth: 300 }}
+            sx={{ maxWidth: '100%' }}
             title={job.file_path}
           >
             {fileName}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {job.message || job.current_stage || 'Initializing...'}
-          </Typography>
+          {/* Current Stage - Prominent Display */}
+          {(isRunning || isPaused) && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+              <Typography variant="body2" sx={{ fontSize: '1.1em' }}>
+                {stageInfo.icon}
+              </Typography>
+              <Typography variant="body2" fontWeight={500} color="primary">
+                {stageInfo.label}
+              </Typography>
+              {job.message && job.message !== stageInfo.label && (
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                  — {job.message}
+                </Typography>
+              )}
+            </Box>
+          )}
         </Box>
         <Chip
           size="small"
@@ -152,37 +214,66 @@ function JobCard({
         />
       </Box>
 
+      {/* Progress Section - Only for active jobs */}
       {(isRunning || isPaused) && (
         <>
+          {/* Main Progress Bar */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
             <LinearProgress
               variant="determinate"
-              value={progress}
-              sx={{ flex: 1, height: 6, borderRadius: 3 }}
+              value={Math.min(100, Math.max(0, progress))}
+              sx={{ flex: 1, height: 8, borderRadius: 4 }}
             />
-            <Typography variant="caption" fontWeight={600} sx={{ minWidth: 35 }}>
+            <Typography variant="body2" fontWeight={700} sx={{ minWidth: 45 }}>
               {Math.round(progress)}%
             </Typography>
           </Box>
+
+          {/* Detailed Stats Row */}
           <Box
             sx={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              mb: 1.5,
+              flexWrap: 'wrap',
+              gap: 1,
             }}
           >
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              {framesText && (
-                <Typography variant="caption" color="text.secondary">
-                  {framesText}
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+              {/* Frame Progress */}
+              {hasFrameData && (
+                <Typography variant="caption" sx={{
+                  bgcolor: 'action.hover',
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: 1,
+                  fontFamily: 'monospace'
+                }}>
+                  🎞️ {job.processed_frames} / {job.total_frames} frames
                 </Typography>
               )}
-              {timeText && (
-                <Typography variant="caption" color="text.secondary">
-                  {timeText}
+              {/* Time Progress */}
+              {hasTimeData && (
+                <Typography variant="caption" sx={{
+                  bgcolor: 'action.hover',
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: 1,
+                  fontFamily: 'monospace'
+                }}>
+                  ⏱️ {formatTime(job.timestamp!)} / {formatTime(job.duration!)}
+                </Typography>
+              )}
+              {/* ETA */}
+              {eta && (
+                <Typography variant="caption" color="success.main" fontWeight={600}>
+                  {eta}
                 </Typography>
               )}
             </Box>
+
+            {/* Action Buttons */}
             <Box>
               {isRunning && (
                 <Tooltip title="Pause">
@@ -217,8 +308,45 @@ function JobCard({
               </Tooltip>
             </Box>
           </Box>
+
+          {/* Pipeline Stage Checklist */}
+          <Box sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 0.5,
+            mt: 1,
+            pt: 1,
+            borderTop: 1,
+            borderColor: 'divider'
+          }}>
+            {ORDERED_STAGES.filter(s => s !== 'complete').map((stage, idx) => {
+              const info = STAGE_LABELS[stage];
+              const isDone = idx < currentStageIndex;
+              const isCurrent = stage === currentStage;
+              return (
+                <Chip
+                  key={stage}
+                  size="small"
+                  label={`${info.icon} ${info.label.split(' ')[0]}`}
+                  variant={isDone ? 'filled' : 'outlined'}
+                  color={isCurrent ? 'primary' : isDone ? 'success' : 'default'}
+                  sx={{
+                    opacity: isDone || isCurrent ? 1 : 0.5,
+                    fontWeight: isCurrent ? 700 : 400,
+                    animation: isCurrent ? 'pulse 1.5s infinite' : 'none',
+                    '@keyframes pulse': {
+                      '0%, 100%': { opacity: 1 },
+                      '50%': { opacity: 0.7 },
+                    },
+                  }}
+                />
+              );
+            })}
+          </Box>
         </>
       )}
+
+      {/* Completed State Actions */}
       {job.status === 'completed' && (
         <Box sx={{ display: 'flex', gap: 1, mt: 1, justifyContent: 'flex-end' }}>
           <Button
@@ -240,6 +368,15 @@ function JobCard({
             Recap
           </Button>
         </Box>
+      )}
+
+      {/* Failed State - Show Error */}
+      {job.status === 'failed' && job.error && (
+        <Alert severity="error" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+            {job.error}
+          </Typography>
+        </Alert>
       )}
     </Paper>
   );

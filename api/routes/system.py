@@ -3,7 +3,9 @@
 import asyncio
 import json
 import threading
+from typing import Any
 
+import numpy as np
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -16,6 +18,17 @@ from core.utils.hardware import (
 )
 from core.utils.logger import logger
 from core.utils.progress import progress_tracker
+
+
+def _numpy_serializer(obj: Any) -> Any:
+    """Convert numpy types to JSON-serializable Python types."""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Unable to serialize {type(obj)}")
 
 router = APIRouter()
 
@@ -179,7 +192,7 @@ async def sse_events():
                         queue.get(),
                         timeout=heartbeat_interval,
                     )
-                    data = json.dumps(event)
+                    data = json.dumps(event, default=_numpy_serializer)
                     yield f"data: {data}\n\n"
                 except TimeoutError:
                     # Send heartbeat to keep connection alive

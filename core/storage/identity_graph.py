@@ -251,6 +251,13 @@ class IdentityGraphManager:
                 return None
             return self._row_to_identity(row)
 
+    def get_or_create_identity_by_name(self, name: str) -> Identity:
+        """Get existing identity by name or create a new one."""
+        identity = self.get_identity_by_name(name)
+        if identity:
+            return identity
+        return self.create_identity(name=name, is_verified=True)
+
     def get_all_identities(self, limit: int = 100) -> list[Identity]:
         """Get all identities, enriched with track counts."""
         with self._lock, sqlite3.connect(self.db_path) as conn:
@@ -285,6 +292,34 @@ class IdentityGraphManager:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    def link_faces_to_identity(
+        self, face_ids: list[str], identity_id: str
+    ) -> int:
+        """Link multiple face tracks (by ID) to an identity.
+
+        Note: Matches are done on ID, but face_ids from Qdrant might
+        correspond to `FaceTrack` IDs if they share UUIDs, OR we match
+        via embedding lookup. Here we assume strict ID match.
+        """
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            # We use 'IN' clause with placeholders
+            placeholders = ",".join(["?"] * len(face_ids))
+            sql = f"UPDATE face_tracks SET identity_id = ? WHERE id IN ({placeholders})"
+            cursor = conn.execute(sql, (identity_id, *face_ids))
+            conn.commit()
+            return cursor.rowcount
+
+    def link_voices_to_identity(
+        self, voice_ids: list[str], identity_id: str
+    ) -> int:
+        """Link multiple voice tracks (by ID) to an identity."""
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            placeholders = ",".join(["?"] * len(voice_ids))
+            sql = f"UPDATE voice_tracks SET identity_id = ? WHERE id IN ({placeholders})"
+            cursor = conn.execute(sql, (identity_id, *voice_ids))
+            conn.commit()
+            return cursor.rowcount
 
     def merge_identities(self, from_id: str, to_id: str) -> int:
         """Merge one identity into another (HITL merge operation).

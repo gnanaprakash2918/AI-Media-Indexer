@@ -26,6 +26,32 @@ except ImportError:
 router = APIRouter()
 
 
+def _normalize_results(results: list[dict]) -> list[dict]:
+    """Normalize search results to ensure consistent frontend fields.
+
+    Ensures all results have video_path, timestamp, and thumbnail_url.
+    """
+    normalized = []
+    for r in results:
+        # Normalize video path (some collections use media_path)
+        video = r.get("video_path") or r.get("media_path", "")
+        ts = r.get("timestamp") or r.get("start_time") or r.get("start", 0)
+
+        result = {
+            **r,
+            "video_path": video,
+            "timestamp": ts,
+        }
+
+        # Add thumbnail_url if not present
+        if video and "thumbnail_url" not in result:
+            safe_path = quote(str(video))
+            result["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
+            result["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+
+        normalized.append(result)
+    return normalized
+
 @router.get("/search/hybrid")
 async def hybrid_search(
     q: Annotated[str, Query(..., description="Search query")],
@@ -80,8 +106,16 @@ async def hybrid_search(
             # Transform results for frontend compatibility
             transformed_results = []
             for r in result.get("results", []):
+                # Normalize video_path (some collections use media_path)
+                video = r.get("video_path") or r.get("media_path", "")
+                ts = (
+                    r.get("timestamp")
+                    or r.get("start_time")
+                    or r.get("start", 0)
+                )
                 transformed = {
                     **r,
+                    "video_path": video,  # Ensure video_path is always present
                     "match_reason": r.get(
                         "llm_reasoning", r.get("reasoning", "")
                     ),
@@ -93,10 +127,17 @@ async def hybrid_search(
                     if r.get("constraints_satisfied")
                     else [],
                     "score": r.get("combined_score", r.get("score", 0.5)),
-                    "timestamp": r.get("timestamp")
-                    or r.get("start_time")
-                    or r.get("start", 0),
+                    "timestamp": ts,
                 }
+                # Add thumbnail_url if not present
+                if video and "thumbnail_url" not in transformed:
+                    safe_path = quote(str(video))
+                    transformed["thumbnail_url"] = (
+                        f"/media/thumbnail?path={safe_path}&time={ts}"
+                    )
+                    transformed["playback_url"] = (
+                        f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                    )
                 transformed_results.append(transformed)
 
             duration = time.perf_counter() - start_time
@@ -126,7 +167,9 @@ async def hybrid_search(
                 "[Search] SearchAgent unavailable, using hybrid search"
             )
             # Use hybrid search instead of pure vector search for better accuracy
-            results = pipeline.db.search_frames_hybrid(query=q, limit=limit)
+            results = _normalize_results(
+                pipeline.db.search_frames_hybrid(query=q, limit=limit)
+            )
             duration = time.perf_counter() - start_time
             return {
                 "query": q,
@@ -143,7 +186,9 @@ async def hybrid_search(
         logger.error(f"[Search] Hybrid search failed: {e}")
         try:
             # Fallback to hybrid search
-            results = pipeline.db.search_frames_hybrid(query=q, limit=limit)
+            results = _normalize_results(
+                pipeline.db.search_frames_hybrid(query=q, limit=limit)
+            )
             return {
                 "query": q,
                 "results": results,

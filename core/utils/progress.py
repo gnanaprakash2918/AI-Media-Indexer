@@ -95,6 +95,8 @@ class ProgressTracker:
             job.progress = min(100.0, max(0.0, percent))
             if stage:
                 job.current_stage = stage
+                # Also update pipeline_stage so frontend displays correct stage
+                job.pipeline_stage = stage
             if message:
                 job.message = message
 
@@ -105,6 +107,7 @@ class ProgressTracker:
                     "job_id": job_id,
                     "progress": job.progress,
                     "stage": job.current_stage,
+                    "pipeline_stage": job.pipeline_stage,
                     "message": job.message,
                 }
             )
@@ -282,6 +285,8 @@ class ProgressTracker:
                 job.progress = 100.0
                 job.completed_at = time.time()
                 job.message = message
+                job.pipeline_stage = "complete"
+                job.current_stage = "complete"
 
                 # Immediate DB update
                 job_manager.update_job(
@@ -290,6 +295,8 @@ class ProgressTracker:
                     progress=100.0,
                     completed_at=job.completed_at,
                     message=message,
+                    pipeline_stage="complete",
+                    current_stage="complete",
                 )
 
         self._broadcast(

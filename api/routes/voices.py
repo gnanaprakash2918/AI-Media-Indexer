@@ -316,6 +316,18 @@ async def name_voice_cluster(
             cluster_id, request.name
         )
 
+        # 3. Identity Linking (Newly added)
+        try:
+            from core.storage.identity_graph import identity_graph
+            identity = identity_graph.get_or_create_identity_by_name(request.name)
+            # Fetch IDs to link - we can skip if handled in db.set_speaker_name,
+            # but this route does manual set_payload.
+            # Ideally we should use db.set_speaker_name to avoid duplication.
+            # Let's switch to using the DB method which now handles EVERYTHING.
+            pipeline.db.set_speaker_name(cluster_id, request.name)
+        except Exception as e:
+            logger.error(f"Identity linking failed: {e}")
+
         return {
             "status": "updated",
             "cluster_id": cluster_id,
@@ -325,3 +337,33 @@ async def name_voice_cluster(
     except Exception as e:
         logger.error(f"[Voices] App naming failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/voices/cluster/{cluster_id}/main")
+async def mark_main_speaker(
+    cluster_id: str,
+    segment_id: str,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    is_main: bool = True,
+):
+    """Mark a voice segment as the representative for its cluster."""
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline invalid")
+
+    try:
+        cluster_int = int(cluster_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Cluster ID must be an integer"
+        ) from None
+
+    success = pipeline.db.set_speaker_main(cluster_int, segment_id, is_main)
+    if not success:
+        raise HTTPException(status_code=404, detail="Cluster or segment not found")
+
+    return {
+        "status": "updated",
+        "cluster_id": cluster_id,
+        "segment_id": segment_id,
+        "is_main_character": is_main,
+    }

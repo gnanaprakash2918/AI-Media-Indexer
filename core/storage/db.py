@@ -54,6 +54,27 @@ def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
     return decorator
 
 
+def sanitize_numpy_types(obj: Any) -> Any:
+    """Recursively convert numpy types to native Python types.
+    
+    Prevents 'Unable to serialize numpy.int32' errors when upserting to Qdrant.
+    """
+    import numpy as np
+    
+    if isinstance(obj, dict):
+        return {k: sanitize_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_numpy_types(v) for v in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
+
 # Auto-select embedding model based on available VRAM
 # Allow override from config
 if settings.embedding_model_override:
@@ -890,6 +911,9 @@ class VectorDB:
         # This fixes the filtering issue where scan_id was sometimes dropped
         if payload.get("scan_id"):
             payload["scan_id"] = str(payload["scan_id"])
+
+        # Sanitize numpy types to native Python types before upsert
+        payload = sanitize_numpy_types(payload)
 
         self.client.upsert(
             collection_name=self.MEDIA_COLLECTION,
@@ -3942,6 +3966,22 @@ class VectorDB:
             # Propagate name to frames for proper search
             self._propagate_face_name_to_frames(cluster_id, name)
 
+            # --- Identity Linking ---
+            try:
+                from core.storage.identity_graph import identity_graph
+
+                # 1. Get/Create Global Identity
+                identity = identity_graph.get_or_create_identity_by_name(name)
+
+                # 2. Link these face tracks to the identity
+                # Note: Qdrant point_ids are used as FaceTrack IDs if they match.
+                # If Qdrant uses UUIDs that match FaceTrack UUIDs, this works directly.
+                identity_graph.link_faces_to_identity(point_ids, identity.id)
+                log(f"[Identity] Linked {len(point_ids)} faces to {identity.name} ({identity.id})")
+            except Exception as e:
+                log(f"[Identity] Linking failed: {e}")
+            # ------------------------
+
             log(
                 f"[HITL] Set name '{name}' on {len(point_ids)} faces in cluster {cluster_id}"
             )
@@ -4112,10 +4152,10 @@ class VectorDB:
         """
         try:
             # Update all segments with this voice_cluster_id
-            self.client.set_payload(
+            # First fetch IDs to link in IdentityGraph
+            resp = self.client.scroll(
                 collection_name=self.VOICE_COLLECTION,
-                payload={"speaker_name": name},
-                points=models.Filter(
+                scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
                             key="voice_cluster_id",
@@ -4123,15 +4163,69 @@ class VectorDB:
                         )
                     ]
                 ),
+                limit=1000,
             )
+            segment_ids = [str(p.id) for p in resp[0]]
+
+            if segment_ids:
+                self.client.set_payload(
+                    collection_name=self.VOICE_COLLECTION,
+                    payload={"speaker_name": name},
+                    points=segment_ids, # Efficient update by ID
+                )
+
+                # --- Identity Linking ---
+                try:
+                    from core.storage.identity_graph import identity_graph
+                    identity = identity_graph.get_or_create_identity_by_name(name)
+                    identity_graph.link_voices_to_identity(segment_ids, identity.id)
+                    log(f"[Identity] Linked {len(segment_ids)} voices to {identity.name}")
+                except Exception as e:
+                    log(f"[Identity] Voice linking failed: {e}")
+                # ------------------------
 
             # Propagate to searchable frame metadata
             self.re_embed_voice_cluster_frames(cluster_id, name)
 
-            return 1  # Return 1 to indicate success
+            return len(segment_ids)
         except Exception as e:
             log(f"set_speaker_name failed: {e}")
             return 0
+
+    def set_speaker_main(self, cluster_id: int, segment_id: str, is_main: bool = True) -> bool:
+        """Mark a voice segment as the representative for its cluster.
+
+        Args:
+            cluster_id: The voice cluster ID.
+            segment_id: The specific segment ID to mark as main.
+            is_main: True to set as main, False to unset.
+        """
+        try:
+            # 1. Unset 'is_main' for all other segments in this cluster
+            if is_main:
+                self.client.set_payload(
+                    collection_name=self.VOICE_COLLECTION,
+                    payload={"is_main": False},
+                    points=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="voice_cluster_id",
+                                match=models.MatchValue(value=cluster_id),
+                            )
+                        ]
+                    ),
+                )
+
+            # 2. Set 'is_main' for the target segment
+            self.client.set_payload(
+                collection_name=self.VOICE_COLLECTION,
+                payload={"is_main": is_main},
+                points=[segment_id],
+            )
+            return True
+        except Exception as e:
+            log(f"set_speaker_main failed: {e}")
+            return False
 
     def get_frames_by_face_cluster(
         self, cluster_id: int, limit: int = 1000
@@ -5055,7 +5149,7 @@ class VectorDB:
         """Get faces that are part of unnamed clusters.
 
         Returns:
-            List of face point dictionaries.
+            List of face point dictionaries with flat structure.
         """
         try:
             # Find clusters that have no name or name is empty strings
@@ -5084,8 +5178,23 @@ class VectorDB:
                 payload = p.payload or {}
                 name = payload.get("name")
                 if not name:  # None or ""
+                    cluster_id = payload.get("cluster_id")
+                    # Fallback to hash-based ID if missing
+                    if cluster_id is None:
+                        cluster_id = abs(hash(str(p.id))) % (10**9)
                     unresolved.append(
-                        {"id": p.id, "payload": payload, "vector": p.vector}
+                        {
+                            "id": str(p.id),
+                            "cluster_id": cluster_id,
+                            "name": name,
+                            "media_path": payload.get("media_path"),
+                            "timestamp": payload.get("timestamp"),
+                            "thumbnail_path": payload.get("thumbnail_path"),
+                            "is_main": payload.get("is_main", False),
+                            "appearance_count": payload.get("appearance_count", 1),
+                            "bbox_size": payload.get("bbox_size"),
+                            "det_score": payload.get("det_score"),
+                        }
                     )
             return unresolved
         except Exception as e:
@@ -5093,7 +5202,11 @@ class VectorDB:
             return []
 
     def get_unresolved_voices(self, limit: int = 100) -> list[dict]:
-        """Get voice segments that are part of unnamed clusters."""
+        """Get voice segments that are part of unnamed clusters.
+
+        Returns:
+            List of voice segment dictionaries with flat structure.
+        """
         try:
             resp = self.client.scroll(
                 collection_name=self.VOICE_COLLECTION,
@@ -5116,8 +5229,21 @@ class VectorDB:
                 payload = p.payload or {}
                 name = payload.get("name")
                 if not name:
+                    cluster_id = payload.get("cluster_id")
+                    if cluster_id is None:
+                        cluster_id = abs(hash(str(p.id))) % (10**9)
                     unresolved.append(
-                        {"id": p.id, "payload": payload, "vector": p.vector}
+                        {
+                            "id": str(p.id),
+                            "cluster_id": cluster_id,
+                            "name": name,
+                            "media_path": payload.get("media_path"),
+                            "audio_path": payload.get("audio_path"),
+                            "start_time": payload.get("start_time"),
+                            "end_time": payload.get("end_time"),
+                            "duration": payload.get("duration"),
+                            "is_main": payload.get("is_main", False),
+                        }
                     )
             return unresolved
         except Exception as e:

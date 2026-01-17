@@ -526,21 +526,31 @@ Be specific with names (e.g., "Tesla Model 3" not "car", "Idly" not "food").
             for attempt in range(self.MAX_RETRIES):
                 try:
                     # Try Ollama 0.5+ schema-based format first
+                    # Add 90s timeout to prevent indefinite blocking on complex frames
+                    VLM_TIMEOUT = 90.0
                     try:
-                        resp = await self.client.chat(
-                            model=self.model,
-                            messages=messages,
-                            format=json_schema,  # Native schema format
+                        resp = await asyncio.wait_for(
+                            self.client.chat(
+                                model=self.model,
+                                messages=messages,
+                                format=json_schema,  # Native schema format
+                            ),
+                            timeout=VLM_TIMEOUT,
                         )
+                    except asyncio.TimeoutError:
+                        raise RuntimeError(f"VLM analysis timed out after {VLM_TIMEOUT}s")
                     except (TypeError, Exception) as schema_err:
                         if (
                             "format" in str(schema_err)
                             or "schema" in str(schema_err).lower()
                         ):
-                            resp = await self.client.chat(
-                                model=self.model,
-                                messages=messages,
-                                format="json",  # Fallback
+                            resp = await asyncio.wait_for(
+                                self.client.chat(
+                                    model=self.model,
+                                    messages=messages,
+                                    format="json",  # Fallback
+                                ),
+                                timeout=VLM_TIMEOUT,
                             )
                         else:
                             raise

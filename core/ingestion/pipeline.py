@@ -281,9 +281,7 @@ class IngestionPipeline:
             )
             logger.debug("Starting frame processing")
             await retry(
-                lambda: self._process_frames(
-                    path, job_id, total_duration=duration
-                )
+                lambda: self._process_frames(path, job_id, total_duration=duration)
             )
 
             logger.debug("Frame processing complete - cleaning memory")
@@ -582,64 +580,73 @@ class IngestionPipeline:
                 # Load audio for CLAP (16kHz mono)
                 try:
                     log("[CLAP] Loading audio file with librosa...")
-                    # Run librosa.load in a thread to verify if it blocks
+                    # Run librosa.load in a thread to avoid blocking
                     audio_array, sr = await asyncio.to_thread(
                         librosa.load, str(path), sr=16000, mono=True
                     )
                     log(f"[CLAP] Audio loaded: {len(audio_array)} samples, {sr}Hz")
 
-                    # Process in 2-second chunks to detect events with timestamps
+                    # Prepare 2-second chunks for BATCH processing (single GPU acquisition)
                     chunk_duration = 2.0
                     chunk_samples = int(chunk_duration * sr)
-                    audio_events = []
 
+                    # Build list of (chunk, start_time) tuples for batch processing
+                    audio_chunks: list[tuple] = []
                     for i in range(0, len(audio_array), chunk_samples):
                         chunk = audio_array[i : i + chunk_samples]
                         if len(chunk) < sr:  # Skip chunks < 1 second
                             continue
-
                         start_time = i / sr
-                        events = await audio_detector.detect_events(
-                            chunk,
-                            sample_rate=int(sr),
-                            top_k=3,
-                            threshold=0.25,
-                            target_classes=[
-                                "applause",
-                                "cheering",
-                                "laughter",
-                                "crowd",
-                                "music",
-                                "singing",
-                                "scary music",
-                                "happy music",
-                                "siren",
-                                "explosion",
-                                "gunshot",
-                                "glass breaking",
-                                "dog barking",
-                                "cat meowing",
-                                "bird chirping",
-                                "thunder",
-                                "rain",
-                                "ocean waves",
-                                "wind",
-                                "footsteps",
-                                "door slamming",
-                                "car engine",
-                            ],
-                        )
+                        audio_chunks.append((chunk, start_time))
 
+                    log(f"[CLAP] Prepared {len(audio_chunks)} chunks for batch processing")
+
+                    # Define target classes once
+                    target_classes = [
+                        "applause",
+                        "cheering",
+                        "laughter",
+                        "crowd",
+                        "music",
+                        "singing",
+                        "scary music",
+                        "happy music",
+                        "siren",
+                        "explosion",
+                        "gunshot",
+                        "glass breaking",
+                        "dog barking",
+                        "cat meowing",
+                        "bird chirping",
+                        "thunder",
+                        "rain",
+                        "ocean waves",
+                        "wind",
+                        "footsteps",
+                        "door slamming",
+                        "car engine",
+                    ]
+
+                    # BATCH PROCESSING: Single GPU acquisition for all chunks
+                    batch_results = await audio_detector.detect_events_batch(
+                        audio_chunks=audio_chunks,
+                        target_classes=target_classes,
+                        sample_rate=int(sr),
+                        top_k=3,
+                        threshold=0.25,
+                    )
+
+                    # Collect results with timestamps
+                    audio_events = []
+                    for (_, start_time), events in zip(audio_chunks, batch_results):
                         for event in events:
                             if event.get("event") not in ("speech", "silence"):
-                                audio_events.append(
-                                    {
-                                        "event": event["event"],
-                                        "confidence": event["confidence"],
-                                        "start": start_time,
-                                        "end": start_time + chunk_duration,
-                                    }
-                                )
+                                audio_events.append({
+                                    "event": event["event"],
+                                    "confidence": event["confidence"],
+                                    "start": start_time,
+                                    "end": start_time + chunk_duration,
+                                })
 
                     if audio_events:
                         log(
