@@ -849,12 +849,12 @@ class IngestionPipeline:
                         f"[Voice] FFmpeg failed for {clip_name}: {e}"
                     )
 
-            if clip_file.exists():
-                audio_path = f"/thumbnails/voices/{clip_name}"
-            else:
-                logger.warning(
-                    f"[Voice] Audio clip missing after ffmpeg: {clip_file}"
-                )
+                if clip_file.exists():
+                    audio_path = f"/thumbnails/voices/{clip_name}"
+                else:
+                    logger.warning(
+                        f"[Voice] Audio clip missing after ffmpeg: {clip_file}"
+                    )
 
                 # ALWAYS store voice segment (even if no embedding, use placeholder)
                 # Only store if we have an embedding (required by insert_voice_segment)

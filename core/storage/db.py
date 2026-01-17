@@ -4950,3 +4950,176 @@ class VectorDB:
         except Exception as e:
             log(f"get_entity_co_occurrences failed: {e}")
             return {}
+    def merge_face_clusters(
+        self, source_cluster_id: int | str, target_cluster_id: int | str
+    ) -> int:
+        """Merges source face cluster into target cluster.
+
+        Args:
+            source_cluster_id: ID of the cluster to be merged (dissolved).
+            target_cluster_id: ID of the cluster to merge into.
+
+        Returns:
+            Count of faces moved.
+        """
+        try:
+            # 1. Get all faces in source cluster
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=source_cluster_id),
+                        )
+                    ]
+                ),
+                limit=10000,
+            )
+            points = resp[0]
+            if not points:
+                return 0
+
+            point_ids = [point.id for point in points]
+
+            # 2. Move faces to target cluster
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"cluster_id": target_cluster_id},
+                points=point_ids,  # type: ignore
+            )
+
+            # 3. Update frames referencing the old cluster
+            self._update_frames_cluster_rename(
+                source_cluster_id, target_cluster_id
+            )
+
+            # 4. If target has a name, propagate it?
+            # (Usually separate renaming step, but good to check)
+            # For now, we rely on the user to name the target cluster if unnamed.
+
+            return len(point_ids)
+        except Exception as e:
+            log(f"merge_face_clusters failed: {e}")
+            return 0
+
+    def merge_voice_clusters(
+        self, source_cluster_id: int | str, target_cluster_id: int | str
+    ) -> int:
+        """Merges source voice cluster into target cluster.
+
+        Args:
+            source_cluster_id: ID of the cluster to be merged.
+            target_cluster_id: ID of the cluster to merge into.
+
+        Returns:
+            Count of voice segments moved.
+        """
+        try:
+            # 1. Get all segments in source cluster
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=source_cluster_id),
+                        )
+                    ]
+                ),
+                limit=10000,
+            )
+            points = resp[0]
+            if not points:
+                return 0
+
+            point_ids = [point.id for point in points]
+
+            # 2. Move segments to target cluster
+            self.client.set_payload(
+                collection_name=self.VOICE_COLLECTION,
+                payload={"voice_cluster_id": target_cluster_id},
+                points=point_ids,  # type: ignore
+            )
+
+            # 3. If target has a name, we should propagate it to frames?
+            # We need to find if target is named.
+            # But let's keep it simple: just merge clusters. Renaming happens separately.
+
+            return len(point_ids)
+        except Exception as e:
+            log(f"merge_voice_clusters failed: {e}")
+            return 0
+
+    def get_unresolved_faces(self, limit: int = 100) -> list[dict]:
+        """Get faces that are part of unnamed clusters.
+
+        Returns:
+            List of face point dictionaries.
+        """
+        try:
+            # Find clusters that have no name or name is empty strings
+            # This is hard in Qdrant due to limitations on empty filtering,
+            # so we fetch faces where 'name' is missing or empty.
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    should=[
+                        models.IsNullCondition(
+                            is_null=models.PayloadField(key="name")
+                        ),
+                        models.FieldCondition(
+                            key="name", match=models.MatchValue(value="")
+                        ),
+                    ]
+                ),
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            # Filter locally to be sure (as empty list vs None behavior varies)
+            unresolved = []
+            for p in resp[0]:
+                payload = p.payload or {}
+                name = payload.get("name")
+                if not name:  # None or ""
+                    unresolved.append(
+                        {"id": p.id, "payload": payload, "vector": p.vector}
+                    )
+            return unresolved
+        except Exception as e:
+            log(f"get_unresolved_faces failed: {e}")
+            return []
+
+    def get_unresolved_voices(self, limit: int = 100) -> list[dict]:
+        """Get voice segments that are part of unnamed clusters."""
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    should=[
+                        models.IsNullCondition(
+                            is_null=models.PayloadField(key="name")
+                        ),
+                        models.FieldCondition(
+                            key="name", match=models.MatchValue(value="")
+                        ),
+                    ]
+                ),
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            unresolved = []
+            for p in resp[0]:
+                payload = p.payload or {}
+                name = payload.get("name")
+                if not name:
+                    unresolved.append(
+                        {"id": p.id, "payload": payload, "vector": p.vector}
+                    )
+            return unresolved
+        except Exception as e:
+            log(f"get_unresolved_voices failed: {e}")
+            return []

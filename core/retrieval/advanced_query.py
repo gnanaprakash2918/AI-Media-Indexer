@@ -137,7 +137,8 @@ class AdvancedQueryDecomposer:
                 import json
 
                 prompt = self._prompt_template.format(query=query)
-                response = await self._llm.generate(prompt)
+                # Use format_json=True for reliable JSON output from Ollama
+                response = await self._llm.generate(prompt, format_json=True)
 
                 # Parse JSON response
                 response_clean = (

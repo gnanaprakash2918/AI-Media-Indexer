@@ -177,11 +177,14 @@ class OllamaLLM(LLMInterface):
             OllamaLLM._consecutive_errors = 0
 
     @observe("llm_generate")
-    async def generate(self, prompt: str, **kwargs: Any) -> str:
+    async def generate(
+        self, prompt: str, format_json: bool = False, **kwargs: Any
+    ) -> str:
         """Generates a text response from Ollama for a given prompt.
 
         Args:
             prompt: The user prompt to send to the model.
+            format_json: If True, use Ollama's native JSON mode for reliable JSON output.
             **kwargs: Additional model parameters (e.g., temperature).
 
         Returns:
@@ -197,11 +200,18 @@ class OllamaLLM(LLMInterface):
 
             for attempt in range(self.MAX_RETRIES):
                 try:
-                    resp = await self.client.chat(
-                        model=self.text_model,  # Use text model for text generation
-                        messages=[{"role": "user", "content": prompt}],
-                        options={"temperature": kwargs.get("temperature", 0.0)},
-                    )
+                    # Build chat request params
+                    chat_params: dict[str, Any] = {
+                        "model": self.text_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "options": {"temperature": kwargs.get("temperature", 0.0)},
+                    }
+                    
+                    # Enable native JSON mode if requested
+                    if format_json:
+                        chat_params["format"] = "json"
+                    
+                    resp = await self.client.chat(**chat_params)
                     content = resp.get("message", {}).get("content")
                     self._record_success()
                     return str(content) if content else ""

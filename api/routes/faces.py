@@ -7,12 +7,14 @@ from pydantic import BaseModel
 from qdrant_client import models
 
 from api.deps import get_pipeline
+from api.schemas import MergeClustersRequest
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
 
 router = APIRouter()
 
 
+@router.get("/faces/clusters")
 async def get_face_clusters(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
@@ -180,15 +182,13 @@ async def get_named_faces(
 
 @router.post("/faces/merge")
 async def merge_face_clusters(
-    source_cluster_id: int,
-    target_cluster_id: int,
+    request: MergeClustersRequest,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
     """Merge two face clusters into one.
 
     Args:
-        source_cluster_id: Cluster to merge FROM (will be dissolved).
-        target_cluster_id: Cluster to merge INTO.
+        request: Merge parameters (source and target IDs).
         pipeline: Ingestion pipeline dependency.
 
     Returns:
@@ -198,7 +198,7 @@ async def merge_face_clusters(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     count = pipeline.db.merge_face_clusters(
-        source_cluster_id, target_cluster_id
+        request.source_cluster_id, request.target_cluster_id
     )
     if count == 0:
         raise HTTPException(status_code=404, detail="No faces found to merge")
