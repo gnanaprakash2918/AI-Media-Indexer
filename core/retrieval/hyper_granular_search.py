@@ -492,3 +492,216 @@ class HyperGranularSearcher:
         except Exception as e:
             log.warning(f"[HyperGranular] Action verification failed: {e}")
             return {"verified": False, "error": str(e)}
+
+    async def scene_chain_search(
+        self,
+        scene_descriptions: list[str],
+        max_gap_seconds: float = 60.0,
+        video_path: str | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Search for a temporal sequence of scenes (A → B → C).
+
+        This is a core GraphRAG capability - finding narrative patterns
+        across time, like "Person A argues → storms out → slams door".
+
+        Args:
+            scene_descriptions: Ordered list of scene descriptions to find.
+            max_gap_seconds: Maximum time gap between consecutive scenes.
+            video_path: Optional filter to specific video.
+            limit: Maximum sequence matches to return.
+
+        Returns:
+            List of matched scene chains with temporal metadata.
+        """
+        if not self.db or len(scene_descriptions) < 2:
+            return []
+
+        log.info(f"[SceneChain] Searching for {len(scene_descriptions)}-step sequence")
+
+        # Search for each scene in the chain
+        scene_candidates: list[list[dict]] = []
+        for i, desc in enumerate(scene_descriptions):
+            try:
+                results = self.db.search_scenes(
+                    query=desc,
+                    limit=50,  # Get enough candidates
+                    video_path=video_path,
+                    search_mode="hybrid",
+                )
+                # Sort by start_time for temporal ordering
+                results = sorted(results, key=lambda x: x.get("start_time", 0))
+                scene_candidates.append(results)
+                log.info(f"[SceneChain] Scene {i+1} '{desc[:30]}...': {len(results)} candidates")
+            except Exception as e:
+                log.warning(f"[SceneChain] Scene {i+1} search failed: {e}")
+                scene_candidates.append([])
+
+        # Find valid temporal sequences
+        matched_chains = []
+
+        # Start with first scene candidates
+        if not scene_candidates or not scene_candidates[0]:
+            return []
+
+        for first_scene in scene_candidates[0]:
+            chain = [first_scene]
+            current_end_time = first_scene.get("end_time", first_scene.get("start_time", 0))
+            video = first_scene.get("media_path", "")
+
+            valid_chain = True
+            for i in range(1, len(scene_candidates)):
+                # Find next scene that follows current one within gap
+                next_scene = None
+                for candidate in scene_candidates[i]:
+                    # Must be same video (for now)
+                    if candidate.get("media_path", "") != video:
+                        continue
+
+                    candidate_start = candidate.get("start_time", 0)
+                    gap = candidate_start - current_end_time
+
+                    # Must come after current scene and within gap limit
+                    if 0 <= gap <= max_gap_seconds:
+                        next_scene = candidate
+                        break
+
+                if next_scene:
+                    chain.append(next_scene)
+                    current_end_time = next_scene.get("end_time", next_scene.get("start_time", 0))
+                else:
+                    valid_chain = False
+                    break
+
+            if valid_chain and len(chain) == len(scene_descriptions):
+                # Calculate chain score (average of individual scores)
+                chain_score = sum(s.get("score", 0) for s in chain) / len(chain)
+
+                matched_chains.append({
+                    "chain_id": len(matched_chains),
+                    "video_path": video,
+                    "chain_score": chain_score,
+                    "start_time": chain[0].get("start_time", 0),
+                    "end_time": chain[-1].get("end_time", 0),
+                    "total_duration": chain[-1].get("end_time", 0) - chain[0].get("start_time", 0),
+                    "scene_count": len(chain),
+                    "scenes": [
+                        {
+                            "index": i,
+                            "description": scene_descriptions[i],
+                            "matched_description": s.get("description", ""),
+                            "start_time": s.get("start_time", 0),
+                            "end_time": s.get("end_time", 0),
+                            "score": s.get("score", 0),
+                            "scene_id": s.get("id", ""),
+                        }
+                        for i, s in enumerate(chain)
+                    ],
+                })
+
+        # Sort by chain score and return top matches
+        matched_chains.sort(key=lambda x: x["chain_score"], reverse=True)
+        log.info(f"[SceneChain] Found {len(matched_chains)} valid sequences")
+        return matched_chains[:limit]
+
+    async def find_events_before_after(
+        self,
+        anchor_query: str,
+        before_seconds: float = 30.0,
+        after_seconds: float = 30.0,
+        video_path: str | None = None,
+    ) -> dict:
+        """Find events that happen before and after a specific anchor event.
+
+        Useful for cause-effect analysis: "What happened before the explosion?"
+
+        Args:
+            anchor_query: Description of the anchor event to find.
+            before_seconds: How many seconds before to search.
+            after_seconds: How many seconds after to search.
+            video_path: Optional filter to specific video.
+
+        Returns:
+            Dict with anchor, before_events, and after_events.
+        """
+        if not self.db:
+            return {"error": "No database configured"}
+
+        # Find the anchor event
+        try:
+            anchor_results = self.db.search_scenes(
+                query=anchor_query,
+                limit=1,
+                video_path=video_path,
+                search_mode="hybrid",
+            )
+
+            if not anchor_results:
+                return {"error": "Anchor event not found", "query": anchor_query}
+
+            anchor = anchor_results[0]
+            anchor_start = anchor.get("start_time", 0)
+            anchor_end = anchor.get("end_time", anchor_start)
+            anchor_video = anchor.get("media_path", "")
+
+            # Get all scenes for this video
+            all_scenes = self.db.get_scenes_for_video(
+                video_path=anchor_video,
+                limit=500,
+            )
+
+            # Find events before and after
+            before_events = []
+            after_events = []
+
+            for scene in all_scenes:
+                scene_start = scene.get("start_time", 0)
+                scene_end = scene.get("end_time", scene_start)
+
+                # Skip the anchor itself
+                if scene.get("id") == anchor.get("id"):
+                    continue
+
+                # Check if before anchor
+                if scene_end <= anchor_start and (anchor_start - scene_end) <= before_seconds:
+                    before_events.append({
+                        "scene_id": scene.get("id"),
+                        "start_time": scene_start,
+                        "end_time": scene_end,
+                        "description": scene.get("description", ""),
+                        "gap_to_anchor": anchor_start - scene_end,
+                    })
+
+                # Check if after anchor
+                elif scene_start >= anchor_end and (scene_start - anchor_end) <= after_seconds:
+                    after_events.append({
+                        "scene_id": scene.get("id"),
+                        "start_time": scene_start,
+                        "end_time": scene_end,
+                        "description": scene.get("description", ""),
+                        "gap_from_anchor": scene_start - anchor_end,
+                    })
+
+            # Sort by proximity to anchor
+            before_events.sort(key=lambda x: x["gap_to_anchor"])
+            after_events.sort(key=lambda x: x["gap_from_anchor"])
+
+            return {
+                "anchor": {
+                    "query": anchor_query,
+                    "scene_id": anchor.get("id"),
+                    "start_time": anchor_start,
+                    "end_time": anchor_end,
+                    "description": anchor.get("description", ""),
+                    "video_path": anchor_video,
+                },
+                "before_events": before_events,
+                "after_events": after_events,
+                "before_count": len(before_events),
+                "after_count": len(after_events),
+            }
+
+        except Exception as e:
+            log.warning(f"[HyperGranular] Before/after search failed: {e}")
+            return {"error": str(e)}
+

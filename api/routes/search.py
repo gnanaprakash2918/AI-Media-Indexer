@@ -701,3 +701,90 @@ async def granular_search(
         raise HTTPException(
             status_code=500, detail=f"Granular search failed: {e}"
         ) from e
+
+
+@router.get("/search/multimodal")
+async def multimodal_search(
+    q: Annotated[str, Query(..., description="Search query")],
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    limit: Annotated[int, Query(description="Maximum results")] = 20,
+    video_path: Annotated[
+        str | None, Query(description="Filter to specific video")
+    ] = None,
+    use_reranking: Annotated[
+        bool, Query(description="Use LLM re-ranking")
+    ] = True,
+) -> dict:
+    """Comprehensive multimodal search using ALL indexed data sources.
+
+    Fuses results from:
+    - Scenes (visual + motion + dialogue vectors)
+    - Voice segments (speaker diarization)
+    - Face clusters (identity)
+    - Co-occurrences (temporal relationships)
+
+    Uses Reciprocal Rank Fusion (RRF) to merge modalities.
+
+    Args:
+        q: Natural language search query.
+        pipeline: The core ingestion pipeline instance.
+        limit: Maximum number of results to return.
+        video_path: Optional filter for a specific video.
+        use_reranking: Whether to enable LLM verification.
+
+    Returns:
+        Fused results with modality breakdown and reasoning.
+    """
+    start_time_search = time.perf_counter()
+    logger.info(f"[MultimodalSearch] Query: '{q[:80]}...'")
+
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        if SearchAgent:
+            agent = SearchAgent(db=pipeline.db)
+            result = await agent.comprehensive_multimodal_search(
+                query=q,
+                limit=limit,
+                video_path=video_path,
+                use_reranking=use_reranking,
+            )
+
+            # Add thumbnail/playback URLs
+            for hit in result.get("results", []):
+                video = hit.get("video_path") or hit.get("media_path", "")
+                ts = hit.get("start_time", hit.get("timestamp", 0))
+                if video and "thumbnail_url" not in hit:
+                    safe_path = quote(str(video))
+                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
+                    hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+
+            duration = time.perf_counter() - start_time_search
+            result["stats"] = {
+                "duration_seconds": round(duration, 3),
+                **result.get("modality_breakdown", {}),
+            }
+
+            logger.info(
+                f"[MultimodalSearch] Returned {len(result.get('results', []))} "
+                f"results in {duration:.3f}s"
+            )
+            return result
+        else:
+            raise ImportError("SearchAgent undefined")
+
+    except Exception as e:
+        logger.error(f"[MultimodalSearch] Error: {e}")
+        # Fallback to hybrid search
+        results = _normalize_results(
+            pipeline.db.search_frames_hybrid(query=q, limit=limit)
+        )
+        return {
+            "query": q,
+            "results": results,
+            "stats": {"total": len(results), "fallback": True},
+            "error": str(e),
+            "search_type": "fallback",
+        }
+

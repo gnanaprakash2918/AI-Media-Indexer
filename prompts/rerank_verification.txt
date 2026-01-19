@@ -1,5 +1,6 @@
-You are verifying if a video segment matches a user query.
-Be STRICT in your evaluation. Only give high scores if ALL constraints are satisfied.
+You are a precise video segment verification expert. Your task is to verify if a video segment matches a user's search query.
+
+IMPORTANT: Use Chain-of-Thought (CoT) reasoning to systematically evaluate each constraint.
 
 QUERY: "{query}"
 
@@ -7,33 +8,58 @@ SEGMENT DESCRIPTION:
 {description}
 
 SEGMENT METADATA:
-- People: {face_names}
+- People Visible: {face_names}
 - Location: {location}
 - Actions: {actions}
-- Visible Text: {visible_text}
+- Visible Text/OCR: {visible_text}
 
-SCORING RULES:
-- Score 0.9-1.0: ALL query constraints are clearly visible/present
-- Score 0.7-0.89: Most constraints satisfied, minor elements missing
-- Score 0.5-0.69: Some constraints match, significant elements missing
-- Score 0.3-0.49: Few constraints match, most elements missing
-- Score 0.0-0.29: Does not match the query at all
+---
 
-CONSTRAINT CHECKLIST:
-1. People/Characters: Are the mentioned people present? Names must match.
-2. Clothing/Colors: Do clothes match the described colors and types exactly?
-3. Actions/Activities: Is the described action happening?
-4. Location/Setting: Does the scene match the described location?
-5. Objects/Text: Are mentioned objects or text visible?
-6. Relationships: Are spatial relationships (X next to Y) correct?
+CHAIN-OF-THOUGHT VERIFICATION PROCESS:
 
-Be HARSH - if the query says "yellow skirt" and you see "yellow pants", that's NOT a match.
-If a person is mentioned by name and they're not identified, score low.
+Step 1: EXTRACT CONSTRAINTS from the query
+- List ALL explicit and implicit constraints mentioned in the query
+- Categorize each: PERSON | CLOTHING | ACTION | LOCATION | OBJECT | TEXT | RELATIONSHIP
+
+Step 2: CHECK EACH CONSTRAINT against segment data
+For each constraint, provide evidence:
+- [✓] MATCHED: Describe exactly what matches and where
+- [✗] MISSING: Explain what's missing or doesn't match
+- [?] UNCERTAIN: Note when evidence is ambiguous
+
+Step 3: REASON ABOUT PARTIAL MATCHES
+- Consider if similar items count (e.g., "blue shirt" vs "blue top")
+- Consider contextual clues that support the match
+- Be STRICT: partial matches reduce score significantly
+
+Step 4: CALCULATE FINAL SCORE based on constraint satisfaction:
+- 0.9-1.0: ALL constraints clearly satisfied with strong evidence
+- 0.7-0.89: Most constraints (>75%) satisfied, minor elements missing
+- 0.5-0.69: Majority constraints satisfied (50-75%), some significant gaps
+- 0.3-0.49: Few constraints match (<50%), major elements missing
+- 0.0-0.29: Minimal or no constraint matches
+
+---
+
+REASONING REQUIREMENTS:
+Your reasoning MUST be specific and evidence-based. 
+
+BAD EXAMPLES (vague):
+- "Visual match" ❌
+- "The scene matches the query" ❌
+- "Face detected" ❌
+
+GOOD EXAMPLES (evidence-based):
+- "Step 1: Query asks for [Person X in yellow dress at beach]. Step 2: [PERSON] Found face cluster #7, name='Person X' (confidence 0.92). [CLOTHING] Yellow garment visible on torso, appears to be dress. [LOCATION] Sandy background with water visible - matches beach. Step 3: All 3 constraints have strong evidence. Score: 0.95"
+- "Step 1: Query asks for [Person A talking to Person B]. Step 2: [PERSON A] Face cluster #3 identified. [PERSON B] NOT FOUND in frame - only 1 person visible. [ACTION] Speaking gesture detected but no second person. Step 3: Critical constraint (Person B) missing. Score: 0.35"
+
+---
 
 Return ONLY valid JSON:
 {{
   "match_score": 0.0,
-  "reasoning": "Step by step explanation of what matches and what doesn't",
-  "constraints_checked": ["constraint 1", "constraint 2"],
-  "missing": ["constraint that failed"]
+  "reasoning": "Step 1: [CONSTRAINTS IDENTIFIED] ... Step 2: [EVIDENCE CHECK] ... Step 3: [PARTIAL MATCH ANALYSIS] ... Step 4: [FINAL SCORE JUSTIFICATION]",
+  "constraints_checked": ["constraint 1", "constraint 2", "..."],
+  "constraints_satisfied": ["matched constraint 1", "matched constraint 2"],
+  "missing": ["missing element 1", "missing element 2"]
 }}

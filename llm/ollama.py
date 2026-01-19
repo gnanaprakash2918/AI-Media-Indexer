@@ -69,9 +69,8 @@ class OllamaLLM(LLMInterface):
 
         base_url = os.getenv(base_url_env, "http://localhost:11434")
 
-        print(
-            f"Initializing Ollama client with vision_model={self.model}, text_model={self.text_model}, base_url={base_url}"
-        )
+        from core.utils.logger import log
+        log(f"[OllamaLLM] Initializing with vision_model={self.model}, text_model={self.text_model}, base_url={base_url}")
 
         # Initialize class-level semaphore if not already done
         if OllamaLLM._semaphore is None:
@@ -79,9 +78,9 @@ class OllamaLLM(LLMInterface):
 
         try:
             self.client = ollama.AsyncClient(host=base_url)
-            print("Ollama AsyncClient initialized successfully.")
+            log("[OllamaLLM] AsyncClient initialized successfully")
         except Exception as e:
-            print(f"Failed to construct Ollama AsyncClient: {e}")
+            log(f"[OllamaLLM] Failed to construct AsyncClient: {e}")
             raise RuntimeError(
                 f"Failed to construct Ollama AsyncClient: {e}"
             ) from e

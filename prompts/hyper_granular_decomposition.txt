@@ -1,24 +1,98 @@
-Decompose this query into structured constraints. Return JSON only.
+You are an expert query decomposition system. Your task is to break down natural language search queries into structured, machine-readable constraints.
 
-Query: {query}
+APPROACH: Use Chain-of-Thought (CoT) reasoning to extract constraints systematically.
 
-Output schema:
+---
+
+QUERY TO DECOMPOSE:
+{query}
+
+---
+
+STEP-BY-STEP DECOMPOSITION PROCESS:
+
+1. IDENTIFY ENTITIES: Who is mentioned? (people, characters, objects)
+2. IDENTIFY ATTRIBUTES: What properties are described? (colors, sizes, types)
+3. IDENTIFY ACTIONS: What activities or movements are mentioned?
+4. IDENTIFY CONTEXT: Where/when does this happen? (location, time, setting)
+5. IDENTIFY RELATIONSHIPS: How do elements relate? (spatial, temporal, causal)
+6. SYNTHESIZE: Combine into structured output
+
+---
+
+OUTPUT SCHEMA:
 {{
-  "identities": [{{"name": "...", "face_id": null}}],
-  "clothing": [{{"body_part": "upper|lower|footwear|accessory", "item": "...", "color": "...", "pattern": "...", "side": "left|right|both|unknown"}}],
-  "audio": [{{"event_class": "...", "min_db": null, "max_db": null}}],
-  "temporal": [{{"constraint_type": "delay|duration|sequence", "min_ms": null, "max_ms": null, "reference_event": "..."}}],
-  "text": [{{"text": "...", "location": "sign|shirt|screen|any"}}],
-  "spatial": [{{"measurement_type": "distance|size", "value_cm": null, "reference": "..."}}],
-  "actions": [{{"action": "...", "intensity": "slow|normal|fast|unknown", "result": "..."}}],
-  "scene_description": "dense semantic description for vector search"
+  "identities": [
+    {{"name": "person name or null", "face_id": null, "confidence": 0.8}}
+  ],
+  "clothing": [
+    {{
+      "body_part": "upper|lower|footwear|accessory",
+      "item": "specific garment type",
+      "color": "color name",
+      "pattern": "solid|striped|patterned|unknown",
+      "side": "left|right|both|unknown"
+    }}
+  ],
+  "audio": [
+    {{"event_class": "sound type", "min_db": null, "max_db": null, "loudness_category": "quiet|moderate|loud|very_loud"}}
+  ],
+  "temporal": [
+    {{
+      "constraint_type": "delay|duration|sequence|before|after",
+      "min_ms": null,
+      "max_ms": null,
+      "reference_event": "event description"
+    }}
+  ],
+  "text": [
+    {{"text": "visible text to find", "location": "sign|shirt|screen|any", "is_exact": false}}
+  ],
+  "spatial": [
+    {{
+      "measurement_type": "distance|size|height|area",
+      "value_cm": null,
+      "min_cm": null,
+      "max_cm": null,
+      "reference": "reference object"
+    }}
+  ],
+  "actions": [
+    {{
+      "action": "action verb/phrase",
+      "intensity": "slow|normal|fast|unknown",
+      "result": "outcome if mentioned"
+    }}
+  ],
+  "location": "scene location if mentioned",
+  "scene_description": "comprehensive semantic description optimized for vector similarity search"
 }}
 
-Examples:
-- "Prakash blue t-shirt" -> identities: [name: Prakash], clothing: [body_part: upper, color: blue, item: t-shirt]
-- "92dB cheer" -> audio: [event_class: cheer, min_db: 92]
-- "500ms delay before fall" -> temporal: [constraint_type: delay, min_ms: 500, reference_event: fall]
-- "Brunswick Sports sign" -> text: [text: Brunswick Sports, location: sign]
-- "red sneaker left foot" -> clothing: [body_part: footwear, color: red, item: sneaker, side: left]
+---
 
-JSON only, no markdown:
+DECOMPOSITION GUIDELINES:
+
+- Extract ALL explicit constraints, even partial information
+- Infer implicit constraints when context strongly suggests them
+- The scene_description should be a dense, searchable summary
+- If no constraints exist for a category, use empty array []
+- Be precise: "blue shirt" vs "blue top" matters for accuracy
+- Handle synonyms: "talking" = "speaking" = "conversing"
+- Handle negations: "not wearing red" should be noted
+
+---
+
+EXAMPLES:
+
+Query: "Person walking in park wearing green jacket"
+→ identities: [], clothing: [body_part: upper, item: jacket, color: green], actions: [action: walking], location: "park", scene_description: "person walking outdoors in park setting wearing green jacket"
+
+Query: "Two people talking at a coffee shop table"
+→ identities: [], actions: [action: talking], location: "coffee shop", spatial: [measurement_type: distance, reference: "table"], scene_description: "two people in conversation at table inside coffee shop"
+
+Query: "Red car driving fast on highway at night"
+→ identities: [], actions: [action: driving, intensity: fast], location: "highway at night", scene_description: "red car moving at high speed on highway during nighttime"
+
+---
+
+Return ONLY valid JSON, no markdown code blocks:

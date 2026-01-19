@@ -9,10 +9,23 @@ logs/
 # Debug files
 debug_*.py
 debug_*.log
+debug_*.txt
+debug_output.txt
 test_debug.py
 verify_fixes.py
 .agents/
 .agent/
+
+# Temporary output/test files
+output.txt
+test_output.txt
+search_test.json
+clusters.json
+agent_err.json
+check_stats.py
+debug_import.py
+*.tmp
+*.bak
 
 # Langfuse local data
 langfuse_data/

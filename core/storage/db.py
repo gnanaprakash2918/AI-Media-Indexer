@@ -1336,8 +1336,11 @@ class VectorDB:
                         "match_reasons": [],
                         **payload,
                     }
+                # Generate detailed match reason with actual content
+                payload = hit.payload or {}
+                desc_preview = (payload.get("description") or payload.get("action") or "")[:80]
                 results_by_id[point_id]["match_reasons"].append(
-                    f"Visual match ({hit.score:.2f})"
+                    f"Semantic match (score={hit.score:.2f}): {desc_preview}..."
                 )
         except Exception as e:
             log(f"Vector search failed: {e}")
@@ -1349,7 +1352,7 @@ class VectorDB:
             # We use Qdrant's MatchText to find documents containing query terms.
             # This is much faster than scraping random frames.
 
-            # Fields to search
+            # Fields to search - COMPREHENSIVE list of ALL indexed text fields
             text_fields = [
                 "action",
                 "dialogue",
@@ -1357,10 +1360,15 @@ class VectorDB:
                 "entities",
                 "visible_text",
                 "face_names",
+                "speaker_names",
                 "clothing_colors",
                 "clothing_types",
                 "accessories",
                 "scene_location",
+                "ocr_text",
+                "transcript",
+                "identity_text",
+                "temporal_context",
             ]
 
             should_conditions = []
@@ -1422,13 +1430,20 @@ class VectorDB:
                     if any(w in val for w in q_lower if len(w) > 2):
                         matched_fields.append(field)
 
-                if matched_fields:
+                # Generate detailed match reason showing WHAT matched
+                field_details = []
+                for field in matched_fields:
+                    val = str(payload.get(field, ""))[:50]
+                    if val:
+                        field_details.append(f"{field}='{val}'")
+                
+                if field_details:
                     results_by_id[point_id]["match_reasons"].append(
-                        f"Keyword match: {', '.join(matched_fields[:3])}"
+                        f"Text match: {'; '.join(field_details[:3])}"
                     )
                 else:
                     results_by_id[point_id]["match_reasons"].append(
-                        "Text match"
+                        "Text match (partial)"
                     )
 
             # === 2b. MASKLET SEARCH (Deep Video Understanding) ===
@@ -1528,14 +1543,171 @@ class VectorDB:
                                     "match_reasons": [],
                                     **payload,
                                 }
+                            # Get more details for reasoning
+                            face_names = result.get("face_names", [])
+                            confidence = "high" if len(rank_lists.get("identity", {})) <= 5 else "medium"
                             results_by_id[point_id]["match_reasons"].append(
-                                f"Person match: '{name}'"
+                                f"Face identity: '{name}' (cluster={cluster_id}, conf={confidence}, visible_faces={face_names})"
                             )
                             results_by_id[point_id]["matched_identity"] = name
         except Exception as e:
             log(f"Identity search failed: {e}")
 
-        # === 4. RRF FUSION ===
+        # === 4. VOICE/TRANSCRIPT SEARCH (Who said what) ===
+        try:
+            # Search voice_segments for dialogue matching query
+            voice_conditions = []
+            if video_paths:
+                voice_conditions.append(
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchAny(any=video_paths),
+                    )
+                )
+            # Text match on transcript
+            voice_conditions.append(
+                models.FieldCondition(
+                    key="transcript",
+                    match=models.MatchText(text=query),
+                )
+            )
+            
+            voice_resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(must=voice_conditions),
+                limit=limit * 2,
+                with_payload=True,
+            )
+            
+            for rank, point in enumerate(voice_resp[0]):
+                payload = point.payload or {}
+                # Create composite ID linking to timestamp
+                media_path = payload.get("media_path", "")
+                start_time = payload.get("start", 0)
+                
+                # Find corresponding frame at this timestamp
+                frame_filter = models.Filter(must=[
+                    models.FieldCondition(
+                        key="video_path",
+                        match=models.MatchValue(value=media_path),
+                    ),
+                    models.FieldCondition(
+                        key="timestamp",
+                        range=models.Range(gte=start_time - 2, lte=start_time + 2),
+                    ),
+                ])
+                
+                frame_resp = self.client.scroll(
+                    collection_name=self.MEDIA_COLLECTION,
+                    scroll_filter=frame_filter,
+                    limit=1,
+                    with_payload=True,
+                )
+                
+                if frame_resp[0]:
+                    frame_point = frame_resp[0][0]
+                    point_id = str(frame_point.id)
+                    rank_lists["voice"][point_id] = rank + 1
+                    
+                    if point_id not in results_by_id:
+                        frame_payload = frame_point.payload or {}
+                        results_by_id[point_id] = {
+                            "id": point_id,
+                            "score": 0.0,
+                            "voice_match": True,
+                            "match_reasons": [],
+                            **frame_payload,
+                        }
+                    
+                    # Detailed voice/transcript match info
+                    transcript = payload.get("transcript", "")[:100]
+                    speaker = payload.get("speaker_name") or f"Speaker #{payload.get('cluster_id', '?')}"
+                    results_by_id[point_id]["match_reasons"].append(
+                        f"Dialogue match: '{speaker}' said '{transcript}...'"
+                    )
+                    results_by_id[point_id]["matched_dialogue"] = transcript
+                    
+        except Exception as e:
+            log(f"Voice/transcript search failed: {e}")
+
+        # === 5. AUDIO EVENT SEARCH (Music/Sounds) ===
+        try:
+            audio_conditions = []
+            if video_paths:
+                audio_conditions.append(
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchAny(any=video_paths),
+                    )
+                )
+            # Match audio event type/label
+            audio_conditions.append(
+                models.FieldCondition(
+                    key="event_type",
+                    match=models.MatchText(text=query),
+                )
+            )
+            
+            audio_resp = self.client.scroll(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                scroll_filter=models.Filter(should=audio_conditions),  # OR condition
+                limit=limit,
+                with_payload=True,
+            )
+            
+            for rank, point in enumerate(audio_resp[0]):
+                payload = point.payload or {}
+                media_path = payload.get("media_path", "")
+                start_time = payload.get("start_time", 0)
+                
+                # Find frame near this audio event
+                if media_path:
+                    frame_filter = models.Filter(must=[
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchValue(value=media_path),
+                        ),
+                        models.FieldCondition(
+                            key="timestamp",
+                            range=models.Range(gte=start_time - 1, lte=start_time + 3),
+                        ),
+                    ])
+                    
+                    frame_resp = self.client.scroll(
+                        collection_name=self.MEDIA_COLLECTION,
+                        scroll_filter=frame_filter,
+                        limit=1,
+                        with_payload=True,
+                    )
+                    
+                    if frame_resp[0]:
+                        frame_point = frame_resp[0][0]
+                        point_id = str(frame_point.id)
+                        rank_lists["audio"][point_id] = rank + 1
+                        
+                        if point_id not in results_by_id:
+                            frame_payload = frame_point.payload or {}
+                            results_by_id[point_id] = {
+                                "id": point_id,
+                                "score": 0.0,
+                                "audio_event_match": True,
+                                "match_reasons": [],
+                                **frame_payload,
+                            }
+                        
+                        # Detailed audio event info
+                        event_type = payload.get("event_type", "unknown")
+                        confidence = payload.get("confidence", 0)
+                        results_by_id[point_id]["match_reasons"].append(
+                            f"Audio event: '{event_type}' (conf={confidence:.2f}) at {start_time:.1f}s"
+                        )
+                        
+        except Exception as e:
+            log(f"Audio event search failed: {e}")
+
+        log(f"Total modalities searched: vector, keyword, identity, voice, audio")
+
+        # === 6. RRF FUSION ===
         for point_id, result in results_by_id.items():
             rrf_score = 0.0
             for _method, ranks in rank_lists.items():
@@ -3737,7 +3909,86 @@ class VectorDB:
             log(f"get_voice_segments_for_media error: {e}")
             return []
 
+    def get_voice_segments_by_video(
+        self,
+        video_path: str,
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get voice diarization segments for a video within optional time range.
+
+        Used by Overlays API to display speaker indicators on video timeline.
+
+        Args:
+            video_path: Path to the video file.
+            start_time: Optional start time filter in seconds.
+            end_time: Optional end time filter in seconds.
+
+        Returns:
+            List of voice segments with speaker info, sorted by start time.
+        """
+        try:
+            conditions = [
+                models.FieldCondition(
+                    key="media_path",
+                    match=models.MatchValue(value=video_path),
+                )
+            ]
+
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(must=conditions),
+                limit=2000,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            results = []
+            for point in resp[0]:
+                payload = point.payload or {}
+                seg_start = payload.get("start", 0)
+                seg_end = payload.get("end", 0)
+
+                # Apply time range filter if provided
+                if start_time is not None and seg_end < start_time:
+                    continue
+                if end_time is not None and seg_start > end_time:
+                    continue
+
+                voice_cluster_id = payload.get("voice_cluster_id", -1)
+                speaker_name = payload.get("speaker_name")
+                speaker_label = payload.get("speaker_label", "")
+
+                # Build display label
+                if speaker_name:
+                    display_label = speaker_name
+                elif voice_cluster_id >= 0:
+                    display_label = f"Speaker #{voice_cluster_id}"
+                else:
+                    display_label = speaker_label or "Unknown Speaker"
+
+                results.append(
+                    {
+                        "id": str(point.id),
+                        "start_time": seg_start,
+                        "end_time": seg_end,
+                        "speaker_label": display_label,
+                        "speaker_name": speaker_name,
+                        "voice_cluster_id": voice_cluster_id,
+                        "audio_path": payload.get("audio_path"),
+                    }
+                )
+
+            # Sort by start time
+            results.sort(key=lambda x: x["start_time"])
+            return results
+
+        except Exception as e:
+            log(f"get_voice_segments_by_video error: {e}")
+            return []
+
     @observe("db_get_recent_frames")
+
     def get_recent_frames(self, limit: int = 20) -> list[dict[str, Any]]:
         """Get the most recently indexed frames.
 
@@ -3922,6 +4173,161 @@ class VectorDB:
             return None
         except Exception:
             return None
+
+    def get_speaker_cluster_by_name(self, name: str) -> int | None:
+        """Find voice cluster ID by HITL-assigned speaker name.
+
+        Used for cross-modal identity linking - when a face is named,
+        find if there's a voice cluster with the same name.
+
+        Args:
+            name: The speaker name to search for.
+
+        Returns:
+            Voice cluster ID if found, None otherwise.
+        """
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="speaker_name",
+                            match=models.MatchValue(value=name),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=["voice_cluster_id"],
+            )
+            if resp[0]:
+                return (resp[0][0].payload or {}).get("voice_cluster_id")
+            return None
+        except Exception:
+            return None
+
+    def link_face_voice_by_name(self, name: str) -> dict[str, Any]:
+        """Link face and voice clusters that share the same HITL-assigned name.
+
+        This enables cross-modal search: "Show me when Prakash is speaking"
+        will match both face detection (visual) and voice diarization (audio).
+
+        Args:
+            name: The shared identity name.
+
+        Returns:
+            Dict with face_cluster_id, voice_cluster_id, and linked status.
+        """
+        face_cluster_id = self.get_face_cluster_by_name(name)
+        voice_cluster_id = self.get_speaker_cluster_by_name(name)
+
+        result = {
+            "name": name,
+            "face_cluster_id": face_cluster_id,
+            "voice_cluster_id": voice_cluster_id,
+            "linked": face_cluster_id is not None and voice_cluster_id is not None,
+        }
+
+        if result["linked"]:
+            log(f"[CrossModal] Linked identity '{name}': face={face_cluster_id}, voice={voice_cluster_id}")
+
+        return result
+
+    def get_person_co_occurrences(
+        self,
+        video_path: str | None = None,
+        time_window_seconds: float = 5.0,
+    ) -> list[dict[str, Any]]:
+        """Extract person co-occurrences for GraphRAG relationship building.
+
+        Finds pairs of people who appear together in the same time window.
+        This forms the basis for APPEARED_WITH edges in the knowledge graph.
+
+        Args:
+            video_path: Optional filter to specific video.
+            time_window_seconds: Time window for considering co-occurrence.
+
+        Returns:
+            List of co-occurrence edges with temporal metadata.
+        """
+        try:
+            # Get all frames with face detections
+            conditions = []
+            if video_path:
+                conditions.append(
+                    models.FieldCondition(
+                        key="video_path",
+                        match=models.MatchValue(value=video_path),
+                    )
+                )
+
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(must=conditions) if conditions else None,
+                limit=5000,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            # Group frames by video and find co-occurrences
+            co_occurrences: dict[tuple, dict] = {}
+
+            for point in resp[0]:
+                payload = point.payload or {}
+                face_cluster_ids = payload.get("face_cluster_ids", [])
+                face_names = payload.get("face_names", [])
+                timestamp = payload.get("timestamp", 0)
+                vid_path = payload.get("video_path", "")
+
+                # Only process frames with 2+ faces
+                if len(face_cluster_ids) < 2:
+                    continue
+
+                # Create pairs of co-occurring identities
+                for i in range(len(face_cluster_ids)):
+                    for j in range(i + 1, len(face_cluster_ids)):
+                        id1, id2 = sorted([face_cluster_ids[i], face_cluster_ids[j]])
+                        name1 = face_names[i] if i < len(face_names) else None
+                        name2 = face_names[j] if j < len(face_names) else None
+
+                        key = (vid_path, id1, id2)
+                        if key not in co_occurrences:
+                            co_occurrences[key] = {
+                                "video_path": vid_path,
+                                "person1_cluster_id": id1,
+                                "person1_name": name1,
+                                "person2_cluster_id": id2,
+                                "person2_name": name2,
+                                "timestamps": [],
+                                "interaction_count": 0,
+                            }
+
+                        co_occurrences[key]["timestamps"].append(timestamp)
+                        co_occurrences[key]["interaction_count"] += 1
+
+                        # Update names if discovered
+                        if name1 and not co_occurrences[key]["person1_name"]:
+                            co_occurrences[key]["person1_name"] = name1
+                        if name2 and not co_occurrences[key]["person2_name"]:
+                            co_occurrences[key]["person2_name"] = name2
+
+            # Compute time ranges for each co-occurrence
+            results = []
+            for key, data in co_occurrences.items():
+                timestamps = sorted(data["timestamps"])
+                if timestamps:
+                    data["start_time"] = min(timestamps)
+                    data["end_time"] = max(timestamps)
+                    data["duration"] = data["end_time"] - data["start_time"]
+                del data["timestamps"]  # Remove raw list to save space
+                results.append(data)
+
+            log(f"[GraphRAG] Found {len(results)} co-occurrence relationships")
+            return results
+
+        except Exception as e:
+            log(f"get_person_co_occurrences error: {e}")
+            return []
 
     def set_face_name(self, cluster_id: str | int, name: str) -> int:
         """Set name for a face cluster (and all its points).

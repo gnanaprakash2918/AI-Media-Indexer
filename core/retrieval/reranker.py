@@ -126,6 +126,32 @@ class RerankingCouncil:
 
         self._models_loaded = True
 
+    def _get_text_for_ranking(self, candidate: "SearchCandidate") -> str:
+        """Extract text content from candidate for ranking models."""
+        payload = candidate.payload or {}
+        # Try multiple possible text fields in order of preference
+        text = (
+            payload.get("description", "")
+            or payload.get("dense_caption", "")
+            or payload.get("transcript", "")
+            or payload.get("text", "")
+            or payload.get("scene_description", "")
+            or payload.get("raw_description", "")
+            or ""
+        )
+        # Fallback: combine available fields if primary is empty
+        if not text:
+            parts = []
+            for key in ["actions", "entity_names", "face_names", "visible_text"]:
+                val = payload.get(key, [])
+                if val:
+                    if isinstance(val, list):
+                        parts.append(" ".join(str(v) for v in val))
+                    else:
+                        parts.append(str(val))
+            text = " ".join(parts)
+        return str(text)[:1000]  # Limit length for models
+
     async def council_rerank(
         self,
         query: str,
@@ -160,14 +186,7 @@ class RerankingCouncil:
         if self._cross_encoder:
             try:
                 pairs = [
-                    (
-                        query,
-                        str(
-                            c.payload.get("description", "")
-                            or c.payload.get("transcript", "")
-                            or ""
-                        ),
-                    )
+                    (query, self._get_text_for_ranking(c))
                     for c in candidates
                 ]
                 ce_scores = self._cross_encoder.predict(list(pairs))
@@ -181,17 +200,9 @@ class RerankingCouncil:
         if self._bge_reranker:
             try:
                 pairs = [
-                    (
-                        query,
-                        str(
-                            c.payload.get("description", "")
-                            or c.payload.get("transcript", "")
-                            or ""
-                        ),
-                    )
+                    (query, self._get_text_for_ranking(c))
                     for c in candidates
                 ]
-                bge_scores = self._bge_reranker.compute_score(pairs)
                 bge_scores = self._bge_reranker.compute_score(pairs)
                 if bge_scores is not None:
                     if isinstance(bge_scores, (int, float)):

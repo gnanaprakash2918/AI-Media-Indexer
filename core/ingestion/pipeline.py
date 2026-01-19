@@ -388,9 +388,46 @@ class IngestionPipeline:
 
             # Auto-detect language if enabled
             detected_lang = "en"
+            detection_confidence = 0.0
+            
             if settings.auto_detect_language:
-                detected_lang = await self._detect_audio_language(path)
-                log(f"[Audio] Detected language: {detected_lang}")
+                detected_lang, detection_confidence = await self._detect_audio_language_with_confidence(path)
+                log(f"[Audio] Detected language: {detected_lang} ({detection_confidence:.1%} confidence)")
+                
+                # === DYNAMIC MULTI-PASS DETECTION ===
+                # If confidence is low (<60%), try detecting on a different segment
+                # This helps with music videos where intro might not have speech
+                if detection_confidence < 0.6:
+                    log(f"[Audio] Low confidence ({detection_confidence:.1%}), trying second pass on different segment...")
+                    second_lang, second_conf = await self._detect_audio_language_with_confidence(
+                        path, start_offset=30.0, duration=30.0
+                    )
+                    log(f"[Audio] Second pass: {second_lang} ({second_conf:.1%})")
+                    
+                    # Use the detection with higher confidence
+                    if second_conf > detection_confidence:
+                        detected_lang = second_lang
+                        detection_confidence = second_conf
+                        log(f"[Audio] Using second pass result: {detected_lang}")
+                    
+                    # If still low confidence, try third pass on middle of video
+                    if detection_confidence < 0.5:
+                        try:
+                            # Probe for duration
+                            probed = self.prober.probe(path)
+                            duration = float(probed.get("format", {}).get("duration", 0.0))
+                            if duration > 120:  # Only if video is longer than 2 min
+                                mid_point = duration / 2
+                                third_lang, third_conf = await self._detect_audio_language_with_confidence(
+                                    path, start_offset=mid_point, duration=30.0
+                                )
+                                log(f"[Audio] Third pass (mid-video): {third_lang} ({third_conf:.1%})")
+                                if third_conf > detection_confidence:
+                                    detected_lang = third_lang
+                                    detection_confidence = third_conf
+                                    log(f"[Audio] Using mid-video detection: {detected_lang}")
+                        except Exception:
+                            pass
             else:
                 detected_lang = settings.language or "en"
 
@@ -757,6 +794,101 @@ class IngestionPipeline:
         """
         with AudioTranscriber() as transcriber:
             return transcriber.detect_language(path)
+
+    async def _detect_audio_language_with_confidence(
+        self,
+        path: Path,
+        start_offset: float = 0.0,
+        duration: float = 30.0,
+    ) -> tuple[str, float]:
+        """Detects audio language with confidence score for multi-pass detection.
+
+        Args:
+            path: Path to the media file.
+            start_offset: Start position in seconds for audio sampling.
+            duration: Duration in seconds to sample for detection.
+
+        Returns:
+            Tuple of (language_code, confidence_score).
+        """
+        await resource_manager.throttle_if_needed("compute")
+
+        try:
+            return await asyncio.to_thread(
+                self._run_detection_with_confidence, path, start_offset, duration
+            )
+        except Exception as e:
+            from core.utils.logger import log
+            log(f"[Audio] Language detection failed: {e}")
+            return ("en", 0.0)
+
+    def _run_detection_with_confidence(
+        self,
+        path: Path,
+        start_offset: float,
+        duration: float,
+    ) -> tuple[str, float]:
+        """Synchronous helper for language detection with confidence.
+
+        Slices a specific segment of audio for detection, useful for
+        multi-pass detection when initial confidence is low.
+
+        Args:
+            path: Path to the media file.
+            start_offset: Start position in seconds.
+            duration: Duration to analyze in seconds.
+
+        Returns:
+            Tuple of (language_code, confidence_score).
+        """
+        from core.utils.logger import log
+        
+        with AudioTranscriber() as transcriber:
+            # Slice the specific audio segment
+            try:
+                wav_path = transcriber._slice_audio(
+                    path, start=start_offset, end=start_offset + duration
+                )
+            except Exception as e:
+                log(f"[Audio] Slicing for detection failed at offset {start_offset}s: {e}")
+                # Fallback to original detection
+                lang = transcriber.detect_language(path)
+                return (lang, 0.5)  # Return medium confidence for fallback
+            
+            try:
+                # Load model if needed
+                model_id = "Systran/faster-whisper-base"
+                if AudioTranscriber._SHARED_SIZE != model_id:
+                    transcriber._load_model(model_id)
+
+                if AudioTranscriber._SHARED_MODEL is None:
+                    return ("en", 0.0)
+
+                # Run detection on the sliced segment
+                _, info = AudioTranscriber._SHARED_MODEL.transcribe(
+                    str(wav_path),
+                    task="transcribe",
+                    beam_size=5,
+                )
+
+                detected_lang = info.language or "en"
+                confidence = info.language_probability or 0.0
+
+                # Special handling for Indic languages with lower threshold
+                indic_langs = ["ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"]
+                if detected_lang in indic_langs and confidence > 0.2:
+                    # Boost confidence for Indic languages (Whisper often underestimates)
+                    confidence = min(confidence * 1.5, 0.95)
+
+                return (detected_lang, confidence)
+
+            finally:
+                # Cleanup temp wav
+                if wav_path and wav_path != path and wav_path.exists():
+                    try:
+                        wav_path.unlink()
+                    except Exception:
+                        pass
 
     @observe("voice_processing")
     async def _process_voice(self, path: Path) -> None:
@@ -1678,6 +1810,8 @@ class IngestionPipeline:
             ocr_boxes = []
             try:
                 # Load frame as numpy array (Windows path safe)
+                import numpy as np
+                import cv2
                 frame_data = np.fromfile(str(frame_path), dtype=np.uint8)
                 frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
 
@@ -1866,10 +2000,21 @@ class IngestionPipeline:
                 )
 
             # 3f. Generate Vector (Include identity for searchability)
-            # "A man walking. Visible: John. Speaking: John"
+            # Avoid duplicating names if vision model already detected them
             full_text = description
             if "identity_text" in payload:
-                full_text = f"{description}. {payload['identity_text']}"
+                # Only add identity_text if names aren't already in description
+                identity_names = payload.get("face_names", []) + payload.get("speaker_names", [])
+                names_not_in_desc = [
+                    name for name in identity_names 
+                    if name and name.lower() not in description.lower()
+                ]
+                if names_not_in_desc:
+                    # Build identity suffix only for missing names
+                    identity_suffix = ""
+                    if names_not_in_desc:
+                        identity_suffix = f"Visible: {', '.join(names_not_in_desc)}"
+                    full_text = f"{description}. {identity_suffix}" if identity_suffix else description
 
             vector = self.db.encode_texts(full_text)[0]
 

@@ -543,38 +543,62 @@ if ($NukeQdrant) {
         Write-Host "  Warning: Docker down failed: $_" -ForegroundColor Yellow
     }
 
-    # 3. Wipe local bind-mount directories
-    $dataDirs = @("qdrant_data", "qdrant_data_embedded", "thumbnails", "logs", ".cache", "jobs.db", "identity.db")
+    # 3. Wipe local bind-mount directories and persistence files
+    $wipeItems = @(
+        "qdrant_data", 
+        "qdrant_data_embedded", 
+        "thumbnails", 
+        "logs", 
+        ".cache", 
+        ".face_cache",
+        "langfuse_data",
+        "jobs.db", 
+        "identity.db", 
+        "identity_graph.db", 
+        "clusters.json",
+        "agent_err.json",
+        "output.txt",
+        "debug_output.txt",
+        "test_output.txt"
+    )
     
     # Optional: Wipe Postgres (Langfuse)
     Write-Host ""
     $wipeLangfuse = Read-Host "  [?] Also wipe Langfuse/Postgres data (Resets API keys)? (y/N)"
     if ($wipeLangfuse -match "^[yY]") {
-        $dataDirs += "postgres_data"
+        $wipeItems += "postgres_data"
         Write-Host "  >> Including Postgres/Langfuse in wipe list." -ForegroundColor Yellow
     } else {
         Write-Host "  >> Preserving Postgres/Langfuse data (Keys kept safe)." -ForegroundColor Green
     }
 
-    foreach ($dir in $dataDirs) {
-        $path = Join-Path $ProjectRoot $dir
+    foreach ($item in $wipeItems) {
+        $path = Join-Path $ProjectRoot $item
         if (Test-Path $path) {
-            Write-Host "  Removing: $dir" -ForegroundColor Gray
-            # Use rd /s /q for aggressive Windows deletion
-            cmd /c "rd /s /q `"$path`"" 2>&1 | Out-Null
+            Write-Host "  Removing: $item" -ForegroundColor Gray
             
-            # Verification
+            # Check if directory or file
+            $isDir = (Get-Item $path) -is [System.IO.DirectoryInfo]
+            
+            if ($isDir) {
+                # Use rd /s /q for aggressive Windows deletion of directories
+                cmd /c "rd /s /q `"$path`"" 2>&1 | Out-Null
+            } else {
+                # Use del for files
+                cmd /c "del /f /q `"$path`"" 2>&1 | Out-Null
+            }
+            
+            # Verification and Backup (PowerShell method)
             if (Test-Path $path) {
-                # Try PowerShell native as backup
                 Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
                 if (Test-Path $path) {
-                    Write-Host "  ERROR: Could not delete $dir. Folder is locked." -ForegroundColor Red
-                    Write-Host "  Please close all applications (Explorer, VS Code) open in that folder." -ForegroundColor Yellow
+                    Write-Host "  ERROR: Could not delete $item. It is locked." -ForegroundColor Red
+                    Write-Host "  Please close all applications (Explorer, VS Code) accessing it." -ForegroundColor Yellow
                 } else {
-                    Write-Host "  $dir deleted successfully (backup method)." -ForegroundColor Green
+                    Write-Host "  $item deleted successfully (backup method)." -ForegroundColor Green
                 }
             } else {
-                Write-Host "  $dir deleted successfully." -ForegroundColor Green
+                Write-Host "  $item deleted successfully." -ForegroundColor Green
             }
         }
     }

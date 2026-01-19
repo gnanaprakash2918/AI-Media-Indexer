@@ -699,8 +699,8 @@ class AudioTranscriber:
                 else:
                     effective_lang = None  # Auto-detect on first run
 
-            # VAD settings: disable for lyrics mode to capture singing/music
-            vad_enabled = not force_lyrics
+            # VAD settings: ALWAYS enable vad_filter to avoid "No clip timestamps" error
+            # Use very permissive settings for lyrics mode to capture singing/music
             no_speech_thresh = (
                 0.9 if force_lyrics else 0.6
             )  # More permissive for lyrics
@@ -717,12 +717,13 @@ class AudioTranscriber:
                 else None,  # Hint that this is music
                 repetition_penalty=1.2,
                 word_timestamps=True,
-                vad_filter=vad_enabled,
+                vad_filter=True,  # ALWAYS enable to avoid "No clip timestamps" error
                 vad_parameters={
-                    "min_speech_duration_ms": 50 if force_lyrics else 100,
-                    "min_silence_duration_ms": 300 if force_lyrics else 500,
-                    "speech_pad_ms": 1000 if force_lyrics else 800,
-                    "threshold": 0.15 if force_lyrics else 0.3,
+                    # Very permissive for lyrics mode to capture more audio
+                    "min_speech_duration_ms": 10 if force_lyrics else 100,
+                    "min_silence_duration_ms": 1000 if force_lyrics else 500,
+                    "speech_pad_ms": 2000 if force_lyrics else 800,
+                    "threshold": 0.1 if force_lyrics else 0.3,  # Very low threshold for lyrics
                 },
                 no_speech_threshold=no_speech_thresh,
                 log_prob_threshold=-1.0,

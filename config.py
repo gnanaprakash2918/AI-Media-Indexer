@@ -169,18 +169,26 @@ class Settings(BaseSettings):
         default="llama3.1", description="Model for Agent CLI"
     )
     llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
-    ollama_base_url: str = Field(default="http://localhost:11434")
-    ollama_vision_model: str = Field(default="moondream:latest")
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        validation_alias="OLLAMA_BASE_URL",
+        description="Base URL for Ollama API",
+    )
+    ollama_vision_model: str = Field(
+        default="llava:7b",
+        validation_alias="OLLAMA_VISION_MODEL",
+        description="Vision model for image analysis (e.g., llava:7b, moondream, internlm2:7b)",
+    )
+    ollama_text_model: str = Field(
+        default="llama3.1",
+        validation_alias="OLLAMA_TEXT_MODEL",
+        description="Text model for structured output (e.g., llama3.1, mistral)",
+    )
 
     gemini_api_key: SecretStr | None = Field(
         default=None, validation_alias="GOOGLE_API_KEY"
     )
     gemini_model: str = "gemini-1.5-flash"
-
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = (
-        "moondream"  # Lightweight vision model (~2GB VRAM vs 5GB for llava)
-    )
 
     tmdb_api_key: str | None = None
     omdb_api_key: str | None = None
@@ -299,7 +307,7 @@ class Settings(BaseSettings):
 
     # Scene Detection
     scene_detect_threshold: float = Field(
-        default=27.0, description="PySceneDetect threshold (lower=more scenes)"
+        default=15.0, description="PySceneDetect threshold (lower=more scenes, 15.0=sensitive for music videos)"
     )
     scene_detect_min_length: float = Field(
         default=1.0, description="Min scene length in seconds"

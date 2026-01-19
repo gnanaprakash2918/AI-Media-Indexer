@@ -58,18 +58,16 @@ async def get_video_overlays(
         for frame in frames:
             ts = frame.get("timestamp", 0)
 
-            face_boxes = frame.get("face_boxes", [])
-            for i, bbox in enumerate(face_boxes):
+            # Pipeline stores faces as: [{"bbox": [...], "cluster_id": X, "name": "...", "confidence": Y}]
+            faces_data = frame.get("faces", [])
+            for face in faces_data:
                 overlays["faces"].append(
                     {
                         "timestamp": ts,
-                        "bbox": bbox,
-                        "label": frame.get("face_names", [])[i]
-                        if i < len(frame.get("face_names", []))
-                        else None,
-                        "cluster_id": frame.get("face_cluster_ids", [])[i]
-                        if i < len(frame.get("face_cluster_ids", []))
-                        else None,
+                        "bbox": face.get("bbox", []),
+                        "label": face.get("name"),
+                        "cluster_id": face.get("cluster_id"),
+                        "confidence": face.get("confidence", 0),
                         "color": "#22C55E",
                     }
                 )
@@ -130,10 +128,38 @@ async def get_video_overlays(
                 }
             )
 
+        # === VOICE DIARIZATION SEGMENTS ===
+        # Get speaker segments for timeline visualization
+        voice_segments = (
+            pipeline.db.get_voice_segments_by_video(
+                video_path=video_id,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            if hasattr(pipeline.db, "get_voice_segments_by_video")
+            else []
+        )
+
+        overlays["voice_diarization"] = []
+        for segment in voice_segments:
+            overlays["voice_diarization"].append(
+                {
+                    "start_time": segment.get("start_time", 0),
+                    "end_time": segment.get("end_time", 0),
+                    "speaker_label": segment.get("speaker_label", "Unknown"),
+                    "speaker_name": segment.get("speaker_name"),
+                    "voice_cluster_id": segment.get("voice_cluster_id", -1),
+                    "color": "#8B5CF6",  # Purple for voice segments
+                }
+            )
+
         logger.info(
-            f"[Overlays] {video_id}: {len(overlays['faces'])} faces, {len(overlays['text_regions'])} text, {len(overlays['objects'])} objects"
+            f"[Overlays] {video_id}: {len(overlays['faces'])} faces, "
+            f"{len(overlays['text_regions'])} text, {len(overlays['objects'])} objects, "
+            f"{len(overlays.get('voice_diarization', []))} voice segments"
         )
         return overlays
+
 
     except Exception as e:
         logger.error(f"[Overlays] Failed: {e}")

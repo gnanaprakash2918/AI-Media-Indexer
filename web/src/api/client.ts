@@ -322,7 +322,17 @@ export interface VideoOverlays {
     lufs: number;
     category: string;
   }>;
+  // Voice diarization segments for timeline visualization
+  voice_diarization?: Array<{
+    start_time: number;
+    end_time: number;
+    speaker_label: string;
+    speaker_name?: string | null;
+    voice_cluster_id: number;
+    color: string;
+  }>;
 }
+
 
 export const getOverlays = async (
   videoPath: string,

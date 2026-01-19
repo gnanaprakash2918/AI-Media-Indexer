@@ -976,3 +976,271 @@ class SearchAgent:
                 "results": results_with_ranges[:limit],
                 "result_count": len(results_with_ranges[:limit]),
             }
+
+    @observe("comprehensive_multimodal_search")
+    async def comprehensive_multimodal_search(
+        self,
+        query: str,
+        limit: int = 20,
+        video_path: str | None = None,
+        use_reranking: bool = True,
+    ) -> dict[str, Any]:
+        """Comprehensive search using ALL indexed data sources for maximum accuracy.
+
+        This method combines data from ALL Qdrant collections:
+        - scenes (visual/motion/dialogue vectors)
+        - voice_segments (speaker diarization)
+        - faces (identity clusters)
+        - co-occurrences (temporal relationships)
+
+        Uses Reciprocal Rank Fusion (RRF) to merge results from multiple modalities.
+
+        Args:
+            query: Natural language search query.
+            limit: Maximum results to return.
+            video_path: Optional filter to specific video.
+            use_reranking: Whether to use LLM reranking.
+
+        Returns:
+            Dict with fused results and detailed modality breakdowns.
+        """
+        log(f"[Multimodal] Comprehensive search: '{query[:80]}...'")
+
+        # === STEP 1: PARSE QUERY ===
+        parsed = await self.parse_query(query)
+        search_text = parsed.to_search_text() or query
+
+        # === STEP 2: RESOLVE IDENTITIES (Face + Voice) ===
+        person_names = []
+        face_cluster_ids = []
+        voice_cluster_ids = []
+
+        if hasattr(parsed, "entities") and parsed.entities:
+            for entity in parsed.entities:
+                if entity.entity_type.lower() == "person" and entity.name:
+                    person_names.append(entity.name)
+        elif parsed.person_name:
+            person_names.append(parsed.person_name)
+
+        for name in person_names:
+            # Face cluster
+            face_cid = self.db.get_face_cluster_by_name(name)
+            if face_cid:
+                face_cluster_ids.append(face_cid)
+
+            # Voice cluster (cross-modal linking)
+            voice_cid = self.db.get_speaker_cluster_by_name(name)
+            if voice_cid:
+                voice_cluster_ids.append(voice_cid)
+
+        log(f"[Multimodal] Resolved identities: faces={face_cluster_ids}, voices={voice_cluster_ids}")
+
+        # === STEP 3: SEARCH ALL MODALITIES ===
+        modality_results = {}
+
+        # 3a. Scene-level search (visual + motion + dialogue)
+        try:
+            scene_results = self.db.search_scenes(
+                query=search_text,
+                limit=limit * 2,
+                person_name=person_names[0] if person_names else None,
+                face_cluster_ids=face_cluster_ids if face_cluster_ids else None,
+                clothing_color=getattr(parsed, "clothing_color", None),
+                clothing_type=getattr(parsed, "clothing_type", None),
+                location=getattr(parsed, "location", None),
+                visible_text=getattr(parsed, "text_to_find", None),
+                action_keywords=getattr(parsed, "action_keywords", None),
+                video_path=video_path,
+                search_mode="hybrid",
+            )
+            modality_results["scenes"] = scene_results
+            log(f"[Multimodal] Scene search: {len(scene_results)} results")
+        except Exception as e:
+            log(f"[Multimodal] Scene search failed: {e}")
+            modality_results["scenes"] = []
+
+        # 3b. Voice segment matching (for speaker queries)
+        try:
+            if person_names or "speak" in query.lower() or "say" in query.lower():
+                voice_results = []
+                if video_path:
+                    voice_segments = self.db.get_voice_segments_by_video(
+                        video_path=video_path
+                    )
+                else:
+                    voice_segments = self.db.get_all_voice_segments(limit=500)
+
+                # Filter by speaker name if applicable
+                for seg in voice_segments:
+                    speaker_name = seg.get("speaker_name", "")
+                    if any(name.lower() in str(speaker_name).lower() for name in person_names):
+                        voice_results.append({
+                            "id": seg.get("id"),
+                            "video_path": seg.get("media_path"),
+                            "start_time": seg.get("start_time", seg.get("start", 0)),
+                            "end_time": seg.get("end_time", seg.get("end", 0)),
+                            "speaker_name": speaker_name,
+                            "score": 0.9,  # High score for exact name match
+                            "modality": "voice",
+                        })
+                modality_results["voices"] = voice_results[:limit]
+                log(f"[Multimodal] Voice search: {len(voice_results)} matches")
+        except Exception as e:
+            log(f"[Multimodal] Voice search failed: {e}")
+            modality_results["voices"] = []
+
+        # 3c. Co-occurrence relationships (for "X with Y" queries)
+        try:
+            if len(person_names) >= 2 or "with" in query.lower() or "together" in query.lower():
+                co_occurrences = self.db.get_person_co_occurrences(
+                    video_path=video_path
+                )
+                # Boost results where both mentioned people appear together
+                co_results = []
+                for co in co_occurrences:
+                    p1_name = co.get("person1_name", "")
+                    p2_name = co.get("person2_name", "")
+                    # Check if any queried person appears
+                    matched = False
+                    for name in person_names:
+                        if name.lower() in str(p1_name).lower() or name.lower() in str(p2_name).lower():
+                            matched = True
+                            break
+                    if matched:
+                        co_results.append({
+                            "video_path": co.get("video_path"),
+                            "start_time": co.get("start_time", 0),
+                            "end_time": co.get("end_time", 0),
+                            "person1": p1_name,
+                            "person2": p2_name,
+                            "interaction_count": co.get("interaction_count", 1),
+                            "score": min(1.0, 0.5 + co.get("interaction_count", 1) * 0.1),
+                            "modality": "co_occurrence",
+                        })
+                modality_results["co_occurrences"] = co_results[:limit]
+                log(f"[Multimodal] Co-occurrence search: {len(co_results)} relationships")
+        except Exception as e:
+            log(f"[Multimodal] Co-occurrence search failed: {e}")
+            modality_results["co_occurrences"] = []
+
+        # === STEP 4: RRF FUSION ACROSS MODALITIES ===
+        fused_results = self._rrf_fusion_multimodal(modality_results, limit * 2)
+        log(f"[Multimodal] RRF fusion: {len(fused_results)} combined results")
+
+        # === STEP 5: LLM RERANKING (Optional) ===
+        if use_reranking and fused_results:
+            try:
+                from core.retrieval.reranker import SearchCandidate
+
+                sc_candidates = []
+                for r in fused_results[:limit * 2]:
+                    sc_candidates.append(
+                        SearchCandidate(
+                            video_path=str(r.get("video_path", "")),
+                            start_time=float(r.get("start_time", 0)),
+                            end_time=float(r.get("end_time", 0)),
+                            score=float(r.get("fused_score", r.get("score", 0))),
+                            payload=r,
+                        )
+                    )
+
+                ranked = await self.council.council_rerank(
+                    query=query,
+                    candidates=sc_candidates,
+                    max_candidates=limit,
+                    use_vlm=True,
+                )
+
+                fused_results = []
+                for r in ranked:
+                    result = r.candidate.payload.copy()
+                    result["final_score"] = r.final_score
+                    result["llm_reasoning"] = r.vlm_reason or "Verified"
+                    fused_results.append(result)
+
+                log(f"[Multimodal] Reranked to {len(fused_results)} final results")
+            except Exception as e:
+                log(f"[Multimodal] Reranking failed: {e}")
+
+        # === STEP 6: BUILD RESPONSE ===
+        return {
+            "query": query,
+            "search_type": "comprehensive_multimodal",
+            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
+            "identities_resolved": {
+                "names": person_names,
+                "face_clusters": face_cluster_ids,
+                "voice_clusters": voice_cluster_ids,
+            },
+            "modality_breakdown": {
+                "scenes_searched": len(modality_results.get("scenes", [])),
+                "voices_matched": len(modality_results.get("voices", [])),
+                "co_occurrences_found": len(modality_results.get("co_occurrences", [])),
+            },
+            "results": fused_results[:limit],
+            "result_count": len(fused_results[:limit]),
+            "all_modalities_used": True,
+        }
+
+    def _rrf_fusion_multimodal(
+        self,
+        modality_results: dict[str, list[dict]],
+        limit: int = 50,
+        k: int = 60,
+    ) -> list[dict]:
+        """Fuse results from multiple modalities using Reciprocal Rank Fusion.
+
+        Args:
+            modality_results: Dict mapping modality name to list of results.
+            limit: Maximum results to return.
+            k: RRF constant (default 60).
+
+        Returns:
+            Fused and sorted list of results.
+        """
+        # Build a unified score map keyed by (video_path, start_time rounded)
+        score_map: dict[tuple, dict] = {}
+
+        for modality, results in modality_results.items():
+            if not results:
+                continue
+
+            for rank, result in enumerate(results):
+                vp = result.get("video_path") or result.get("media_path") or ""
+                st = round(float(result.get("start_time", result.get("timestamp", 0))), 1)
+                key = (vp, st)
+
+                # Calculate RRF score contribution
+                rrf_score = 1.0 / (k + rank + 1)
+
+                if key not in score_map:
+                    score_map[key] = {
+                        "video_path": vp,
+                        "start_time": st,
+                        "end_time": result.get("end_time", st + 5),
+                        "fused_score": 0.0,
+                        "modalities": [],
+                        "description": result.get("description", ""),
+                        "face_names": result.get("face_names", []),
+                        "speaker_name": result.get("speaker_name"),
+                    }
+
+                score_map[key]["fused_score"] += rrf_score
+                score_map[key]["modalities"].append(modality)
+
+                # Merge additional data
+                if result.get("description") and not score_map[key]["description"]:
+                    score_map[key]["description"] = result["description"]
+                if result.get("face_names"):
+                    score_map[key]["face_names"] = list(
+                        set(score_map[key]["face_names"] + result.get("face_names", []))
+                    )
+                if result.get("speaker_name"):
+                    score_map[key]["speaker_name"] = result["speaker_name"]
+
+        # Sort by fused score
+        fused = list(score_map.values())
+        fused.sort(key=lambda x: x["fused_score"], reverse=True)
+
+        return fused[:limit]
+
