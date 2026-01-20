@@ -125,6 +125,18 @@ class DynamicParsedQuery(BaseModel):
         description="Audio requirements: ['says I love you', 'sad music', 'engine sound']",
     )
 
+    # Music structure section (for queries like "during the chorus")
+    music_section: str | None = Field(
+        default=None,
+        description="Music structure section: chorus, verse, bridge, intro, outro, drop, breakdown",
+    )
+
+    # High energy filter (for "climax", "peak moment")
+    high_energy: bool = Field(
+        default=False,
+        description="Whether to filter for high-energy moments in the video",
+    )
+
     # The original query
     raw_query: str = Field(default="")
 
@@ -321,7 +333,7 @@ class FrameAnalysis(BaseModel):
 
         # 1. IDENTITY (highest weight - enables "Prakash bowling")
         for name in self.person_names:
-            parts.extend([name, name])  # Double for emphasis
+            parts.append(name)
 
         # 2. ACTION (second priority)
         if self.action:
@@ -487,7 +499,7 @@ class SceneData(BaseModel):
 
         # 1. IDENTITY (highest weight)
         for name in self.person_names:
-            parts.extend([name, name])  # Double for emphasis
+            parts.append(name)
         for name in self.speaker_names:
             if name not in self.person_names:
                 parts.append(name)

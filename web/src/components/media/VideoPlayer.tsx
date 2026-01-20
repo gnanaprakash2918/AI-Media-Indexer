@@ -72,7 +72,7 @@ function InnerVideoPlayer({
 
   // Filter masklets active at the current percentage of playback
   const activeMasklets = useMemo(() => {
-    if (!masklets.data) return [];
+    if (!masklets.data || !Array.isArray(masklets.data)) return [];
     return masklets.data.filter((m: any) =>
       currentTime >= m.start_time && currentTime <= m.end_time
     );

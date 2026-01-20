@@ -591,16 +591,31 @@ async def granular_search(
     )
 
     try:
-        # Use enhanced MultiVectorSearcher
-        from core.retrieval.advanced_query import MultiVectorSearcher
+        # Use HyperGranularSearcher (formerly unused dead code)
+        try:
+            from core.retrieval.hyper_granular_search import HyperGranularSearcher
+            searcher = HyperGranularSearcher(db=pipeline.db)
+            logger.info("[GranularSearch] Using HyperGranularSearcher")
+        except Exception as e:
+            logger.warning(f"HyperGranularSearcher init failed ({e}), falling back to MultiVector")
+            from core.retrieval.advanced_query import MultiVectorSearcher
+            searcher = MultiVectorSearcher(db=pipeline.db)
 
-        searcher = MultiVectorSearcher(db=pipeline.db)
-        results = await searcher.search(
-            query=query,
-            limit=limit,
-            video_path=video_path,
-            enable_rerank=enable_rerank,
-        )
+        # HyperGranularSearcher signature: search(query, limit, video_path)
+        # MultiVectorSearcher signature: search(query, limit, video_path, enable_rerank)
+        if hasattr(searcher, "decompose_query"): # It's HyperGranular
+             results = await searcher.search(
+                query=query,
+                limit=limit,
+                video_path=video_path,
+            )
+        else:
+            results = await searcher.search(
+                query=query,
+                limit=limit,
+                video_path=video_path,
+                enable_rerank=enable_rerank,
+            )
 
         # Add thumbnail/playback URLs
         for hit in results:
@@ -702,6 +717,89 @@ async def granular_search(
             status_code=500, detail=f"Granular search failed: {e}"
         ) from e
 
+
+@router.get("/search/explainable")
+async def explainable_search(
+    q: Annotated[str, Query(..., description="Search query")],
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    limit: Annotated[int, Query(description="Maximum results")] = 10,
+) -> dict:
+    """Search with detailed reasoning for each result.
+
+    Returns explainable matches with:
+    - Matched entities with individual confidence scores
+    - Reasoning for why each result was selected
+    - Face/voice identification with names
+    - Evidence types (face_match, voice_match, text_match, etc.)
+
+    Best for debugging and understanding search quality.
+
+    Args:
+        q: Natural language search query.
+        pipeline: The core ingestion pipeline instance.
+        limit: Maximum number of results to return.
+
+    Returns:
+        Results with explainable metadata and reasoning.
+    """
+    start_time = time.perf_counter()
+    logger.info(f"[ExplainableSearch] Query: '{q[:80]}...'")
+
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        # Parse query for entity extraction
+        parsed = None
+        if SearchAgent:
+            agent = SearchAgent(db=pipeline.db)
+            parsed = await agent.parse_query(q)
+
+        # Call the explainable search method
+        results = pipeline.db.explainable_search(
+            query_text=q,
+            parsed_query=parsed,
+            limit=limit,
+        )
+
+        # Add thumbnail URLs
+        for r in results:
+            video = r.get("video_path") or r.get("media_path", "")
+            ts = r.get("timestamp", r.get("start_time", 0))
+            if video and "thumbnail_url" not in r:
+                safe_path = quote(str(video))
+                r["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
+                r["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+
+        duration = time.perf_counter() - start_time
+        logger.info(
+            f"[ExplainableSearch] Returned {len(results)} results in {duration:.3f}s"
+        )
+
+        return {
+            "query": q,
+            "results": results,
+            "stats": {
+                "total": len(results),
+                "duration_seconds": round(duration, 3),
+            },
+            "search_type": "explainable",
+            "parsed_query": parsed.model_dump() if parsed else None,
+        }
+
+    except Exception as e:
+        logger.error(f"[ExplainableSearch] Error: {e}")
+        # Fallback to hybrid search
+        results = _normalize_results(
+            pipeline.db.search_frames_hybrid(query=q, limit=limit)
+        )
+        return {
+            "query": q,
+            "results": results,
+            "stats": {"total": len(results), "fallback": True},
+            "error": str(e),
+            "search_type": "fallback",
+        }
 
 @router.get("/search/multimodal")
 async def multimodal_search(

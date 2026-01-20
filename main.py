@@ -58,8 +58,8 @@ async def _run(video_path: Path, media_type: str) -> None:
         qdrant_backend="docker",
         qdrant_host="localhost",
         qdrant_port=6333,
-        frame_interval_seconds=15,
-        # tmdb_api_key="YOUR_KEY_HERE",  # Optionally provide TMDB key.
+        # frame_interval_seconds uses config.frame_interval (default 0.5s = 2fps)
+        # Don't hardcode to 15s which is too sparse for accurate search
     )
     await pipeline.process_video(video_path, media_type_hint=media_type)
 

@@ -543,9 +543,7 @@ class SearchAgent:
 
         reranked = []
 
-        for candidate in candidates[
-            : min(5, top_k)
-        ]:  # LLM rerank top 5 only for speed
+        for candidate in candidates[:top_k]:  # LLM rerank all top_k candidates
             description = (
                 candidate.get("description", "")
                 or candidate.get("dense_caption", "")
@@ -1123,6 +1121,44 @@ class SearchAgent:
             log(f"[Multimodal] Co-occurrence search failed: {e}")
             modality_results["co_occurrences"] = []
 
+        # 3d. Audio events search (CLAP-detected sounds, music sections)
+        try:
+            audio_events = self.db.search_audio_events(
+                query=search_text,
+                limit=limit,
+            )
+            modality_results["audio_events"] = [
+                {
+                    **event,
+                    "modality": "audio_event",
+                    "score": event.get("score", 0.7),
+                }
+                for event in audio_events
+            ]
+            log(f"[Multimodal] Audio events search: {len(audio_events)} matches")
+        except Exception as e:
+            log(f"[Multimodal] Audio events search failed: {e}")
+            modality_results["audio_events"] = []
+
+        # 3e. Video metadata search (summaries, titles, context)
+        try:
+            video_meta = self.db.search_video_metadata(
+                query=search_text,
+                limit=limit,
+            )
+            modality_results["video_metadata"] = [
+                {
+                    **meta,
+                    "modality": "video_metadata",
+                    "score": meta.get("score", 0.6),
+                }
+                for meta in video_meta
+            ]
+            log(f"[Multimodal] Video metadata search: {len(video_meta)} matches")
+        except Exception as e:
+            log(f"[Multimodal] Video metadata search failed: {e}")
+            modality_results["video_metadata"] = []
+
         # === STEP 4: RRF FUSION ACROSS MODALITIES ===
         fused_results = self._rrf_fusion_multimodal(modality_results, limit * 2)
         log(f"[Multimodal] RRF fusion: {len(fused_results)} combined results")
@@ -1176,6 +1212,8 @@ class SearchAgent:
                 "scenes_searched": len(modality_results.get("scenes", [])),
                 "voices_matched": len(modality_results.get("voices", [])),
                 "co_occurrences_found": len(modality_results.get("co_occurrences", [])),
+                "audio_events_matched": len(modality_results.get("audio_events", [])),
+                "video_metadata_matched": len(modality_results.get("video_metadata", [])),
             },
             "results": fused_results[:limit],
             "result_count": len(fused_results[:limit]),

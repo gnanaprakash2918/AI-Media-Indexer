@@ -183,24 +183,24 @@ export default function DashboardPage() {
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
-            title="Dialogue Segments"
-            value={data?.collections?.media_segments?.points_count ?? 0}
-            icon={<TextSnippet />}
+            title="Indexed Videos"
+            value={data?.videos ?? 0}
+            icon={<VideoLibrary />}
             color="#3b82f6"
           />
         </Grid>
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             title="Visual Frames"
-            value={data?.frames ?? data?.collections?.media_frames?.points_count ?? 0}
-            icon={<VideoLibrary />}
+            value={data?.frames ?? 0}
+            icon={<TextSnippet />}
             color="#8b5cf6"
           />
         </Grid>
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             title="Faces Detected"
-            value={data?.faces ?? data?.collections?.faces?.points_count ?? 0}
+            value={data?.faces ?? 0}
             icon={<Face />}
             color="#ec4899"
           />
@@ -208,7 +208,7 @@ export default function DashboardPage() {
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             title="Voice Segments"
-            value={data?.voice_segments ?? data?.collections?.voice_segments?.points_count ?? 0}
+            value={data?.voice_segments ?? 0}
             icon={<RecordVoiceOver />}
             color="#10b981"
           />

@@ -286,7 +286,7 @@ class Settings(BaseSettings):
 
     # Audio Processing
     audio_rms_silence_db: float = Field(
-        default=-40.0,
+        default=-60.0,
         description="RMS threshold in dB below which audio is considered silent",
     )
     whisper_language_lock: bool = Field(
@@ -383,8 +383,8 @@ class Settings(BaseSettings):
     )
 
     enable_sam3_tracking: bool = Field(
-        default=False,
-        description="Enable SAM 3 Promptable Concept Segmentation",
+        default=True,
+        description="Enable SAM 3 Promptable Concept Segmentation for frame-exact object tracking",
     )
 
     manipulation_backend: Literal["disabled", "wan", "propainter", "auto"] = (

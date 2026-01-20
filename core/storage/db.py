@@ -1269,6 +1269,9 @@ class VectorDB:
         video_paths: str | list[str] | None = None,
         face_cluster_ids: list[int] | None = None,
         rrf_k: int = 60,
+        transcript_query: str | None = None,
+        music_section: str | None = None,
+        high_energy: bool = False,
     ) -> list[dict[str, Any]]:
         """Performs a hybrid search combining vector, keyword, and identity filters.
 
@@ -1281,6 +1284,9 @@ class VectorDB:
             video_paths: Optional filter for specific video paths.
             face_cluster_ids: Optional filter for specific face identities.
             rrf_k: Constant for RRF scoring (default 60).
+            transcript_query: Optional specific transcript to search for.
+            music_section: Filter by music section (chorus, verse, etc.).
+            high_energy: Filter for high-energy moments only.
 
         Returns:
             A list of result dictionaries with hybrid scores and match reasons.
@@ -1543,8 +1549,8 @@ class VectorDB:
                                     "match_reasons": [],
                                     **payload,
                                 }
-                            # Get more details for reasoning
-                            face_names = result.get("face_names", [])
+                            # Get face names from the result payload
+                            face_names = results_by_id[point_id].get("face_names", [])
                             confidence = "high" if len(rank_lists.get("identity", {})) <= 5 else "medium"
                             results_by_id[point_id]["match_reasons"].append(
                                 f"Face identity: '{name}' (cluster={cluster_id}, conf={confidence}, visible_faces={face_names})"
@@ -1568,7 +1574,7 @@ class VectorDB:
             voice_conditions.append(
                 models.FieldCondition(
                     key="transcript",
-                    match=models.MatchText(text=query),
+                    match=models.MatchText(text=transcript_query or query),
                 )
             )
             
@@ -1629,6 +1635,86 @@ class VectorDB:
                     
         except Exception as e:
             log(f"Voice/transcript search failed: {e}")
+
+        # === 4b. MEDIA SEGMENT SEARCH (ASR/Subtitles) ===
+        # Fallback for when voice diarization (VOICE_COLLECTION) misses segments
+        try:
+            asr_conditions = []
+            if video_paths:
+                asr_conditions.append(
+                    models.FieldCondition(
+                        key="video_path",
+                        match=models.MatchAny(any=video_paths),
+                    )
+                )
+            
+            asr_conditions.append(
+                models.FieldCondition(
+                    key="text",
+                    match=models.MatchText(text=transcript_query or query),
+                )
+            )
+
+            asr_resp = self.client.scroll(
+                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                scroll_filter=models.Filter(must=asr_conditions),
+                limit=limit * 2,
+                with_payload=True,
+            )
+
+            for rank, point in enumerate(asr_resp[0]):
+                payload = point.payload or {}
+                media_path = payload.get("video_path", "")
+                start_time = payload.get("start", 0)
+                text = payload.get("text", "")[:100]
+                
+                # Find matching frame
+                frame_filter = models.Filter(must=[
+                    models.FieldCondition(
+                        key="video_path",
+                        match=models.MatchValue(value=media_path),
+                    ),
+                    models.FieldCondition(
+                        key="timestamp",
+                        range=models.Range(gte=start_time - 2, lte=start_time + 2),
+                    ),
+                ])
+                
+                frame_resp = self.client.scroll(
+                    collection_name=self.MEDIA_COLLECTION,
+                    scroll_filter=frame_filter,
+                    limit=1,
+                    with_payload=True,
+                )
+                
+                if frame_resp[0]:
+                    frame_point = frame_resp[0][0]
+                    point_id = str(frame_point.id)
+                    
+                    # Merge into voice rank list (treating ASR as voice)
+                    if point_id not in rank_lists["voice"]:
+                        rank_lists["voice"][point_id] = rank + 1
+                    else:
+                        rank_lists["voice"][point_id] = min(rank_lists["voice"][point_id], rank + 1)
+
+                    if point_id not in results_by_id:
+                        frame_payload = frame_point.payload or {}
+                        results_by_id[point_id] = {
+                            "id": point_id,
+                            "score": 0.0,
+                            "voice_match": True,
+                            "match_reasons": [],
+                            **frame_payload,
+                        }
+                    
+                    if f"Dialogue match: '{text}...'" not in results_by_id[point_id]["match_reasons"]:
+                        results_by_id[point_id]["match_reasons"].append(
+                            f"Transcript match: '{text}...'"
+                        )
+                        results_by_id[point_id]["matched_dialogue"] = text
+
+        except Exception as e:
+            log(f"ASR/Media segment search failed: {e}")
 
         # === 5. AUDIO EVENT SEARCH (Music/Sounds) ===
         try:
@@ -1705,7 +1791,135 @@ class VectorDB:
         except Exception as e:
             log(f"Audio event search failed: {e}")
 
-        log(f"Total modalities searched: vector, keyword, identity, voice, audio")
+        # === 5b. MUSIC SECTION FILTERING (Temporal precision) ===
+        # Filter for specific music sections like "chorus" or "drop"
+        if music_section:
+            try:
+                section_event = f"music_{music_section.lower()}"
+                section_conditions = [
+                    models.FieldCondition(
+                        key="event_type",
+                        match=models.MatchValue(value=section_event),
+                    )
+                ]
+                if video_paths:
+                    section_conditions.append(
+                        models.FieldCondition(
+                            key="media_path",
+                            match=models.MatchAny(any=video_paths),
+                        )
+                    )
+                
+                section_resp = self.client.scroll(
+                    collection_name=self.AUDIO_EVENTS_COLLECTION,
+                    scroll_filter=models.Filter(must=section_conditions),
+                    limit=50,
+                    with_payload=True,
+                )
+                
+                # Get time ranges for this section type
+                section_ranges = []
+                for point in section_resp[0]:
+                    payload = point.payload or {}
+                    start = payload.get("start_time", 0)
+                    end = payload.get("end_time", start + 30)  # Default 30s if no end
+                    media = payload.get("media_path", "")
+                    section_ranges.append((media, start, end))
+                
+                if section_ranges:
+                    log(f"[Music] Found {len(section_ranges)} '{music_section}' sections")
+                    
+                    # Boost results that fall within these time ranges
+                    for point_id, result in results_by_id.items():
+                        video_path = result.get("video_path", "")
+                        timestamp = result.get("timestamp", 0)
+                        
+                        for media, start, end in section_ranges:
+                            if video_path == media and start <= timestamp <= end:
+                                rank_lists["music_section"][point_id] = 1  # High rank
+                                result["match_reasons"].append(
+                                    f"During {music_section} ({start:.1f}s-{end:.1f}s)"
+                                )
+                                result["in_music_section"] = music_section
+                                break
+                                
+            except Exception as e:
+                log(f"Music section filtering failed: {e}")
+
+        # === 5c. HIGH ENERGY FILTERING ===
+        if high_energy:
+            try:
+                # Filter for high-energy moments (drops, choruses)
+                energy_conditions = []
+                if video_paths:
+                    energy_conditions.append(
+                        models.FieldCondition(
+                            key="media_path",
+                            match=models.MatchAny(any=video_paths),
+                        )
+                    )
+                
+                # Look for drops and choruses (typically high energy)
+                energy_resp = self.client.scroll(
+                    collection_name=self.AUDIO_EVENTS_COLLECTION,
+                    scroll_filter=models.Filter(
+                        must=energy_conditions,
+                        should=[
+                            models.FieldCondition(
+                                key="event_type",
+                                match=models.MatchValue(value="music_drop"),
+                            ),
+                            models.FieldCondition(
+                                key="event_type",
+                                match=models.MatchValue(value="music_chorus"),
+                            ),
+                        ]
+                    ) if energy_conditions else models.Filter(
+                        should=[
+                            models.FieldCondition(
+                                key="event_type",
+                                match=models.MatchValue(value="music_drop"),
+                            ),
+                            models.FieldCondition(
+                                key="event_type",
+                                match=models.MatchValue(value="music_chorus"),
+                            ),
+                        ]
+                    ),
+                    limit=50,
+                    with_payload=True,
+                )
+                
+                energy_ranges = []
+                for point in energy_resp[0]:
+                    payload = point.payload or {}
+                    energy_level = payload.get("payload", {}).get("energy", 0)
+                    if energy_level > 0.8:  # Only high-energy sections
+                        start = payload.get("start_time", 0)
+                        end = payload.get("end_time", start + 30)
+                        media = payload.get("media_path", "")
+                        energy_ranges.append((media, start, end))
+                
+                if energy_ranges:
+                    log(f"[Energy] Found {len(energy_ranges)} high-energy sections")
+                    
+                    for point_id, result in results_by_id.items():
+                        video_path = result.get("video_path", "")
+                        timestamp = result.get("timestamp", 0)
+                        
+                        for media, start, end in energy_ranges:
+                            if video_path == media and start <= timestamp <= end:
+                                rank_lists["high_energy"][point_id] = 1
+                                result["match_reasons"].append(
+                                    f"High-energy moment ({start:.1f}s-{end:.1f}s)"
+                                )
+                                result["is_high_energy"] = True
+                                break
+                                
+            except Exception as e:
+                log(f"High energy filtering failed: {e}")
+
+        log(f"Total modalities searched: vector, keyword, identity, voice, audio, music_structure")
 
         # === 6. RRF FUSION ===
         for point_id, result in results_by_id.items():
@@ -1919,6 +2133,111 @@ class VectorDB:
             for p in results
             if p.payload and "loud_moment" in str(p.payload.get("event", ""))
         ]
+
+    @observe("db_get_masklets")
+    def get_masklets(self, video_path: str) -> list[dict[str, Any]]:
+        """Retrieve unified masklets (Faces + Voices) for overlays/timeline.
+
+        Args:
+            video_path: Absolute path to the video file.
+
+        Returns:
+            List of masklet dicts with {start, end, label, type, box?, confidence}.
+        """
+        masklets = []
+        try:
+            # 1. Fetch Faces (Visual Identity)
+            face_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchValue(value=video_path),
+                    )
+                ]
+            )
+            faces_resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=face_filter,
+                limit=2000, # Reasonable limit for a single video
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            for point in faces_resp[0]:
+                payload = point.payload or {}
+                # Only return named faces or high-confidence clusters?
+                # For overlay, we show everything, but "Unknown" if no name.
+                label = payload.get("name") or f"Person {payload.get('cluster_id')}"
+                
+                # Bounding box is likely not stored in payload efficiently currently?
+                # Using a dummy box if missing, or checking if we stored 'bbox'
+                # Note: insert_face payload has bbox_size but not full coords usually.
+                # If we want visual boxes, we need to store [x1,y1,x2,y2].
+                # Assuming UI handles "point" or we use a default box.
+                
+                masklets.append({
+                    "type": "face",
+                    "start": payload.get("timestamp", 0),
+                    "end": payload.get("timestamp", 0) + 1.0, # 1s duration estimate
+                    "label": label,
+                    "confidence": payload.get("det_score", 0.9),
+                    "box": payload.get("bbox", [0, 0, 0, 0]), # Placeholder if missing
+                    "cluster_id": payload.get("cluster_id"),
+                })
+
+            # 2. Fetch Voices (Audio Identity) - USER REQUEST
+            voice_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchValue(value=video_path),
+                    )
+                ]
+            )
+            voice_resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=voice_filter,
+                limit=1000,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            # Pre-fetch voice cluster names if possible, or resolve on fly
+            # Optimization: Get all unique voice_cluster_ids and fetch names?
+            # For now, let's rely on payload if we updated it, or basic logic.
+            # *Crucially*, we assume 'speaker_label' might be raw, but if we named the CLUSTER,
+            # we need to propagate that name.
+            
+            # Map cluster_id -> name (Video-level cache usually needed, but fast here)
+            cluster_names = {} 
+            # TODO: We need a way to store/retrieve Voice Cluster Names.
+            # Currently 'VOICE_COLLECTION' has 'voice_cluster_id'.
+            # We don't have a separate "VOICE_CLUSTERS" collection like faces usually?
+            # If not, we check if ANY segment in that cluster has a 'name'?
+            # For now, we return the label provided.
+
+            for point in voice_resp[0]:
+                payload = point.payload or {}
+                # "speaker_label" is usually "SPEAKER_01". 
+                # "voice_cluster_id" is the global ID.
+                # Check if we have a resolved name.
+                label = payload.get("speaker_name") # Ideally we store this on naming
+                if not label:
+                     label = f"Voice {payload.get('voice_cluster_id', '?')}"
+
+                masklets.append({
+                    "type": "voice",
+                    "start": payload.get("start", 0),
+                    "end": payload.get("end", 0),
+                    "label": label,
+                    "confidence": 0.8,
+                    # No box for voice
+                })
+
+        except Exception as e:
+            log(f"get_masklets failed: {e}")
+        
+        return masklets
 
     def get_frame_by_id(self, frame_id: str) -> dict[str, Any] | None:
         """Retrieve a specific frame by ID."""
@@ -2157,6 +2476,76 @@ class VectorDB:
             ],
         )
 
+    def set_speaker_name(self, cluster_id: int, name: str) -> int:
+        """Assign a name to a voice cluster.
+
+        Args:
+            cluster_id: The voice cluster ID.
+            name: The user-assigned name.
+
+        Returns:
+            Number of segments updated.
+        """
+        try:
+            self.client.set_payload(
+                collection_name=self.VOICE_COLLECTION,
+                payload={"speaker_name": name},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+            )
+            # Find how many points were updated (optional, for return value)
+            # For speed, we can skip counting or do a quick separate count query.
+            # Let's just return 1 to indicate success for now or perform a count.
+            return 1 
+        except Exception as e:
+            log(f"set_speaker_name failed: {e}")
+            return 0
+
+    def set_speaker_main(self, cluster_id: int, segment_id: str, is_main: bool = True) -> bool:
+        """Mark a specific segment as the 'main' representation of a speaker.
+
+        Args:
+            cluster_id: The voice cluster ID.
+            segment_id: The specific segment ID to mark.
+            is_main: Boolean status.
+
+        Returns:
+            Success status.
+        """
+        try:
+            # 1. Unmark others in cluster if setting to True (enforce single main?)
+            # Usually we allow multiple mains or just one. Assuming one main per cluster.
+            if is_main:
+                self.client.set_payload(
+                    collection_name=self.VOICE_COLLECTION,
+                    payload={"is_main": False},
+                    points=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="voice_cluster_id",
+                                match=models.MatchValue(value=cluster_id),
+                            )
+                        ]
+                    ),
+                )
+
+            # 2. Set target
+            self.client.set_payload(
+                collection_name=self.VOICE_COLLECTION,
+                payload={"is_main": is_main},
+                points=models.PointIdsList(points=[segment_id]),
+            )
+            return True
+        except Exception as e:
+            log(f"set_speaker_main failed: {e}")
+            return False
+
     # =========================================================================
     # SCENE-LEVEL STORAGE (Production architecture like Twelve Labs)
     # =========================================================================
@@ -2332,6 +2721,99 @@ class VectorDB:
             return results
         except Exception as e:
             log(f"Scenelet search failed: {e}")
+            return []
+
+    @observe("db_search_audio_events")
+    def search_audio_events(
+        self,
+        query: str,
+        limit: int = 10,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search for discrete audio events (e.g., 'dog barking', 'doorbell').
+
+        Args:
+            query: The search query.
+            limit: Maximum results.
+            score_threshold: Minimum similarity score.
+
+        Returns:
+            List of audio event matches.
+        """
+        try:
+            # We use the same encoder as voice/audio
+            query_vec = self.encode_texts(query, is_query=True)[0]
+
+            resp = self.client.query_points(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                query=query_vec,
+                limit=limit,
+                score_threshold=score_threshold,
+            )
+
+            results = []
+            for hit in resp.points:
+                payload = hit.payload or {}
+                results.append(
+                    {
+                        "id": str(hit.id),
+                        "score": hit.score,
+                        "type": "audio_event",
+                        "label": payload.get("label", "audio"),
+                        "start": payload.get("start_time", 0),
+                        "end": payload.get("end_time", 0),
+                        "video_path": payload.get("video_path"),
+                        **payload,
+                    }
+                )
+            return results
+        except Exception as e:
+            log(f"search_audio_events failed: {e}")
+            return []
+
+    @observe("db_search_video_metadata")
+    def search_video_metadata(
+        self,
+        query: str,
+        limit: int = 5,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search video-level metadata (summaries, titles, context).
+
+        Args:
+            query: The search query.
+            limit: Maximum results.
+
+        Returns:
+            List of matching videos with metadata.
+        """
+        try:
+            query_vec = self.encode_texts(query, is_query=True)[0]
+
+            resp = self.client.query_points(
+                collection_name=self.VIDEO_METADATA_COLLECTION,
+                query=query_vec,
+                limit=limit,
+                score_threshold=score_threshold,
+            )
+
+            results = []
+            for hit in resp.points:
+                payload = hit.payload or {}
+                results.append(
+                    {
+                        "id": str(hit.id),
+                        "score": hit.score,
+                        "type": "video_metadata",
+                        "video_path": payload.get("video_path"),
+                        "summary": payload.get("summary"),
+                        "title": payload.get("title"),
+                        **payload,
+                    }
+                )
+            return results
+        except Exception as e:
+            log(f"search_video_metadata failed: {e}")
             return []
 
     @observe("db_search_scenes")

@@ -64,16 +64,10 @@ class IngestionPipeline:
             tmdb_api_key: Optional API key for TMDB movie metadata.
         """
         self.scene_detector = detect_scenes
-        self.face_manager = FaceManager()
-        self.vision_analyzer = VisionAnalyzer()
-        self.audio_transcriber = AudioTranscriber()
+        self.scene_detector = detect_scenes
         self.prober = MediaProber()
         self.sam_tracker = Sam3Tracker()
-        self.metadata_engine = MetadataEngine(
-            tmdb_api_key=settings.tmdb_api_key
-        )
-        self.voice_processor = VoiceProcessor()
-
+        
         # OCR Components
         self.ocr_engine = EasyOCRProcessor(langs=["en"], use_gpu=True)
         self.text_gate = TextGatedOCR()
@@ -604,8 +598,9 @@ class IngestionPipeline:
         # Detects non-speech sounds: bells, cheers, sirens, applause, etc.
         # ============================================================
         try:
+            # CLAP defaults to True in EnhancedPipelineConfig, so use True as fallback
             if self.enhanced_config and getattr(
-                self.enhanced_config, "enable_clap", False
+                self.enhanced_config, "enable_clap", True
             ):
                 import librosa
 
@@ -759,6 +754,67 @@ class IngestionPipeline:
             )
         except Exception as e:
             log(f"[Loudness] Analysis failed: {e}")
+
+        # ============================================================
+        # MUSIC STRUCTURE ANALYSIS: Detect verse/chorus/bridge/drop
+        # Enables temporal queries like "during the chorus" or "at the drop"
+        # ============================================================
+        try:
+            from core.processing.audio_structure import get_music_analyzer
+
+            log("[MusicStructure] Starting structure analysis...")
+            music_analyzer = get_music_analyzer()
+
+            # Load audio if not already loaded
+            if "audio_array" not in locals():
+                import librosa
+
+                audio_array, sr = librosa.load(str(path), sr=22050, mono=True)
+            else:
+                # Resample to 22050 for librosa if needed
+                if "sr" in locals() and sr != 22050:
+                    import librosa
+                    audio_array = librosa.resample(audio_array, orig_sr=sr, target_sr=22050)
+                    sr = 22050
+
+            # Analyze music structure
+            analysis = music_analyzer.analyze_array(audio_array, sr=22050)
+
+            if analysis.sections:
+                log(f"[MusicStructure] Found {len(analysis.sections)} sections at {analysis.global_tempo:.1f} BPM")
+
+                # Store each section as an audio event for searchability
+                for section in analysis.sections:
+                    self.db.insert_audio_event(
+                        media_path=str(path),
+                        event_type=f"music_{section.section_type}",
+                        start_time=section.start_time,
+                        end_time=section.end_time,
+                        confidence=section.confidence,
+                        payload={
+                            "section_type": section.section_type,
+                            "energy": section.energy,
+                            "beat_count": section.beat_count,
+                            "tempo": section.tempo,
+                        },
+                    )
+
+                # Store music metadata
+                self.db.update_media_metadata(
+                    media_path=str(path),
+                    metadata={
+                        "music_tempo": analysis.global_tempo,
+                        "has_vocals": analysis.has_vocals,
+                        "section_count": len(analysis.sections),
+                        "music_structure": [s.to_dict() for s in analysis.sections[:20]],  # Limit for storage
+                    },
+                )
+                log(f"[MusicStructure] Indexed {len(analysis.sections)} sections")
+            else:
+                log("[MusicStructure] No sections detected (may not be music)")
+
+        except Exception as e:
+            log(f"[MusicStructure] Analysis failed: {e}")
 
         self._cleanup_memory()
 
@@ -997,14 +1053,14 @@ class IngestionPipeline:
 
                 # ALWAYS store voice segment (even if no embedding, use placeholder)
                 # Only store if we have an embedding (required by insert_voice_segment)
-                if seg.embedding is not None and audio_path:
+                if seg.embedding is not None:
                     self.db.insert_voice_segment(
                         media_path=str(path),
                         start=seg.start_time,
                         end=seg.end_time,
                         speaker_label=global_speaker_id,  # Use Global ID
                         embedding=seg.embedding,
-                        audio_path=audio_path,
+                        audio_path=audio_path,  # Can be None, DB handles it
                         voice_cluster_id=voice_cluster_id,
                     )
                 else:

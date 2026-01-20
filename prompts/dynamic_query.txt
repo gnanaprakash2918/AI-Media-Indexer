@@ -10,6 +10,15 @@ CRITICAL RULES:
 6. This must work for ANY video content - movies, personal, sports, cooking, etc.
 7. DO NOT assume any domain or hardcode any entity types
 
+MUSIC STRUCTURE KEYWORDS (extract to temporal_constraints):
+- "during the chorus" → {{"music_section": "chorus"}}
+- "at the drop" → {{"music_section": "drop"}}
+- "in the verse" → {{"music_section": "verse"}}
+- "at the bridge" → {{"music_section": "bridge"}}
+- "during the intro" → {{"music_section": "intro"}}
+- "at the climax" → {{"music_section": "chorus", "high_energy": true}}
+- "during breakdown" → {{"music_section": "breakdown"}}
+
 INPUT QUERY:
 {query}
 
@@ -26,6 +35,8 @@ OUTPUT FORMAT (valid JSON only):
         }}
     ],
     "temporal_constraints": ["<timing/sequence constraints>"],
+    "music_section": "<chorus|verse|bridge|intro|outro|drop|breakdown|null>",
+    "high_energy": <true|false>,
     "audio_constraints": ["<audio/speech requirements>"],
     "scene_description": "<comprehensive description for vector search>",
     "modalities": ["<visual|audio|text>"]

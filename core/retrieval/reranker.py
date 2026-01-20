@@ -258,7 +258,7 @@ class RerankingCouncil:
         self,
         query: str,
         candidates: list[SearchCandidate],
-        max_candidates: int = 5,
+        max_candidates: int = 20,
     ) -> list[RankedResult]:
         """Re-rank candidates based on VLM visual analysis."""
         results: list[RankedResult] = []
@@ -297,15 +297,42 @@ class RerankingCouncil:
                 if clean.startswith("json"):
                     clean = clean[4:]
 
+            # Robust parsing logic
             try:
+                # 1. Try standard JSON validation
+                if clean.startswith("```json"):
+                    clean = clean.split("```json")[1]
+                if clean.startswith("```"):
+                    clean = clean.split("```")[1]
+                if clean.endswith("```"):
+                    clean = clean.rsplit("```", 1)[0]
+                
+                clean = clean.strip()
                 return RerankScore.model_validate_json(clean)
             except Exception:
-                start = raw.find("{")
-                end = raw.rfind("}") + 1
-                if start >= 0 and end > start:
-                    return RerankScore.model_validate_json(raw[start:end])
+                # 2. Try heuristic extraction if JSON fails
+                try:
+                    import re
+                    # Extract "confidence": 85 using regex
+                    conf_match = re.search(r'"confidence":\s*(\d+)', clean)
+                    reason_match = re.search(r'"reason":\s*"([^"]+)"', clean)
+                    
+                    if conf_match:
+                        conf = int(conf_match.group(1))
+                        reason = reason_match.group(1) if reason_match else "Parsed from partial response"
+                        return RerankScore(confidence=conf, reason=reason)
+                except Exception:
+                    pass
+
+                # 3. Fallback: If we got a text response but it wasn't JSON
+                if len(clean) > 10:
+                    return RerankScore(
+                        confidence=50, 
+                        reason=f"VLM returned unstructured text: {clean[:50]}..."
+                    )
+                
                 return RerankScore(
-                    confidence=30, reason="Parse failed, assuming partial match"
+                    confidence=0, reason="Parse failed completely"
                 )
         except Exception as e:
             log.error(f"VLM rerank error: {e}")

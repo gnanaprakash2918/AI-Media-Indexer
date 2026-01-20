@@ -249,12 +249,16 @@ class VoiceProcessor:
                     max_speakers=settings.max_speakers,
                 )
 
+            track_count = 0
+            segments_with_placeholder = 0
             for turn, _, speaker in diarization.itertracks(yield_label=True):
+                track_count += 1
                 start = float(turn.start)
                 end = float(turn.end)
                 duration = end - start
 
                 if duration < MIN_SEGMENT_DURATION:
+                    # log.warning(f"Skipping short segment: {duration:.2f}s")
                     continue
                 if duration > MAX_SEGMENT_DURATION:
                     end = start + MAX_SEGMENT_DURATION
@@ -262,18 +266,27 @@ class VoiceProcessor:
                 embedding = await self._extract_embedding(
                     processing_path, start, end
                 )
+                
+                # If embedding extraction fails, use a placeholder
+                # This ensures segments are still stored for music/singing
                 if embedding is None:
-                    continue
+                    log.warning(f"[Voice] Embedding extraction failed for {start:.2f}-{end:.2f}s, using placeholder")
+                    # Create a zeroed placeholder embedding (256-dim for wespeaker)
+                    embedding = [0.0] * 256
+                    segments_with_placeholder += 1
 
                 segments.append(
                     SpeakerSegment(
                         start_time=start,
                         end_time=end,
                         speaker_label=speaker,
-                        confidence=1.0,
+                        confidence=1.0 if segments_with_placeholder == 0 else 0.5,
                         embedding=embedding,
                     )
                 )
+            
+            log.info(f"[Voice] Found {len(segments)} segments out of {track_count} tracks " +
+                     f"({segments_with_placeholder} with placeholder embeddings)")
 
             return segments
 
@@ -360,6 +373,7 @@ class VoiceProcessor:
             A list of float values representing the embedding, or None if extraction fails.
         """
         if not self.inference:
+            log.warning("[Voice] Embedding extraction failed: inference model not initialized")
             return None
 
         try:
@@ -375,10 +389,13 @@ class VoiceProcessor:
                 vec = np.asarray(emb, dtype=np.float32).reshape(-1)
 
             if vec.ndim != 1 or vec.size == 0:
+                log.warning(f"[Voice] Invalid embedding shape: ndim={vec.ndim}, size={vec.size}")
                 return None
 
             vec /= np.linalg.norm(vec) + 1e-9
             return vec.tolist()
 
-        except Exception:
+        except Exception as e:
+            log.warning(f"[Voice] Embedding extraction error for {start:.2f}-{end:.2f}s: {e}")
             return None
+

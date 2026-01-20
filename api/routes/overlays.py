@@ -97,9 +97,12 @@ async def get_video_overlays(
                     }
                 )
 
+            # Active speaker overlay - extract bboxes from faces_data
             if frame.get("is_active_speaker"):
-                for i, bbox in enumerate(face_boxes):
-                    if frame.get("speaking_face_idx") == i:
+                # Use bboxes from faces_data instead of undefined face_boxes
+                face_bboxes = [f.get("bbox", []) for f in faces_data]
+                for i, bbox in enumerate(face_bboxes):
+                    if frame.get("speaking_face_idx") == i and bbox:
                         overlays["active_speakers"].append(
                             {
                                 "timestamp": ts,

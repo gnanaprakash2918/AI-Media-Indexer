@@ -75,7 +75,7 @@ async def get_face_clusters(
                 "face_count": len(cluster_faces),
                 "representative": cluster_faces[0] if cluster_faces else None,
                 "is_main": any(f.get("is_main") for f in cluster_faces),
-                "faces": cluster_faces[:5],  # Representative samples
+                "faces": cluster_faces,  # Return ALL faces (was limited to 5)
             }
             for cid, cluster_faces in clusters.items()
         ]

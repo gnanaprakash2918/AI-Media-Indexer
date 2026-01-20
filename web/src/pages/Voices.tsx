@@ -110,18 +110,19 @@ export const Voices: React.FC = () => {
         getVoiceClusters(),
       ]);
 
-      // Filter out segments without audio_path (incomplete data)
+      // Show ALL segments - don't filter by audio_path
+      // (audio extraction may fail but segment detection succeeds)
       const validSegments = (segData.segments || []).filter(
-        (s: VoiceSegment) => s.audio_path && s.speaker_label
+        (s: VoiceSegment) => s.speaker_label  // Only require speaker_label
       );
       setSegments(validSegments);
 
-      // Also filter segments within clusters
+      // Show all clusters, including those without audio
       const validClusters = (clusterData.clusters || []).map((c: VoiceCluster) => ({
         ...c,
-        segments: (c.segments || []).filter((s: VoiceSegment) => s.audio_path),
-        segment_count: (c.segments || []).filter((s: VoiceSegment) => s.audio_path).length,
-      })).filter((c: VoiceCluster) => c.segment_count > 0);  // Remove empty clusters
+        segments: c.segments || [],
+        segment_count: (c.segments || []).length,
+      })).filter((c: VoiceCluster) => c.segment_count > 0);
       setClusters(validClusters);
 
       try {
@@ -359,7 +360,8 @@ export const Voices: React.FC = () => {
       {tab === 0 ? (
         segments.length === 0 ? (
           <Alert severity="info">
-            No voice segments found. Ingest media with "Voice Analysis" enabled.
+            No voice segments found. Voice analysis detects <strong>spoken speech</strong>, not singing.
+            For music videos, voice diarization may not detect segments. Try re-ingesting or check if HF_TOKEN is set.
           </Alert>
         ) : (
           <TableContainer component={Paper}>

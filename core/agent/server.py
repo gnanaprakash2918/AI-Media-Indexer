@@ -78,8 +78,7 @@ def _get_pipeline() -> IngestionPipeline:
             qdrant_backend="docker",
             qdrant_host="localhost",
             qdrant_port=6333,
-            frame_interval_seconds=15,
-            # MetadataEngine will fall back to env if set.
+            # Uses config.frame_interval (default 0.5s = 2fps) for accurate search
             tmdb_api_key=None,
         )
     return _pipeline

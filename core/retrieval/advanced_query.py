@@ -301,18 +301,63 @@ class MultiVectorSearcher:
         # Step 3: Build search text from scene description
         search_text = decomposed.scene_description or query
 
-        # Step 4: Execute hybrid search (vector + keyword + RRF)
+        # Step 4: Execute hybrid search (vector + keyword + RRF) + AUDIO + METADATA
         results = []
         if self.db:
             try:
+                # 4a. Standard Frame Search
                 results = self.db.search_frames_hybrid(
                     query=search_text,
                     limit=limit * 3,  # Get more for reranking
                     video_paths=video_path,
-                    face_cluster_ids=face_cluster_ids
-                    if face_cluster_ids
-                    else None,
+                    face_cluster_ids=face_cluster_ids if face_cluster_ids else None,
+                    transcript_query=query,  # Search transcripts with original query
                 )
+
+                # 4b. Audio Event Search (New Integration)
+                try:
+                    audio_hits = self.db.search_audio_events(
+                        query=query,
+                        limit=limit,
+                        score_threshold=0.6,
+                    )
+                    # Convert audio hits to "pseudo-frames" for UI
+                    for hit in audio_hits:
+                        vid_path = hit.get("video_path")
+                        if video_path and vid_path != video_path:
+                            continue
+                        
+                        # Use midpoint for timestamp
+                        midpoint = (hit.get("start", 0) + hit.get("end", 0)) / 2
+                        hit["timestamp"] = midpoint
+                        hit["action"] = f"[Audio Event] {hit.get('label')}"
+                        hit["description"] = f"Sound detection: {hit.get('label')}"
+                        hit["match_reasons"] = [f"Audio match: {hit.get('label')}"]
+                        # Boost score slightly as it's a specific modality match
+                        hit["rrf_score"] = hit.get("score", 0.5) * 1.1
+                        results.append(hit)
+                except Exception as e:
+                    log.warning(f"[MultiVectorSearch] Audio search failed: {e}")
+
+                # 4c. Video Metadata Search (Global Context)
+                try:
+                    meta_hits = self.db.search_video_metadata(
+                        query=query,
+                        limit=5,
+                    )
+                    for hit in meta_hits:
+                        vid_path = hit.get("video_path")
+                        if video_path and vid_path != video_path:
+                            continue
+                        # Return just the first frame of the matching video to represent the whole video
+                        hit["timestamp"] = 0.0 
+                        hit["action"] = f"[Video Match] {hit.get('title')}"
+                        hit["description"] = f"Video Summary: {hit.get('summary')}"
+                        hit["match_reasons"] = [f"Global video context match"]
+                        results.append(hit)
+                except Exception as e:
+                    log.warning(f"[MultiVectorSearch] Metadata search failed: {e}")
+
             except Exception as e:
                 log.warning(f"[MultiVectorSearch] Hybrid search failed: {e}")
                 # Fallback to basic search
