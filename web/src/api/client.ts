@@ -504,3 +504,74 @@ export const getIdentitySuggestions = async (videoPath?: string) => {
   });
   return res.data;
 };
+
+// ========== HITL Search Feedback APIs ==========
+
+export interface SearchFeedback {
+  query: string;
+  result_id: string;
+  video_path: string;
+  timestamp: number;
+  is_relevant: boolean;
+  feedback_type?: 'binary' | 'rating' | 'correction';
+  rating?: number;
+  correction?: string;
+  notes?: string;
+}
+
+export const submitSearchFeedback = async (feedback: SearchFeedback) => {
+  const res = await apiClient.post('/search/feedback', feedback);
+  return res.data;
+};
+
+export const getSearchFeedbackStats = async () => {
+  const res = await apiClient.get('/search/feedback/stats');
+  return res.data;
+};
+
+// ========== Voice Overlay APIs ==========
+
+export interface VoiceOverlay {
+  type: string;
+  start_time: number;
+  end_time: number;
+  duration: number;
+  speaker_label: string;
+  speaker_name: string | null;
+  cluster_id: number;
+  has_audio: boolean;
+  audio_url: string | null;
+  color: string;
+}
+
+export interface VoiceOverlayResponse {
+  video_id: string;
+  timestamp: number | null;
+  voice_segments: VoiceOverlay[];
+  total_segments: number;
+  active_speaker: {
+    speaker_label: string;
+    speaker_name: string;
+    start_time: number;
+    end_time: number;
+  } | null;
+}
+
+export const getVoiceOverlays = async (
+  videoPath: string,
+  timestamp?: number,
+): Promise<VoiceOverlayResponse> => {
+  const res = await apiClient.get('/overlays/voice', {
+    params: { video_id: videoPath, timestamp },
+  });
+  return res.data;
+};
+
+// ========== Explainable Search API ==========
+
+export const searchExplainable = async (query: string, limit = 10) => {
+  const res = await apiClient.get('/search/explainable', {
+    params: { q: query, limit },
+  });
+  return res.data;
+};

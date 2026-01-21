@@ -221,10 +221,15 @@ class VoiceProcessor:
             A list of SpeakerSegment objects containing timestamps and embeddings.
         """
         if not self.enabled or not audio_path.exists():
+            if not self.enabled:
+                log.warning(f"[Voice] SKIPPED - Voice analysis disabled")
+            else:
+                log.warning(f"[Voice] SKIPPED - File not found: {audio_path}")
             return []
 
         await self._lazy_init()
         if not self.pipeline or not self.inference:
+            log.warning("[Voice] SKIPPED - Pipeline or inference model failed to load")
             return []
 
         segments: list[SpeakerSegment] = []

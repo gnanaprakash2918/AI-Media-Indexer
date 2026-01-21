@@ -166,9 +166,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # CORS: Restrict to known origins (override via CORS_ORIGINS env var)
+    allowed_origins = os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"
+    ).split(",")
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -886,3 +886,130 @@ async def multimodal_search(
             "search_type": "fallback",
         }
 
+
+# === HITL FEEDBACK ENDPOINT ===
+
+from pydantic import BaseModel
+
+
+class SearchFeedback(BaseModel):
+    """User feedback on search result quality."""
+    query: str
+    result_id: str
+    video_path: str
+    timestamp: float
+    is_relevant: bool
+    feedback_type: str = "binary"  # "binary", "rating", "correction"
+    rating: int | None = None  # 1-5 for rating type
+    correction: str | None = None  # User-provided correct answer
+    notes: str | None = None
+
+
+@router.post("/search/feedback")
+async def submit_search_feedback(
+    feedback: SearchFeedback,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Submit user feedback on a search result (HITL loop).
+
+    This endpoint collects user feedback to:
+    1. Identify false positives/negatives
+    2. Build training data for reranker improvement
+    3. Track search accuracy over time
+
+    Args:
+        feedback: The feedback data.
+        pipeline: Ingestion pipeline instance.
+
+    Returns:
+        Confirmation of feedback submission.
+    """
+    logger.info(
+        f"[HITL] Feedback received: query='{feedback.query[:50]}...' "
+        f"is_relevant={feedback.is_relevant} type={feedback.feedback_type}"
+    )
+
+    try:
+        # Store feedback in Qdrant for later analysis
+        import uuid
+        from datetime import datetime
+
+        feedback_id = str(uuid.uuid4())
+        feedback_data = {
+            "feedback_id": feedback_id,
+            "query": feedback.query,
+            "result_id": feedback.result_id,
+            "video_path": feedback.video_path,
+            "timestamp": feedback.timestamp,
+            "is_relevant": feedback.is_relevant,
+            "feedback_type": feedback.feedback_type,
+            "rating": feedback.rating,
+            "correction": feedback.correction,
+            "notes": feedback.notes,
+            "submitted_at": datetime.now().isoformat(),
+        }
+
+        # Store in a simple JSON file for now (could be moved to Qdrant collection)
+        import json
+        from pathlib import Path
+
+        feedback_dir = Path("logs/search_feedback")
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+        feedback_file = feedback_dir / f"{feedback_id}.json"
+
+        with open(feedback_file, "w") as f:
+            json.dump(feedback_data, f, indent=2)
+
+        # If this is a correction, we could use it to re-train or boost future results
+        if feedback.correction:
+            logger.info(f"[HITL] Correction provided: '{feedback.correction}'")
+
+        return {
+            "status": "submitted",
+            "feedback_id": feedback_id,
+            "message": "Thank you for your feedback!",
+        }
+
+    except Exception as e:
+        logger.error(f"[HITL] Feedback submission failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/search/feedback/stats")
+async def get_feedback_stats() -> dict:
+    """Get aggregated statistics on search feedback.
+
+    Returns:
+        Summary of feedback received.
+    """
+    import json
+    from pathlib import Path
+
+    feedback_dir = Path("logs/search_feedback")
+    if not feedback_dir.exists():
+        return {"total": 0, "relevant": 0, "irrelevant": 0, "accuracy": None}
+
+    feedback_files = list(feedback_dir.glob("*.json"))
+    total = len(feedback_files)
+    relevant = 0
+    irrelevant = 0
+
+    for f in feedback_files:
+        try:
+            with open(f) as file:
+                data = json.load(file)
+                if data.get("is_relevant"):
+                    relevant += 1
+                else:
+                    irrelevant += 1
+        except Exception:
+            pass
+
+    accuracy = (relevant / total * 100) if total > 0 else None
+
+    return {
+        "total": total,
+        "relevant": relevant,
+        "irrelevant": irrelevant,
+        "accuracy_percentage": round(accuracy, 2) if accuracy else None,
+    }

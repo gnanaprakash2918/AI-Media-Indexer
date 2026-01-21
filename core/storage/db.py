@@ -84,6 +84,59 @@ else:
     _SELECTED_MODEL, _ = select_embedding_model()
 
 
+def paginated_scroll(
+    client,
+    collection_name: str,
+    scroll_filter: models.Filter | None = None,
+    limit: int = 1000,
+    batch_size: int = 100,
+    with_payload: bool = True,
+    with_vectors: bool = False,
+) -> list:
+    """Generator-based paginated scroll for large result sets.
+    
+    Prevents memory issues by fetching results in batches using Qdrant's
+    cursor-based pagination instead of loading all at once.
+    
+    Args:
+        client: Qdrant client instance.
+        collection_name: Name of the collection to scroll.
+        scroll_filter: Optional filter to apply.
+        limit: Maximum total results to return.
+        batch_size: Number of records per batch (default 100).
+        with_payload: Whether to include payload in results.
+        with_vectors: Whether to include vectors in results.
+        
+    Returns:
+        List of all matching points up to limit.
+    """
+    all_points = []
+    offset = None
+    remaining = limit
+    
+    while remaining > 0:
+        fetch_size = min(batch_size, remaining)
+        
+        result, next_offset = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=scroll_filter,
+            limit=fetch_size,
+            offset=offset,
+            with_payload=with_payload,
+            with_vectors=with_vectors,
+        )
+        
+        all_points.extend(result)
+        remaining -= len(result)
+        
+        if next_offset is None or len(result) < fetch_size:
+            break
+            
+        offset = next_offset
+    
+    return all_points
+
+
 class VectorDB:
     """Wrapper for Qdrant vector database storage and retrieval."""
 
@@ -364,7 +417,7 @@ class VectorDB:
 
         if self.encoder is None:
             # Lazy load if needed or raise error
-            self._lazy_load_encoder()  # type: ignore
+            self._ensure_encoder_loaded()
             if self.encoder is None:
                 log("Encoder not available", level="ERROR")
                 return []
@@ -1117,8 +1170,8 @@ class VectorDB:
                     payload.get("voice_cluster_id", -1),
                     hit.score,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"match_speaker failed: {e}", level="DEBUG")
         return None
 
     def upsert_speaker_embedding(
@@ -1258,7 +1311,8 @@ class VectorDB:
                     }
                 )
             return results
-        except Exception:
+        except Exception as e:
+            log(f"search_frames_filtered failed: {e}", level="DEBUG")
             return []
 
     @observe("db_search_frames_hybrid")
@@ -1952,8 +2006,8 @@ class VectorDB:
                 name = (pt.payload or {}).get("name")
                 if name:
                     known_names.add(name.lower())
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"extract_names_from_query scroll failed: {e}", level="DEBUG")
 
         query_lower = query.lower()
         found_names = []
@@ -1992,7 +2046,8 @@ class VectorDB:
             if resp[0] and resp[0][0].payload:
                 return resp[0][0].payload.get("cluster_id")
             return None
-        except Exception:
+        except Exception as e:
+            log(f"get_cluster_id_by_name failed for '{name}': {e}", level="DEBUG")
             return None
 
     def fuzzy_get_cluster_id_by_name(
@@ -2047,7 +2102,8 @@ class VectorDB:
                 return best_match_id
 
             return None
-        except Exception:
+        except Exception as e:
+            log(f"fuzzy_get_cluster_id_by_name failed for '{name}': {e}", level="DEBUG")
             return None
 
     def get_frames_by_video(
@@ -2155,15 +2211,18 @@ class VectorDB:
                     )
                 ]
             )
-            faces_resp = self.client.scroll(
+            # 1. Fetch Faces (Visual Identity) - using paginated scroll
+            faces_points = paginated_scroll(
+                self.client,
                 collection_name=self.FACES_COLLECTION,
                 scroll_filter=face_filter,
-                limit=2000, # Reasonable limit for a single video
+                limit=2000,
+                batch_size=200,  # Pagination for memory efficiency
                 with_payload=True,
                 with_vectors=False,
             )
 
-            for point in faces_resp[0]:
+            for point in faces_points:
                 payload = point.payload or {}
                 # Only return named faces or high-confidence clusters?
                 # For overlay, we show everything, but "Unknown" if no name.
@@ -2194,19 +2253,18 @@ class VectorDB:
                     )
                 ]
             )
-            voice_resp = self.client.scroll(
+            # 2. Fetch Voices (Audio Identity) - using paginated scroll
+            voice_points = paginated_scroll(
+                self.client,
                 collection_name=self.VOICE_COLLECTION,
                 scroll_filter=voice_filter,
                 limit=1000,
+                batch_size=200,  # Pagination for memory efficiency
                 with_payload=True,
                 with_vectors=False,
             )
 
-            # Pre-fetch voice cluster names if possible, or resolve on fly
-            # Optimization: Get all unique voice_cluster_ids and fetch names?
-            # For now, let's rely on payload if we updated it, or basic logic.
-            # *Crucially*, we assume 'speaker_label' might be raw, but if we named the CLUSTER,
-            # we need to propagate that name.
+            # Pre-fetch voice cluster names if possible
             
             # Map cluster_id -> name (Video-level cache usually needed, but fast here)
             cluster_names = {} 
@@ -2216,7 +2274,7 @@ class VectorDB:
             # If not, we check if ANY segment in that cluster has a 'name'?
             # For now, we return the label provided.
 
-            for point in voice_resp[0]:
+            for point in voice_points:
                 payload = point.payload or {}
                 # "speaker_label" is usually "SPEAKER_01". 
                 # "voice_cluster_id" is the global ID.
@@ -2249,8 +2307,8 @@ class VectorDB:
             )
             if results:
                 return results[0].payload
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"get_frame_by_id failed for '{frame_id}': {e}", level="DEBUG")
         return None
 
     def insert_audio_event(
@@ -2322,7 +2380,8 @@ class VectorDB:
                 with_payload=False,
             )
             return [str(p.id) for p in resp[0]]
-        except Exception:
+        except Exception as e:
+            log(f"get_face_ids_for_video failed: {e}", level="DEBUG")
             return []
 
     @observe("db_insert_face")

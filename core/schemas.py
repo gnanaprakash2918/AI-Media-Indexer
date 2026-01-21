@@ -21,6 +21,12 @@ class MediaType(str, Enum):
 
 
 # --- UNIVERSAL PERCEPTION SCHEMAS (For FAANG-level search) ---
+# NOTE: These schemas are FLEXIBLE - they accept str|dict|list from LLMs.
+# For STRICT schemas (LLM structured output), use core/knowledge/schemas.py.
+# Both are maintained for different use cases:
+#   - core/schemas.py: Runtime flexibility (accepts various LLM output formats)
+#   - core/knowledge/schemas.py: Strict parsing (enforces string output)
+
 
 
 class EntityDetail(BaseModel):

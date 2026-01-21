@@ -1,5 +1,8 @@
 """Configuration settings for the ASR and LLM pipeline."""
 
+# Windows compatibility patches (must be imported before third-party libs)
+import core.utils.platform_compat  # noqa: F401, E402
+
 import logging
 import sys
 from enum import Enum
@@ -204,7 +207,7 @@ class Settings(BaseSettings):
     frame_interval: float = Field(
         default=0.5, description="Seconds between frames (0.5=2fps, 1.0=1fps)"
     )
-    batch_size: int = Field(default=24)
+    # NOTE: batch_size is defined in Performance section (line 142) using hardware profile
     device_override: Literal["cuda", "cpu", "mps"] | None = None
 
     language: str | None = "ta"

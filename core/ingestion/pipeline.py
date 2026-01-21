@@ -64,7 +64,6 @@ class IngestionPipeline:
             tmdb_api_key: Optional API key for TMDB movie metadata.
         """
         self.scene_detector = detect_scenes
-        self.scene_detector = detect_scenes
         self.prober = MediaProber()
         self.sam_tracker = Sam3Tracker()
         
@@ -2323,7 +2322,7 @@ class IngestionPipeline:
 
                 # Generate and attach Main Video Thumbnail
                 try:
-                    main_thumb = self._generate_main_thumbnail(path)
+                    main_thumb = await self._generate_main_thumbnail(path)
                     if main_thumb:
                         global_summary["thumbnail_path"] = main_thumb
                 except Exception as e:
@@ -2344,7 +2343,7 @@ class IngestionPipeline:
         except Exception as e:
             logger.error(f"Post-processing failed: {e}")
 
-    def _generate_main_thumbnail(self, path: Path) -> str | None:
+    async def _generate_main_thumbnail(self, path: Path) -> str | None:
         """Generates a representative thumbnail for the video at 5.0s.
 
         Args:
@@ -2354,7 +2353,6 @@ class IngestionPipeline:
             The relative web path to the generated thumbnail, or None on failure.
         """
         import hashlib
-        import subprocess
 
         try:
             thumb_dir = settings.cache_dir / "thumbnails" / "videos"
@@ -2370,7 +2368,7 @@ class IngestionPipeline:
             if thumb_file.exists():
                 return rel_path
 
-            # Extract at 5 seconds
+            # Extract at 5 seconds using async subprocess (non-blocking)
             cmd = [
                 "ffmpeg",
                 "-y",
@@ -2385,23 +2383,23 @@ class IngestionPipeline:
                 str(thumb_file),
             ]
 
-            # Run ffmpeg
-            subprocess.run(
-                cmd,
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            # Run ffmpeg asynchronously (doesn't block event loop)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
+            await proc.wait()
 
             # Fallback to 0s if 5s failed (e.g. short video)
             if not thumb_file.exists():
                 cmd[3] = "00:00:00.000"
-                subprocess.run(
-                    cmd,
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
                 )
+                await proc.wait()
 
             if thumb_file.exists():
                 return rel_path
@@ -2486,16 +2484,16 @@ class IngestionPipeline:
 
                     track_key = f"{concept}_{obj_id}"
 
-                if track_key not in tracks:
-                    tracks[track_key] = {
-                        "start": frame_idx,
-                        "end": frame_idx,
-                        "concept": concept,
-                    }
-                else:
-                    tracks[track_key]["end"] = max(
-                        tracks[track_key]["end"], frame_idx
-                    )
+                    if track_key not in tracks:
+                        tracks[track_key] = {
+                            "start": frame_idx,
+                            "end": frame_idx,
+                            "concept": concept,
+                        }
+                    else:
+                        tracks[track_key]["end"] = max(
+                            tracks[track_key]["end"], frame_idx
+                        )
 
         # 4. Save Masklets to DB
         fps = (

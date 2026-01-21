@@ -2,6 +2,9 @@
 
 This module uses Pydantic schemas to enforce structured output from the LLM,
 WITHOUT hardcoded lists. The LLM's internal world knowledge handles specificity.
+
+NOTE: These are STRICT schemas (enforce string types) for LLM structured output.
+For FLEXIBLE schemas (accept str|dict|list), see core/schemas.py.
 """
 
 from __future__ import annotations

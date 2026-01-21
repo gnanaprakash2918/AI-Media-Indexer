@@ -310,7 +310,7 @@ export default function SearchPage() {
           <Grid container spacing={3}>
             {results.map((item: SearchResult, idx: number) => (
               <Grid key={item.id || idx} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                <MediaCard item={item} />
+                <MediaCard item={item} searchQuery={lastQuery} />
               </Grid>
             ))}
           </Grid>

@@ -25,6 +25,19 @@ DYNAMIC_QUERY_PROMPT = load_prompt("dynamic_query")
 QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT  # Legacy alias
 
 
+# Pydantic model for LLM reranking results (moved from loop to module level)
+from pydantic import BaseModel, Field
+
+
+class RerankResult(BaseModel):
+    """Structured output for LLM-based reranking verification."""
+
+    match_score: float = Field(default=0.5)
+    constraints_checked: list[str] = Field(default_factory=list)
+    reasoning: str = Field(default="")
+    missing: list[str] = Field(default_factory=list)
+
+
 class SearchAgent:
     """Agentic search with LLM-powered query expansion and scene-level search.
 
@@ -560,18 +573,7 @@ class SearchAgent:
             )
 
             try:
-                # Use LLM to score this candidate
-                from pydantic import BaseModel, Field
-
-                class RerankResult(BaseModel):
-                    match_score: float = Field(default=0.5)
-                    constraints_checked: list[str] = Field(
-                        default_factory=list
-                    )
-                    reasoning: str = Field(default="")
-                    missing: list[str] = Field(default_factory=list)
-
-                # Try structured generation with retry
+                # Use module-level RerankResult class (moved from loop for performance)
                 result = None
                 for attempt in range(2):
                     try:

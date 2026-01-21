@@ -11,6 +11,8 @@ import {
   Room,
   Visibility,
   Edit,
+  ThumbUp,
+  ThumbDown,
 } from '@mui/icons-material';
 import {
   Card,
@@ -31,9 +33,10 @@ import {
   TextField,
   Button,
   CircularProgress,
+  Snackbar,
 } from '@mui/material';
 import { VideoPlayer } from './VideoPlayer';
-import { updateFrameDescription } from '../../api/client';
+import { updateFrameDescription, submitSearchFeedback } from '../../api/client';
 
 interface MediaResult {
   score: number;
@@ -70,7 +73,12 @@ interface MediaResult {
   matched_identity?: string;
 }
 
-export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }) {
+interface MediaCardProps {
+  item: MediaResult;
+  searchQuery?: string; // For HITL feedback
+}
+
+export const MediaCard = memo(function MediaCard({ item, searchQuery }: MediaCardProps) {
   const theme = useTheme();
   const [playerOpen, setPlayerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -79,6 +87,27 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
     item.action || item.description || '',
   );
   const [saving, setSaving] = useState(false);
+  const [feedbackGiven, setFeedbackGiven] = useState<'up' | 'down' | null>(null);
+  const [snackOpen, setSnackOpen] = useState(false);
+
+  // HITL Feedback handler
+  const handleFeedback = async (isRelevant: boolean) => {
+    if (!searchQuery || feedbackGiven) return;
+    try {
+      await submitSearchFeedback({
+        query: searchQuery,
+        result_id: item.id || '',
+        video_path: item.video_path,
+        timestamp: item.timestamp ?? item.start ?? 0,
+        is_relevant: isRelevant,
+        feedback_type: 'binary',
+      });
+      setFeedbackGiven(isRelevant ? 'up' : 'down');
+      setSnackOpen(true);
+    } catch (err) {
+      console.error('Feedback failed', err);
+    }
+  };
 
   // Handle both video_path and media_path (scenelets use media_path)
   const videoPath = item.video_path || (item as any).media_path || '';
@@ -331,6 +360,42 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
                 {(item.score * 100).toFixed(0)}%
               </Typography>
             </Tooltip>
+
+            {/* HITL Feedback Buttons */}
+            {searchQuery && (
+              <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+                <Tooltip title="Relevant result">
+                  <IconButton
+                    size="small"
+                    onClick={(e) => { e.stopPropagation(); handleFeedback(true); }}
+                    disabled={feedbackGiven !== null}
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      color: feedbackGiven === 'up' ? 'success.main' : 'action.disabled',
+                      '&:hover': { color: 'success.main' },
+                    }}
+                  >
+                    <ThumbUp sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Not relevant">
+                  <IconButton
+                    size="small"
+                    onClick={(e) => { e.stopPropagation(); handleFeedback(false); }}
+                    disabled={feedbackGiven !== null}
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      color: feedbackGiven === 'down' ? 'error.main' : 'action.disabled',
+                      '&:hover': { color: 'error.main' },
+                    }}
+                  >
+                    <ThumbDown sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            )}
           </Box>
 
           {/* Speaker Names */}
@@ -610,6 +675,14 @@ export const MediaCard = memo(function MediaCard({ item }: { item: MediaResult }
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* HITL Feedback Snackbar */}
+      <Snackbar
+        open={snackOpen}
+        autoHideDuration={3000}
+        onClose={() => setSnackOpen(false)}
+        message={feedbackGiven === 'up' ? '👍 Thanks! Marked as relevant.' : '👎 Thanks! Marked as not relevant.'}
+      />
     </>
   );
 });

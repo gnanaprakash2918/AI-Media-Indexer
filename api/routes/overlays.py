@@ -249,3 +249,93 @@ async def get_frame_overlays(
     except Exception as e:
         logger.error(f"[Overlays] Frame lookup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/overlays/voice")
+async def get_voice_overlays(
+    video_id: Annotated[str, Query(description="Video path or ID")],
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    timestamp: Annotated[
+        float | None, Query(description="Specific timestamp to check")
+    ] = None,
+) -> dict:
+    """Get voice diarization overlays for a video.
+
+    Returns speaker segments with their time ranges and speaker info.
+
+    Args:
+        video_id: Video path or identifier.
+        pipeline: Ingestion pipeline instance.
+        timestamp: Optional timestamp to filter around.
+
+    Returns:
+        Dict with voice segments and active speaker at timestamp.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        # Get voice segments for this video
+        segments = pipeline.db.get_voice_segments_for_media(video_id)
+
+        # Format for overlay display
+        voice_overlays = []
+        active_speaker = None
+
+        for seg in segments:
+            start = seg.get("start", 0)
+            end = seg.get("end", 0)
+            speaker_label = seg.get("speaker_label", "Unknown")
+            speaker_name = seg.get("speaker_name")
+
+            overlay = {
+                "type": "voice",
+                "start_time": start,
+                "end_time": end,
+                "duration": end - start,
+                "speaker_label": speaker_label,
+                "speaker_name": speaker_name,
+                "cluster_id": seg.get("voice_cluster_id", -1),
+                "has_audio": bool(seg.get("audio_path")),
+                "audio_url": seg.get("audio_path"),
+                "color": _get_speaker_color(seg.get("voice_cluster_id", 0)),
+            }
+            voice_overlays.append(overlay)
+
+            # Check if this speaker is active at the given timestamp
+            if timestamp is not None and start <= timestamp <= end:
+                active_speaker = {
+                    "speaker_label": speaker_label,
+                    "speaker_name": speaker_name or speaker_label,
+                    "start_time": start,
+                    "end_time": end,
+                }
+
+        return {
+            "video_id": video_id,
+            "timestamp": timestamp,
+            "voice_segments": voice_overlays,
+            "total_segments": len(voice_overlays),
+            "active_speaker": active_speaker,
+        }
+
+    except Exception as e:
+        logger.error(f"[Overlays] Voice lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+def _get_speaker_color(cluster_id: int) -> str:
+    """Generate a consistent color for a speaker cluster."""
+    colors = [
+        "#EF4444",  # Red
+        "#3B82F6",  # Blue
+        "#10B981",  # Green
+        "#F59E0B",  # Amber
+        "#8B5CF6",  # Purple
+        "#EC4899",  # Pink
+        "#06B6D4",  # Cyan
+        "#F97316",  # Orange
+    ]
+    if cluster_id < 0:
+        return "#6B7280"  # Gray for unclustered
+    return colors[cluster_id % len(colors)]
