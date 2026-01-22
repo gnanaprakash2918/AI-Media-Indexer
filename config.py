@@ -310,7 +310,8 @@ class Settings(BaseSettings):
 
     # Scene Detection
     scene_detect_threshold: float = Field(
-        default=15.0, description="PySceneDetect threshold (lower=more scenes, 15.0=sensitive for music videos)"
+        default=15.0,
+        description="PySceneDetect threshold (lower=more scenes, 15.0=sensitive for music videos)",
     )
     scene_detect_min_length: float = Field(
         default=1.0, description="Min scene length in seconds"
@@ -444,6 +445,91 @@ class Settings(BaseSettings):
     enable_hybrid_search: bool = Field(
         default=True,
         description="Use hybrid search (vector + keyword + identity)",
+    )
+
+    # --- Search Configuration (all previously hardcoded thresholds) ---
+    # Query Expansion
+    search_enable_expansion: bool = Field(
+        default=True,
+        description="Enable LLM query expansion (disable for non-English)",
+    )
+    search_expansion_fallback: bool = Field(
+        default=True,
+        description="Retry with original query if expansion yields few results",
+    )
+    search_expansion_min_results: int = Field(
+        default=3,
+        description="Min results before triggering fallback to original query",
+    )
+
+    # Hybrid Search Weights
+    search_vector_weight: float = Field(
+        default=0.6,
+        description="Weight for vector similarity in hybrid search (0.0-1.0)",
+    )
+    search_keyword_weight: float = Field(
+        default=0.4,
+        description="Weight for keyword/BM25 in hybrid search (0.0-1.0)",
+    )
+
+    # Retrieval Limits
+    search_default_limit: int = Field(
+        default=20,
+        description="Default number of search results",
+    )
+    search_rerank_multiplier: int = Field(
+        default=3,
+        description="Multiply limit by this for reranking pool (get 3x candidates)",
+    )
+
+    # Reranking Thresholds
+    search_min_score_threshold: float = Field(
+        default=0.3,
+        description="Minimum score to include in results (0.0-1.0)",
+    )
+    search_vlm_confidence_threshold: int = Field(
+        default=50,
+        description="VLM confidence threshold for verification (0-100)",
+    )
+
+    # HITL Feedback
+    search_hitl_positive_boost: float = Field(
+        default=1.5,
+        description="Score multiplier for positive feedback (>1.0 = boost)",
+    )
+    search_hitl_negative_penalty: float = Field(
+        default=0.5,
+        description="Score multiplier for negative feedback (<1.0 = penalty)",
+    )
+    search_hitl_max_boost: float = Field(
+        default=3.0,
+        description="Maximum cumulative HITL boost",
+    )
+    search_hitl_min_penalty: float = Field(
+        default=0.2,
+        description="Minimum cumulative HITL penalty",
+    )
+    search_hitl_similarity_threshold: float = Field(
+        default=0.7,
+        description="Query similarity threshold for HITL feedback matching",
+    )
+
+    # Query Decomposition
+    search_decomposition_confidence: float = Field(
+        default=0.6,
+        description="Min confidence for query decomposition constraints",
+    )
+
+    # RRF Fusion
+    search_rrf_k: int = Field(
+        default=60,
+        description="RRF constant k (higher = more weight to lower ranks)",
+    )
+
+    # Temporal Context
+    search_temporal_tolerance: float = Field(
+        default=10.0,
+        description="Seconds tolerance for temporal matching in feedback",
     )
 
     # Memory Management - STRATEGY: SOTA Always, Throttle Resources

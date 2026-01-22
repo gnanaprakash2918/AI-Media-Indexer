@@ -378,9 +378,7 @@ function LabelDialog({
   existingNames?: string[];
 }) {
   const [name, setName] = useState('');
-  useEffect(() => {
-    if (open) setName('');
-  }, [open]);
+
 
   const handleSave = () => {
     if (name.trim()) {
@@ -925,6 +923,7 @@ export default function FacesPage() {
       )}
 
       <LabelDialog
+        key={selectedFaceId || 'face-dialog'}
         open={!!selectedFaceId}
         isCluster={false}
         isLoading={labelFaceMutation.isPending}
@@ -936,6 +935,7 @@ export default function FacesPage() {
         }}
       />
       <LabelDialog
+        key={selectedClusterId ?? 'cluster-dialog'}
         open={selectedClusterId !== null}
         isCluster={true}
         isLoading={labelClusterMutation.isPending}

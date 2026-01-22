@@ -28,7 +28,6 @@ class MediaType(str, Enum):
 #   - core/knowledge/schemas.py: Strict parsing (enforces string output)
 
 
-
 class EntityDetail(BaseModel):
     """Details about ANY specific object, food, item, or tool in a frame."""
 

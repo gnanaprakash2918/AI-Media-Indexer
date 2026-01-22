@@ -161,7 +161,7 @@ class SearchAgent:
         self,
         query: str,
         limit: int = 20,
-        use_expansion: bool = True,
+        use_expansion: bool = False,  # Default OFF to prevent LLM hallucination
         video_path: str | None = None,
     ) -> dict[str, Any]:
         """Performs a production-grade scene-level search with LLM expansion.
@@ -281,7 +281,7 @@ class SearchAgent:
         self,
         query: str,
         limit: int = 20,
-        use_expansion: bool = True,
+        use_expansion: bool = False,  # Default OFF to prevent LLM hallucination
     ) -> dict[str, Any]:
         """Performs a frame-level agentic search with query expansion.
 
@@ -626,6 +626,8 @@ class SearchAgent:
         limit: int = 10,
         video_path: str | None = None,
         use_reranking: bool = True,
+        use_expansion: bool = False,  # Default OFF to prevent LLM hallucination
+        expansion_fallback: bool = True,
     ) -> dict[str, Any]:
         """Performs a state-of-the-art search with full verification and explainability.
 
@@ -638,16 +640,34 @@ class SearchAgent:
             limit: Maximum number of results to return.
             video_path: Optional filter for a specific video.
             use_reranking: Whether to perform second-stage LLM verification.
+            use_expansion: Whether to use LLM query expansion (can be disabled
+                if expansion is hurting results, e.g., for non-English content).
+            expansion_fallback: If True and expansion yields < 3 results,
+                retry with original query and merge results.
 
         Returns:
             A dictionary containing ranked results and reasoning for each match.
         """
         log(f"[SOTA Search] Query: '{query[:100]}...'")
+        log(f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}")
 
-        # 1. Parse query with dynamic entity extraction
-        parsed = await self.parse_query(query)
-        search_text = parsed.to_search_text() or query
-        log(f"[SOTA Search] Expanded: '{search_text[:100]}...'")
+        # 1. Parse query with dynamic entity extraction (if enabled)
+        expansion_used = False
+        if use_expansion:
+            try:
+                parsed = await self.parse_query(query)
+                search_text = parsed.to_search_text() or query
+                expansion_used = search_text != query
+                log(f"[SOTA Search] Expanded: '{search_text[:100]}...'")
+            except Exception as e:
+                log(f"[SOTA Search] Expansion failed: {e}, using raw query")
+                parsed = ParsedQuery(visual_keywords=[query])
+                search_text = query
+        else:
+            # Skip expansion - use raw query
+            log("[SOTA Search] Expansion disabled, using raw query")
+            parsed = ParsedQuery(visual_keywords=[query])
+            search_text = query
 
         # 2. Resolve person identities
         person_names = []
@@ -741,6 +761,35 @@ class SearchAgent:
             log(f"[SOTA Search] Search failed: {e}")
             candidates = []
 
+        # === EXPANSION FALLBACK ===
+        # If expansion yielded few results, retry with original raw query
+        if expansion_fallback and expansion_used and len(candidates) < 3:
+            log(f"[SOTA Search] Expansion yielded only {len(candidates)} results, trying original query")
+            try:
+                raw_candidates = self.db.search_scenes(
+                    query=query,  # Use original query, not expanded
+                    limit=limit * 3,
+                    person_name=None,  # Don't use potentially hallucinated names
+                    face_cluster_ids=None,
+                    video_path=video_path,
+                    search_mode="hybrid",
+                )
+                log(f"[SOTA Search] Raw query returned {len(raw_candidates)} additional candidates")
+
+                # Merge unique results (by ID)
+                seen_ids = {c.get("id") for c in candidates if c.get("id")}
+                for rc in raw_candidates:
+                    if rc.get("id") and rc.get("id") not in seen_ids:
+                        candidates.append(rc)
+                        seen_ids.add(rc.get("id"))
+
+                # Re-sort by score
+                candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+                log(f"[SOTA Search] After merge: {len(candidates)} total candidates")
+                fallback_used = "expansion_fallback"
+            except Exception as fb_err:
+                log(f"[SOTA Search] Fallback search failed: {fb_err}")
+
         # 4. Re-rank with Reranking Council (VLM + CrossEncoder)
         if use_reranking and candidates:
             try:
@@ -766,20 +815,22 @@ class SearchAgent:
                             payload=c
                         )
                     )
-
+                
                 # Execute Council Rerank
+                # Using council_rerank which returns RankedResult objects
                 ranked_results = await self.council.council_rerank(
                     query=query,
                     candidates=sc_candidates,
                     max_candidates=limit,
                     use_vlm=True
                 )
-                
+
                 # Convert back to dicts
                 reranked_candidates = []
                 for r in ranked_results:
                     cand_dict = r.candidate.payload.copy()
                     cand_dict["combined_score"] = r.final_score
+                    cand_dict["score"] = r.final_score # Update main score
                     cand_dict["llm_reasoning"] = r.vlm_reason or "Verified by Council"
                     cand_dict["council_scores"] = {
                         "vlm": r.vlm_confidence,
@@ -790,12 +841,18 @@ class SearchAgent:
 
                 candidates = reranked_candidates
                 log(f"[SOTA Search] Council re-ranked to {len(candidates)} results")
+
             except Exception as e:
+                log(f"[SOTA Search] Reranking failed: {e}")
                 import traceback
-                log(f"[SOTA Search] Council re-ranking failed: {e}")
                 log(traceback.format_exc())
-                if candidates:
-                    log(f"Sample candidate payload: {candidates[0].keys()}")
+
+        # 5. Granular Constraint Filtering & Scoring (if ParsedQuery has detail)
+        # Only apply if we have granular constraints, to refine the final list
+        if hasattr(parsed, "identities") and (parsed.identities or parsed.clothing or parsed.text):
+            candidates = self._apply_granular_scoring(candidates, parsed)
+            # Re-sort after granular scoring adjustment
+            candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         # GOLD.md Compliance: Comprehensive Search Reasoning Trace with Pipeline Steps
         # Build detailed pipeline_steps for frontend debug panel
@@ -804,40 +861,12 @@ class SearchAgent:
                 "step": "Query Parsing",
                 "status": "completed",
                 "detail": f"Extracted {len(parsed.entities) if hasattr(parsed, 'entities') and parsed.entities else 0} entities",
-                "data": {
-                    "original_query": query[:100],
-                    "entities_found": [e.name for e in parsed.entities]
-                    if hasattr(parsed, "entities") and parsed.entities
-                    else [],
-                    "scene_description": parsed.scene_description[:100]
-                    if hasattr(parsed, "scene_description")
-                    and parsed.scene_description
-                    else None,
-                },
-            },
-            {
-                "step": "Identity Resolution",
-                "status": "completed",
-                "detail": f"Matched {len(person_names)} names → {len(face_ids)} faces",
-                "data": {
-                    "names_searched": person_names,
-                    "faces_matched": len(face_ids),
-                },
-            },
-            {
-                "step": "Query Expansion",
-                "status": "completed",
-                "detail": f"Expanded to {len(search_text)} chars",
-                "data": {
-                    "expanded_text": search_text[:200] + "..."
-                    if len(search_text) > 200
-                    else search_text,
-                },
+                "data": {"original_query": query[:100]}
             },
             {
                 "step": "Vector Search",
                 "status": "completed",
-                "detail": f"{'Fallback: ' + fallback_used if fallback_used else 'scenes'} → {len(candidates)} results",
+                "detail": f"{'Fallback: ' + str(fallback_used) if fallback_used else 'scenes'} → {len(candidates)} results",
                 "data": {
                     "collection_searched": fallback_used or "scenes",
                     "fallback_used": fallback_used is not None,
@@ -862,14 +891,10 @@ class SearchAgent:
             "step4_retrieve": f"Retrieved {len(candidates)} candidates from {fallback_used or 'scenes'}",
             "step5_rerank": f"Reranking={use_reranking}, final={len(candidates[:limit])}",
         }
-        log(f"[SOTA Search] Reasoning: {reasoning_chain}")
 
-        # 5. Build response with full explainability
         return {
             "query": query,
-            "parsed": parsed.model_dump()
-            if hasattr(parsed, "model_dump")
-            else {},
+            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
             "search_text": search_text,
             "person_names_resolved": person_names,
             "face_ids_matched": len(face_ids),
@@ -878,10 +903,52 @@ class SearchAgent:
             "search_type": "sota",
             "reranking_used": use_reranking,
             "fallback_used": fallback_used,
-            "reasoning_chain": reasoning_chain,
             "pipeline_steps": pipeline_steps,
+            "reasoning_chain": reasoning_chain
         }
 
+    def _apply_granular_scoring(self, results: list[dict], parsed: ParsedQuery) -> list[dict]:
+        """Refine scores based on granular constraint matching."""
+        for result in results:
+            base_score = float(result.get("score", 0.5))
+            # Fetch payload (handle if result is dict or SearchCandidate)
+            payload = result.get("base_payload", result) if isinstance(result, dict) else result
+            
+            # Text/Description for matching
+            desc = (str(payload.get("description", "")) + " " + str(payload.get("action", ""))).lower()
+            ocr = (str(payload.get("ocr_text", "")) + " " + str(payload.get("visible_text", ""))).lower()
+            
+            matches = 0
+            total_checks = 0
+            
+            # Check Text Constraints
+            if hasattr(parsed, "text"):
+                for t in parsed.text:
+                    total_checks += 1
+                    if t.get("text", "").lower() in ocr:
+                        matches += 1
+                    elif t.get("text", "").lower() in desc: 
+                        matches += 0.5
+                    
+            # Check Clothing Constraints
+            if hasattr(parsed, "clothing"):
+                for c in parsed.clothing:
+                    total_checks += 1
+                    c_item = c.get("item", "").lower()
+                    c_color = c.get("color", "").lower()
+                    if c_item and c_item in desc:
+                        matches += 0.5
+                    if c_color and c_color in desc:
+                        matches += 0.5
+            
+            # Boost score if constraints match
+            if total_checks > 0:
+                boost = (matches / total_checks) * 0.2  # Max 20% boost
+                if isinstance(result, dict):
+                    result["score"] = base_score + boost
+                    result["granular_matches"] = matches
+            
+        return results
     @observe("scenelet_search")
     async def scenelet_search(
         self,

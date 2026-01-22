@@ -30,6 +30,7 @@ def _numpy_serializer(obj: Any) -> Any:
         return obj.tolist()
     raise TypeError(f"Unable to serialize {type(obj)}")
 
+
 router = APIRouter()
 
 

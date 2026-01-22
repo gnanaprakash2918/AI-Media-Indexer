@@ -15,7 +15,7 @@ async def retry(
     delay: float = 3.0,
 ) -> None:
     """Retry an async function with exponential backoff on failure.
-    
+
     Logs each retry attempt with the error message for debugging.
     """
     last_exc: Exception | None = None

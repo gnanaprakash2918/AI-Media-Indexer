@@ -10,7 +10,6 @@ import {
     alpha,
     useTheme,
     LinearProgress,
-    Tooltip,
 } from '@mui/material';
 import {
     ExpandMore,

@@ -70,6 +70,11 @@ def reset_cache() -> bool:
     ]
 
     for cache_dir in cache_dirs:
+        # SAFETY: Explicitly skip logs directory to preserve history
+        if "logs" in str(cache_dir).lower():
+            print(f"[SAFETY] Skipping potential log dir: {cache_dir}")
+            continue
+
         if cache_dir.exists():
             try:
                 shutil.rmtree(cache_dir)

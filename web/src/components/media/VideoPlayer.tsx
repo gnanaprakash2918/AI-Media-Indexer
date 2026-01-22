@@ -12,13 +12,21 @@ import {
 import { Close, Loop, AllInclusive } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
-import { getMasklets, getOverlays, type VideoOverlays, type OverlayItem } from '../../api/client';
+import { getMasklets, getOverlays, type OverlayItem } from '../../api/client';
 
 export interface OverlayToggles {
   faces: boolean;
   text: boolean;
   objects: boolean;
   speakers: boolean;
+}
+
+interface Masklet {
+  id: string;
+  concept: string;
+  start_time: number;
+  end_time: number;
+  bbox: number[];
 }
 
 interface VideoPlayerProps {
@@ -73,7 +81,7 @@ function InnerVideoPlayer({
   // Filter masklets active at the current percentage of playback
   const activeMasklets = useMemo(() => {
     if (!masklets.data || !Array.isArray(masklets.data)) return [];
-    return masklets.data.filter((m: any) =>
+    return masklets.data.filter((m: Masklet) =>
       currentTime >= m.start_time && currentTime <= m.end_time
     );
   }, [masklets.data, currentTime]);
@@ -276,7 +284,7 @@ function InnerVideoPlayer({
                   viewBox="0 0 1000 1000"
                   preserveAspectRatio="none"
                 >
-                  {activeMasklets.map((m: any, i: number) => (
+                  {activeMasklets.map((m: Masklet, i: number) => (
                     <g key={i}>
                       <rect
                         x={m.bbox[0]}

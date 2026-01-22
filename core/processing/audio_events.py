@@ -1,4 +1,5 @@
 """Module for detecting audio events and matching them to descriptions."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,7 @@ log = get_logger(__name__)
 
 class AudioEventDetector:
     """Detector for identifying specific audio events (e.g., siren, applause)."""
+
     def __init__(self, device: str | None = None):
         """Initialize audio event detector."""
         self.model = None
@@ -121,12 +123,15 @@ class AudioEventDetector:
             # to avoid blocking the async event loop
             target_sr = 48000
             if sample_rate != target_sr:
-                log.debug(f"[CLAP] Resampling audio from {sample_rate}Hz to {target_sr}Hz...")
+                log.debug(
+                    f"[CLAP] Resampling audio from {sample_rate}Hz to {target_sr}Hz..."
+                )
                 import librosa
+
                 audio_segment = librosa.resample(
                     audio_segment.astype(np.float32),
                     orig_sr=sample_rate,
-                    target_sr=target_sr
+                    target_sr=target_sr,
                 )
                 sample_rate = target_sr
                 log.debug("[CLAP] Resampling complete")
@@ -233,7 +238,9 @@ class AudioEventDetector:
             # CLAP expects 48kHz audio - resample ALL chunks BEFORE acquiring GPU
             target_sr = 48000
             resampled_chunks = []
-            log.info(f"[CLAP] Batch: Resampling {len(audio_chunks)} chunks from {sample_rate}Hz to {target_sr}Hz...")
+            log.info(
+                f"[CLAP] Batch: Resampling {len(audio_chunks)} chunks from {sample_rate}Hz to {target_sr}Hz..."
+            )
 
             import librosa
 
@@ -255,7 +262,9 @@ class AudioEventDetector:
             log.info("[CLAP] Batch: Resampling complete")
 
             # Single GPU acquisition for ALL chunks
-            log.info(f"[CLAP] Batch: Acquiring GPU for {len(resampled_chunks)} chunks...")
+            log.info(
+                f"[CLAP] Batch: Acquiring GPU for {len(resampled_chunks)} chunks..."
+            )
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
                 log.info("[CLAP] Batch: GPU acquired, processing all chunks...")
                 device = self._device or "cpu"
@@ -270,7 +279,9 @@ class AudioEventDetector:
 
                 with torch.no_grad():
                     text_embeds = self.model.get_text_features(**text_inputs)
-                    text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
+                    text_embeds = text_embeds / text_embeds.norm(
+                        dim=-1, keepdim=True
+                    )
 
                 all_results: list[list[dict]] = []
 
@@ -284,11 +295,17 @@ class AudioEventDetector:
                         sampling_rate=target_sr,
                         return_tensors="pt",
                     )
-                    audio_inputs = {k: v.to(device) for k, v in audio_inputs.items()}
+                    audio_inputs = {
+                        k: v.to(device) for k, v in audio_inputs.items()
+                    }
 
                     with torch.no_grad():
-                        audio_embeds = self.model.get_audio_features(**audio_inputs)
-                        audio_embeds = audio_embeds / audio_embeds.norm(dim=-1, keepdim=True)
+                        audio_embeds = self.model.get_audio_features(
+                            **audio_inputs
+                        )
+                        audio_embeds = audio_embeds / audio_embeds.norm(
+                            dim=-1, keepdim=True
+                        )
 
                         similarity = (audio_embeds @ text_embeds.T).squeeze(0)
                         probs = similarity.softmax(dim=-1).cpu().numpy()
@@ -298,10 +315,12 @@ class AudioEventDetector:
                     for idx in top_indices:
                         conf = float(probs[idx])
                         if conf >= threshold:
-                            results.append({
-                                "event": target_classes[idx],
-                                "confidence": round(conf, 3),
-                            })
+                            results.append(
+                                {
+                                    "event": target_classes[idx],
+                                    "confidence": round(conf, 3),
+                                }
+                            )
                     all_results.append(results)
 
                 log.info(f"[CLAP] Batch: Processed {len(all_results)} chunks")

@@ -70,7 +70,10 @@ class OllamaLLM(LLMInterface):
         base_url = os.getenv(base_url_env, "http://localhost:11434")
 
         from core.utils.logger import log
-        log(f"[OllamaLLM] Initializing with vision_model={self.model}, text_model={self.text_model}, base_url={base_url}")
+
+        log(
+            f"[OllamaLLM] Initializing with vision_model={self.model}, text_model={self.text_model}, base_url={base_url}"
+        )
 
         # Initialize class-level semaphore if not already done
         if OllamaLLM._semaphore is None:
@@ -203,13 +206,15 @@ class OllamaLLM(LLMInterface):
                     chat_params: dict[str, Any] = {
                         "model": self.text_model,
                         "messages": [{"role": "user", "content": prompt}],
-                        "options": {"temperature": kwargs.get("temperature", 0.0)},
+                        "options": {
+                            "temperature": kwargs.get("temperature", 0.0)
+                        },
                     }
-                    
+
                     # Enable native JSON mode if requested
                     if format_json:
                         chat_params["format"] = "json"
-                    
+
                     resp = await self.client.chat(**chat_params)
                     content = resp.get("message", {}).get("content")
                     self._record_success()
@@ -537,7 +542,9 @@ Be specific with names (e.g., "Tesla Model 3" not "car", "Idly" not "food").
                             timeout=VLM_TIMEOUT,
                         )
                     except asyncio.TimeoutError:
-                        raise RuntimeError(f"VLM analysis timed out after {VLM_TIMEOUT}s")
+                        raise RuntimeError(
+                            f"VLM analysis timed out after {VLM_TIMEOUT}s"
+                        )
                     except (TypeError, Exception) as schema_err:
                         if (
                             "format" in str(schema_err)

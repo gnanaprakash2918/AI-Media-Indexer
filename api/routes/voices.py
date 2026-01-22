@@ -126,8 +126,8 @@ async def merge_voice_clusters(
 
     return {
         "status": "merged",
-        "source_cluster_id": source_cluster_id,
-        "target_cluster_id": target_cluster_id,
+        "source_cluster_id": request.source_cluster_id,
+        "target_cluster_id": request.target_cluster_id,
         "segments_moved": count,
     }
 
@@ -212,9 +212,8 @@ async def create_new_voice_cluster(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        import random
-
-        new_cluster_id = random.randint(10000, 99999)
+        # Use proper atomic cluster ID generation
+        new_cluster_id = pipeline.db.get_next_voice_cluster_id()
 
         from qdrant_client import models
 
@@ -273,6 +272,7 @@ async def move_voice_to_cluster(
 
 class ClusterNameRequest(BaseModel):
     """Request schema for naming a voice cluster."""
+
     name: str
 
 
@@ -319,7 +319,10 @@ async def name_voice_cluster(
         # 3. Identity Linking (Newly added)
         try:
             from core.storage.identity_graph import identity_graph
-            identity = identity_graph.get_or_create_identity_by_name(request.name)
+
+            identity = identity_graph.get_or_create_identity_by_name(
+                request.name
+            )
             # Fetch IDs to link - we can skip if handled in db.set_speaker_name,
             # but this route does manual set_payload.
             # Ideally we should use db.set_speaker_name to avoid duplication.
@@ -359,7 +362,9 @@ async def mark_main_speaker(
 
     success = pipeline.db.set_speaker_main(cluster_int, segment_id, is_main)
     if not success:
-        raise HTTPException(status_code=404, detail="Cluster or segment not found")
+        raise HTTPException(
+            status_code=404, detail="Cluster or segment not found"
+        )
 
     return {
         "status": "updated",

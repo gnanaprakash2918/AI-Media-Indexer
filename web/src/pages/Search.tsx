@@ -17,7 +17,7 @@ import {
   MenuItem,
   Tooltip,
 } from '@mui/material';
-import { Search as SearchIcon, PlayArrow, Psychology } from '@mui/icons-material';
+import { Search as SearchIcon, PlayArrow } from '@mui/icons-material';
 
 import { searchHybrid, searchGranular, getLibrary, type SearchResult } from '../api/client';
 import { MediaCard } from '../components/media/MediaCard';
@@ -32,7 +32,7 @@ interface PipelineStep {
   step: string;
   status: 'completed' | 'running' | 'pending' | 'skipped';
   detail: string;
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
 }
 
 interface SearchResponse {
@@ -310,7 +310,7 @@ export default function SearchPage() {
           <Grid container spacing={3}>
             {results.map((item: SearchResult, idx: number) => (
               <Grid key={item.id || idx} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                <MediaCard item={item} searchQuery={lastQuery} />
+                <MediaCard item={item} searchQuery={lastQuery} overlayToggles={overlayToggles} />
               </Grid>
             ))}
           </Grid>

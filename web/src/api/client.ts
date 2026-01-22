@@ -280,7 +280,7 @@ export const triggerGrounding = async (videoPath: string, concepts?: string[]) =
   return res.data;
 };
 
-export const updateMasklet = async (maskletId: string, updates: any) => {
+export const updateMasklet = async (maskletId: string, updates: Record<string, unknown>) => {
   const res = await apiClient.patch(`/api/masklets/${maskletId}`, updates);
   return res.data;
 };

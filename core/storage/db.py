@@ -56,15 +56,31 @@ def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
 
 def sanitize_numpy_types(obj: Any) -> Any:
     """Recursively convert numpy types to native Python types.
-    
+
     Prevents 'Unable to serialize numpy.int32' errors when upserting to Qdrant.
+    Also detects and handles unawaited coroutines which would cause serialization failures.
     """
+    import asyncio
+    import inspect
+
     import numpy as np
-    
+
+    # CRITICAL: Detect unawaited coroutines which would cause Pydantic serialization errors
+    if asyncio.iscoroutine(obj) or inspect.iscoroutine(obj):
+        log(
+            f"[SANITIZE] ERROR: Unawaited coroutine detected in payload: {obj}. "
+            "This indicates a missing 'await' somewhere in the pipeline. "
+            "Replacing with error placeholder to prevent crash.",
+            level="ERROR",
+        )
+        return "[ERROR: Unawaited coroutine - check logs]"
+
     if isinstance(obj, dict):
         return {k: sanitize_numpy_types(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [sanitize_numpy_types(v) for v in obj]
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
     elif isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
@@ -72,7 +88,6 @@ def sanitize_numpy_types(obj: Any) -> Any:
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
     return obj
-
 
 
 # Auto-select embedding model based on available VRAM
@@ -94,10 +109,10 @@ def paginated_scroll(
     with_vectors: bool = False,
 ) -> list:
     """Generator-based paginated scroll for large result sets.
-    
+
     Prevents memory issues by fetching results in batches using Qdrant's
     cursor-based pagination instead of loading all at once.
-    
+
     Args:
         client: Qdrant client instance.
         collection_name: Name of the collection to scroll.
@@ -106,17 +121,17 @@ def paginated_scroll(
         batch_size: Number of records per batch (default 100).
         with_payload: Whether to include payload in results.
         with_vectors: Whether to include vectors in results.
-        
+
     Returns:
         List of all matching points up to limit.
     """
     all_points = []
     offset = None
     remaining = limit
-    
+
     while remaining > 0:
         fetch_size = min(batch_size, remaining)
-        
+
         result, next_offset = client.scroll(
             collection_name=collection_name,
             scroll_filter=scroll_filter,
@@ -125,15 +140,15 @@ def paginated_scroll(
             with_payload=with_payload,
             with_vectors=with_vectors,
         )
-        
+
         all_points.extend(result)
         remaining -= len(result)
-        
+
         if next_offset is None or len(result) < fetch_size:
             break
-            
+
         offset = next_offset
-    
+
     return all_points
 
 
@@ -211,6 +226,102 @@ class VectorDB:
             f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
         )
         self._ensure_collections()
+
+        # Thread-safe cluster ID counter (uses timestamp + counter for uniqueness)
+        import threading
+
+        self._cluster_id_lock = threading.Lock()
+        self._cluster_id_counter = 0
+
+    def get_next_voice_cluster_id(self) -> int:
+        """Generate a unique voice cluster ID.
+
+        Uses timestamp-based unique ID with atomic counter to guarantee uniqueness.
+        Format: YYMMDDHHMM + 4-digit counter = 14-digit ID that's time-sortable.
+
+        Returns:
+            Unique integer cluster ID.
+        """
+        import time
+
+        with self._cluster_id_lock:
+            # Get timestamp component (minutes since epoch, fits in reasonable int)
+            ts = int(time.time() // 60)  # Minutes since epoch
+            self._cluster_id_counter = (self._cluster_id_counter + 1) % 10000
+            # Combine: timestamp * 10000 + counter
+            cluster_id = (ts % 100000000) * 10000 + self._cluster_id_counter
+            return cluster_id
+
+    def get_next_face_cluster_id(self) -> int:
+        """Generate a unique face cluster ID.
+
+        Uses same logic as voice cluster IDs for consistency.
+
+        Returns:
+            Unique integer cluster ID.
+        """
+        return self.get_next_voice_cluster_id()
+
+    def get_max_voice_cluster_id(self) -> int:
+        """Get the maximum existing voice cluster ID.
+
+        Useful for bootstrapping counter after restart.
+
+        Returns:
+            Maximum cluster ID found, or 0 if none exist.
+        """
+        try:
+            # Scroll through voice segments to find max cluster ID
+            max_id = 0
+            offset = None
+            while True:
+                results, offset = self.client.scroll(
+                    collection_name=self.VOICE_COLLECTION,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["voice_cluster_id"],
+                    with_vectors=False,
+                )
+                for point in results:
+                    cid = (
+                        point.payload.get("voice_cluster_id", 0)
+                        if point.payload
+                        else 0
+                    )
+                    if isinstance(cid, int) and cid > max_id:
+                        max_id = cid
+                if offset is None:
+                    break
+            return max_id
+        except Exception:
+            return 0
+
+    def get_max_face_cluster_id(self) -> int:
+        """Get the maximum existing face cluster ID."""
+        try:
+            max_id = 0
+            offset = None
+            while True:
+                results, offset = self.client.scroll(
+                    collection_name=self.FACES_COLLECTION,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["cluster_id"],
+                    with_vectors=False,
+                )
+                for point in results:
+                    cid = (
+                        point.payload.get("cluster_id", 0)
+                        if point.payload
+                        else 0
+                    )
+                    if isinstance(cid, int) and cid > max_id:
+                        max_id = cid
+                if offset is None:
+                    break
+            return max_id
+        except Exception:
+            return 0
 
     def _load_encoder(self) -> SentenceTransformer:
         """Loads the SentenceTransformer model from local cache or HuggingFace Hub.
@@ -1398,7 +1509,9 @@ class VectorDB:
                     }
                 # Generate detailed match reason with actual content
                 payload = hit.payload or {}
-                desc_preview = (payload.get("description") or payload.get("action") or "")[:80]
+                desc_preview = (
+                    payload.get("description") or payload.get("action") or ""
+                )[:80]
                 results_by_id[point_id]["match_reasons"].append(
                     f"Semantic match (score={hit.score:.2f}): {desc_preview}..."
                 )
@@ -1496,7 +1609,7 @@ class VectorDB:
                     val = str(payload.get(field, ""))[:50]
                     if val:
                         field_details.append(f"{field}='{val}'")
-                
+
                 if field_details:
                     results_by_id[point_id]["match_reasons"].append(
                         f"Text match: {'; '.join(field_details[:3])}"
@@ -1604,8 +1717,14 @@ class VectorDB:
                                     **payload,
                                 }
                             # Get face names from the result payload
-                            face_names = results_by_id[point_id].get("face_names", [])
-                            confidence = "high" if len(rank_lists.get("identity", {})) <= 5 else "medium"
+                            face_names = results_by_id[point_id].get(
+                                "face_names", []
+                            )
+                            confidence = (
+                                "high"
+                                if len(rank_lists.get("identity", {})) <= 5
+                                else "medium"
+                            )
                             results_by_id[point_id]["match_reasons"].append(
                                 f"Face identity: '{name}' (cluster={cluster_id}, conf={confidence}, visible_faces={face_names})"
                             )
@@ -1631,44 +1750,48 @@ class VectorDB:
                     match=models.MatchText(text=transcript_query or query),
                 )
             )
-            
+
             voice_resp = self.client.scroll(
                 collection_name=self.VOICE_COLLECTION,
                 scroll_filter=models.Filter(must=voice_conditions),
                 limit=limit * 2,
                 with_payload=True,
             )
-            
+
             for rank, point in enumerate(voice_resp[0]):
                 payload = point.payload or {}
                 # Create composite ID linking to timestamp
                 media_path = payload.get("media_path", "")
                 start_time = payload.get("start", 0)
-                
+
                 # Find corresponding frame at this timestamp
-                frame_filter = models.Filter(must=[
-                    models.FieldCondition(
-                        key="video_path",
-                        match=models.MatchValue(value=media_path),
-                    ),
-                    models.FieldCondition(
-                        key="timestamp",
-                        range=models.Range(gte=start_time - 2, lte=start_time + 2),
-                    ),
-                ])
-                
+                frame_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchValue(value=media_path),
+                        ),
+                        models.FieldCondition(
+                            key="timestamp",
+                            range=models.Range(
+                                gte=start_time - 2, lte=start_time + 2
+                            ),
+                        ),
+                    ]
+                )
+
                 frame_resp = self.client.scroll(
                     collection_name=self.MEDIA_COLLECTION,
                     scroll_filter=frame_filter,
                     limit=1,
                     with_payload=True,
                 )
-                
+
                 if frame_resp[0]:
                     frame_point = frame_resp[0][0]
                     point_id = str(frame_point.id)
                     rank_lists["voice"][point_id] = rank + 1
-                    
+
                     if point_id not in results_by_id:
                         frame_payload = frame_point.payload or {}
                         results_by_id[point_id] = {
@@ -1678,15 +1801,18 @@ class VectorDB:
                             "match_reasons": [],
                             **frame_payload,
                         }
-                    
+
                     # Detailed voice/transcript match info
                     transcript = payload.get("transcript", "")[:100]
-                    speaker = payload.get("speaker_name") or f"Speaker #{payload.get('cluster_id', '?')}"
+                    speaker = (
+                        payload.get("speaker_name")
+                        or f"Speaker #{payload.get('cluster_id', '?')}"
+                    )
                     results_by_id[point_id]["match_reasons"].append(
                         f"Dialogue match: '{speaker}' said '{transcript}...'"
                     )
                     results_by_id[point_id]["matched_dialogue"] = transcript
-                    
+
         except Exception as e:
             log(f"Voice/transcript search failed: {e}")
 
@@ -1701,7 +1827,7 @@ class VectorDB:
                         match=models.MatchAny(any=video_paths),
                     )
                 )
-            
+
             asr_conditions.append(
                 models.FieldCondition(
                     key="text",
@@ -1721,35 +1847,41 @@ class VectorDB:
                 media_path = payload.get("video_path", "")
                 start_time = payload.get("start", 0)
                 text = payload.get("text", "")[:100]
-                
+
                 # Find matching frame
-                frame_filter = models.Filter(must=[
-                    models.FieldCondition(
-                        key="video_path",
-                        match=models.MatchValue(value=media_path),
-                    ),
-                    models.FieldCondition(
-                        key="timestamp",
-                        range=models.Range(gte=start_time - 2, lte=start_time + 2),
-                    ),
-                ])
-                
+                frame_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="video_path",
+                            match=models.MatchValue(value=media_path),
+                        ),
+                        models.FieldCondition(
+                            key="timestamp",
+                            range=models.Range(
+                                gte=start_time - 2, lte=start_time + 2
+                            ),
+                        ),
+                    ]
+                )
+
                 frame_resp = self.client.scroll(
                     collection_name=self.MEDIA_COLLECTION,
                     scroll_filter=frame_filter,
                     limit=1,
                     with_payload=True,
                 )
-                
+
                 if frame_resp[0]:
                     frame_point = frame_resp[0][0]
                     point_id = str(frame_point.id)
-                    
+
                     # Merge into voice rank list (treating ASR as voice)
                     if point_id not in rank_lists["voice"]:
                         rank_lists["voice"][point_id] = rank + 1
                     else:
-                        rank_lists["voice"][point_id] = min(rank_lists["voice"][point_id], rank + 1)
+                        rank_lists["voice"][point_id] = min(
+                            rank_lists["voice"][point_id], rank + 1
+                        )
 
                     if point_id not in results_by_id:
                         frame_payload = frame_point.payload or {}
@@ -1760,8 +1892,11 @@ class VectorDB:
                             "match_reasons": [],
                             **frame_payload,
                         }
-                    
-                    if f"Dialogue match: '{text}...'" not in results_by_id[point_id]["match_reasons"]:
+
+                    if (
+                        f"Dialogue match: '{text}...'"
+                        not in results_by_id[point_id]["match_reasons"]
+                    ):
                         results_by_id[point_id]["match_reasons"].append(
                             f"Transcript match: '{text}...'"
                         )
@@ -1787,44 +1922,50 @@ class VectorDB:
                     match=models.MatchText(text=query),
                 )
             )
-            
+
             audio_resp = self.client.scroll(
                 collection_name=self.AUDIO_EVENTS_COLLECTION,
-                scroll_filter=models.Filter(should=audio_conditions),  # OR condition
+                scroll_filter=models.Filter(
+                    should=audio_conditions
+                ),  # OR condition
                 limit=limit,
                 with_payload=True,
             )
-            
+
             for rank, point in enumerate(audio_resp[0]):
                 payload = point.payload or {}
                 media_path = payload.get("media_path", "")
                 start_time = payload.get("start_time", 0)
-                
+
                 # Find frame near this audio event
                 if media_path:
-                    frame_filter = models.Filter(must=[
-                        models.FieldCondition(
-                            key="video_path",
-                            match=models.MatchValue(value=media_path),
-                        ),
-                        models.FieldCondition(
-                            key="timestamp",
-                            range=models.Range(gte=start_time - 1, lte=start_time + 3),
-                        ),
-                    ])
-                    
+                    frame_filter = models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="video_path",
+                                match=models.MatchValue(value=media_path),
+                            ),
+                            models.FieldCondition(
+                                key="timestamp",
+                                range=models.Range(
+                                    gte=start_time - 1, lte=start_time + 3
+                                ),
+                            ),
+                        ]
+                    )
+
                     frame_resp = self.client.scroll(
                         collection_name=self.MEDIA_COLLECTION,
                         scroll_filter=frame_filter,
                         limit=1,
                         with_payload=True,
                     )
-                    
+
                     if frame_resp[0]:
                         frame_point = frame_resp[0][0]
                         point_id = str(frame_point.id)
                         rank_lists["audio"][point_id] = rank + 1
-                        
+
                         if point_id not in results_by_id:
                             frame_payload = frame_point.payload or {}
                             results_by_id[point_id] = {
@@ -1834,14 +1975,14 @@ class VectorDB:
                                 "match_reasons": [],
                                 **frame_payload,
                             }
-                        
+
                         # Detailed audio event info
                         event_type = payload.get("event_type", "unknown")
                         confidence = payload.get("confidence", 0)
                         results_by_id[point_id]["match_reasons"].append(
                             f"Audio event: '{event_type}' (conf={confidence:.2f}) at {start_time:.1f}s"
                         )
-                        
+
         except Exception as e:
             log(f"Audio event search failed: {e}")
 
@@ -1863,40 +2004,49 @@ class VectorDB:
                             match=models.MatchAny(any=video_paths),
                         )
                     )
-                
+
                 section_resp = self.client.scroll(
                     collection_name=self.AUDIO_EVENTS_COLLECTION,
                     scroll_filter=models.Filter(must=section_conditions),
                     limit=50,
                     with_payload=True,
                 )
-                
+
                 # Get time ranges for this section type
                 section_ranges = []
                 for point in section_resp[0]:
                     payload = point.payload or {}
                     start = payload.get("start_time", 0)
-                    end = payload.get("end_time", start + 30)  # Default 30s if no end
+                    end = payload.get(
+                        "end_time", start + 30
+                    )  # Default 30s if no end
                     media = payload.get("media_path", "")
                     section_ranges.append((media, start, end))
-                
+
                 if section_ranges:
-                    log(f"[Music] Found {len(section_ranges)} '{music_section}' sections")
-                    
+                    log(
+                        f"[Music] Found {len(section_ranges)} '{music_section}' sections"
+                    )
+
                     # Boost results that fall within these time ranges
                     for point_id, result in results_by_id.items():
                         video_path = result.get("video_path", "")
                         timestamp = result.get("timestamp", 0)
-                        
+
                         for media, start, end in section_ranges:
-                            if video_path == media and start <= timestamp <= end:
-                                rank_lists["music_section"][point_id] = 1  # High rank
+                            if (
+                                video_path == media
+                                and start <= timestamp <= end
+                            ):
+                                rank_lists["music_section"][point_id] = (
+                                    1  # High rank
+                                )
                                 result["match_reasons"].append(
                                     f"During {music_section} ({start:.1f}s-{end:.1f}s)"
                                 )
                                 result["in_music_section"] = music_section
                                 break
-                                
+
             except Exception as e:
                 log(f"Music section filtering failed: {e}")
 
@@ -1912,7 +2062,7 @@ class VectorDB:
                             match=models.MatchAny(any=video_paths),
                         )
                     )
-                
+
                 # Look for drops and choruses (typically high energy)
                 energy_resp = self.client.scroll(
                     collection_name=self.AUDIO_EVENTS_COLLECTION,
@@ -1927,8 +2077,10 @@ class VectorDB:
                                 key="event_type",
                                 match=models.MatchValue(value="music_chorus"),
                             ),
-                        ]
-                    ) if energy_conditions else models.Filter(
+                        ],
+                    )
+                    if energy_conditions
+                    else models.Filter(
                         should=[
                             models.FieldCondition(
                                 key="event_type",
@@ -1943,7 +2095,7 @@ class VectorDB:
                     limit=50,
                     with_payload=True,
                 )
-                
+
                 energy_ranges = []
                 for point in energy_resp[0]:
                     payload = point.payload or {}
@@ -1953,27 +2105,34 @@ class VectorDB:
                         end = payload.get("end_time", start + 30)
                         media = payload.get("media_path", "")
                         energy_ranges.append((media, start, end))
-                
+
                 if energy_ranges:
-                    log(f"[Energy] Found {len(energy_ranges)} high-energy sections")
-                    
+                    log(
+                        f"[Energy] Found {len(energy_ranges)} high-energy sections"
+                    )
+
                     for point_id, result in results_by_id.items():
                         video_path = result.get("video_path", "")
                         timestamp = result.get("timestamp", 0)
-                        
+
                         for media, start, end in energy_ranges:
-                            if video_path == media and start <= timestamp <= end:
+                            if (
+                                video_path == media
+                                and start <= timestamp <= end
+                            ):
                                 rank_lists["high_energy"][point_id] = 1
                                 result["match_reasons"].append(
                                     f"High-energy moment ({start:.1f}s-{end:.1f}s)"
                                 )
                                 result["is_high_energy"] = True
                                 break
-                                
+
             except Exception as e:
                 log(f"High energy filtering failed: {e}")
 
-        log(f"Total modalities searched: vector, keyword, identity, voice, audio, music_structure")
+        log(
+            f"Total modalities searched: vector, keyword, identity, voice, audio, music_structure"
+        )
 
         # === 6. RRF FUSION ===
         for point_id, result in results_by_id.items():
@@ -2047,7 +2206,10 @@ class VectorDB:
                 return resp[0][0].payload.get("cluster_id")
             return None
         except Exception as e:
-            log(f"get_cluster_id_by_name failed for '{name}': {e}", level="DEBUG")
+            log(
+                f"get_cluster_id_by_name failed for '{name}': {e}",
+                level="DEBUG",
+            )
             return None
 
     def fuzzy_get_cluster_id_by_name(
@@ -2103,7 +2265,10 @@ class VectorDB:
 
             return None
         except Exception as e:
-            log(f"fuzzy_get_cluster_id_by_name failed for '{name}': {e}", level="DEBUG")
+            log(
+                f"fuzzy_get_cluster_id_by_name failed for '{name}': {e}",
+                level="DEBUG",
+            )
             return None
 
     def get_frames_by_video(
@@ -2226,23 +2391,30 @@ class VectorDB:
                 payload = point.payload or {}
                 # Only return named faces or high-confidence clusters?
                 # For overlay, we show everything, but "Unknown" if no name.
-                label = payload.get("name") or f"Person {payload.get('cluster_id')}"
-                
+                label = (
+                    payload.get("name") or f"Person {payload.get('cluster_id')}"
+                )
+
                 # Bounding box is likely not stored in payload efficiently currently?
                 # Using a dummy box if missing, or checking if we stored 'bbox'
                 # Note: insert_face payload has bbox_size but not full coords usually.
                 # If we want visual boxes, we need to store [x1,y1,x2,y2].
                 # Assuming UI handles "point" or we use a default box.
-                
-                masklets.append({
-                    "type": "face",
-                    "start": payload.get("timestamp", 0),
-                    "end": payload.get("timestamp", 0) + 1.0, # 1s duration estimate
-                    "label": label,
-                    "confidence": payload.get("det_score", 0.9),
-                    "box": payload.get("bbox", [0, 0, 0, 0]), # Placeholder if missing
-                    "cluster_id": payload.get("cluster_id"),
-                })
+
+                masklets.append(
+                    {
+                        "type": "face",
+                        "start": payload.get("timestamp", 0),
+                        "end": payload.get("timestamp", 0)
+                        + 1.0,  # 1s duration estimate
+                        "label": label,
+                        "confidence": payload.get("det_score", 0.9),
+                        "box": payload.get(
+                            "bbox", [0, 0, 0, 0]
+                        ),  # Placeholder if missing
+                        "cluster_id": payload.get("cluster_id"),
+                    }
+                )
 
             # 2. Fetch Voices (Audio Identity) - USER REQUEST
             voice_filter = models.Filter(
@@ -2265,9 +2437,9 @@ class VectorDB:
             )
 
             # Pre-fetch voice cluster names if possible
-            
+
             # Map cluster_id -> name (Video-level cache usually needed, but fast here)
-            cluster_names = {} 
+            cluster_names = {}
             # TODO: We need a way to store/retrieve Voice Cluster Names.
             # Currently 'VOICE_COLLECTION' has 'voice_cluster_id'.
             # We don't have a separate "VOICE_CLUSTERS" collection like faces usually?
@@ -2276,25 +2448,29 @@ class VectorDB:
 
             for point in voice_points:
                 payload = point.payload or {}
-                # "speaker_label" is usually "SPEAKER_01". 
+                # "speaker_label" is usually "SPEAKER_01".
                 # "voice_cluster_id" is the global ID.
                 # Check if we have a resolved name.
-                label = payload.get("speaker_name") # Ideally we store this on naming
+                label = payload.get(
+                    "speaker_name"
+                )  # Ideally we store this on naming
                 if not label:
-                     label = f"Voice {payload.get('voice_cluster_id', '?')}"
+                    label = f"Voice {payload.get('voice_cluster_id', '?')}"
 
-                masklets.append({
-                    "type": "voice",
-                    "start": payload.get("start", 0),
-                    "end": payload.get("end", 0),
-                    "label": label,
-                    "confidence": 0.8,
-                    # No box for voice
-                })
+                masklets.append(
+                    {
+                        "type": "voice",
+                        "start": payload.get("start", 0),
+                        "end": payload.get("end", 0),
+                        "label": label,
+                        "confidence": 0.8,
+                        # No box for voice
+                    }
+                )
 
         except Exception as e:
             log(f"get_masklets failed: {e}")
-        
+
         return masklets
 
     def get_frame_by_id(self, frame_id: str) -> dict[str, Any] | None:
@@ -2561,12 +2737,14 @@ class VectorDB:
             # Find how many points were updated (optional, for return value)
             # For speed, we can skip counting or do a quick separate count query.
             # Let's just return 1 to indicate success for now or perform a count.
-            return 1 
+            return 1
         except Exception as e:
             log(f"set_speaker_name failed: {e}")
             return 0
 
-    def set_speaker_main(self, cluster_id: int, segment_id: str, is_main: bool = True) -> bool:
+    def set_speaker_main(
+        self, cluster_id: int, segment_id: str, is_main: bool = True
+    ) -> bool:
         """Mark a specific segment as the 'main' representation of a speaker.
 
         Args:
@@ -4529,7 +4707,6 @@ class VectorDB:
             return []
 
     @observe("db_get_recent_frames")
-
     def get_recent_frames(self, limit: int = 20) -> list[dict[str, Any]]:
         """Get the most recently indexed frames.
 
@@ -4766,11 +4943,14 @@ class VectorDB:
             "name": name,
             "face_cluster_id": face_cluster_id,
             "voice_cluster_id": voice_cluster_id,
-            "linked": face_cluster_id is not None and voice_cluster_id is not None,
+            "linked": face_cluster_id is not None
+            and voice_cluster_id is not None,
         }
 
         if result["linked"]:
-            log(f"[CrossModal] Linked identity '{name}': face={face_cluster_id}, voice={voice_cluster_id}")
+            log(
+                f"[CrossModal] Linked identity '{name}': face={face_cluster_id}, voice={voice_cluster_id}"
+            )
 
         return result
 
@@ -4804,7 +4984,9 @@ class VectorDB:
 
             resp = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
-                scroll_filter=models.Filter(must=conditions) if conditions else None,
+                scroll_filter=models.Filter(must=conditions)
+                if conditions
+                else None,
                 limit=5000,
                 with_payload=True,
                 with_vectors=False,
@@ -4827,7 +5009,9 @@ class VectorDB:
                 # Create pairs of co-occurring identities
                 for i in range(len(face_cluster_ids)):
                     for j in range(i + 1, len(face_cluster_ids)):
-                        id1, id2 = sorted([face_cluster_ids[i], face_cluster_ids[j]])
+                        id1, id2 = sorted(
+                            [face_cluster_ids[i], face_cluster_ids[j]]
+                        )
                         name1 = face_names[i] if i < len(face_names) else None
                         name2 = face_names[j] if j < len(face_names) else None
 
@@ -4876,6 +5060,12 @@ class VectorDB:
         Also propagates the name to all frames containing this cluster
         for proper search and display.
 
+        **Auto-Merge Feature**: If another face cluster already has this name,
+        both clusters will be merged under the same identity.
+
+        **Cross-Modal Linking**: If a voice cluster has this same name,
+        they will be linked together via the identity graph.
+
         Args:
             cluster_id: The face cluster ID (str or int).
             name: The name to assign.
@@ -4884,7 +5074,29 @@ class VectorDB:
             Number of updated face points.
         """
         try:
-            # Get all face point IDs in this cluster
+            # === Step 1: Check for existing face clusters with same name ===
+            existing_cluster = self.get_face_cluster_by_name(name)
+            if existing_cluster and existing_cluster != cluster_id:
+                log(
+                    f"[HITL] Found existing face cluster with name '{name}' (ID: {existing_cluster})"
+                )
+                log(
+                    f"[HITL] Auto-merging cluster {cluster_id} into existing cluster {existing_cluster}"
+                )
+
+                # Merge current cluster into existing one
+                try:
+                    self.merge_face_clusters(
+                        source_id=cluster_id, target_id=existing_cluster
+                    )
+                    # After merge, use the existing cluster for remaining operations
+                    cluster_id = existing_cluster
+                except Exception as merge_err:
+                    log(
+                        f"[HITL] Auto-merge failed, continuing with separate clusters: {merge_err}"
+                    )
+
+            # === Step 2: Get all face point IDs in this cluster ===
             resp = self.client.scroll(
                 collection_name=self.FACES_COLLECTION,
                 scroll_filter=models.Filter(
@@ -4903,28 +5115,59 @@ class VectorDB:
                 log(f"set_face_name: No faces found for cluster {cluster_id}")
                 return 0
 
-            # Update all face points with the name
+            # === Step 3: Update all face points with the name ===
             self.client.set_payload(
                 collection_name=self.FACES_COLLECTION,
                 payload={"name": name},
                 points=point_ids,  # type: ignore
             )
 
-            # Propagate name to frames for proper search
+            # === Step 4: Propagate name to frames for proper search ===
             self._propagate_face_name_to_frames(cluster_id, name)
 
-            # --- Identity Linking ---
+            # === Step 5: Identity Linking (Face + Voice Cross-Modal) ===
             try:
                 from core.storage.identity_graph import identity_graph
 
-                # 1. Get/Create Global Identity
+                # Get/Create Global Identity
                 identity = identity_graph.get_or_create_identity_by_name(name)
 
-                # 2. Link these face tracks to the identity
-                # Note: Qdrant point_ids are used as FaceTrack IDs if they match.
-                # If Qdrant uses UUIDs that match FaceTrack UUIDs, this works directly.
+                # Link these face tracks to the identity
                 identity_graph.link_faces_to_identity(point_ids, identity.id)
-                log(f"[Identity] Linked {len(point_ids)} faces to {identity.name} ({identity.id})")
+                log(
+                    f"[Identity] Linked {len(point_ids)} faces to {identity.name} ({identity.id})"
+                )
+
+                # === Cross-Modal Link: Check for voice cluster with same name ===
+                voice_cluster = self.get_speaker_cluster_by_name(name)
+                if voice_cluster:
+                    log(
+                        f"[Identity] Found voice cluster with same name '{name}' (ID: {voice_cluster})"
+                    )
+                    # Get voice segment IDs for this cluster
+                    voice_resp = self.client.scroll(
+                        collection_name=self.VOICE_COLLECTION,
+                        scroll_filter=models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key="voice_cluster_id",
+                                    match=models.MatchValue(
+                                        value=voice_cluster
+                                    ),
+                                )
+                            ]
+                        ),
+                        limit=1000,
+                    )
+                    voice_ids = [str(p.id) for p in voice_resp[0]]
+                    if voice_ids:
+                        identity_graph.link_voices_to_identity(
+                            voice_ids, identity.id
+                        )
+                        log(
+                            f"[Identity] Cross-linked {len(voice_ids)} voice segments to {identity.name}"
+                        )
+
             except Exception as e:
                 log(f"[Identity] Linking failed: {e}")
             # ------------------------
@@ -5090,6 +5333,12 @@ class VectorDB:
     def set_speaker_name(self, cluster_id: int, name: str) -> int:
         """Set name for a speaker cluster.
 
+        **Auto-Merge Feature**: If another voice cluster already has this name,
+        both clusters will be merged under the same identity.
+
+        **Cross-Modal Linking**: If a face cluster has this same name,
+        they will be linked together via the identity graph.
+
         Args:
             cluster_id: The speaker cluster ID.
             name: The name to assign.
@@ -5098,8 +5347,29 @@ class VectorDB:
             Number of updated segments.
         """
         try:
-            # Update all segments with this voice_cluster_id
-            # First fetch IDs to link in IdentityGraph
+            # === Step 1: Check for existing voice clusters with same name ===
+            existing_cluster = self.get_speaker_cluster_by_name(name)
+            if existing_cluster and existing_cluster != cluster_id:
+                log(
+                    f"[HITL] Found existing voice cluster with name '{name}' (ID: {existing_cluster})"
+                )
+                log(
+                    f"[HITL] Auto-merging cluster {cluster_id} into existing cluster {existing_cluster}"
+                )
+
+                # Merge current cluster into existing one
+                try:
+                    self.merge_voice_clusters(
+                        source_id=cluster_id, target_id=existing_cluster
+                    )
+                    # After merge, use the existing cluster for remaining operations
+                    cluster_id = existing_cluster
+                except Exception as merge_err:
+                    log(
+                        f"[HITL] Auto-merge failed, continuing with separate clusters: {merge_err}"
+                    )
+
+            # === Step 2: Fetch all segments in this cluster ===
             resp = self.client.scroll(
                 collection_name=self.VOICE_COLLECTION,
                 scroll_filter=models.Filter(
@@ -5115,31 +5385,78 @@ class VectorDB:
             segment_ids = [str(p.id) for p in resp[0]]
 
             if segment_ids:
+                # === Step 3: Update all segments with the name ===
                 self.client.set_payload(
                     collection_name=self.VOICE_COLLECTION,
                     payload={"speaker_name": name},
-                    points=segment_ids, # Efficient update by ID
+                    points=segment_ids,
                 )
 
-                # --- Identity Linking ---
+                # === Step 4: Identity Linking (Voice + Face Cross-Modal) ===
                 try:
                     from core.storage.identity_graph import identity_graph
-                    identity = identity_graph.get_or_create_identity_by_name(name)
-                    identity_graph.link_voices_to_identity(segment_ids, identity.id)
-                    log(f"[Identity] Linked {len(segment_ids)} voices to {identity.name}")
+
+                    # Get/Create Global Identity
+                    identity = identity_graph.get_or_create_identity_by_name(
+                        name
+                    )
+
+                    # Link voice segments to identity
+                    identity_graph.link_voices_to_identity(
+                        segment_ids, identity.id
+                    )
+                    log(
+                        f"[Identity] Linked {len(segment_ids)} voices to {identity.name}"
+                    )
+
+                    # === Cross-Modal Link: Check for face cluster with same name ===
+                    face_cluster = self.get_face_cluster_by_name(name)
+                    if face_cluster:
+                        log(
+                            f"[Identity] Found face cluster with same name '{name}' (ID: {face_cluster})"
+                        )
+                        # Get face point IDs for this cluster
+                        face_resp = self.client.scroll(
+                            collection_name=self.FACES_COLLECTION,
+                            scroll_filter=models.Filter(
+                                must=[
+                                    models.FieldCondition(
+                                        key="cluster_id",
+                                        match=models.MatchValue(
+                                            value=face_cluster
+                                        ),
+                                    )
+                                ]
+                            ),
+                            limit=500,
+                        )
+                        face_ids = [str(p.id) for p in face_resp[0]]
+                        if face_ids:
+                            identity_graph.link_faces_to_identity(
+                                face_ids, identity.id
+                            )
+                            log(
+                                f"[Identity] Cross-linked {len(face_ids)} faces to {identity.name}"
+                            )
+
                 except Exception as e:
                     log(f"[Identity] Voice linking failed: {e}")
                 # ------------------------
 
-            # Propagate to searchable frame metadata
+            # === Step 5: Propagate to searchable frame metadata ===
             self.re_embed_voice_cluster_frames(cluster_id, name)
 
+            log(
+                f"[HITL] Set name '{name}' on {len(segment_ids)} voice segments in cluster {cluster_id}"
+            )
             return len(segment_ids)
         except Exception as e:
             log(f"set_speaker_name failed: {e}")
             return 0
 
-    def set_speaker_main(self, cluster_id: int, segment_id: str, is_main: bool = True) -> bool:
+    def set_speaker_main(
+        self, cluster_id: int, segment_id: str, is_main: bool = True
+    ) -> bool:
         """Mark a voice segment as the representative for its cluster.
 
         Args:
@@ -5507,11 +5824,6 @@ class VectorDB:
                     )
                 ],
             )
-            log(
-                f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}"
-            )
-            return True
-
             log(
                 f"Re-embedded frame {frame_id} with names: {face_names + speaker_names}"
             )
@@ -5991,6 +6303,7 @@ class VectorDB:
         except Exception as e:
             log(f"get_entity_co_occurrences failed: {e}")
             return {}
+
     def merge_face_clusters(
         self, source_cluster_id: int | str, target_cluster_id: int | str
     ) -> int:
@@ -6138,7 +6451,9 @@ class VectorDB:
                             "timestamp": payload.get("timestamp"),
                             "thumbnail_path": payload.get("thumbnail_path"),
                             "is_main": payload.get("is_main", False),
-                            "appearance_count": payload.get("appearance_count", 1),
+                            "appearance_count": payload.get(
+                                "appearance_count", 1
+                            ),
                             "bbox_size": payload.get("bbox_size"),
                             "det_score": payload.get("det_score"),
                         }

@@ -140,8 +140,8 @@ class MultiAgentOrchestrator:
                 self._llm_loaded = True  # Don't retry
 
     def route_request_sync(self, user_query: str) -> AgentResponse:
-        """Synchronous routing using rule-based fallback."""
-        return self._fallback_route(user_query)
+        """Synchronous routing using deterministic fallback."""
+        return self._deterministic_route(user_query)
 
     async def route_request(self, user_query: str) -> AgentResponse:
         """Decides which agent handles the query using LLM."""
@@ -150,9 +150,9 @@ class MultiAgentOrchestrator:
 
         self._ensure_llm_loaded()
 
-        # Fallback to rule-based if no LLM
+        # Fallback to deterministic routing if no LLM
         if self._llm is None:
-            return self._fallback_route(user_query)
+            return self._deterministic_route(user_query)
 
         # Build Agent Descriptions for Prompt
         agents_desc = "\n".join(
@@ -177,7 +177,7 @@ class MultiAgentOrchestrator:
                 logger.warning(
                     f"Router selected unknown agent: {selected_agent_name}"
                 )
-                return self._fallback_route(user_query)
+                return self._deterministic_route(user_query)
 
             logger.info(
                 f"Routing to {selected_agent_name}: {routing_data.get('reasoning', '')}"
@@ -189,34 +189,56 @@ class MultiAgentOrchestrator:
             )
         except Exception as e:
             logger.error(f"Routing failed: {e}")
-            return self._fallback_route(user_query)
+            return self._deterministic_route(user_query)
 
-    def _fallback_route(self, user_query: str) -> AgentResponse:
-        """Rule-based fallback routing when LLM unavailable."""
+    def _deterministic_route(self, user_query: str) -> AgentResponse:
+        """Deterministic keyword-based routing (Safety Fallback).
+
+        Used when LLM routing is unavailable or fails.
+        Matches query patterns to verified agent capabilities.
+
+        Args:
+            user_query: User's search query.
+
+        Returns:
+            AgentResponse directed to the most appropriate agent.
+        """
         query_lower = user_query.lower()
+        log_reason = "Deterministic Routing (LLM Unavailable): "
 
-        # Audio queries
-        if any(
-            w in query_lower
-            for w in [
-                "said",
-                "say",
-                "transcript",
-                "speech",
-                "subtitle",
-                "dialogue",
-            ]
-        ):
+        # 1. Audio/Transcript Routing
+        audio_keywords = [
+            "said",
+            "say",
+            "transcript",
+            "speech",
+            "subtitle",
+            "dialogue",
+            "voice",
+            "speaker",
+            "sound",
+            "noise",
+        ]
+        if any(w in query_lower for w in audio_keywords):
+            reason = f"{log_reason} Matched audio keyword in '{user_query}'"
+            logger.info(f"[Orchestrator] {reason} -> audio_agent")
             return AgentResponse(agent_name="audio_agent", content=user_query)
 
-        # Vision queries (describe specific frame)
-        if (
-            any(w in query_lower for w in ["describe", "analyze", "explain"])
-            and "frame" in query_lower
-        ):
+        # 2. Vision/Analysis Routing
+        # "Describe this frame", "Analyze scene"
+        vision_actions = ["describe", "analyze", "explain", "what is in"]
+        vision_targets = ["frame", "image", "picture", "scene", "shot"]
+
+        has_action = any(w in query_lower for w in vision_actions)
+        has_target = any(w in query_lower for w in vision_targets)
+
+        if has_action and has_target:
+            reason = f"{log_reason} Matched vision analysis pattern in '{user_query}'"
+            logger.info(f"[Orchestrator] {reason} -> vision_agent")
             return AgentResponse(agent_name="vision_agent", content=user_query)
 
-        # Ultra-complex queries (>50 words or many constraints)
+        # 3. Complex Query Decomposition Logic
+        # Checks for high logic density (constraints, boolean logic, deep temporal dependencies)
         word_count = len(user_query.split())
         constraint_keywords = [
             "wearing",
@@ -237,22 +259,28 @@ class MultiAgentOrchestrator:
             "seconds",
             "minutes",
             "dB",
-            "BPM",
+            "bpm",
+            "and",
+            "or",
+            "not",
         ]
         constraint_count = sum(
             1 for kw in constraint_keywords if kw in query_lower
         )
 
         if word_count > 50 or constraint_count >= 5:
-            logger.info(
-                f"Routing to query_decomposition_agent: "
-                f"{word_count} words, {constraint_count} constraints"
+            reason = (
+                f"{log_reason} High complexity detected "
+                f"({word_count} words, {constraint_count} constraints) in '{user_query}'"
             )
+            logger.info(f"[Orchestrator] {reason} -> query_decomposition_agent")
             return AgentResponse(
                 agent_name="query_decomposition_agent", content=user_query
             )
 
-        # Default to search
+        # 4. Default: Semantic Search
+        reason = f"{log_reason} No specific special routing detected -> Defaulting to standard search"
+        logger.info(f"[Orchestrator] {reason} -> search_agent")
         return AgentResponse(agent_name="search_agent", content=user_query)
 
 

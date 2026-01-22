@@ -723,7 +723,9 @@ class AudioTranscriber:
                     "min_speech_duration_ms": 10 if force_lyrics else 100,
                     "min_silence_duration_ms": 1000 if force_lyrics else 500,
                     "speech_pad_ms": 2000 if force_lyrics else 800,
-                    "threshold": 0.1 if force_lyrics else 0.3,  # Very low threshold for lyrics
+                    "threshold": 0.1
+                    if force_lyrics
+                    else 0.3,  # Very low threshold for lyrics
                 },
                 no_speech_threshold=no_speech_thresh,
                 log_prob_threshold=-1.0,

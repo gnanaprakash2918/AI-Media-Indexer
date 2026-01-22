@@ -286,9 +286,7 @@ class IndicASRPipeline:
             )
 
             self.model.freeze()  # type: ignore
-            log(
-                f"[IndicASR] NeMo model loaded on {self.device}"
-            )
+            log(f"[IndicASR] NeMo model loaded on {self.device}")
         except Exception as e:
             log(f"[IndicASR] Failed to load NeMo model: {e}")
             raise

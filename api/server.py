@@ -8,12 +8,18 @@ import warnings
 
 # Configure TensorFlow BEFORE any imports that trigger TF loading
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # Suppress C++ level warnings
+os.environ.setdefault(
+    "TF_CPP_MIN_LOG_LEVEL", "2"
+)  # Suppress C++ level warnings
 
 # Suppress tf_keras deprecation warnings BEFORE importing anything that uses TF
 # These come through Python's warnings module and absl logging
-warnings.filterwarnings("ignore", category=DeprecationWarning, module=".*tensorflow.*")
-warnings.filterwarnings("ignore", category=DeprecationWarning, module=".*tf_keras.*")
+warnings.filterwarnings(
+    "ignore", category=DeprecationWarning, module=".*tensorflow.*"
+)
+warnings.filterwarnings(
+    "ignore", category=DeprecationWarning, module=".*tf_keras.*"
+)
 warnings.filterwarnings("ignore", message=".*sparse_softmax_cross_entropy.*")
 warnings.filterwarnings("ignore", message=".*deprecated.*", module=".*keras.*")
 
@@ -101,7 +107,7 @@ from api.routes import (
     councils,
     events,
     faces,
-    graph, # New
+    graph,  # New
     identities,
     ingest,
     library,
@@ -214,7 +220,7 @@ def create_app() -> FastAPI:
     app.include_router(faces.router, tags=["Faces"])
     app.include_router(voices.router, tags=["Voices"])
     app.include_router(library.router, tags=["Library"])
-    app.include_router(graph.router, tags=["Graph"]) # New
+    app.include_router(graph.router, tags=["Graph"])  # New
     if overlays:
         app.include_router(overlays.router, tags=["Overlays"])
 

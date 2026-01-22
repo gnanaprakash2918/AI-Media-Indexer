@@ -14,6 +14,7 @@ from qdrant_client.http import models
 
 from config import settings
 from core.llm.vlm_factory import get_vlm_client
+from core.processing.deep_research import get_deep_research_processor
 from core.processing.extractor import FrameExtractor
 from core.processing.frame_sampling import TextGatedOCR
 from core.processing.identity import FaceManager, FaceTrackBuilder
@@ -66,7 +67,7 @@ class IngestionPipeline:
         self.scene_detector = detect_scenes
         self.prober = MediaProber()
         self.sam_tracker = Sam3Tracker()
-        
+
         # OCR Components
         self.ocr_engine = EasyOCRProcessor(langs=["en"], use_gpu=True)
         self.text_gate = TextGatedOCR()
@@ -228,14 +229,20 @@ class IngestionPipeline:
                     job_id, 5.0, stage="audio", message="Processing audio"
                 )
                 await retry(lambda: self._process_audio(path))
-                logger.info("[Pipeline] _process_audio completed, running cleanup...")
+                logger.info(
+                    "[Pipeline] _process_audio completed, running cleanup..."
+                )
                 self._cleanup_memory("audio_complete")  # Unload Whisper
-                logger.info("[Pipeline] Audio cleanup done, saving checkpoint...")
+                logger.info(
+                    "[Pipeline] Audio cleanup done, saving checkpoint..."
+                )
                 # Checkpoint audio completion
                 progress_tracker.save_checkpoint(
                     job_id, {"audio_complete": True}
                 )
-            logger.info("[Pipeline] Audio phase complete, moving to voice processing...")
+            logger.info(
+                "[Pipeline] Audio phase complete, moving to voice processing..."
+            )
             progress_tracker.update(
                 job_id, 30.0, stage="audio", message="Audio complete"
             )
@@ -274,7 +281,9 @@ class IngestionPipeline:
             )
             logger.debug("Starting frame processing")
             await retry(
-                lambda: self._process_frames(path, job_id, total_duration=duration)
+                lambda: self._process_frames(
+                    path, job_id, total_duration=duration
+                )
             )
 
             logger.debug("Frame processing complete - cleaning memory")
@@ -382,43 +391,68 @@ class IngestionPipeline:
             # Auto-detect language if enabled
             detected_lang = "en"
             detection_confidence = 0.0
-            
+
             if settings.auto_detect_language:
-                detected_lang, detection_confidence = await self._detect_audio_language_with_confidence(path)
-                log(f"[Audio] Detected language: {detected_lang} ({detection_confidence:.1%} confidence)")
-                
+                (
+                    detected_lang,
+                    detection_confidence,
+                ) = await self._detect_audio_language_with_confidence(path)
+                log(
+                    f"[Audio] Detected language: {detected_lang} ({detection_confidence:.1%} confidence)"
+                )
+
                 # === DYNAMIC MULTI-PASS DETECTION ===
                 # If confidence is low (<60%), try detecting on a different segment
                 # This helps with music videos where intro might not have speech
                 if detection_confidence < 0.6:
-                    log(f"[Audio] Low confidence ({detection_confidence:.1%}), trying second pass on different segment...")
-                    second_lang, second_conf = await self._detect_audio_language_with_confidence(
+                    log(
+                        f"[Audio] Low confidence ({detection_confidence:.1%}), trying second pass on different segment..."
+                    )
+                    (
+                        second_lang,
+                        second_conf,
+                    ) = await self._detect_audio_language_with_confidence(
                         path, start_offset=30.0, duration=30.0
                     )
-                    log(f"[Audio] Second pass: {second_lang} ({second_conf:.1%})")
-                    
+                    log(
+                        f"[Audio] Second pass: {second_lang} ({second_conf:.1%})"
+                    )
+
                     # Use the detection with higher confidence
                     if second_conf > detection_confidence:
                         detected_lang = second_lang
                         detection_confidence = second_conf
-                        log(f"[Audio] Using second pass result: {detected_lang}")
-                    
+                        log(
+                            f"[Audio] Using second pass result: {detected_lang}"
+                        )
+
                     # If still low confidence, try third pass on middle of video
                     if detection_confidence < 0.5:
                         try:
                             # Probe for duration
                             probed = self.prober.probe(path)
-                            duration = float(probed.get("format", {}).get("duration", 0.0))
-                            if duration > 120:  # Only if video is longer than 2 min
+                            duration = float(
+                                probed.get("format", {}).get("duration", 0.0)
+                            )
+                            if (
+                                duration > 120
+                            ):  # Only if video is longer than 2 min
                                 mid_point = duration / 2
-                                third_lang, third_conf = await self._detect_audio_language_with_confidence(
+                                (
+                                    third_lang,
+                                    third_conf,
+                                ) = await self._detect_audio_language_with_confidence(
                                     path, start_offset=mid_point, duration=30.0
                                 )
-                                log(f"[Audio] Third pass (mid-video): {third_lang} ({third_conf:.1%})")
+                                log(
+                                    f"[Audio] Third pass (mid-video): {third_lang} ({third_conf:.1%})"
+                                )
                                 if third_conf > detection_confidence:
                                     detected_lang = third_lang
                                     detection_confidence = third_conf
-                                    log(f"[Audio] Using mid-video detection: {detected_lang}")
+                                    log(
+                                        f"[Audio] Using mid-video detection: {detected_lang}"
+                                    )
                         except Exception:
                             pass
             else:
@@ -615,7 +649,9 @@ class IngestionPipeline:
                     audio_array, sr = await asyncio.to_thread(
                         librosa.load, str(path), sr=16000, mono=True
                     )
-                    log(f"[CLAP] Audio loaded: {len(audio_array)} samples, {sr}Hz")
+                    log(
+                        f"[CLAP] Audio loaded: {len(audio_array)} samples, {sr}Hz"
+                    )
 
                     # Prepare 2-second chunks for BATCH processing (single GPU acquisition)
                     chunk_duration = 2.0
@@ -630,7 +666,9 @@ class IngestionPipeline:
                         start_time = i / sr
                         audio_chunks.append((chunk, start_time))
 
-                    log(f"[CLAP] Prepared {len(audio_chunks)} chunks for batch processing")
+                    log(
+                        f"[CLAP] Prepared {len(audio_chunks)} chunks for batch processing"
+                    )
 
                     # Define target classes once
                     target_classes = [
@@ -669,15 +707,19 @@ class IngestionPipeline:
 
                     # Collect results with timestamps
                     audio_events = []
-                    for (_, start_time), events in zip(audio_chunks, batch_results):
+                    for (_, start_time), events in zip(
+                        audio_chunks, batch_results
+                    ):
                         for event in events:
                             if event.get("event") not in ("speech", "silence"):
-                                audio_events.append({
-                                    "event": event["event"],
-                                    "confidence": event["confidence"],
-                                    "start": start_time,
-                                    "end": start_time + chunk_duration,
-                                })
+                                audio_events.append(
+                                    {
+                                        "event": event["event"],
+                                        "confidence": event["confidence"],
+                                        "start": start_time,
+                                        "end": start_time + chunk_duration,
+                                    }
+                                )
 
                     if audio_events:
                         log(
@@ -773,14 +815,19 @@ class IngestionPipeline:
                 # Resample to 22050 for librosa if needed
                 if "sr" in locals() and sr != 22050:
                     import librosa
-                    audio_array = librosa.resample(audio_array, orig_sr=sr, target_sr=22050)
+
+                    audio_array = librosa.resample(
+                        audio_array, orig_sr=sr, target_sr=22050
+                    )
                     sr = 22050
 
             # Analyze music structure
             analysis = music_analyzer.analyze_array(audio_array, sr=22050)
 
             if analysis.sections:
-                log(f"[MusicStructure] Found {len(analysis.sections)} sections at {analysis.global_tempo:.1f} BPM")
+                log(
+                    f"[MusicStructure] Found {len(analysis.sections)} sections at {analysis.global_tempo:.1f} BPM"
+                )
 
                 # Store each section as an audio event for searchability
                 for section in analysis.sections:
@@ -805,10 +852,14 @@ class IngestionPipeline:
                         "music_tempo": analysis.global_tempo,
                         "has_vocals": analysis.has_vocals,
                         "section_count": len(analysis.sections),
-                        "music_structure": [s.to_dict() for s in analysis.sections[:20]],  # Limit for storage
+                        "music_structure": [
+                            s.to_dict() for s in analysis.sections[:20]
+                        ],  # Limit for storage
                     },
                 )
-                log(f"[MusicStructure] Indexed {len(analysis.sections)} sections")
+                log(
+                    f"[MusicStructure] Indexed {len(analysis.sections)} sections"
+                )
             else:
                 log("[MusicStructure] No sections detected (may not be music)")
 
@@ -870,10 +921,14 @@ class IngestionPipeline:
 
         try:
             return await asyncio.to_thread(
-                self._run_detection_with_confidence, path, start_offset, duration
+                self._run_detection_with_confidence,
+                path,
+                start_offset,
+                duration,
             )
         except Exception as e:
             from core.utils.logger import log
+
             log(f"[Audio] Language detection failed: {e}")
             return ("en", 0.0)
 
@@ -897,7 +952,7 @@ class IngestionPipeline:
             Tuple of (language_code, confidence_score).
         """
         from core.utils.logger import log
-        
+
         with AudioTranscriber() as transcriber:
             # Slice the specific audio segment
             try:
@@ -905,11 +960,13 @@ class IngestionPipeline:
                     path, start=start_offset, end=start_offset + duration
                 )
             except Exception as e:
-                log(f"[Audio] Slicing for detection failed at offset {start_offset}s: {e}")
+                log(
+                    f"[Audio] Slicing for detection failed at offset {start_offset}s: {e}"
+                )
                 # Fallback to original detection
                 lang = transcriber.detect_language(path)
                 return (lang, 0.5)  # Return medium confidence for fallback
-            
+
             try:
                 # Load model if needed
                 model_id = "Systran/faster-whisper-base"
@@ -930,7 +987,18 @@ class IngestionPipeline:
                 confidence = info.language_probability or 0.0
 
                 # Special handling for Indic languages with lower threshold
-                indic_langs = ["ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"]
+                indic_langs = [
+                    "ta",
+                    "hi",
+                    "te",
+                    "ml",
+                    "kn",
+                    "bn",
+                    "gu",
+                    "mr",
+                    "or",
+                    "pa",
+                ]
                 if detected_lang in indic_langs and confidence > 0.2:
                     # Boost confidence for Indic languages (Whisper often underestimates)
                     confidence = min(confidence * 1.5, 0.95)
@@ -977,7 +1045,7 @@ class IngestionPipeline:
             # 2. Assign Global ID
             # 3. Persist specific samples for future matching
 
-            import random  # For cluster ID generation
+            # Cluster IDs now use db.get_next_voice_cluster_id() for uniqueness
 
             for _idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
@@ -997,11 +1065,13 @@ class IngestionPipeline:
                         # If existing matched speaker has no cluster ID (-1), generate one?
                         # Usually it should have one if we follow this new logic consistently.
                         if voice_cluster_id == -1:
-                            voice_cluster_id = random.randint(100000, 999999)
+                            voice_cluster_id = (
+                                self.db.get_next_voice_cluster_id()
+                            )
                     else:
                         # New Global Speaker -> New Cluster
                         global_speaker_id = f"SPK_{uuid.uuid4().hex[:12]}"
-                        voice_cluster_id = random.randint(100000, 999999)
+                        voice_cluster_id = self.db.get_next_voice_cluster_id()
 
                         self.db.upsert_speaker_embedding(
                             speaker_id=global_speaker_id,
@@ -1013,6 +1083,7 @@ class IngestionPipeline:
                         )
 
                 # ALWAYS extract audio clip for every segment (not just those with embeddings)
+                audio_extraction_success = False
                 try:
                     clip_name = f"{safe_stem}_{seg.start_time:.2f}_{seg.end_time:.2f}.mp3"
                     clip_file = thumb_dir / clip_name
@@ -1035,37 +1106,79 @@ class IngestionPipeline:
                             "error",
                             str(clip_file),
                         ]
-                        subprocess.run(
+                        result = subprocess.run(
                             cmd, capture_output=True, text=True
                         )
+                        if result.returncode != 0:
+                            logger.warning(
+                                f"[Voice] FFmpeg failed ({result.returncode}): {result.stderr[:100]}"
+                            )
                 except Exception as e:
                     logger.warning(
                         f"[Voice] FFmpeg failed for {clip_name}: {e}"
                     )
 
-                if clip_file.exists():
+                if clip_file.exists() and clip_file.stat().st_size > 0:
                     audio_path = f"/thumbnails/voices/{clip_name}"
+                    audio_extraction_success = True
                 else:
                     logger.warning(
-                        f"[Voice] Audio clip missing after ffmpeg: {clip_file}"
+                        f"[Voice] Audio clip missing or empty after ffmpeg: {clip_file}"
                     )
+                    audio_path = None
 
-                # ALWAYS store voice segment (even if no embedding, use placeholder)
-                # Only store if we have an embedding (required by insert_voice_segment)
-                if seg.embedding is not None:
+                # === STORE VOICE SEGMENT ===
+                # Policy: Only store if we have BOTH embedding AND audio
+                # This prevents "No audio" segments and invalid clusters
+
+                if seg.embedding is not None and audio_extraction_success:
+                    # Ensure voice_cluster_id is always valid (never -1 or 0)
+                    if voice_cluster_id <= 0:
+                        voice_cluster_id = self.db.get_next_voice_cluster_id()
+                        logger.info(
+                            f"[Voice] Generated fallback cluster ID {voice_cluster_id} "
+                            f"for segment {seg.start_time:.2f}-{seg.end_time:.2f}s"
+                        )
+
                     self.db.insert_voice_segment(
                         media_path=str(path),
                         start=seg.start_time,
                         end=seg.end_time,
                         speaker_label=global_speaker_id,  # Use Global ID
                         embedding=seg.embedding,
-                        audio_path=audio_path,  # Can be None, DB handles it
+                        audio_path=audio_path,  # Guaranteed non-None here
+                        voice_cluster_id=voice_cluster_id,
+                    )
+                elif seg.embedding is None and audio_extraction_success:
+                    # Has audio but no embedding - still useful for playback
+                    # Store with placeholder embedding
+                    logger.info(
+                        f"[Voice] Segment {seg.start_time:.2f}-{seg.end_time:.2f}s "
+                        f"has audio but no embedding, storing with placeholder"
+                    )
+                    # Generate a placeholder cluster ID
+                    if voice_cluster_id <= 0:
+                        voice_cluster_id = self.db.get_next_voice_cluster_id()
+
+                    # Create a zero embedding placeholder
+                    placeholder_embedding = [
+                        0.0
+                    ] * 256  # WeSpeaker embedding size
+                    self.db.insert_voice_segment(
+                        media_path=str(path),
+                        start=seg.start_time,
+                        end=seg.end_time,
+                        speaker_label=global_speaker_id,
+                        embedding=placeholder_embedding,
+                        audio_path=audio_path,
                         voice_cluster_id=voice_cluster_id,
                     )
                 else:
-                    # Log segments without embeddings for debugging
+                    # No audio AND no embedding - skip completely
                     logger.warning(
-                        f"[Voice] Segment {seg.start_time:.2f}-{seg.end_time:.2f}s has no embedding, audio_path={audio_path}"
+                        f"[Voice] Skipping segment {seg.start_time:.2f}-{seg.end_time:.2f}s: "
+                        f"no audio (success={audio_extraction_success}), "
+                        f"no embedding (has_emb={seg.embedding is not None})"
                     )
         finally:
             if self.voice:
@@ -1596,14 +1709,34 @@ class IngestionPipeline:
         except Exception:
             pass
 
-        # Feed detected faces into FaceTrackBuilder for temporal grouping
-        # This creates stable per-video tracks before global identity linking
         if hasattr(self, "_face_track_builder") and detected_faces:
             self._face_track_builder.process_frame(
                 faces=detected_faces,
                 frame_index=index,
                 timestamp=timestamp,
             )
+
+        # ------------------------------------------------------------
+        # DEEP RESEARCH: SOTA Frame Analysis (Cinematography, Aesthetics)
+        # ------------------------------------------------------------
+        dr_result = None
+        try:
+            dr_processor = get_deep_research_processor()
+            # Run analysis (fire and forget features for now, use metadata)
+            dr_result = await dr_processor.analyze_frame(
+                frame=frame_path,
+                compute_aesthetics=True,
+                compute_saliency=False,  # Skip heavy saliency for speed
+                compute_fingerprint=True,
+            )
+            if dr_result:
+                logger.info(
+                    f"[DeepResearch] Frame {timestamp:.2f}s: "
+                    f"Shot='{dr_result.shot_type}', Mood='{dr_result.mood}', "
+                    f"Aesthetic={dr_result.aesthetic_score:.2f}"
+                )
+        except Exception as e:
+            logger.warning(f"[DeepResearch] Analysis failed: {e}")
 
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"
@@ -1867,6 +2000,7 @@ class IngestionPipeline:
                 # Load frame as numpy array (Windows path safe)
                 import numpy as np
                 import cv2
+
                 frame_data = np.fromfile(str(frame_path), dtype=np.uint8)
                 frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
 
@@ -2013,6 +2147,24 @@ class IngestionPipeline:
                 payload["action"] = analysis.action or ""
                 payload["description"] = description
 
+            # DEEP RESEARCH METADATA INJECTION
+            if dr_result:
+                payload["cinematography"] = {
+                    "shot_type": dr_result.shot_type,
+                    "shot_confidence": dr_result.shot_confidence,
+                    "mood": dr_result.mood,
+                    "mood_confidence": dr_result.mood_confidence,
+                    "aesthetic_score": dr_result.aesthetic_score,
+                    "is_black_frame": dr_result.is_black_frame,
+                    "blur_score": dr_result.blur_score,
+                    "perceptual_hash": dr_result.perceptual_hash,
+                }
+                # Enrich search text with high-confidence tags
+                if dr_result.shot_confidence > 0.4:
+                    description += f". Shot type: {dr_result.shot_type}"
+                if dr_result.mood_confidence > 0.4:
+                    description += f". Mood: {dr_result.mood}"
+
             # 3d. Add structured face data for UI overlays (bboxes)
             # This enables drawing boxes around identified people in the UI
             faces_metadata = []
@@ -2059,17 +2211,26 @@ class IngestionPipeline:
             full_text = description
             if "identity_text" in payload:
                 # Only add identity_text if names aren't already in description
-                identity_names = payload.get("face_names", []) + payload.get("speaker_names", [])
+                identity_names = payload.get("face_names", []) + payload.get(
+                    "speaker_names", []
+                )
                 names_not_in_desc = [
-                    name for name in identity_names 
+                    name
+                    for name in identity_names
                     if name and name.lower() not in description.lower()
                 ]
                 if names_not_in_desc:
                     # Build identity suffix only for missing names
                     identity_suffix = ""
                     if names_not_in_desc:
-                        identity_suffix = f"Visible: {', '.join(names_not_in_desc)}"
-                    full_text = f"{description}. {identity_suffix}" if identity_suffix else description
+                        identity_suffix = (
+                            f"Visible: {', '.join(names_not_in_desc)}"
+                        )
+                    full_text = (
+                        f"{description}. {identity_suffix}"
+                        if identity_suffix
+                        else description
+                    )
 
             vector = self.db.encode_texts(full_text)[0]
 
@@ -2288,6 +2449,112 @@ class IngestionPipeline:
                 except Exception as e:
                     logger.warning(f"SAM3 Tracking failed: {e}")
 
+            # ------------------------------------------------------------
+            # SOTA SCENE INDEXING (Adaptive Scene Segmentation)
+            # ------------------------------------------------------------
+            try:
+                from core.processing.scene_detector import detect_scenes
+                from core.processing.scene_aggregator import (
+                    aggregate_frames_to_scene,
+                )
+
+                # 1. Detect logical scenes (shots)
+                raw_scenes = detect_scenes(media_path)
+                if not raw_scenes:
+                    # Fallback: Treat whole video as one scene if detection fails or single shot
+                    raw_scenes = []  # Will be handled by global context or we can make 1 synthetic scene
+
+                logger.info(
+                    f"Indexing {len(raw_scenes)} scenes for {path.name}"
+                )
+
+                # 2. Process each scene
+                for scene_idx, scene_info in enumerate(raw_scenes):
+                    # Find frames within this scene's time window
+                    scene_frames = [
+                        f
+                        for f in frames
+                        if scene_info.start_time
+                        <= f.get("timestamp", 0)
+                        < scene_info.end_time
+                    ]
+
+                    if not scene_frames:
+                        # Skip scenes with no analyzed frames (avoid empty noise)
+                        continue
+
+                    # Aggregate frame data into scene-level metadata
+                    scene_data = aggregate_frames_to_scene(
+                        frames=scene_frames,
+                        start_time=scene_info.start_time,
+                        end_time=scene_info.end_time,
+                        dialogue_segments=audio_segments,
+                    )
+
+                    # 3. Generate Multi-Vector Embeddings (Visual, Motion, Dialogue, Hybrid)
+                    # Visual: Summary of actions and entities
+                    visual_text = scene_data.get("visual_summary", "")
+
+                    # Motion: Sequence of actions
+                    motion_text = scene_data.get("action_sequence", "")
+
+                    # Dialogue: Transcript
+                    dialogue_text = scene_data.get("dialogue_transcript", "")
+
+                    # Hybrid: Combined rich description for general search
+                    hybrid_text = (
+                        f"{visual_text}. {motion_text}. "
+                        f"{dialogue_text}. "
+                        f"Location: {scene_data.get('location')}."
+                    )
+
+                    # Encode vectors
+                    # Note: We use the same encoder for all modalities (shared latent space) or specific ones if available
+                    # For now, using the main encoder for all text representations is standard for dense retrieval
+                    vectors = {}
+                    if visual_text:
+                        vectors["visual"] = self.db.encode_text(visual_text)
+                    if motion_text:
+                        vectors["motion"] = self.db.encode_text(motion_text)
+                    if dialogue_text:
+                        vectors["dialogue"] = self.db.encode_text(dialogue_text)
+
+                    # Generate deterministic ID
+                    import uuid
+
+                    scene_id = str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"{media_path}_scene_{scene_idx}",
+                        )
+                    )
+
+                    # Upsert to SCENES collection
+                    self.db.client.upsert(
+                        collection_name=self.db.SCENES_COLLECTION,
+                        points=[
+                            models.PointStruct(
+                                id=scene_id,
+                                vector=vectors,  # Multi-vector dictionary
+                                payload={
+                                    "media_path": media_path,
+                                    "video_path": media_path,  # Alias
+                                    "start_time": scene_info.start_time,
+                                    "end_time": scene_info.end_time,
+                                    "scene_index": scene_idx,
+                                    "description": hybrid_text,  # Main display text
+                                    **scene_data,  # flattened metadata
+                                },
+                            )
+                        ],
+                    )
+
+                # Add simplified global scene for context
+                # (Existing logic below can remain or be replaced by this granular loop metadata)
+
+            except Exception as e:
+                logger.error(f"Scene indexing failed: {e}")
+
             if frames:
                 # Collect dialogue from audio segments
                 dialogue_texts = [
@@ -2299,7 +2566,7 @@ class IngestionPipeline:
                     dialogue_texts[:50]
                 )  # First 50 segments
 
-                scene_data = {
+                scene_data_global = {
                     "start_time": 0,
                     "end_time": frames[-1].get("timestamp", 0) + 1,
                     "visual_summary": " ".join(
@@ -2316,7 +2583,7 @@ class IngestionPipeline:
                     ],
                     "dialogue_summary": dialogue_summary,
                 }
-                global_ctx.add_scene(scene_data)
+                global_ctx.add_scene(scene_data_global)
 
                 global_summary = global_ctx.to_payload()
 

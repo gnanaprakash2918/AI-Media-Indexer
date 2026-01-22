@@ -173,6 +173,34 @@ class EnhancedPipelineConfig:
             from core.retrieval.hybrid import HybridSearcher
 
             self._hybrid_searcher = HybridSearcher(db, self.bm25_path)
+
+            # Auto-build BM25 index if empty or missing
+            try:
+                stats = self._hybrid_searcher.get_stats()
+                kw_stats = stats.get("keyword_index", {})
+                doc_count = kw_stats.get("document_count", 0)
+
+                if doc_count == 0:
+                    log.info(
+                        "[Integration] BM25 index empty, building from database..."
+                    )
+                    built = self._hybrid_searcher.build_index_from_db()
+                    if built > 0:
+                        self._hybrid_searcher.save_index()
+                        log.info(
+                            f"[Integration] Built BM25 index with {built} documents"
+                        )
+                    else:
+                        log.warning(
+                            "[Integration] No documents available for BM25 index"
+                        )
+                else:
+                    log.info(
+                        f"[Integration] BM25 index loaded with {doc_count} documents"
+                    )
+            except Exception as e:
+                log.warning(f"[Integration] BM25 auto-build failed: {e}")
+
             log.info("[Integration] HybridSearcher enabled")
         return self._hybrid_searcher
 

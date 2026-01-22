@@ -76,9 +76,15 @@ interface MediaResult {
 interface MediaCardProps {
   item: MediaResult;
   searchQuery?: string; // For HITL feedback
+  overlayToggles?: {
+    faces: boolean;
+    text: boolean;
+    objects: boolean;
+    speakers: boolean;
+  };
 }
 
-export const MediaCard = memo(function MediaCard({ item, searchQuery }: MediaCardProps) {
+export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayToggles }: MediaCardProps) {
   const theme = useTheme();
   const [playerOpen, setPlayerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -104,13 +110,13 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery }: MediaCar
       });
       setFeedbackGiven(isRelevant ? 'up' : 'down');
       setSnackOpen(true);
-    } catch (err) {
-      console.error('Feedback failed', err);
+    } catch (_err) {
+      console.error('Feedback failed', _err);
     }
   };
 
   // Handle both video_path and media_path (scenelets use media_path)
-  const videoPath = item.video_path || (item as any).media_path || '';
+  const videoPath = item.video_path || (item as MediaResult & { media_path?: string }).media_path || '';
 
   // Extract filename for thumbnail
   const filename = videoPath ? videoPath.split(/[/\\]/).pop() : 'unknown';
@@ -644,6 +650,7 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery }: MediaCar
         endTime={item.end}
         open={playerOpen}
         onClose={() => setPlayerOpen(false)}
+        overlayToggles={overlayToggles}
       />
       <Dialog
         open={editOpen}

@@ -405,11 +405,24 @@ if (-not $SkipClean) {
         }
     }
     
-    # Clean log files (keep directory)
-    $logFiles = Get-ChildItem -Path (Join-Path $ProjectRoot "logs") -Filter "*.log" -ErrorAction SilentlyContinue
-    if ($logFiles) {
-        Write-Host "  Removing: log files" -ForegroundColor Gray
-        $logFiles | Remove-Item -Force -ErrorAction SilentlyContinue
+    # Clean log files (SAFETY: Ask before deleting logs)
+    $logDir = Join-Path $ProjectRoot "logs"
+    if (Test-Path $logDir) {
+        $logFiles = Get-ChildItem -Path $logDir -Filter "*.log" -ErrorAction SilentlyContinue
+        if ($logFiles) {
+            Write-Host ""
+            if ($NoInteractive) {
+                Write-Host "  [SAFETY] Preserving logs in Nuclear/Fresh mode (Use manual delete if needed)" -ForegroundColor Green
+            } else {
+                $delLogs = Read-Host "  [?] Delete existing log files? (y/N)"
+                if ($delLogs -match "^[yY]") {
+                    Write-Host "  Removing: log files" -ForegroundColor Gray
+                    $logFiles | Remove-Item -Force -ErrorAction SilentlyContinue
+                } else {
+                    Write-Host "  Preserving logs" -ForegroundColor Green
+                }
+            }
+        }
     }
     
     # Clean pycache recursively in project subdirectories (EXCLUDE .venv)
@@ -548,7 +561,6 @@ if ($NukeQdrant) {
         "qdrant_data", 
         "qdrant_data_embedded", 
         "thumbnails", 
-        "logs", 
         ".cache", 
         ".face_cache",
         "langfuse_data",

@@ -1,4 +1,5 @@
 """End-to-end verification for hyper-granular search and novel constraints."""
+
 import asyncio
 import os
 import sys
@@ -156,11 +157,11 @@ async def test_frontend_structure():
     )
     search_content = search_file.read_text(encoding="utf-8")
 
-    assert 'overlayToggles' in search_content, "Missing overlayToggles state"
-    assert 'Faces' in search_content, "Missing Faces toggle"
-    assert 'Text/OCR' in search_content, "Missing Text toggle"
-    assert 'Objects' in search_content, "Missing Objects toggle"
-    assert 'Speakers' in search_content, "Missing Speakers toggle"
+    assert "overlayToggles" in search_content, "Missing overlayToggles state"
+    assert "Faces" in search_content, "Missing Faces toggle"
+    assert "Text/OCR" in search_content, "Missing Text toggle"
+    assert "Objects" in search_content, "Missing Objects toggle"
+    assert "Speakers" in search_content, "Missing Speakers toggle"
 
     video_player = (
         Path(__file__).parent.parent

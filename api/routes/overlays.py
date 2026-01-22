@@ -1,4 +1,5 @@
 """API routes for retrieving media overlays (faces, text, objects)."""
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -162,7 +163,6 @@ async def get_video_overlays(
             f"{len(overlays.get('voice_diarization', []))} voice segments"
         )
         return overlays
-
 
     except Exception as e:
         logger.error(f"[Overlays] Failed: {e}")

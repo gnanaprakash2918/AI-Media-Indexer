@@ -46,11 +46,16 @@ def _normalize_results(results: list[dict]) -> list[dict]:
         # Add thumbnail_url if not present
         if video and "thumbnail_url" not in result:
             safe_path = quote(str(video))
-            result["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
-            result["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+            result["thumbnail_url"] = (
+                f"/media/thumbnail?path={safe_path}&time={ts}"
+            )
+            result["playback_url"] = (
+                f"/media?path={safe_path}#t={max(0, ts - 3)}"
+            )
 
         normalized.append(result)
     return normalized
+
 
 @router.get("/search/hybrid")
 async def hybrid_search(
@@ -459,7 +464,7 @@ async def agentic_search(
     q: str,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit: int = 20,
-    use_expansion: bool = True,
+    use_expansion: bool = False,  # Default OFF to prevent hallucination
 ):
     """FAANG-level search with LLM query expansion and identity resolution."""
     if not pipeline:
@@ -494,7 +499,7 @@ async def scene_search(
     q: str,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit: int = 20,
-    use_expansion: bool = True,
+    use_expansion: bool = False,  # Default OFF to prevent hallucination
     video_path: Annotated[
         str | None, Query(description="Filter to specific video")
     ] = None,
@@ -563,23 +568,12 @@ async def granular_search(
 ):
     """Ultra-fine-grained search for complex 200+ word queries.
 
-    Uses MultiVectorSearcher with:
+    Uses SearchAgent which consolidates:
     - LLM query decomposition
     - Identity resolution (names → cluster IDs)
-    - Hybrid search (vector + keyword + RRF)
+    - Hybrid search vector + keyword + RRF
     - LLM reranking with chain-of-thought
-    - Constraint scoring and filtering
-
-    Args:
-        query: Complex natural language query (up to 200+ words).
-        pipeline: The core ingestion pipeline instance.
-        limit: Maximum results to return.
-        video_path: Optional filter to specific video.
-        show_reasoning: Include reasoning trace in response.
-        enable_rerank: Enable LLM-based reranking (slower but more accurate).
-
-    Returns:
-        Results with matched constraints, reasoning, and confidence.
+    - Granular Constraint scoring
     """
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
@@ -591,35 +585,23 @@ async def granular_search(
     )
 
     try:
-        # Use HyperGranularSearcher (formerly unused dead code)
-        try:
-            from core.retrieval.hyper_granular_search import HyperGranularSearcher
-            searcher = HyperGranularSearcher(db=pipeline.db)
-            logger.info("[GranularSearch] Using HyperGranularSearcher")
-        except Exception as e:
-            logger.warning(f"HyperGranularSearcher init failed ({e}), falling back to MultiVector")
-            from core.retrieval.advanced_query import MultiVectorSearcher
-            searcher = MultiVectorSearcher(db=pipeline.db)
+        agent = SearchAgent(db=pipeline.db)
 
-        # HyperGranularSearcher signature: search(query, limit, video_path)
-        # MultiVectorSearcher signature: search(query, limit, video_path, enable_rerank)
-        if hasattr(searcher, "decompose_query"): # It's HyperGranular
-             results = await searcher.search(
-                query=query,
-                limit=limit,
-                video_path=video_path,
-            )
-        else:
-            results = await searcher.search(
-                query=query,
-                limit=limit,
-                video_path=video_path,
-                enable_rerank=enable_rerank,
-            )
+        # Use sota_search which now handles granular constraints internally
+        result = await agent.sota_search(
+            query=query,
+            limit=limit,
+            video_path=video_path,
+            use_reranking=enable_rerank,
+            use_expansion=True,  # Enable expansion for granular parsing
+        )
+
+        results = result.get("results", [])
+        parsed = result.get("parsed", {})
 
         # Add thumbnail/playback URLs
         for hit in results:
-            video = hit.get("video_path")
+            video = hit.get("video_path") or hit.get("media_path")
             ts = hit.get("timestamp", hit.get("start_time", 0))
             if video:
                 safe_path = quote(str(video))
@@ -632,42 +614,6 @@ async def granular_search(
 
         duration = time.perf_counter() - start_time_search
 
-        # Build response
-        # Build pipeline_steps for debug panel
-        pipeline_steps = [
-            {
-                "step": "Query Decomposition",
-                "status": "completed",
-                "detail": f"Parsed {len(results[0].get('decomposed_constraints', []))} constraints"
-                if results
-                else "No constraints",
-                "data": {
-                    "word_count": word_count,
-                    "modalities": results[0].get("query_modalities", [])
-                    if results
-                    else [],
-                },
-            },
-            {
-                "step": "Multi-Vector Search",
-                "status": "completed",
-                "detail": f"Found {len(results)} candidates",
-                "data": {
-                    "collection": "media_frames",
-                    "enable_rerank": enable_rerank,
-                },
-            },
-            {
-                "step": "LLM Reranking",
-                "status": "completed" if enable_rerank else "skipped",
-                "detail": f"{'Applied' if enable_rerank else 'Disabled'} → {len(results)} final results",
-                "data": {
-                    "enabled": enable_rerank,
-                    "final_count": len(results),
-                },
-            },
-        ]
-
         response = {
             "query": query,
             "query_word_count": word_count,
@@ -676,46 +622,34 @@ async def granular_search(
             "stats": {
                 "total": len(results),
                 "duration_seconds": round(duration, 3),
-                "constraints_parsed": len(
-                    results[0].get("decomposed_constraints", [])
-                )
-                if results
-                else 0,
+                "constraints_parsed": len(parsed.get("reasoning", [])),
                 "reranking_enabled": enable_rerank,
             },
             # Debug/Transparency fields
-            "pipeline_steps": pipeline_steps,
-            "search_text": query,
+            "search_text": result.get("expanded_search", query),
         }
 
         if show_reasoning and results:
-            response["reasoning_trace"] = results[0].get("reasoning_trace", [])
-            response["decomposed_constraints"] = results[0].get(
-                "decomposed_constraints", []
-            )
-            response["query_modalities"] = results[0].get(
-                "query_modalities", []
-            )
+            response["reasoning_trace"] = parsed.get("reasoning", [])
+            response["decomposed_constraints"] = parsed
 
         logger.info(
             f"[GranularSearch] Returned {len(results)} results in {duration:.3f}s"
         )
         return response
 
-    except ImportError as e:
-        logger.warning(f"[GranularSearch] Import error: {e}, using fallback")
-        results = pipeline.db.search_frames(query=query, limit=limit)
+    except Exception as e:
+        logger.error(f"[GranularSearch] Error: {e}")
+        # Fallback to hybrid search
+        results = _normalize_results(
+            pipeline.db.search_frames_hybrid(query=query, limit=limit)
+        )
         return {
             "query": query,
             "results": results,
             "stats": {"total": len(results), "fallback": True},
             "error": str(e),
         }
-    except Exception as e:
-        logger.error(f"[GranularSearch] Error: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Granular search failed: {e}"
-        ) from e
 
 
 @router.get("/search/explainable")
@@ -768,8 +702,12 @@ async def explainable_search(
             ts = r.get("timestamp", r.get("start_time", 0))
             if video and "thumbnail_url" not in r:
                 safe_path = quote(str(video))
-                r["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
-                r["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                r["thumbnail_url"] = (
+                    f"/media/thumbnail?path={safe_path}&time={ts}"
+                )
+                r["playback_url"] = (
+                    f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                )
 
         duration = time.perf_counter() - start_time
         logger.info(
@@ -800,6 +738,7 @@ async def explainable_search(
             "error": str(e),
             "search_type": "fallback",
         }
+
 
 @router.get("/search/multimodal")
 async def multimodal_search(
@@ -855,8 +794,12 @@ async def multimodal_search(
                 ts = hit.get("start_time", hit.get("timestamp", 0))
                 if video and "thumbnail_url" not in hit:
                     safe_path = quote(str(video))
-                    hit["thumbnail_url"] = f"/media/thumbnail?path={safe_path}&time={ts}"
-                    hit["playback_url"] = f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                    hit["thumbnail_url"] = (
+                        f"/media/thumbnail?path={safe_path}&time={ts}"
+                    )
+                    hit["playback_url"] = (
+                        f"/media?path={safe_path}#t={max(0, ts - 3)}"
+                    )
 
             duration = time.perf_counter() - start_time_search
             result["stats"] = {
@@ -887,6 +830,266 @@ async def multimodal_search(
         }
 
 
+# === UNIFIED SEARCH ENDPOINT ===
+
+
+@router.get("/search/unified")
+@router.post("/search/unified")
+async def unified_search(
+    q: Annotated[str, Query(..., description="Search query")],
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    limit: Annotated[int, Query(description="Maximum results")] = 20,
+    video_path: Annotated[
+        str | None, Query(description="Filter to specific video")
+    ] = None,
+    # === Pipeline Stage Toggles ===
+    enable_expansion: Annotated[
+        bool,
+        Query(description="Use LLM query expansion (disable for non-English)"),
+    ] = True,
+    enable_reranking: Annotated[
+        bool,
+        Query(
+            description="Use full council reranking (cross-encoder + BGE + VLM)"
+        ),
+    ] = True,
+    enable_vlm: Annotated[
+        bool,
+        Query(description="Use VLM visual verification (slower but accurate)"),
+    ] = True,
+    enable_deep_reasoning: Annotated[
+        bool, Query(description="Include detailed CoT reasoning per result")
+    ] = True,
+    # === Fallback Behavior ===
+    expansion_fallback: Annotated[
+        bool, Query(description="Retry with original query if expansion fails")
+    ] = True,
+) -> dict:
+    """Unified multimodal search with full pipeline configuration.
+
+    This endpoint combines ALL search modalities and provides maximum
+    control over the search pipeline:
+
+    **Modalities Used:**
+    - Scene-level visual/motion/dialogue vectors
+    - Voice segments (speaker identification)
+    - Frame-level fallback when scenes empty
+    - Audio events (CLAP-detected sounds)
+    - ASR transcripts
+
+    **Pipeline Stages (toggleable):**
+    1. **Query Expansion**: LLM parses entities, expands synonyms
+    2. **Identity Resolution**: Names → face/voice cluster IDs
+    3. **Multi-Vector Search**: Scenes → Scenelets → Frames fallback
+    4. **Reranking Council**: Cross-encoder + BGE + VLM scoring
+    5. **HITL Boost**: Past feedback influences final ranking
+    6. **Deep Reasoning**: CoT explanation per result
+
+    **Use Cases:**
+    - `enable_expansion=False` for non-English queries (avoids hallucination)
+    - `enable_reranking=False` for faster search (skip LLM verification)
+    - `enable_vlm=False` with `enable_reranking=True` for text-only rerank
+    - `enable_deep_reasoning=True` for debugging search quality
+
+    Args:
+        q: Natural language search query.
+        pipeline: The core ingestion pipeline instance.
+        limit: Maximum number of results to return.
+        video_path: Optional filter for a specific video.
+        enable_expansion: Toggle LLM query expansion.
+        enable_reranking: Toggle full council reranking.
+        enable_vlm: Toggle VLM visual verification.
+        enable_deep_reasoning: Toggle detailed reasoning traces.
+        expansion_fallback: Retry with raw query if expansion yields few results.
+
+    Returns:
+        Comprehensive search results with:
+        - results: Ranked matches with scores and reasoning
+        - pipeline_steps: What stages were executed
+        - stats: Timing and count information
+        - modality_breakdown: Results per modality
+    """
+    start_time_search = time.perf_counter()
+    logger.info(
+        f"[UnifiedSearch] Query: '{q[:80]}...' | "
+        f"expansion={enable_expansion}, rerank={enable_reranking}, "
+        f"vlm={enable_vlm}, reasoning={enable_deep_reasoning}"
+    )
+
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    pipeline_steps = []
+
+    try:
+        if SearchAgent:
+            agent = SearchAgent(db=pipeline.db)
+
+            # Execute search with configured options
+            result = await agent.sota_search(
+                query=q,
+                limit=limit,
+                video_path=video_path,
+                use_reranking=enable_reranking,
+                use_expansion=enable_expansion,
+                expansion_fallback=expansion_fallback,
+            )
+
+            # Track pipeline steps
+            pipeline_steps = [
+                {
+                    "step": "Query Expansion",
+                    "status": "completed" if enable_expansion else "skipped",
+                    "detail": f"Expanded to: {result.get('search_text', q)[:80]}..."
+                    if enable_expansion
+                    else "Using raw query",
+                },
+                {
+                    "step": "Identity Resolution",
+                    "status": "completed",
+                    "detail": f"Resolved {len(result.get('person_names_resolved', []))} names → "
+                    f"{result.get('face_ids_matched', 0)} faces",
+                },
+                {
+                    "step": "Multi-Vector Search",
+                    "status": "completed",
+                    "detail": f"Found {result.get('result_count', 0)} candidates "
+                    f"(fallback: {result.get('fallback_used', 'none')})",
+                },
+                {
+                    "step": "Reranking Council",
+                    "status": "completed" if enable_reranking else "skipped",
+                    "detail": f"VLM={'enabled' if enable_vlm else 'disabled'}"
+                    if enable_reranking
+                    else "Skipped",
+                },
+                {
+                    "step": "HITL Feedback",
+                    "status": "completed",
+                    "detail": "Applied boost/penalty from past ratings",
+                },
+            ]
+
+            # Add thumbnail/playback URLs
+            for hit in result.get("results", []):
+                video = hit.get("video_path") or hit.get("media_path", "")
+                start = hit.get("start_time", hit.get("timestamp", 0))
+                end = hit.get("end_time", start + 5)
+
+                if video and "thumbnail_url" not in hit:
+                    safe_path = quote(str(video))
+                    hit["thumbnail_url"] = (
+                        f"/media/thumbnail?path={safe_path}&time={start}"
+                    )
+                    hit["playback_url"] = (
+                        f"/media?path={safe_path}#t={max(0, start - 2)}"
+                    )
+                    # Use actual segment times, not fixed windows
+                    hit["segment_url"] = (
+                        f"/media/segment?path={safe_path}&start={start:.2f}&end={end:.2f}"
+                    )
+
+                # Add deep reasoning if enabled
+                if enable_deep_reasoning:
+                    reasoning_parts = []
+
+                    # Build detailed reasoning from payload
+                    if hit.get("person_names"):
+                        reasoning_parts.append(
+                            f"[IDENTITY] Found people: {', '.join(hit['person_names'])}"
+                        )
+                    if hit.get("matched_identity"):
+                        reasoning_parts.append(
+                            f"[IDENTITY] Matched: {hit['matched_identity']}"
+                        )
+                    if hit.get("actions"):
+                        reasoning_parts.append(
+                            f"[ACTIONS] Detected: {', '.join(str(a) for a in hit['actions'][:3])}"
+                        )
+                    if hit.get("clothing_colors"):
+                        reasoning_parts.append(
+                            f"[APPEARANCE] Colors: {', '.join(hit['clothing_colors'])}"
+                        )
+                    if hit.get("visible_text"):
+                        reasoning_parts.append(
+                            f"[TEXT] Visible: {', '.join(str(t) for t in hit['visible_text'][:3])}"
+                        )
+                    if hit.get("dialogue_transcript"):
+                        reasoning_parts.append(
+                            f'[DIALOGUE] "{hit["dialogue_transcript"][:100]}..."'
+                        )
+                    if hit.get("llm_reasoning"):
+                        reasoning_parts.append(
+                            f"[VERIFICATION] {hit['llm_reasoning']}"
+                        )
+
+                    hit["deep_reasoning"] = (
+                        " → ".join(reasoning_parts) if reasoning_parts else None
+                    )
+
+            duration = time.perf_counter() - start_time_search
+
+            logger.info(
+                f"[UnifiedSearch] Returned {len(result.get('results', []))} results "
+                f"in {duration:.3f}s"
+            )
+
+            return {
+                "query": q,
+                "search_type": "unified",
+                "results": result.get("results", []),
+                "stats": {
+                    "total": len(result.get("results", [])),
+                    "duration_seconds": round(duration, 3),
+                    "expansion_used": enable_expansion,
+                    "reranking_used": enable_reranking,
+                    "vlm_used": enable_vlm,
+                    "fallback_used": result.get("fallback_used"),
+                },
+                "pipeline_steps": pipeline_steps,
+                "parsed_query": result.get("parsed", {}),
+                "search_text": result.get("search_text", q),
+                "identities_resolved": {
+                    "names": result.get("person_names_resolved", []),
+                    "face_ids": result.get("face_ids_matched", 0),
+                },
+                "reasoning_chain": result.get("reasoning_chain", {}),
+            }
+        else:
+            raise ImportError("SearchAgent undefined")
+
+    except Exception as e:
+        logger.error(f"[UnifiedSearch] Error: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+
+        # Fallback to basic hybrid search
+        results = _normalize_results(
+            pipeline.db.search_frames_hybrid(query=q, limit=limit)
+        )
+        duration = time.perf_counter() - start_time_search
+
+        return {
+            "query": q,
+            "search_type": "unified_fallback",
+            "results": results,
+            "stats": {
+                "total": len(results),
+                "duration_seconds": round(duration, 3),
+                "fallback": True,
+            },
+            "error": str(e),
+            "pipeline_steps": [
+                {
+                    "step": "Fallback",
+                    "status": "used",
+                    "detail": f"Error: {str(e)[:50]}",
+                },
+            ],
+        }
+
+
 # === HITL FEEDBACK ENDPOINT ===
 
 from pydantic import BaseModel
@@ -894,6 +1097,7 @@ from pydantic import BaseModel
 
 class SearchFeedback(BaseModel):
     """User feedback on search result quality."""
+
     query: str
     result_id: str
     video_path: str

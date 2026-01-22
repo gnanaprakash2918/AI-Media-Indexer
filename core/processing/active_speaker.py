@@ -1,4 +1,5 @@
 """Module for active speaker detection using audio-visual cues."""
+
 from __future__ import annotations
 
 import asyncio

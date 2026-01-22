@@ -99,6 +99,7 @@ class ResourceArbiter:
         )
 
         import logging
+
         logger = logging.getLogger(__name__)
 
         token = get_or_create_token(job_id) if job_id else None
@@ -123,11 +124,15 @@ class ResourceArbiter:
             limit = self.total_vram * 0.9
 
             while self.current_usage + vram_gb > limit:
-                logger.info(f"[Arbiter] VRAM full ({self.current_usage}/{limit}), offloading...")
+                logger.info(
+                    f"[Arbiter] VRAM full ({self.current_usage}/{limit}), offloading..."
+                )
                 # Try to offload least recent INACTIVE model
                 offloaded = await self._offload_least_recent()
                 if not offloaded:
-                    logger.warning("[Arbiter] Could not offload any models, proceeding anyway")
+                    logger.warning(
+                        "[Arbiter] Could not offload any models, proceeding anyway"
+                    )
                     break
                 logger.info("[Arbiter] Offload successful")
 
@@ -137,7 +142,9 @@ class ResourceArbiter:
             self.registry[model_name]["last_used"] = time.time()
 
         try:
-            logger.info(f"[Arbiter] Waiting for GPU semaphore ({model_name})...")
+            logger.info(
+                f"[Arbiter] Waiting for GPU semaphore ({model_name})..."
+            )
             async with self._gpu_semaphore:
                 logger.info(f"[Arbiter] GPU semaphore acquired ({model_name})")
                 yield token
@@ -153,7 +160,9 @@ class ResourceArbiter:
                 # CRITICAL FIX: Decrement current_usage to free VRAM budget
                 model_vram = self.registry[model_name].get("vram", vram_gb)
                 self.current_usage = max(0, self.current_usage - model_vram)
-                logger.info(f"[Arbiter] Released {model_vram}GB VRAM, current usage: {self.current_usage:.1f}GB")
+                logger.info(
+                    f"[Arbiter] Released {model_vram}GB VRAM, current usage: {self.current_usage:.1f}GB"
+                )
             logger.info(f"[Arbiter] Cleanup complete {model_name}")
 
     async def _offload_least_recent(self) -> bool:

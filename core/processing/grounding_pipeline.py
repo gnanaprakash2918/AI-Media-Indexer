@@ -1,4 +1,5 @@
 """Pipeline for visual grounding and segment tracking."""
+
 import logging
 from pathlib import Path
 

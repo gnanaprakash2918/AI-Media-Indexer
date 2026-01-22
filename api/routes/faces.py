@@ -205,8 +205,8 @@ async def merge_face_clusters(
 
     return {
         "status": "merged",
-        "source_cluster_id": source_cluster_id,
-        "target_cluster_id": target_cluster_id,
+        "source_cluster_id": request.source_cluster_id,
+        "target_cluster_id": request.target_cluster_id,
         "faces_moved": count,
     }
 
@@ -289,9 +289,8 @@ async def create_new_face_cluster(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        import random
-
-        new_cluster_id = random.randint(10000, 99999)
+        # Use proper atomic cluster ID generation
+        new_cluster_id = pipeline.db.get_next_face_cluster_id()
 
         pipeline.db.client.set_payload(
             collection_name=pipeline.db.FACES_COLLECTION,
@@ -342,6 +341,7 @@ async def move_face_to_cluster(
 
 class ClusterNameRequest(BaseModel):
     """Request schema for naming a face cluster."""
+
     name: str
 
 

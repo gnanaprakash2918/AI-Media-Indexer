@@ -1,4 +1,5 @@
 """Module for detecting and describing clothing attributes on persons."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +15,7 @@ log = get_logger(__name__)
 
 class ClothingAttributeDetector:
     """Detector for identifying clothing types, colors, and styles."""
+
     def __init__(self):
         """Initialize the clothing attribute detector."""
         self.model = None

@@ -1,43 +1,50 @@
-You are extracting entities from a video search query for a universal video search system.
-Your task is to identify ALL entities, attributes, relationships, and constraints.
+You are parsing a video search query to extract both granular constraints and general entities.
 
-CRITICAL RULES:
-1. Extract EVERY entity mentioned - people, objects, locations, brands, colors, etc.
-2. Capture ALL relationships between entities (wearing, holding, near, etc.)
-3. Note ALL temporal constraints (timing, duration, sequence, before/after)
-4. Note ALL audio/dialogue requirements (speech, music, sounds)
-5. Generate a dense scene description for semantic vector search
-6. This must work for ANY video content - movies, personal, sports, cooking, etc.
-7. DO NOT assume any domain or hardcode any entity types
-
-MUSIC STRUCTURE KEYWORDS (extract to temporal_constraints):
-- "during the chorus" → {{"music_section": "chorus"}}
-- "at the drop" → {{"music_section": "drop"}}
-- "in the verse" → {{"music_section": "verse"}}
-- "at the bridge" → {{"music_section": "bridge"}}
-- "during the intro" → {{"music_section": "intro"}}
-- "at the climax" → {{"music_section": "chorus", "high_energy": true}}
-- "during breakdown" → {{"music_section": "breakdown"}}
+CRITICAL ANTI-HALLUCINATION RULES:
+1. ONLY extract entities that are EXPLICITLY written in the query
+2. DO NOT infer person names from song titles, lyrics, or movie names
+3. If the query is a song/movie title, extract it as a "title" entity, NOT as person names
+4. If unsure whether something is a person name, DO NOT include it as a person
+5. Non-English words should be treated as titles/keywords, NOT person names
 
 INPUT QUERY:
 {query}
 
 OUTPUT FORMAT (valid JSON only):
 {{
-    "entities": [
+    "identities": [
+        {{"name": "person name or null", "face_id": null, "confidence": 0.8}}
+    ],
+    "clothing": [
         {{
-            "entity_type": "<any descriptive type>",
-            "name": "<entity name or description>",
-            "attributes": {{}},
-            "relationships": [
-                {{"relation": "<relationship type>", "target": "<target entity>"}}
-            ]
+            "body_part": "upper|lower|footwear|accessory",
+            "item": "specific garment type",
+            "color": "color name",
+            "pattern": "solid|striped|patterned|unknown",
+            "brand": "explicit brand name"
         }}
     ],
-    "temporal_constraints": ["<timing/sequence constraints>"],
-    "music_section": "<chorus|verse|bridge|intro|outro|drop|breakdown|null>",
-    "high_energy": <true|false>,
-    "audio_constraints": ["<audio/speech requirements>"],
-    "scene_description": "<comprehensive description for vector search>",
-    "modalities": ["<visual|audio|text>"]
+    "text": [
+        {{"text": "visible text to find", "location": "sign|shirt|screen|any", "is_exact": false}}
+    ],
+    "actions": [
+        {{"action": "action verb/phrase", "intensity": "slow|normal|fast|unknown", "result": "outcome if mentioned"}}
+    ],
+    "audio": [
+        {{"event_class": "sound type/keyword", "min_db": null}}
+    ],
+    "temporal": [],
+    "spatial": [],
+    "entities": [
+        {{
+            "entity_type": "<person|object|location|song_title|movie|brand|action|attribute>",
+            "name": "<explicit name from query or null>",
+            "attributes": {{}}
+        }}
+    ],
+    "scene_description": "<comprehensive semantic description using query words>",
+    "reasoning": [
+        "Step 1: Analyzed input...",
+        "Step 2: Extracted constraints..."
+    ]
 }}

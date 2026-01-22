@@ -85,6 +85,65 @@ class VoiceTrack:
     total_duration: float = 0.0
 
 
+@dataclass
+class Scene:
+    """A narrative scene within a video for GraphRAG.
+
+    Scenes are detected by shot boundaries plus semantic clustering.
+    They form the nodes in the temporal graph.
+    """
+
+    id: str
+    media_id: str
+    start_time: float
+    end_time: float
+    location: str | None = None
+    description: str | None = None
+    scene_type: str | None = None  # "dialogue", "action", "transition", etc.
+
+    # Linked identities in this scene
+    face_cluster_ids: list[int] = field(default_factory=list)
+    speaker_cluster_ids: list[int] = field(default_factory=list)
+
+    # Detected entities and actions
+    entities: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SceneTransition:
+    """An edge between two scenes in the temporal graph.
+
+    Types: CUT, FADE, DISSOLVE, or semantic transitions.
+    """
+
+    id: str
+    from_scene_id: str
+    to_scene_id: str
+    transition_type: str  # "cut", "fade", "dissolve", "wipe", "semantic"
+    confidence: float = 1.0
+
+
+@dataclass
+class TemporalEvent:
+    """A discrete event within a scene for fine-grained temporal queries.
+
+    Events are the atoms of temporal reasoning:
+    "Prakash speaks" -> "Alia responds" -> "Prakash walks away"
+    """
+
+    id: str
+    scene_id: str
+    identity_id: str | None
+    timestamp: float
+    event_type: str  # "speaks", "enters", "exits", "action", "gesture"
+    description: str | None = None
+
+    # For sequence queries
+    previous_event_id: str | None = None
+    next_event_id: str | None = None
+
+
 class IdentityGraphManager:
     """SQLite-backed Identity Graph for robust person tracking.
 
@@ -174,6 +233,81 @@ class IdentityGraphManager:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_identities_name ON identities(name)"
+            )
+
+            # =========================================================
+            # GRAPHRAG TABLES FOR TEMPORAL QUERIES
+            # =========================================================
+
+            # Scene table: Narrative scenes for temporal graph nodes
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS scenes (
+                    id TEXT PRIMARY KEY,
+                    media_id TEXT NOT NULL,
+                    start_time REAL NOT NULL,
+                    end_time REAL NOT NULL,
+                    location TEXT,
+                    description TEXT,
+                    scene_type TEXT,
+                    face_cluster_ids TEXT,
+                    speaker_cluster_ids TEXT,
+                    entities TEXT,
+                    actions TEXT,
+                    created_at REAL DEFAULT (unixepoch())
+                )
+            """)
+
+            # SceneTransition table: Edges between scenes
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS scene_transitions (
+                    id TEXT PRIMARY KEY,
+                    from_scene_id TEXT NOT NULL,
+                    to_scene_id TEXT NOT NULL,
+                    transition_type TEXT NOT NULL,
+                    confidence REAL DEFAULT 1.0,
+                    FOREIGN KEY (from_scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (to_scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+                )
+            """)
+
+            # TemporalEvent table: Fine-grained events for sequence queries
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS temporal_events (
+                    id TEXT PRIMARY KEY,
+                    scene_id TEXT NOT NULL,
+                    identity_id TEXT,
+                    timestamp REAL NOT NULL,
+                    event_type TEXT NOT NULL,
+                    description TEXT,
+                    previous_event_id TEXT,
+                    next_event_id TEXT,
+                    created_at REAL DEFAULT (unixepoch()),
+                    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (identity_id) REFERENCES identities(id) ON DELETE SET NULL
+                )
+            """)
+
+            # GraphRAG indexes
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scenes_media ON scenes(media_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scenes_time ON scenes(start_time, end_time)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scene_transitions_from ON scene_transitions(from_scene_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scene_transitions_to ON scene_transitions(to_scene_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_temporal_events_scene ON temporal_events(scene_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_temporal_events_identity ON temporal_events(identity_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_temporal_events_time ON temporal_events(timestamp)"
             )
 
             conn.commit()
@@ -682,6 +816,420 @@ class IdentityGraphManager:
             speaker_label=row["speaker_label"],
             total_duration=row["total_duration"],
         )
+
+    # =========================================================================
+    # GRAPHRAG: SCENE OPERATIONS
+    # =========================================================================
+
+    def create_scene(
+        self,
+        media_id: str,
+        start_time: float,
+        end_time: float,
+        location: str | None = None,
+        description: str | None = None,
+        scene_type: str | None = None,
+        face_cluster_ids: list[int] | None = None,
+        speaker_cluster_ids: list[int] | None = None,
+        entities: list[str] | None = None,
+        actions: list[str] | None = None,
+    ) -> Scene:
+        """Create a new scene in the temporal graph."""
+        import json
+
+        scene_id = str(uuid.uuid4())
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO scenes
+                (id, media_id, start_time, end_time, location, description, 
+                 scene_type, face_cluster_ids, speaker_cluster_ids, entities, actions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    scene_id,
+                    media_id,
+                    start_time,
+                    end_time,
+                    location,
+                    description,
+                    scene_type,
+                    json.dumps(face_cluster_ids or []),
+                    json.dumps(speaker_cluster_ids or []),
+                    json.dumps(entities or []),
+                    json.dumps(actions or []),
+                ),
+            )
+            conn.commit()
+
+        return Scene(
+            id=scene_id,
+            media_id=media_id,
+            start_time=start_time,
+            end_time=end_time,
+            location=location,
+            description=description,
+            scene_type=scene_type,
+            face_cluster_ids=face_cluster_ids or [],
+            speaker_cluster_ids=speaker_cluster_ids or [],
+            entities=entities or [],
+            actions=actions or [],
+        )
+
+    def get_scenes_for_media(self, media_id: str) -> list[Scene]:
+        """Get all scenes for a video, ordered by time."""
+        import json
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM scenes WHERE media_id = ? ORDER BY start_time",
+                (media_id,),
+            )
+            scenes = []
+            for row in cursor.fetchall():
+                scenes.append(
+                    Scene(
+                        id=row["id"],
+                        media_id=row["media_id"],
+                        start_time=row["start_time"],
+                        end_time=row["end_time"],
+                        location=row["location"],
+                        description=row["description"],
+                        scene_type=row["scene_type"],
+                        face_cluster_ids=json.loads(
+                            row["face_cluster_ids"] or "[]"
+                        ),
+                        speaker_cluster_ids=json.loads(
+                            row["speaker_cluster_ids"] or "[]"
+                        ),
+                        entities=json.loads(row["entities"] or "[]"),
+                        actions=json.loads(row["actions"] or "[]"),
+                    )
+                )
+            return scenes
+
+    def create_scene_transition(
+        self,
+        from_scene_id: str,
+        to_scene_id: str,
+        transition_type: str = "cut",
+        confidence: float = 1.0,
+    ) -> SceneTransition:
+        """Create a transition edge between two scenes."""
+        transition_id = str(uuid.uuid4())
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO scene_transitions
+                (id, from_scene_id, to_scene_id, transition_type, confidence)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    transition_id,
+                    from_scene_id,
+                    to_scene_id,
+                    transition_type,
+                    confidence,
+                ),
+            )
+            conn.commit()
+
+        return SceneTransition(
+            id=transition_id,
+            from_scene_id=from_scene_id,
+            to_scene_id=to_scene_id,
+            transition_type=transition_type,
+            confidence=confidence,
+        )
+
+    def get_scene_timeline(self, media_id: str) -> list[dict]:
+        """Get the complete scene timeline with transitions for a video.
+
+        Returns ordered scenes with their transitions for narrative visualization.
+        """
+        scenes = self.get_scenes_for_media(media_id)
+        if not scenes:
+            return []
+
+        # Get all transitions between these scenes
+        scene_ids = [s.id for s in scenes]
+        placeholders = ",".join(["?"] * len(scene_ids))
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                f"""
+                SELECT * FROM scene_transitions 
+                WHERE from_scene_id IN ({placeholders}) OR to_scene_id IN ({placeholders})
+                """,
+                scene_ids + scene_ids,
+            )
+            transitions = {
+                row["from_scene_id"]: row for row in cursor.fetchall()
+            }
+
+        # Build timeline
+        timeline = []
+        for i, scene in enumerate(scenes):
+            entry = {
+                "scene": {
+                    "id": scene.id,
+                    "start_time": scene.start_time,
+                    "end_time": scene.end_time,
+                    "duration": scene.end_time - scene.start_time,
+                    "location": scene.location,
+                    "description": scene.description,
+                    "scene_type": scene.scene_type,
+                    "people": scene.face_cluster_ids,
+                    "actions": scene.actions,
+                },
+                "transition_to_next": None,
+            }
+
+            if scene.id in transitions:
+                t = transitions[scene.id]
+                entry["transition_to_next"] = {
+                    "type": t["transition_type"],
+                    "confidence": t["confidence"],
+                }
+
+            timeline.append(entry)
+
+        return timeline
+
+    # =========================================================================
+    # GRAPHRAG: TEMPORAL EVENT OPERATIONS
+    # =========================================================================
+
+    def create_temporal_event(
+        self,
+        scene_id: str,
+        timestamp: float,
+        event_type: str,
+        identity_id: str | None = None,
+        description: str | None = None,
+    ) -> TemporalEvent:
+        """Create a new temporal event within a scene."""
+        event_id = str(uuid.uuid4())
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO temporal_events
+                (id, scene_id, identity_id, timestamp, event_type, description)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    scene_id,
+                    identity_id,
+                    timestamp,
+                    event_type,
+                    description,
+                ),
+            )
+            conn.commit()
+
+        return TemporalEvent(
+            id=event_id,
+            scene_id=scene_id,
+            identity_id=identity_id,
+            timestamp=timestamp,
+            event_type=event_type,
+            description=description,
+        )
+
+    def link_events_sequence(self, event_ids: list[str]) -> int:
+        """Link a sequence of events in order (A→B→C).
+
+        Args:
+            event_ids: List of event IDs in chronological order.
+
+        Returns:
+            Number of links created.
+        """
+        if len(event_ids) < 2:
+            return 0
+
+        links_created = 0
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            for i in range(len(event_ids) - 1):
+                prev_id = event_ids[i]
+                next_id = event_ids[i + 1]
+
+                # Update forward link
+                conn.execute(
+                    "UPDATE temporal_events SET next_event_id = ? WHERE id = ?",
+                    (next_id, prev_id),
+                )
+                # Update backward link
+                conn.execute(
+                    "UPDATE temporal_events SET previous_event_id = ? WHERE id = ?",
+                    (prev_id, next_id),
+                )
+                links_created += 1
+
+            conn.commit()
+
+        return links_created
+
+    def find_event_sequence(
+        self,
+        pattern: list[str],
+        media_id: str | None = None,
+        identity_name: str | None = None,
+    ) -> list[list[dict]]:
+        """Find sequences of events matching a pattern.
+
+        This is the KEY GraphRAG query for temporal sequences like:
+        "A speaks" → "B responds" → "A walks away"
+
+        Args:
+            pattern: List of event_type patterns to match in order.
+                     e.g., ["speaks", "speaks", "exits"]
+            media_id: Optional filter to specific video.
+            identity_name: Optional filter to specific person.
+
+        Returns:
+            List of matching sequences, each containing event dicts.
+        """
+        if not pattern:
+            return []
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # Build query for first event type
+            conditions = ["event_type = ?"]
+            params: list = [pattern[0]]
+
+            if media_id:
+                conditions.append(
+                    "scene_id IN (SELECT id FROM scenes WHERE media_id = ?)"
+                )
+                params.append(media_id)
+
+            if identity_name:
+                conditions.append(
+                    "identity_id IN (SELECT id FROM identities WHERE LOWER(name) = LOWER(?))"
+                )
+                params.append(identity_name)
+
+            where_clause = " AND ".join(conditions)
+
+            # Get all starting events
+            cursor = conn.execute(
+                f"SELECT * FROM temporal_events WHERE {where_clause} ORDER BY timestamp",
+                params,
+            )
+            starting_events = cursor.fetchall()
+
+            if not starting_events:
+                return []
+
+            # For each starting event, try to match the full pattern
+            matched_sequences = []
+
+            for start_event in starting_events:
+                sequence = [dict(start_event)]
+                current_event = start_event
+                pattern_matched = True
+
+                for i in range(1, len(pattern)):
+                    # Get next event
+                    next_id = current_event["next_event_id"]
+                    if not next_id:
+                        pattern_matched = False
+                        break
+
+                    next_event = conn.execute(
+                        "SELECT * FROM temporal_events WHERE id = ?",
+                        (next_id,),
+                    ).fetchone()
+
+                    if not next_event or next_event["event_type"] != pattern[i]:
+                        pattern_matched = False
+                        break
+
+                    sequence.append(dict(next_event))
+                    current_event = next_event
+
+                if pattern_matched and len(sequence) == len(pattern):
+                    matched_sequences.append(sequence)
+
+            return matched_sequences
+
+    def get_events_for_identity(
+        self,
+        identity_id: str,
+        media_id: str | None = None,
+        limit: int = 100,
+    ) -> list[TemporalEvent]:
+        """Get all events involving a specific identity."""
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            if media_id:
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM temporal_events 
+                    WHERE identity_id = ? 
+                    AND scene_id IN (SELECT id FROM scenes WHERE media_id = ?)
+                    ORDER BY timestamp
+                    LIMIT ?
+                    """,
+                    (identity_id, media_id, limit),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM temporal_events 
+                    WHERE identity_id = ?
+                    ORDER BY timestamp
+                    LIMIT ?
+                    """,
+                    (identity_id, limit),
+                )
+
+            events = []
+            for row in cursor.fetchall():
+                events.append(
+                    TemporalEvent(
+                        id=row["id"],
+                        scene_id=row["scene_id"],
+                        identity_id=row["identity_id"],
+                        timestamp=row["timestamp"],
+                        event_type=row["event_type"],
+                        description=row["description"],
+                        previous_event_id=row["previous_event_id"],
+                        next_event_id=row["next_event_id"],
+                    )
+                )
+            return events
+
+    def get_graphrag_stats(self) -> dict[str, int]:
+        """Get GraphRAG statistics including scenes, transitions, events."""
+        with self._lock, sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM identities) as identities,
+                    (SELECT COUNT(*) FROM face_tracks) as face_tracks,
+                    (SELECT COUNT(*) FROM voice_tracks) as voice_tracks,
+                    (SELECT COUNT(*) FROM scenes) as scenes,
+                    (SELECT COUNT(*) FROM scene_transitions) as transitions,
+                    (SELECT COUNT(*) FROM temporal_events) as events
+            """).fetchone()
+            return {
+                "identities": row[0],
+                "face_tracks": row[1],
+                "voice_tracks": row[2],
+                "scenes": row[3],
+                "scene_transitions": row[4],
+                "temporal_events": row[5],
+            }
 
 
 # Global instance

@@ -18,11 +18,11 @@ if sys.platform == "win32":
     # SIGKILL (9): Used by pytorch-lightning's fault tolerance
     if not hasattr(signal, "SIGKILL"):
         signal.SIGKILL = 9
-    
+
     # SIGTERM (15): Graceful termination - usually exists on Windows but ensure it
     if not hasattr(signal, "SIGTERM"):
         signal.SIGTERM = 15
-    
+
     # SIGUSR1/SIGUSR2: User-defined signals, not available on Windows
     if not hasattr(signal, "SIGUSR1"):
         signal.SIGUSR1 = 10

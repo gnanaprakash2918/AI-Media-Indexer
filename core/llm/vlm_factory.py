@@ -65,7 +65,9 @@ class OllamaVLM(VLMClient):
         self.model = model or settings.ollama_vision_model
         self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self.timeout = timeout
-        log(f"[OllamaVLM] Initialized with model={self.model}, base_url={self.base_url}")
+        log(
+            f"[OllamaVLM] Initialized with model={self.model}, base_url={self.base_url}"
+        )
 
     def generate_caption(self, image_path: Path | str, prompt: str) -> str:
         """Sends a file-based captioning request to Ollama."""

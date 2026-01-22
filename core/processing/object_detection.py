@@ -97,7 +97,7 @@ class ObjectDetector:
 
                     device = self._get_device()
                     self._device = device
-                    self.model.to(device) # type: ignore
+                    self.model.to(device)  # type: ignore
 
                     log.info(f"[YOLO-World] Model loaded on {device}")
                     return True

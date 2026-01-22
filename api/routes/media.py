@@ -471,7 +471,7 @@ async def get_masklets(
             # Fallback/Placeholder: Check if we have scenelets that might be valid 'masklets'
             # or simply return empty list to satisfy frontend
             masklets = []
-            
+
         return {"masklets": masklets}
     except Exception as e:
         logger.error(f"[Media] Failed to get masklets: {e}")

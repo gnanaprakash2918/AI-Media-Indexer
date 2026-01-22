@@ -388,7 +388,14 @@ export default function IngestPage() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [pendingJobs, setPendingJobs] = useState<string[]>([]);
-  const [summaryDialog, setSummaryDialog] = useState<{ open: boolean; path: string; data: any }>({
+
+  interface SummaryData {
+    summary?: string;
+    entities?: string[];
+    storyline?: string;
+  }
+
+  const [summaryDialog, setSummaryDialog] = useState<{ open: boolean; path: string; data: SummaryData | null }>({
     open: false,
     path: '',
     data: null,
@@ -456,7 +463,7 @@ export default function IngestPage() {
     try {
       const data = await getVideoSummary(path);
       setSummaryDialog({ open: true, path, data });
-    } catch (err) {
+    } catch {
       alert("No summary found for this video yet.");
     }
   };

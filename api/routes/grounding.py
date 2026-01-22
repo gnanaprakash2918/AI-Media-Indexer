@@ -1,4 +1,5 @@
 """API routes for visual grounding and segment management."""
+
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -19,12 +20,14 @@ db = VectorDB()
 
 class TriggerRequest(BaseModel):
     """Request schema for triggering visual grounding."""
+
     video_path: str
     concepts: list[str] | None = None
 
 
 class MaskletUpdate(BaseModel):
     """Schema for updating a masklet or segment."""
+
     label: str | None = None
     confidence: float | None = None
     payload: dict[str, Any] | None = None

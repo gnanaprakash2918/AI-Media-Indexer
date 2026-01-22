@@ -688,10 +688,46 @@ class ParsedQuery(BaseModel):
         description="ALL entities from query - unlimited types and attributes",
     )
 
+    # =========================================================================
+    # GRANULAR CONSTRAINTS (Unified from HyperGranularQuery)
+    # =========================================================================
+    identities: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of IdentityConstraint dicts: {name, face_id, voice_id, confidence}",
+    )
+    clothing: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of ClothingConstraint dicts: {item, color, pattern, brand, body_part}",
+    )
+    audio: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of AudioConstraint dicts: {event_class, min_db, max_db}",
+    )
+    temporal: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of TemporalConstraint dicts: {constraint_type, min_ms, ...}",
+    )
+    text: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of TextConstraint dicts: {text, is_exact, location}",
+    )
+    spatial: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of SpatialConstraint dicts: {measurement_type, value_cm, ...}",
+    )
+    actions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of ActionConstraint dicts: {action, intensity, result}",
+    )
+    reasoning: list[str] = Field(
+        default_factory=list,
+        description="Chain of thought reasoning steps for the parsed query",
+    )
+
     # Legacy single-person fields (for backwards compatibility)
     person_name: str | None = Field(
         default=None,
-        description="Primary person name (use people[] for multiple)",
+        description="Primary person name (use people[] or identities[] for multiple)",
     )
     clothing_color: str | None = Field(default=None)
     clothing_type: str | None = Field(default=None)
