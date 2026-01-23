@@ -164,6 +164,41 @@ async def delete_voice_segment(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.delete("/voices/cluster/{cluster_id}")
+async def delete_voice_cluster(
+    cluster_id: int,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Delete an entire voice cluster and all its segments.
+
+    Args:
+        cluster_id: The voice cluster ID to delete.
+        pipeline: Ingestion pipeline instance.
+
+    Returns:
+        Deletion confirmation with count.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        count = pipeline.db.delete_voice_cluster(cluster_id)
+        if count == 0:
+            raise HTTPException(
+                status_code=404, detail="Cluster not found or empty"
+            )
+        return {
+            "status": "deleted",
+            "cluster_id": cluster_id,
+            "segments_deleted": count,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Voices] Delete cluster failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.post("/voices/cluster")
 async def trigger_voice_clustering(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
@@ -293,14 +328,53 @@ async def name_voice_cluster(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        # 1. Update Voice Segments Payload
-        # We need to find all segments with this cluster ID first?
-        # Qdrant set_payload by filter is efficient
         from qdrant_client import models
 
+        # 0. Check for existing cluster with same name (Auto-Merge)
+        # Check both 'name' and 'speaker_name' just in case
+        existing_resp = pipeline.db.client.scroll(
+            collection_name=pipeline.db.VOICE_COLLECTION,
+            scroll_filter=models.Filter(
+                should=[
+                    models.FieldCondition(
+                        key="speaker_name",
+                        match=models.MatchValue(value=request.name),
+                    ),
+                    models.FieldCondition(
+                        key="name",
+                        match=models.MatchValue(value=request.name),
+                    )
+                ],
+                must_not=[
+                    models.FieldCondition(
+                        key="voice_cluster_id",
+                        match=models.MatchValue(value=cluster_id),
+                    )
+                ]
+            ),
+            limit=1,
+            with_payload=["voice_cluster_id"],
+        )
+
+        points = existing_resp[0]
+        if points:
+             target_cluster_id = points[0].payload.get("voice_cluster_id")
+             if target_cluster_id is not None:
+                 logger.info(f"Auto-merging voice cluster {cluster_id} into {target_cluster_id} (Name: {request.name})")
+                 count = pipeline.db.merge_voice_clusters(cluster_id, target_cluster_id)
+                 return {
+                     "status": "merged",
+                     "source_cluster_id": cluster_id,
+                     "target_cluster_id": target_cluster_id,
+                     "name": request.name,
+                     "segments_moved": count
+                 }
+
+        # 1. Update Voice Segments Payload
+        # Set both 'speaker_name' and 'name' for consistency
         pipeline.db.client.set_payload(
             collection_name=pipeline.db.VOICE_COLLECTION,
-            payload={"speaker_name": request.name},
+            payload={"speaker_name": request.name, "name": request.name}, # Fix for get_unresolved_voices using 'name'
             points=models.Filter(
                 must=[
                     models.FieldCondition(
@@ -316,18 +390,15 @@ async def name_voice_cluster(
             cluster_id, request.name
         )
 
-        # 3. Identity Linking (Newly added)
+        # 3. Identity Linking
         try:
             from core.storage.identity_graph import identity_graph
 
             identity = identity_graph.get_or_create_identity_by_name(
                 request.name
             )
-            # Fetch IDs to link - we can skip if handled in db.set_speaker_name,
-            # but this route does manual set_payload.
-            # Ideally we should use db.set_speaker_name to avoid duplication.
-            # Let's switch to using the DB method which now handles EVERYTHING.
-            pipeline.db.set_speaker_name(cluster_id, request.name)
+            # Use db method if it exists, but we successfully did it above manually
+            # pipeline.db.set_speaker_name(cluster_id, request.name)
         except Exception as e:
             logger.error(f"Identity linking failed: {e}")
 

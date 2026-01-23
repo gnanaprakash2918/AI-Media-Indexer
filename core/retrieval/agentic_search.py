@@ -103,10 +103,14 @@ class SearchAgent:
         prompt = QUERY_EXPANSION_PROMPT.format(query=query)
 
         try:
-            parsed = await self.llm.generate_structured(
-                schema=ParsedQuery,
-                prompt=prompt,
-                system_prompt="You are a search query parser. Return JSON only.",
+            # Timeout to prevent hanging if LLM is slow/stuck
+            parsed = await asyncio.wait_for(
+                self.llm.generate_structured(
+                    schema=ParsedQuery,
+                    prompt=prompt,
+                    system_prompt="You are a search query parser. Return JSON only.",
+                ),
+                timeout=12.0  # 12s massive timeout for slow machines, but finite
             )
             log(f"[Search] Parsed query: {parsed.model_dump()}")
             return parsed
@@ -689,12 +693,10 @@ class SearchAgent:
                 face_ids.extend(ids)
                 log(f"[SOTA Search] Resolved '{name}' → {len(ids)} faces")
 
-        # 3. Retrieve candidates via multi-vector search
-        # Use fallback chain: scenes → scenelets → frames
-        fallback_used = None
+        all_results = {}
+        
         try:
-            # Use search_scenes as the explainable/SOTA method
-            candidates = self.db.search_scenes(
+            scene_results = self.db.search_scenes(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
                 person_name=person_names[0] if person_names else None,
@@ -720,75 +722,135 @@ class SearchAgent:
                 video_path=video_path,
                 search_mode="hybrid",
             )
-            log(
-                f"[SOTA Search] Retrieved {len(candidates)} candidates from scenes"
-            )
+            all_results["scenes"] = scene_results
+            log(f"[SOTA] Scenes: {len(scene_results)} results")
 
-            # Fallback 1: Try scenelets if scenes empty
-            if not candidates:
-                log("[SOTA Search] No scenes found, falling back to scenelets")
-                fallback_used = "scenelets"
+            # CONSTRAINT RELAXATION: If strict search failed, try loose semantic search
+            if not scene_results and (person_names or parsed.clothing_color or parsed.location):
+                log(f"[SOTA] Strict scene search yielded 0 results. Retrying with relaxed semantic search...")
                 try:
-                    candidates = self.db.search_scenelets(
+                    fallback_scenes = self.db.search_scenes(
                         query=search_text,
-                        limit=limit * 3 if use_reranking else limit,
-                        video_path=video_path,
+                        limit=limit,
+                        search_mode="hybrid",
+                        # Intentionally omitting filters to cast a wider net
                     )
-                    log(
-                        f"[SOTA Search] Retrieved {len(candidates)} candidates from scenelets"
-                    )
-                except Exception as e:
-                    log(f"[SOTA Search] Scenelet search failed: {e}")
-                    candidates = []
-
-            # Fallback 2: Try frame-level hybrid search if still empty
-            if not candidates:
-                log("[SOTA Search] No scenelets found, falling back to frames")
-                fallback_used = "frames"
-                face_cluster_id = face_ids[0] if face_ids else None
-                candidates = self.db.search_frames_hybrid(
-                    query=search_text,
-                    limit=limit * 3 if use_reranking else limit,
-                    face_cluster_ids=[face_cluster_id]
-                    if face_cluster_id is not None
-                    else None,
-                )
-                log(
-                    f"[SOTA Search] Retrieved {len(candidates)} candidates from frames"
-                )
-
+                    log(f"[SOTA] Relaxed search found {len(fallback_scenes)} scenes")
+                    # Append unique results (deduplicate by ID)
+                    existing_ids = {r["id"] for r in scene_results}
+                    for r in fallback_scenes:
+                        if r["id"] not in existing_ids:
+                             # Add a flag to indicate it satisfied loose constraints only
+                            r["match_type"] = "relaxed"
+                            scene_results.append(r)
+                    all_results["scenes"] = scene_results
         except Exception as e:
-            log(f"[SOTA Search] Search failed: {e}")
-            candidates = []
+            log(f"[SOTA] Scene search failed: {e}")
+            all_results["scenes"] = []
 
-        # === EXPANSION FALLBACK ===
-        # If expansion yielded few results, retry with original raw query
-        if expansion_fallback and expansion_used and len(candidates) < 3:
-            log(f"[SOTA Search] Expansion yielded only {len(candidates)} results, trying original query")
-            try:
-                raw_candidates = self.db.search_scenes(
-                    query=query,  # Use original query, not expanded
-                    limit=limit * 3,
-                    person_name=None,  # Don't use potentially hallucinated names
-                    face_cluster_ids=None,
-                    video_path=video_path,
-                    search_mode="hybrid",
-                )
-                log(f"[SOTA Search] Raw query returned {len(raw_candidates)} additional candidates")
+        try:
+            scenelet_results = self.db.search_scenelets(
+                query=search_text,
+                limit=limit * 3 if use_reranking else limit,
+                video_path=video_path,
+            )
+            all_results["scenelets"] = scenelet_results
+            log(f"[SOTA] Scenelets: {len(scenelet_results)} results")
+        except Exception as e:
+            log(f"[SOTA] Scenelet search failed: {e}")
+            all_results["scenelets"] = []
 
-                # Merge unique results (by ID)
-                seen_ids = {c.get("id") for c in candidates if c.get("id")}
-                for rc in raw_candidates:
-                    if rc.get("id") and rc.get("id") not in seen_ids:
-                        candidates.append(rc)
-                        seen_ids.add(rc.get("id"))
+        try:
+            face_cluster_id = face_ids[0] if face_ids else None
+            frame_results = self.db.search_frames_hybrid(
+                query=search_text,
+                limit=limit * 3 if use_reranking else limit,
+                face_cluster_ids=[face_cluster_id]
+                if face_cluster_id is not None
+                else None,
+                video_paths=[video_path] if video_path else None,
+            )
+            all_results["frames"] = frame_results
+            log(f"[SOTA] Frames: {len(frame_results)} results")
+        except Exception as e:
+            log(f"[SOTA] Frame search failed: {e}")
+            all_results["frames"] = []
 
-                # Re-sort by score
-                candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-                log(f"[SOTA Search] After merge: {len(candidates)} total candidates")
-                fallback_used = "expansion_fallback"
-            except Exception as fb_err:
-                log(f"[SOTA Search] Fallback search failed: {fb_err}")
+        try:
+            voice_results = self.db.search_voice_segments(
+                query=search_text,
+                limit=limit * 2,
+                video_path=video_path,
+            )
+            all_results["voice"] = voice_results if voice_results else []
+            log(f"[SOTA] Voice: {len(all_results['voice'])} results")
+        except Exception as e:
+            log(f"[SOTA] Voice search failed: {e}")
+            all_results["voice"] = []
+
+        try:
+            audio_results = self.db.search_audio_events(
+                query=search_text,
+                limit=limit * 2,
+            )
+            all_results["audio_events"] = audio_results if audio_results else []
+            log(f"[SOTA] Audio events: {len(all_results['audio_events'])} results")
+        except Exception as e:
+            log(f"[SOTA] Audio event search failed: {e}")
+            all_results["audio_events"] = []
+
+        from collections import defaultdict
+        
+        fused_scores = defaultdict(float)
+        result_data = {}
+        
+        weights = {
+            "scenes": 0.30,
+            "frames": 0.25,
+            "scenelets": 0.20,
+            "voice": 0.15,
+            "audio_events": 0.10,
+        }
+        
+        k = 60
+        
+        for modality, results in all_results.items():
+            weight = weights.get(modality, 0.1)
+            
+            for rank, result in enumerate(results, start=1):
+                result_id = result.get("id")
+                if not result_id:
+                    continue
+                
+                rrf_score = 1.0 / (k + rank)
+                weighted_score = rrf_score * weight
+                
+                fused_scores[result_id] += weighted_score
+                
+                if result_id not in result_data:
+                    result_data[result_id] = result
+                    result_data[result_id]["modality_sources"] = []
+                
+                result_data[result_id]["modality_sources"].append(modality)
+        
+        ranked = sorted(
+            fused_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:limit * 3 if use_reranking else limit]
+        
+        candidates = []
+        for result_id, score in ranked:
+            result = result_data[result_id]
+            result["fused_score"] = score
+            candidates.append(result)
+        
+        log(f"[SOTA] After weighted fusion: {len(candidates)} candidates")
+        
+        fallback_used = None
+        if not any(all_results.values()):
+            fallback_used = "no_results"
+
 
         # 4. Re-rank with Reranking Council (VLM + CrossEncoder)
         if use_reranking and candidates:
@@ -798,13 +860,19 @@ class SearchAgent:
                 for c in candidates:
                     video_p = c.get("video_path") or c.get("media_path") or ""
                     
-                    # Handle scene vs frame timestamps
-                    start = c.get("start_time")
-                    end = c.get("end_time")
+                    # Handle scene vs frame timestamps - check multiple possible fields
+                    start = c.get("start_time") or c.get("start")
+                    end = c.get("end_time") or c.get("end")
+                    
+                    # Fallback: use timestamp field with small buffer
                     if start is None:
                         ts = float(c.get("timestamp", 0))
                         start = max(0, ts - 2.0)
-                        end = ts + 2.0
+                        end = ts + 3.0  # Slightly longer end buffer
+                    
+                    # Ensure start_time and end_time are in payload for frontend
+                    c["start_time"] = float(start or 0)
+                    c["end_time"] = float(end or start + 5.0 if start else 5.0)
 
                     sc_candidates.append(
                         SearchCandidate(

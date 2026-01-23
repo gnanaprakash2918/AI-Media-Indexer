@@ -204,13 +204,15 @@ async def get_frame_overlays(
             "clothing": [],
         }
 
-        for i, bbox in enumerate(frame.get("face_boxes", [])):
+        # Face overlays - use 'faces' field which contains full metadata
+        faces_data = frame.get("faces", [])
+        for face in faces_data:
             overlays["faces"].append(
                 {
-                    "bbox": bbox,
-                    "label": frame.get("face_names", [])[i]
-                    if i < len(frame.get("face_names", []))
-                    else None,
+                    "bbox": face.get("bbox", []),
+                    "label": face.get("name"),
+                    "cluster_id": face.get("cluster_id"),
+                    "confidence": face.get("confidence", 0),
                     "color": "#22C55E",
                 }
             )

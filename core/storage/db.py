@@ -1534,9 +1534,8 @@ class VectorDB:
                 "visible_text",
                 "face_names",
                 "speaker_names",
-                "clothing_colors",
-                "clothing_types",
-                "accessories",
+                "visual_attributes",  # Dynamic: ALL visual details from VLM
+                "entity_details",     # Dynamic: ALL entity names and categories
                 "scene_location",
                 "ocr_text",
                 "transcript",
@@ -2451,11 +2450,18 @@ class VectorDB:
                 # "speaker_label" is usually "SPEAKER_01".
                 # "voice_cluster_id" is the global ID.
                 # Check if we have a resolved name.
-                label = payload.get(
-                    "speaker_name"
-                )  # Ideally we store this on naming
+                label = payload.get("speaker_name")
+                
+                # Fallback hierarchy: 
+                # 1. Assigned Name (speaker_name)
+                # 2. explicit "SILENCE" label
+                # 3. Voice Cluster ID
                 if not label:
-                    label = f"Voice {payload.get('voice_cluster_id', '?')}"
+                    sl = payload.get("speaker_label", "")
+                    if sl == "SILENCE":
+                        label = "SILENCE"
+                    else:
+                        label = f"Voice {payload.get('voice_cluster_id', '?')}"
 
                 masklets.append(
                     {
@@ -2669,6 +2675,7 @@ class VectorDB:
         embedding: list[float],
         audio_path: str | None = None,
         voice_cluster_id: int = -1,
+        **kwargs: Any,
     ) -> None:
         """Insert a voice segment embedding.
 
@@ -2680,6 +2687,7 @@ class VectorDB:
             embedding: The voice embedding vector.
             audio_path: Path to the extracted audio clip.
             voice_cluster_id: The cluster ID for grouping (-1 = unclustered).
+            **kwargs: Additional metadata to store in payload (e.g. emotion).
 
         Raises:
             ValueError: If the embedding dimension does not match `VOICE_VECTOR_SIZE`.
@@ -2690,7 +2698,21 @@ class VectorDB:
                 f"got {len(embedding)}"
             )
 
-        point_id = str(uuid.uuid4())
+        # Deterministic ID to prevent duplicates (idempotency)
+        unique_str = f"voice_{media_path}_{start:.3f}_{end:.3f}"
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
+        
+        payload = {
+            "media_path": media_path,
+            "start": start,
+            "end": end,
+            "speaker_label": speaker_label,
+            "embedding_version": "wespeaker_resnet34_v1_l2",
+            "audio_path": audio_path,
+            "voice_cluster_id": voice_cluster_id,
+        }
+        if kwargs:
+            payload.update(kwargs)
 
         self.client.upsert(
             collection_name=self.VOICE_COLLECTION,
@@ -2698,15 +2720,7 @@ class VectorDB:
                 models.PointStruct(
                     id=point_id,
                     vector=embedding,
-                    payload={
-                        "media_path": media_path,
-                        "start": start,
-                        "end": end,
-                        "speaker_label": speaker_label,
-                        "embedding_version": "wespeaker_resnet34_v1_l2",
-                        "audio_path": audio_path,
-                        "voice_cluster_id": voice_cluster_id,
-                    },
+                    payload=payload,
                 )
             ],
         )
@@ -2966,26 +2980,80 @@ class VectorDB:
         query: str,
         limit: int = 10,
         score_threshold: float | None = None,
+        video_path: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search for discrete audio events (e.g., 'dog barking', 'doorbell').
+        conditions = []
+        conditions.append(
+            models.FieldCondition(
+                key="event_class",
+                match=models.MatchText(text=query),
+            )
+        )
+        if video_path:
+            conditions.append(
+                models.FieldCondition(
+                    key="media_path",
+                    match=models.MatchValue(value=video_path),
+                )
+            )
+
+        try:
+            resp, _ = self.client.scroll(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                scroll_filter=models.Filter(must=conditions),
+                limit=limit,
+            )
+            return [
+                {"id": str(p.id), "score": 1.0, **(p.payload or {})}
+                for p in resp
+            ]
+        except Exception as e:
+            log(f"Audio event search failed: {e}")
+            return []
+
+    @observe("db_search_audio_events_semantic")
+    def search_audio_events_semantic(
+        self,
+        query: str,
+        limit: int = 10,
+        score_threshold: float | None = None,
+        video_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search audio events using semantic vector similarity.
+
+        Unlike search_audio_events which does text matching on event_class,
+        this method performs vector-based semantic search for more flexible
+        audio event discovery.
 
         Args:
             query: The search query.
-            limit: Maximum results.
+            limit: Maximum number of results.
             score_threshold: Minimum similarity score.
+            video_path: Optional filter by video path.
 
         Returns:
-            List of audio event matches.
+            List of matching audio events with scores.
         """
         try:
-            # We use the same encoder as voice/audio
             query_vec = self.encode_texts(query, is_query=True)[0]
+
+            conditions: list[models.Condition] = []
+            if video_path:
+                conditions.append(
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchValue(value=video_path),
+                    )
+                )
+
+            query_filter = models.Filter(must=conditions) if conditions else None
 
             resp = self.client.query_points(
                 collection_name=self.AUDIO_EVENTS_COLLECTION,
                 query=query_vec,
                 limit=limit,
                 score_threshold=score_threshold,
+                query_filter=query_filter,
             )
 
             results = []
@@ -3005,7 +3073,7 @@ class VectorDB:
                 )
             return results
         except Exception as e:
-            log(f"search_audio_events failed: {e}")
+            log(f"search_audio_events_semantic failed: {e}")
             return []
 
     @observe("db_search_video_metadata")
@@ -4494,6 +4562,116 @@ class VectorDB:
                 updated += 1
             return updated
         except Exception:
+            return 0
+
+    @observe("db_delete_voice_cluster")
+    def delete_voice_cluster(self, cluster_id: int) -> int:
+        """Delete an entire voice cluster and all its segments.
+
+        Args:
+            cluster_id: The voice cluster ID to delete.
+
+        Returns:
+            Number of segments deleted.
+        """
+        try:
+            # 1. Get all segments in this cluster
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+                limit=10000,
+                with_payload=True,
+                with_vectors=False,
+            )
+            points = resp[0]
+            if not points:
+                return 0
+
+            # 2. Delete audio files
+            for point in points:
+                payload = point.payload or {}
+                audio_path = payload.get("audio_path")
+                if audio_path:
+                    try:
+                        if audio_path.startswith("/"):
+                            file_path = settings.cache_dir / audio_path.lstrip("/")
+                            if file_path.exists():
+                                file_path.unlink()
+                    except Exception:
+                        pass
+
+            # 3. Delete the points
+            point_ids = [point.id for point in points]
+            self.client.delete(
+                collection_name=self.VOICE_COLLECTION,
+                points_selector=models.PointIdsList(points=point_ids),
+            )
+            log(f"[DB] Deleted voice cluster {cluster_id}: {len(point_ids)} segments")
+            return len(point_ids)
+        except Exception as e:
+            log(f"delete_voice_cluster failed: {e}")
+            return 0
+
+    @observe("db_delete_face_cluster")
+    def delete_face_cluster(self, cluster_id: int) -> int:
+        """Delete an entire face cluster and all its faces.
+
+        Args:
+            cluster_id: The face cluster ID to delete.
+
+        Returns:
+            Number of faces deleted.
+        """
+        try:
+            # 1. Get all faces in this cluster
+            resp = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=cluster_id),
+                        )
+                    ]
+                ),
+                limit=10000,
+                with_payload=True,
+                with_vectors=False,
+            )
+            points = resp[0]
+            if not points:
+                return 0
+
+            # 2. Delete thumbnail files
+            for point in points:
+                payload = point.payload or {}
+                thumb_path = payload.get("thumbnail_path")
+                if thumb_path:
+                    try:
+                        if thumb_path.startswith("/"):
+                            file_path = settings.cache_dir / thumb_path.lstrip("/")
+                            if file_path.exists():
+                                file_path.unlink()
+                    except Exception:
+                        pass
+
+            # 3. Delete the points
+            point_ids = [point.id for point in points]
+            self.client.delete(
+                collection_name=self.FACES_COLLECTION,
+                points_selector=models.PointIdsList(points=point_ids),
+            )
+            log(f"[DB] Deleted face cluster {cluster_id}: {len(point_ids)} faces")
+            return len(point_ids)
+        except Exception as e:
+            log(f"delete_face_cluster failed: {e}")
             return 0
 
     def get_face_by_thumbnail(
@@ -6508,6 +6686,321 @@ class VectorDB:
                         }
                     )
             return unresolved
+            return unresolved
         except Exception as e:
             log(f"get_unresolved_voices failed: {e}")
+            return []
+
+    def merge_face_clusters(self, source_cluster_id: int, target_cluster_id: int) -> int:
+        """Merges two face clusters."""
+        try:
+            # Count faces to be moved
+            count_resp = self.client.count(
+                collection_name=self.FACES_COLLECTION,
+                count_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=source_cluster_id),
+                        )
+                    ]
+                ),
+            )
+            count = count_resp.count
+            
+            if count == 0:
+                return 0
+
+            # Update payload
+            self.client.set_payload(
+                collection_name=self.FACES_COLLECTION,
+                payload={"cluster_id": target_cluster_id},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id",
+                            match=models.MatchValue(value=source_cluster_id),
+                        )
+                    ]
+                ),
+            )
+            
+            # Also update the frames collection to point to the new cluster ID?
+            # Frames contain 'face_cluster_ids' list. We need to replace source with target in that list.
+            # This is hard to do atomically with Qdrant.
+            # We should probably iterate and update frames.
+            self._merge_face_cluster_frames(source_cluster_id, target_cluster_id)
+
+            return count
+        except Exception as e:
+            log(f"merge_face_clusters failed: {e}")
+            return 0
+
+    def merge_voice_clusters(self, source_cluster_id: int, target_cluster_id: int) -> int:
+        """Merges two voice clusters."""
+        try:
+            count_resp = self.client.count(
+                collection_name=self.VOICE_COLLECTION,
+                count_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=source_cluster_id),
+                        )
+                    ]
+                ),
+            )
+            count = count_resp.count
+
+            if count == 0:
+                return 0
+
+            self.client.set_payload(
+                collection_name=self.VOICE_COLLECTION,
+                payload={"voice_cluster_id": target_cluster_id},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id",
+                            match=models.MatchValue(value=source_cluster_id),
+                        )
+                    ]
+                ),
+            )
+            return count
+        except Exception as e:
+            log(f"merge_voice_clusters failed: {e}")
+            return 0
+
+    def delete_face_cluster(self, cluster_id: int) -> int:
+        """Deletes all faces in a cluster."""
+        try:
+            count_resp = self.client.count(
+                collection_name=self.FACES_COLLECTION,
+                count_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="cluster_id", 
+                            match=models.MatchValue(value=cluster_id)
+                        )
+                    ]
+                )
+            )
+            
+            self.client.delete(
+                collection_name=self.FACES_COLLECTION,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="cluster_id",
+                                match=models.MatchValue(value=cluster_id),
+                            )
+                        ]
+                    )
+                ),
+            )
+            return count_resp.count
+        except Exception as e:
+            log(f"delete_face_cluster failed: {e}")
+            return 0
+
+    def delete_voice_cluster(self, cluster_id: int) -> int:
+        """Deletes all voice segments in a cluster."""
+        try:
+            count_resp = self.client.count(
+                collection_name=self.VOICE_COLLECTION,
+                count_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="voice_cluster_id", 
+                            match=models.MatchValue(value=cluster_id)
+                        )
+                    ]
+                )
+            )
+            
+            self.client.delete(
+                collection_name=self.VOICE_COLLECTION,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="voice_cluster_id",
+                                match=models.MatchValue(value=cluster_id),
+                            )
+                        ]
+                    )
+                ),
+            )
+            return count_resp.count
+        except Exception as e:
+            log(f"delete_voice_cluster failed: {e}")
+            return 0
+            
+    def _merge_face_cluster_frames(self, source_id: int, target_id: int):
+        """Helper to update frame references when merging face clusters."""
+        try:
+            # Scroll frames that have source_id
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="face_cluster_ids",
+                            match=models.MatchAny(any=[source_id])
+                        )
+                    ]
+                ),
+                limit=10000,
+                with_payload=["face_cluster_ids"]
+            )
+            
+            for p in resp[0]:
+                payload = p.payload or {}
+                ids = payload.get("face_cluster_ids", [])
+                if source_id in ids:
+                    new_ids = [target_id if x == source_id else x for x in ids]
+                    # Deduplicate
+                    new_ids = list(set(new_ids))
+                    self.client.set_payload(
+                        collection_name=self.MEDIA_COLLECTION,
+                        payload={"face_cluster_ids": new_ids},
+                        points=[p.id]
+                    )
+        except Exception as e:
+            log(f"_merge_face_cluster_frames failed: {e}")
+
+    def get_frames_by_video(
+        self,
+        video_path: str,
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> list[dict]:
+        """Get all frames for a video within optional time range.
+        
+        Args:
+            video_path: Path to the video file
+            start_time: Optional start time filter
+            end_time: Optional end time filter
+            
+        Returns:
+            List of frame payloads with all metadata
+        """
+        conditions = [
+            models.FieldCondition(
+                key="video_path",
+                match=models.MatchValue(value=video_path),
+            )
+        ]
+        
+        if start_time is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="timestamp",
+                    range=models.Range(gte=start_time),
+                )
+            )
+        
+        if end_time is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="timestamp",
+                    range=models.Range(lte=end_time),
+                )
+            )
+        
+        try:
+            resp = self.client.scroll(
+                collection_name=self.MEDIA_COLLECTION,
+                scroll_filter=models.Filter(must=conditions),
+                limit=10000,
+                with_payload=True,
+                with_vectors=False,
+            )
+            
+            results = []
+            for point in resp[0]:
+                if point.payload:
+                    results.append({
+                        "id": str(point.id),
+                        **point.payload,
+                    })
+            
+            results.sort(key=lambda x: x.get("timestamp", 0))
+            return results
+            
+        except Exception as e:
+            log(f"[DB] get_frames_by_video failed: {e}")
+            return []
+
+    def get_voice_segments_by_video(
+        self,
+        video_path: str,
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> list[dict]:
+        """Get all voice segments for a video within optional time range.
+        
+        Args:
+            video_path: Path to the video file
+            start_time: Optional start time filter
+            end_time: Optional end time filter
+            
+        Returns:
+            List of voice segment payloads
+        """
+        conditions = [
+            models.FieldCondition(
+                key="media_path",
+                match=models.MatchValue(value=video_path),
+            )
+        ]
+        
+        if start_time is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="start",
+                    range=models.Range(gte=start_time),
+                )
+            )
+        
+        if end_time is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="end",
+                    range=models.Range(lte=end_time),
+                )
+            )
+        
+        try:
+            resp = self.client.scroll(
+                collection_name=self.VOICE_COLLECTION,
+                scroll_filter=models.Filter(must=conditions),
+                limit=10000,
+                with_payload=True,
+                with_vectors=False,
+            )
+            
+            results = []
+            for point in resp[0]:
+                if point.payload:
+                    payload = point.payload
+                    results.append({
+                        "id": str(point.id),
+                        "start_time": payload.get("start", 0),
+                        "end_time": payload.get("end", 0),
+                        "speaker_label": payload.get("speaker_label", "Unknown"),
+                        "speaker_name": payload.get("speaker_name"),
+                        "voice_cluster_id": payload.get("voice_cluster_id", -1),
+                        "transcript": payload.get("transcript", ""),
+                        "audio_path": payload.get("audio_path"),
+                        **payload,
+                    })
+            
+            results.sort(key=lambda x: x.get("start_time", 0))
+            return results
+            
+        except Exception as e:
+            log(f"[DB] get_voice_segments_by_video failed: {e}")
             return []

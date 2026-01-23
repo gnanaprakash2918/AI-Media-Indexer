@@ -269,14 +269,37 @@ class VoiceProcessor:
                     continue
                 if duration > MAX_SEGMENT_DURATION:
                     end = start + MAX_SEGMENT_DURATION
+                
+                
+                # Check for silence/garbage audio
+                # Pyannote is good but can hallucinate speech on noise or breaths
+                is_silence_segment = False
+                try:
+                    import soundfile as sf
+                    # Read just this segment (assuming 16kHz from _convert_to_wav)
+                    audio_chunk, _ = sf.read(
+                        str(processing_path), 
+                        start=int(start * 16000), 
+                        frames=int((end - start) * 16000)
+                    )
+                    if is_audio_silent(audio_chunk):
+                        is_silence_segment = True
+                        # log.debug(f"Marking silent segment: {start:.2f}-{end:.2f}s")
+                except Exception as e:
+                    log.warning(f"[Voice] Silence check failed: {e}")
 
-                embedding = await self._extract_embedding(
-                    processing_path, start, end
-                )
+                embedding = None
+                if not is_silence_segment:
+                    embedding = await self._extract_embedding(
+                        processing_path, start, end
+                    )
+                else:
+                    speaker = "SILENCE"  # Hardcoded category as requested
+                    # Embedding remains None
 
-                # If embedding extraction fails, use a placeholder
+                # If embedding extraction fails (and not silent), use a placeholder
                 # This ensures segments are still stored for music/singing
-                if embedding is None:
+                if embedding is None and not is_silence_segment:
                     log.warning(
                         f"[Voice] Embedding extraction failed for {start:.2f}-{end:.2f}s, using placeholder"
                     )
@@ -289,9 +312,7 @@ class VoiceProcessor:
                         start_time=start,
                         end_time=end,
                         speaker_label=speaker,
-                        confidence=1.0
-                        if segments_with_placeholder == 0
-                        else 0.5,
+                        confidence=1.0 if is_silence_segment else (1.0 if segments_with_placeholder == 0 else 0.5),
                         embedding=embedding,
                     )
                 )
@@ -392,6 +413,53 @@ class VoiceProcessor:
             return None
 
         try:
+            # Get actual audio duration to prevent boundary errors
+            import soundfile as sf
+
+            try:
+                info = sf.info(str(audio_path))
+                max_duration = float(info.duration)
+            except Exception as sf_err:
+                log.warning(
+                    f"[Voice] Could not determine audio duration: {sf_err}, using segment end as fallback"
+                )
+                max_duration = end + 1.0
+
+            # Clamp boundaries with safety margin (50ms) to prevent frame overflow
+            safety_margin = 0.05
+            original_start, original_end = start, end
+            
+            # Pad short segments to improve embedding quality
+            MIN_EMBEDDING_DURATION = 1.5  # WeSpeaker prefers ~1.5s+
+            duration = end - start
+            if duration < MIN_EMBEDDING_DURATION:
+                padding_needed = MIN_EMBEDDING_DURATION - duration
+                half_pad = padding_needed / 2.0
+                
+                # Center pad within available audio
+                start = max(0.0, start - half_pad)
+                end = min(max_duration - safety_margin, end + half_pad)
+                
+                # If still too short (e.g. at start/end of file), extend the other side
+                if (end - start) < MIN_EMBEDDING_DURATION:
+                    if start == 0.0:
+                        end = min(max_duration - safety_margin, start + MIN_EMBEDDING_DURATION)
+                    elif end >= max_duration - safety_margin:
+                        start = max(0.0, end - MIN_EMBEDDING_DURATION)
+            else:
+                 # Just clamp standard margin
+                 start = max(0.0, start)
+                 end = min(max_duration - safety_margin, end)
+
+            # Ensure minimum segment duration (100ms) -- fallback
+            if end - start < 0.1:
+                log.warning(
+                    f"[Voice] Segment too short after clamping: "
+                    f"original=[{original_start:.2f}, {original_end:.2f}], "
+                    f"clamped=[{start:.2f}, {end:.2f}], max_duration={max_duration:.2f}"
+                )
+                return None
+
             async with GPU_SEMAPHORE:
                 emb = self.inference.crop(
                     str(audio_path),
@@ -401,6 +469,7 @@ class VoiceProcessor:
             if isinstance(emb, torch.Tensor):
                 vec = cast(torch.Tensor, emb).squeeze().float().cpu().numpy()
             else:
+                # Direct numpy array support from some pipelines
                 vec = np.asarray(emb, dtype=np.float32).reshape(-1)
 
             if vec.ndim != 1 or vec.size == 0:

@@ -67,7 +67,7 @@ async def hybrid_search(
     ] = None,
     use_reranking: Annotated[
         bool, Query(description="Use LLM re-ranking for higher accuracy")
-    ] = True,
+    ] = False,  # OFF by default to prevent timeouts
     face_cluster_id: Annotated[
         int | None, Query(description="Filter by specific face cluster ID")
     ] = None,
@@ -750,7 +750,7 @@ async def multimodal_search(
     ] = None,
     use_reranking: Annotated[
         bool, Query(description="Use LLM re-ranking")
-    ] = True,
+    ] = False,  # OFF by default to prevent timeouts
 ) -> dict:
     """Comprehensive multimodal search using ALL indexed data sources.
 

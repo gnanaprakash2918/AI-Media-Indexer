@@ -52,6 +52,8 @@ interface ConfigData {
   llm_provider: string;
   enable_voice_analysis: boolean;
   enable_resource_monitoring: boolean;
+  enable_vlm_reranking?: boolean;
+  enable_hybrid_search?: boolean;
   max_cpu_percent: number;
   max_ram_percent: number;
   google_api_key?: string;
@@ -589,6 +591,28 @@ function SettingsContent({
                   />
                 }
                 label="Resource Monitoring"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.enable_vlm_reranking ?? true}
+                    onChange={e =>
+                      handleChange('enable_vlm_reranking', e.target.checked)
+                    }
+                  />
+                }
+                label="VLM Reranking (may use more VRAM)"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.enable_hybrid_search ?? true}
+                    onChange={e =>
+                      handleChange('enable_hybrid_search', e.target.checked)
+                    }
+                  />
+                }
+                label="Hybrid Search"
               />
             </Box>
           </ConfigSection>

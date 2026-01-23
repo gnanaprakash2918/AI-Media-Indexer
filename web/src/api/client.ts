@@ -247,6 +247,17 @@ export const createNewVoiceCluster = async (segmentIds: string[]) => {
   return res.data;
 };
 
+// Delete entire clusters
+export const deleteVoiceCluster = async (clusterId: number) => {
+  const res = await apiClient.delete(`/voices/cluster/${clusterId}`);
+  return res.data;
+};
+
+export const deleteFaceCluster = async (clusterId: number) => {
+  const res = await apiClient.delete(`/faces/cluster/${clusterId}`);
+  return res.data;
+};
+
 // Name-Based Search
 export const searchByName = async (name: string, limit = 20) => {
   const res = await apiClient.get('/search/by-name', { params: { name, limit } });

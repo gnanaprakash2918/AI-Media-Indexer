@@ -208,7 +208,8 @@ class Sam3Tracker:
 
         except ImportError:
             logger.warning(
-                "sam2 package not installed. Run: pip install segment-anything-2"
+                "sam2 package not installed. Note: This project uses SAM3. "
+                "Install with: pip install segment-anything-2"
             )
             return False
         except Exception as e:

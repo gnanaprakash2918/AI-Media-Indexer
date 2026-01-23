@@ -53,6 +53,7 @@ import {
   nameVoiceCluster,
   mergeVoiceClusters,
   getAllNames,
+  deleteVoiceCluster,
 } from '../api/client';
 
 interface VoiceSegment {
@@ -243,6 +244,18 @@ export const Voices: React.FC = () => {
       setIsMerging(false);
     }
   };
+
+  const handleDeleteCluster = async (clusterId: number) => {
+    if (!confirm(`Delete this entire voice cluster and all its segments?`)) return;
+    try {
+      await deleteVoiceCluster(clusterId);
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      setError('Failed to delete cluster');
+    }
+  };
+
 
   const toggleClusterExpand = (clusterId: number) => {
     const newExpanded = new Set(expandedClusters);
@@ -475,15 +488,33 @@ export const Voices: React.FC = () => {
                   >
                     Merge
                   </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    startIcon={<Delete />}
+                    onClick={e => {
+                      e.stopPropagation();
+                      handleDeleteCluster(cluster.cluster_id);
+                    }}
+                    sx={{ ml: 1 }}
+                  >
+                    Delete
+                  </Button>
                 </Box>
-                {cluster.representative?.audio_path && (
-                  <audio
-                    controls
-                    src={`http://localhost:8000${cluster.representative.audio_path}`}
-                    style={{ height: 28, width: 140, marginRight: 16 }}
-                    onClick={e => e.stopPropagation()}
-                  />
-                )}
+                {/* Show audio from representative OR first segment with audio */}
+                {(() => {
+                  const audioPath = cluster.representative?.audio_path
+                    || cluster.segments?.find(s => s.audio_path)?.audio_path;
+                  return audioPath ? (
+                    <audio
+                      controls
+                      src={`http://localhost:8000${audioPath}`}
+                      style={{ height: 28, width: 140, marginRight: 16 }}
+                      onClick={e => e.stopPropagation()}
+                    />
+                  ) : null;
+                })()}
                 {expandedClusters.has(cluster.cluster_id) ? (
                   <ExpandLess />
                 ) : (

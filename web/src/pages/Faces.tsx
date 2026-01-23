@@ -64,6 +64,7 @@ import {
   setFaceMain,
   getAllNames,
   apiClient,
+  deleteFaceCluster,
 } from '../api/client';
 
 interface FaceData {
@@ -222,6 +223,7 @@ function ClusterCard({
   onMoveFace,
   onMerge,
   onSetMain,
+  onDeleteCluster,
 }: {
   cluster: FaceClusterData;
   onLabelCluster: (clusterId: number) => void;
@@ -231,6 +233,7 @@ function ClusterCard({
   onMoveFace: (faceId: string) => void;
   onMerge?: () => void;
   onSetMain?: (clusterId: number, isMain: boolean) => void;
+  onDeleteCluster?: (clusterId: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -331,6 +334,20 @@ function ClusterCard({
         >
           <Edit fontSize="small" sx={{ mr: 0.5 }} /> Label All
         </Button>
+        {onDeleteCluster && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            onClick={e => {
+              e.stopPropagation();
+              onDeleteCluster(cluster.cluster_id);
+            }}
+            sx={{ mr: 1 }}
+          >
+            <Delete fontSize="small" sx={{ mr: 0.5 }} /> Delete
+          </Button>
+        )}
         {expanded ? <ExpandLess /> : <ExpandMore />}
       </Box>
       <Collapse in={expanded}>
@@ -590,6 +607,19 @@ export default function FacesPage() {
 
   const handleDeleteFace = (faceId: string) => {
     if (confirm('Delete this face?')) deleteMutation.mutate(faceId);
+  };
+
+  const deleteClusterMutation = useMutation({
+    mutationFn: (clusterId: number) => deleteFaceCluster(clusterId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['faces'] });
+    },
+  });
+
+  const handleDeleteCluster = (clusterId: number) => {
+    if (confirm('Delete this entire face cluster and all its faces?')) {
+      deleteClusterMutation.mutate(clusterId);
+    }
   };
 
   const clusters: FaceClusterData[] = clustersQuery.data?.clusters || [];
@@ -880,6 +910,7 @@ export default function FacesPage() {
                 onSetMain={(cid, isMain) =>
                   setMainMutation.mutate({ clusterId: cid, isMain })
                 }
+                onDeleteCluster={handleDeleteCluster}
               />
             ))}
           </Box>

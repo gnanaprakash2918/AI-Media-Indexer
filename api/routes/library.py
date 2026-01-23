@@ -228,7 +228,7 @@ async def get_config():
 
     return {
         "llm_provider": settings.llm_provider,
-        "ollama_model": settings.ollama_model,
+        "ollama_model": settings.ollama_text_model,
         "frame_interval": settings.frame_interval,
         "qdrant_backend": settings.qdrant_backend,
         "embedding_model": settings.embedding_model_override or "auto",

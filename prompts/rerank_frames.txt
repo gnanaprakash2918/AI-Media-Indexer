@@ -2,24 +2,18 @@ Look at these frames from a video segment.
 
 USER QUERY: {query}
 
-FRAME DESCRIPTIONS:
-{descriptions}
-
-TASK: Determine if this segment matches the query and explain why.
+TASK: Analyze the visual content and determine if this segment matches the query.
 
 Consider:
-1. Visual elements matching the query
-2. Actions and movements described
-3. People and their attributes (clothing, accessories, etc.)
+1. Visual elements matching the query (people, objects, settings)
+2. Actions and movements visible in the frames
+3. People and their attributes (clothing, accessories, expressions)
 4. Objects and their interactions
 5. Location and environment
-6. Temporal aspects (sequence, timing)
+6. Temporal aspects (sequence, timing across frames)
 
 OUTPUT FORMAT (valid JSON only):
 {{
-    "relevance_score": 0.0-1.0,
-    "matches_query": true/false,
-    "key_matches": ["<specific elements that match>"],
-    "missing_elements": ["<query elements not found>"],
-    "reasoning": "<detailed explanation>"
+    "confidence": 0-100,
+    "reason": "<brief explanation of why this does or doesn't match>"
 }}

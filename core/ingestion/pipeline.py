@@ -276,6 +276,12 @@ class IngestionPipeline:
                 logger.info(f"Job {job_id} paused")
                 return job_id
 
+            # Audio Events (CLAP)
+            progress_tracker.update(
+                job_id, 45.0, stage="audio_events", message="Detecting audio events"
+            )
+            await self._process_audio_events(path, job_id)
+
             progress_tracker.update(
                 job_id, 55.0, stage="frames", message="Processing frames"
             )
@@ -1052,9 +1058,12 @@ class IngestionPipeline:
                 global_speaker_id = f"unknown_{uuid.uuid4().hex[:8]}"
                 voice_cluster_id = -1
 
+                # Respect explicit SILENCE label
+                if seg.speaker_label == "SILENCE":
+                    global_speaker_id = "SILENCE"
+
                 # Check Global Registry if embedding exists
-                # Check Global Registry if embedding exists
-                if seg.embedding is not None:
+                if seg.embedding is not None and global_speaker_id != "SILENCE":
                     match = self.db.match_speaker(
                         seg.embedding,
                         threshold=settings.voice_clustering_threshold,
@@ -1096,8 +1105,8 @@ class IngestionPipeline:
                             str(path),
                             "-ss",
                             str(seg.start_time),
-                            "-to",
-                            str(seg.end_time),
+                            "-t",
+                            str(seg.end_time - seg.start_time),
                             "-q:a",
                             "2",  # High quality MP3
                             "-map",
@@ -1127,9 +1136,37 @@ class IngestionPipeline:
                     )
                     audio_path = None
 
+
+
+
+
                 # === STORE VOICE SEGMENT ===
                 # Policy: Only store if we have BOTH embedding AND audio
                 # This prevents "No audio" segments and invalid clusters
+
+                # Speech Emotion Recognition (SER)
+                emotion_meta = {}
+                if audio_extraction_success:
+                    try:
+                        if not hasattr(self, "_ser_analyzer"):
+                            from core.processing.speech_emotion import (
+                                SpeechEmotionAnalyzer,
+                            )
+
+                            self._ser_analyzer = SpeechEmotionAnalyzer()
+
+                        import librosa
+
+                        # Load the clip we just made (resample to 16k for Wav2Vec2)
+                        y, sr = librosa.load(str(clip_file), sr=16000)
+                        emotion_res = await self._ser_analyzer.analyze(y, sr)
+                        if emotion_res:
+                            emotion_meta = {
+                                "emotion": emotion_res.get("emotion"),
+                                "emotion_conf": emotion_res.get("confidence"),
+                            }
+                    except Exception as e:
+                        logger.warning(f"[Voice] SER failed: {e}")
 
                 if seg.embedding is not None and audio_extraction_success:
                     # Ensure voice_cluster_id is always valid (never -1 or 0)
@@ -1144,10 +1181,11 @@ class IngestionPipeline:
                         media_path=str(path),
                         start=seg.start_time,
                         end=seg.end_time,
-                        speaker_label=global_speaker_id,  # Use Global ID
-                        embedding=seg.embedding,
-                        audio_path=audio_path,  # Guaranteed non-None here
+                        speaker_label=global_speaker_id,
+                        embedding=seg.embedding.tolist() if hasattr(seg.embedding, "tolist") else seg.embedding,
+                        audio_path=audio_path,
                         voice_cluster_id=voice_cluster_id,
+                        **emotion_meta,
                     )
                 elif seg.embedding is None and audio_extraction_success:
                     # Has audio but no embedding - still useful for playback
@@ -1160,9 +1198,9 @@ class IngestionPipeline:
                     if voice_cluster_id <= 0:
                         voice_cluster_id = self.db.get_next_voice_cluster_id()
 
-                    # Create a zero embedding placeholder
+                    # Create a zero embedding placeholder (using small epsilon for safe Cosine distance)
                     placeholder_embedding = [
-                        0.0
+                        1e-6
                     ] * 256  # WeSpeaker embedding size
                     self.db.insert_voice_segment(
                         media_path=str(path),
@@ -1186,6 +1224,90 @@ class IngestionPipeline:
             del self.voice
             self.voice = None
             self._cleanup_memory()
+
+    @observe("audio_events")
+    async def _process_audio_events(
+        self, path: Path, job_id: str | None = None
+    ) -> None:
+        """Detects and indexes discrete audio events (CLAP)."""
+        logger.info(f"Starting audio event detection for {path.name}")
+        
+        try:
+            from core.processing.audio_events import AudioEventDetector
+            
+            # Common audio events to detect
+            target_classes = [
+                "applause", "laughter", "crying", "screaming", "music", 
+                "singing", "speech", "shout", "whisper", "doorbell", 
+                "knock", "glass breaking", "car horn", "siren", "gunshot", 
+                "explosion", "dog barking", "cat meow", "bird chirp", 
+                "rain", "thunder", "wind", "water flowing", "footsteps",
+                "silence", "typing", "phone ringing", "alarm"
+            ]
+            
+            detector = AudioEventDetector()
+            
+            # Use chunks from audio processing or re-read
+            import librosa
+            import numpy as np
+            
+            # Load audio for event detection (resampled to 48k for CLAP)
+            # Use a smaller duration if file is huge, or process in stream
+            # For now load full file as we have memory efficient batching
+            audio, sr = librosa.load(str(path), sr=48000)
+            
+            # Split into 5s chunks with 2.5s overlap
+            chunk_duration = 5.0
+            stride = 2.5
+            samples_per_chunk = int(chunk_duration * sr)
+            stride_samples = int(stride * sr)
+            
+            chunks = []
+            for i in range(0, len(audio) - samples_per_chunk, stride_samples):
+                chunk = audio[i : i + samples_per_chunk]
+                start_time = i / sr
+                chunks.append((chunk, start_time))
+                
+            if not chunks:
+                return
+
+            # Batch process
+            all_events = await detector.detect_events_batch(
+                chunks, target_classes, sample_rate=sr, top_k=2, threshold=0.3
+            )
+            
+            events_stored = 0
+            for (chunk_audio, start_time), events in zip(chunks, all_events):
+                if not events:
+                    continue
+                    
+                end_time = start_time + chunk_duration
+                
+                # Store mostly high confidence events
+                for event in events:
+                    self.db.client.upsert(
+                        collection_name=self.db.AUDIO_EVENTS_COLLECTION,
+                        points=[
+                            models.PointStruct(
+                                id=str(uuid.uuid4()),
+                                vector=[0.0],  # Dummy vector, payload search only
+                                payload={
+                                    "media_path": str(path),
+                                    "start_time": start_time,
+                                    "end_time": end_time,
+                                    "event_class": event["event"], # e.g. "applause"
+                                    "confidence": event["confidence"],
+                                },
+                            )
+                        ],
+                    )
+                    events_stored += 1
+            
+            logger.info(f"Indexed {events_stored} audio events for {path.name}")
+            detector.cleanup()
+            
+        except Exception as e:
+            logger.error(f"Audio event detection failed: {e}")
 
     @observe("frame_processing")
     async def _process_frames(
@@ -1599,7 +1721,36 @@ class IngestionPipeline:
             # Dialogue: transcript
             dialogue_text = aggregated.get("dialogue_transcript", "")
 
-            # 6. Store scene with multi-vector
+            # 6. Deep Research Analysis (Cinematography, Aesthetics, Mood)
+            dr_meta = {}
+            if frame_bytes:
+                try:
+                    import cv2
+                    import numpy as np
+                    from core.processing.deep_research import get_deep_research_processor
+
+                    nparr = np.frombuffer(frame_bytes, np.uint8)
+                    img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                    processor = get_deep_research_processor()
+                    # Run deep research on the representative frame
+                    dr_result = await processor.analyze_frame(
+                        img_np,
+                        compute_embeddings=False, # VectorDB does this
+                        compute_saliency=False,
+                        compute_fingerprint=True
+                    )
+                    
+                    dr_meta = {
+                        "shot_type": dr_result.shot_type,
+                        "mood": dr_result.mood,
+                        "aesthetic_score": dr_result.aesthetic_score,
+                        "is_black_frame": dr_result.is_black_frame,
+                    }
+                except Exception as e:
+                    logger.warning(f"Deep Research failed for scene {idx}: {e}")
+
+            # 7. Store scene with multi-vector
             try:
                 # Save representative thumbnail
                 thumb_path = None
@@ -1642,6 +1793,10 @@ class IngestionPipeline:
                         for e in aggregated.get("entities", [])
                         if isinstance(e, dict)
                     ],
+                    # Deep Research Metadata
+                    "shot_type": dr_meta.get("shot_type", ""),
+                    "mood": dr_meta.get("mood", ""),
+                    "aesthetic_score": dr_meta.get("aesthetic_score", 0.0),
                     # Non-indexed data
                     "visual_summary": visual_summary,
                     "action_sequence": aggregated.get("action_sequence", ""),
@@ -1651,6 +1806,14 @@ class IngestionPipeline:
                     "frame_count": aggregated.get("frame_count", 0),
                     "thumbnail_path": thumb_path,
                 }
+
+                # Enhance visual text with Deep Research insights
+                if dr_meta:
+                     visual_text += (
+                         f" {dr_meta.get('shot_type', '')} "
+                         f"{dr_meta.get('mood', '')} "
+                         f"aesthetic_score: {dr_meta.get('aesthetic_score', 0):.2f}"
+                     )
 
                 self.db.store_scene(
                     media_path=str(path),
@@ -2016,6 +2179,38 @@ class IngestionPipeline:
                             logger.info(f"[OCR] Extracted: {ocr_text[:100]}...")
                         else:
                             logger.debug("[OCR] No text found in gated frame")
+
+                    # Deep Research Enrichment (Safety & Time)
+                    try:
+                        # Content Moderation
+                        if not hasattr(self, "_moderator"):
+                            from core.processing.content_moderation import (
+                                VisualContentModerator,
+                            )
+
+                            self._moderator = VisualContentModerator()
+
+                        safe_res = await self._moderator.check_frame(frame_img)
+                        if not safe_res.is_safe:
+                            flags_str = ", ".join(
+                                [f.name for f in safe_res.flags]
+                            )
+                            video_context += f"\n[SAFETY-FLAG]: {flags_str}"
+
+                        # Clock Reader
+                        if not hasattr(self, "_clock"):
+                            from core.processing.clock_reader import ClockReader
+
+                            self._clock = ClockReader()
+
+                        clock_res = await self._clock.read(frame_img)
+                        if clock_res:
+                            video_context += (
+                                f"\n[VISIBLE-TIME]: {clock_res.get('time_string')}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Deep Research enrichment error: {e}")
+
             except Exception as e:
                 logger.warning(f"[OCR] Failed: {e}")
 
@@ -2146,6 +2341,31 @@ class IngestionPipeline:
                 )
                 payload["action"] = analysis.action or ""
                 payload["description"] = description
+                
+                # DYNAMIC: Extract ALL visual attributes from entities for searchability
+                # NO HARDCODING - works for any entity type (clothing, vehicles, objects, etc.)
+                # This enables queries like "light green shirt", "red ferrari", "blue bag"
+                visual_attributes = []
+                entity_details = []
+                
+                # Extract from ALL entities - let VLM determine what's important
+                for entity in analysis.entities:
+                    # Collect ALL visual details (colors, patterns, textures, states)
+                    if entity.visual_details:
+                        visual_attributes.append(entity.visual_details.lower())
+                    
+                    # Collect entity names for keyword search
+                    entity_details.append(entity.name.lower())
+                    
+                    # Also collect category for filtering
+                    if entity.category:
+                        entity_details.append(entity.category.lower())
+                
+                # Store as searchable fields - hybrid search will match these
+                if visual_attributes:
+                    payload["visual_attributes"] = visual_attributes
+                if entity_details:
+                    payload["entity_details"] = entity_details
 
             # DEEP RESEARCH METADATA INJECTION
             if dr_result:

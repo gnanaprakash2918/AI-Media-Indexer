@@ -372,3 +372,33 @@ http-client.private.env.json
 # Github Copilot persisted session migrations, see: https://github.com/microsoft/copilot-intellij-feedback/issues/712#issuecomment-3322062215
 .idea/**/copilot.data.migration.*.xml
 t.py
+
+# Database files and reports
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+qdrant_data/
+qdrant_data_embedded/
+postgres_data/
+clickhouse_data/
+
+# Reports and analysis files
+*_report.txt
+*_report.md
+*_audit.txt
+*_audit.md
+eslint_report.txt
+pylint_report.txt
+search_audit.md
+implementation_plan.md
+walkthrough.md
+
+# Temporary/unwanted files
+OVERLAY_METHODS.py
+ADD_TO_DB.py
+*.tmp
+*.bak
+debug_*.py
+test_*.py
+verify_*.py

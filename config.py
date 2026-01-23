@@ -447,6 +447,11 @@ class Settings(BaseSettings):
         description="Use hybrid search (vector + keyword + identity)",
     )
 
+    enable_vlm_reranking: bool = Field(
+        default=False,  # OFF by default to prevent timeouts
+        description="Enable VLM-based reranking for higher accuracy (uses more VRAM and time)",
+    )
+
     # --- Search Configuration (all previously hardcoded thresholds) ---
     # Query Expansion
     search_enable_expansion: bool = Field(

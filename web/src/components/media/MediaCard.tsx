@@ -46,6 +46,9 @@ interface MediaResult {
   start?: number;
   end?: number;
   timestamp?: number;
+  // Scene-level timestamps (from scenes collection)
+  start_time?: number;
+  end_time?: number;
   text?: string;
   type?: string;
   action?: string;
@@ -646,8 +649,8 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
       </Card>
       <VideoPlayer
         videoPath={videoPath}
-        startTime={item.start ?? item.timestamp}
-        endTime={item.end}
+        startTime={item.start_time ?? item.start ?? item.timestamp}
+        endTime={item.end_time ?? item.end}
         open={playerOpen}
         onClose={() => setPlayerOpen(false)}
         overlayToggles={overlayToggles}

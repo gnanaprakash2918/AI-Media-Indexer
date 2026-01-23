@@ -70,11 +70,13 @@ function InnerVideoPlayer({
     enabled: !!videoPath,
   });
 
-  // Calculate segment bounds
+  // Calculate segment bounds - use actual endTime if provided, otherwise add buffer
   const segmentStart = startTime ?? 0;
-  const segmentEnd = endTime ?? (startTime ? startTime + 10 : 0);
+  // Use actual endTime if available, otherwise add 5s buffer (not 10s which was too long)
+  const segmentEnd = endTime ?? (startTime !== undefined ? startTime + 5 : 0);
   const segmentDuration = segmentEnd - segmentStart;
-  const hasSegment = startTime !== undefined && startTime > 0;
+  // Has segment if startTime is defined and we have meaningful duration
+  const hasSegment = startTime !== undefined && segmentDuration > 0;
 
   const [currentTime, setCurrentTime] = useState(startTime ?? 0);
 
@@ -135,6 +137,12 @@ function InnerVideoPlayer({
     // Seek to segment start (or 0 for full video)
     if (hasSegment && !isFullVideo) {
       video.currentTime = segmentStart;
+      try {
+        video.play();
+      } catch (e) {
+        // Autoplay might be blocked, user intervention needed
+        console.warn('Autoplay blocked', e);
+      }
     }
   }, [hasSegment, isFullVideo, segmentStart]);
 

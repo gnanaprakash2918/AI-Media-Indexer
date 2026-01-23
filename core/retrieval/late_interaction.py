@@ -172,8 +172,8 @@ class ColBERTRetriever:
         Score = Sum_over_query_tokens( Max_over_doc_tokens( dot(q_i, d_j) ) )
 
         Args:
-            query_embeddings: Shape (num_query_tokens, dim)
-            doc_embeddings: Shape (num_doc_tokens, dim)
+            query_embeddings: Shape (num_query_tokens, dim) or (dim,)
+            doc_embeddings: Shape (num_doc_tokens, dim) or (dim,)
 
         Returns:
             Scalar score
@@ -182,6 +182,26 @@ class ColBERTRetriever:
             return 0.0
 
         try:
+            # Ensure 2D shape: (num_tokens, dim)
+            # Handle case where embeddings are 1D (single token)
+            if query_embeddings.ndim == 1:
+                query_embeddings = query_embeddings.reshape(1, -1)
+            if doc_embeddings.ndim == 1:
+                doc_embeddings = doc_embeddings.reshape(1, -1)
+
+            # Validate shapes after reshaping
+            if query_embeddings.ndim != 2 or doc_embeddings.ndim != 2:
+                log.error(
+                    f"[ColBERT] Invalid embedding dimensions: "
+                    f"query={query_embeddings.shape}, doc={doc_embeddings.shape}"
+                )
+                return 0.0
+
+            # Validate non-empty
+            if query_embeddings.shape[0] == 0 or doc_embeddings.shape[0] == 0:
+                log.warning("[ColBERT] Empty embeddings provided")
+                return 0.0
+
             # Convert to torch for efficient matrix ops
             q = torch.from_numpy(query_embeddings).to(self._device)
             d = torch.from_numpy(doc_embeddings).to(self._device)
@@ -194,7 +214,7 @@ class ColBERTRetriever:
             # Sim matrix: (num_q, num_d)
             sim_matrix = torch.matmul(q, d.T)
 
-            # Max over document tokens: (num_q,)
+            # Max over document tokens (dim=1 means max over columns)
             max_sim_values, _ = torch.max(sim_matrix, dim=1)
 
             # Sum over query tokens
@@ -203,5 +223,9 @@ class ColBERTRetriever:
             return float(score.item())
 
         except Exception as e:
-            log.error(f"[ColBERT] Scoring failed: {e}")
+            log.error(
+                f"[ColBERT] Scoring failed: {e}, "
+                f"query_shape={query_embeddings.shape if hasattr(query_embeddings, 'shape') else 'unknown'}, "
+                f"doc_shape={doc_embeddings.shape if hasattr(doc_embeddings, 'shape') else 'unknown'}"
+            )
             return 0.0

@@ -52,7 +52,7 @@ export default function SearchPage() {
   const [lastQuery, setLastQuery] = useState('');
   const [selectedVideo, setSelectedVideo] = useState<string>('');
   const [deepSearch, setDeepSearch] = useState(false);
-  const [useReranking, setUseReranking] = useState(true);
+  const [useReranking, setUseReranking] = useState(false);  // OFF by default to prevent timeouts
 
   // Overlay visibility toggles
   const [overlayToggles, setOverlayToggles] = useState({

@@ -35,6 +35,15 @@ except ImportError:
     HAS_HF_TRANSFORMERS = False
 
 # Backend 2: NeMo (heavier but higher quality)
+# Windows compatibility: NeMo uses signal.SIGKILL which doesn't exist on Windows
+import os
+import signal
+import sys
+
+if sys.platform == "win32" and not hasattr(signal, "SIGKILL"):
+    # SIGKILL (9) doesn't exist on Windows, add a dummy constant
+    signal.SIGKILL = 9  # type: ignore[attr-defined]
+
 try:
     import nemo.collections.asr as nemo_asr  # type: ignore
     from huggingface_hub import hf_hub_download
@@ -250,7 +259,13 @@ class IndicASRPipeline:
         """Loads the NVIDIA NeMo ASR model for the target language.
 
         Uses pre-trained IndicConformer models from HuggingFace Hub.
+        Patches tokenizer config for compatibility with NeMo 2.x.
         """
+        import tarfile
+        import tempfile
+
+        import yaml
+
         if self.NEMO_MODEL_MAP is None:
             raise ValueError("NEMO_MODEL_MAP is missing")
         model_info = self.NEMO_MODEL_MAP.get(
@@ -278,19 +293,135 @@ class IndicASRPipeline:
             )
             assert nemo_ckpt_path, "NeMo checkpoint download failed"
 
-            # Use restore_from directly - it handles all config and weights properly
-            # This is more robust than manually loading config + state_dict
-            self.model = nemo_asr.models.ASRModel.restore_from(  # type: ignore
-                restore_path=nemo_ckpt_path,
-                map_location=self.device,
-            )
+            # Fix for NeMo 2.x: Extract and patch tokenizer config
+            # The AI4Bharat models are missing 'dir' key in tokenizer config
+            patched_dir = self._patch_nemo_for_nemo2(nemo_ckpt_path)
+
+            if patched_dir:
+                # Load from patched extracted directory
+                log(f"[IndicASR] Loading from patched config: {patched_dir}")
+                self.model = nemo_asr.models.ASRModel.restore_from(  # type: ignore
+                    restore_path=patched_dir,
+                    map_location=self.device,
+                )
+            else:
+                # Fallback: try direct load (may work on older NeMo)
+                self.model = nemo_asr.models.ASRModel.restore_from(  # type: ignore
+                    restore_path=nemo_ckpt_path,
+                    map_location=self.device,
+                )
 
             self.model.freeze()  # type: ignore
             log(f"[IndicASR] NeMo model loaded on {self.device}")
+
         except Exception as e:
             log(f"[IndicASR] Failed to load NeMo model: {e}")
             raise
 
+    def _patch_nemo_for_nemo2(self, nemo_path: str) -> str | None:
+        """Extract .nemo archive and patch tokenizer config for NeMo 2.x compatibility.
+
+        Args:
+            nemo_path: Path to the .nemo checkpoint file.
+
+        Returns:
+            Path to the patched extracted directory, or None if patching failed.
+        """
+        import tarfile
+
+        import yaml
+
+        try:
+            nemo_file = Path(nemo_path)
+            if not nemo_file.exists():
+                log(f"[IndicASR] .nemo file not found: {nemo_path}")
+                return None
+
+            # Create extraction directory in cache
+            extract_dir = nemo_file.parent / f"{nemo_file.stem}_patched"
+
+            # Check if already patched and complete
+            config_path = extract_dir / "model_config.yaml"
+            weights_file = extract_dir / "model_weights.ckpt"
+            if config_path.exists() and weights_file.exists():
+                log("[IndicASR] Using existing patched config")
+                return str(extract_dir)
+
+            # Clean up incomplete extraction
+            if extract_dir.exists():
+                import shutil
+                shutil.rmtree(extract_dir, ignore_errors=True)
+
+            extract_dir.mkdir(parents=True, exist_ok=True)
+
+            # Extract .nemo (it's a tar archive)
+            log(f"[IndicASR] Extracting .nemo archive for patching: {nemo_file.name}")
+            with tarfile.open(nemo_path, "r") as tar:
+                # Use safer extraction without filter for compatibility
+                tar.extractall(extract_dir)
+
+            # Find and patch model_config.yaml
+            config_path = extract_dir / "model_config.yaml"
+            if not config_path.exists():
+                log("[IndicASR] No model_config.yaml found in archive")
+                return None
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+
+            # Patch tokenizer config to add 'dir' key
+            if "tokenizer" in config:
+                tokenizer_cfg = config["tokenizer"]
+
+                # Find tokenizer directory (usually contains .model files)
+                tokenizer_dir = None
+                for item in extract_dir.iterdir():
+                    if item.is_dir():
+                        try:
+                            if any(
+                                f.suffix in (".model", ".vocab") 
+                                for f in item.iterdir() if f.is_file()
+                            ):
+                                tokenizer_dir = item.name
+                                break
+                        except Exception:
+                            continue
+
+                # If no subdir found, check if tokenizer files are in root
+                if tokenizer_dir is None:
+                    if any(
+                        f.suffix in (".model", ".vocab")
+                        for f in extract_dir.iterdir()
+                        if f.is_file()
+                    ):
+                        tokenizer_dir = "."
+
+                if tokenizer_dir and "dir" not in tokenizer_cfg:
+                    tokenizer_cfg["dir"] = tokenizer_dir
+                    log(f"[IndicASR] Patched tokenizer.dir = '{tokenizer_dir}'")
+
+                    # Write patched config
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(config, f, default_flow_style=False)
+
+                    return str(extract_dir)
+                elif "dir" in tokenizer_cfg:
+                    log("[IndicASR] tokenizer.dir already present")
+                    return str(extract_dir)
+                else:
+                    log("[IndicASR] Could not find tokenizer directory to patch")
+                    # Return the directory anyway - let NeMo try to load it
+                    return str(extract_dir)
+            else:
+                log("[IndicASR] No tokenizer config found to patch")
+                # Return the directory anyway - older models might not need patching
+                return str(extract_dir)
+
+        except Exception as e:
+            log(f"[IndicASR] Failed to patch .nemo archive: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     def _extract_audio(self, media_path: Path) -> Path:
         """Extracts audio from a video file into a mono 16kHz WAV format.
 

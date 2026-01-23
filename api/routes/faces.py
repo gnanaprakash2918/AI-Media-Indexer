@@ -243,6 +243,41 @@ async def delete_face(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.delete("/faces/cluster/{cluster_id}")
+async def delete_face_cluster(
+    cluster_id: int,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Delete an entire face cluster and all its faces.
+
+    Args:
+        cluster_id: The face cluster ID to delete.
+        pipeline: Ingestion pipeline instance.
+
+    Returns:
+        Deletion confirmation with count.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        count = pipeline.db.delete_face_cluster(cluster_id)
+        if count == 0:
+            raise HTTPException(
+                status_code=404, detail="Cluster not found or empty"
+            )
+        return {
+            "status": "deleted",
+            "cluster_id": cluster_id,
+            "faces_deleted": count,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Faces] Delete cluster failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.post("/faces/cluster")
 async def trigger_face_clustering(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
@@ -352,20 +387,73 @@ async def name_face_cluster(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
     """Name a face cluster and propagate to search.
-
-    Args:
-        cluster_id: The ID of the cluster to name.
-        request: JSON body containing {"name": "New Name"}.
-        pipeline: Ingestion pipeline dependency.
+    
+    If the name already exists for another cluster, efficiently merges this cluster
+    into the existing one.
     """
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        # 1. Update Face Payloads (set "name")
-        # Find all faces with this cluster_id
         from qdrant_client import models
 
+        # 0. Check if name already exists (Auto-Merge)
+        existing = pipeline.db.client.scroll(
+            collection_name=pipeline.db.FACES_COLLECTION,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="name",
+                        match=models.MatchBase(value=request.name), # Use MatchBase or MatchValue/Text depending on version
+                        # Safer to use MatchValue for exact string
+                    ),
+                    models.FieldCondition(
+                         key="cluster_id",
+                         match=models.MatchExcept(**{"except": [cluster_id]})
+                    )
+                ]
+            ),
+            limit=1,
+            with_payload=["cluster_id"],
+        )
+        
+        # Need to handle MatchValue properly. 
+        # Using a simpler query to find ANY face with this name but different cluster_id
+        existing_resp = pipeline.db.client.scroll(
+            collection_name=pipeline.db.FACES_COLLECTION,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="name",
+                        match=models.MatchValue(value=request.name),
+                    )
+                ],
+                must_not=[
+                    models.FieldCondition(
+                        key="cluster_id",
+                        match=models.MatchValue(value=cluster_id),
+                    )
+                ]
+            ),
+            limit=1,
+            with_payload=["cluster_id"],
+        )
+        
+        points = existing_resp[0]
+        if points:
+             target_cluster_id = points[0].payload.get("cluster_id")
+             if target_cluster_id is not None:
+                 logger.info(f"Auto-merging cluster {cluster_id} into {target_cluster_id} (Name: {request.name})")
+                 count = pipeline.db.merge_face_clusters(cluster_id, target_cluster_id)
+                 return {
+                     "status": "merged",
+                     "source_cluster_id": cluster_id,
+                     "target_cluster_id": target_cluster_id,
+                     "name": request.name,
+                     "faces_moved": count
+                 }
+
+        # 1. Update Face Payloads (set "name")
         pipeline.db.client.set_payload(
             collection_name=pipeline.db.FACES_COLLECTION,
             payload={"name": request.name},
