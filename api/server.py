@@ -115,6 +115,7 @@ from api.routes import (
     search,
     system,
     voices,
+    manipulation, # NEW: Manipulation Routes
 )
 
 try:
@@ -223,6 +224,9 @@ def create_app() -> FastAPI:
     app.include_router(graph.router, tags=["Graph"])  # New
     if overlays:
         app.include_router(overlays.router, tags=["Overlays"])
+    
+    # Manipulation Routes
+    app.include_router(manipulation.router, tags=["Manipulation"])
 
     # Mount static files for default thumbnails/assets
     thumb_dir = settings.cache_dir / "thumbnails"

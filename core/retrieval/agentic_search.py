@@ -740,10 +740,12 @@ class SearchAgent:
                     existing_ids = {r["id"] for r in scene_results}
                     for r in fallback_scenes:
                         if r["id"] not in existing_ids:
-                             # Add a flag to indicate it satisfied loose constraints only
+                            # Add a flag to indicate it satisfied loose constraints only
                             r["match_type"] = "relaxed"
                             scene_results.append(r)
                     all_results["scenes"] = scene_results
+                except Exception as e:
+                    log(f"[SOTA] Relaxed search failed: {e}")
         except Exception as e:
             log(f"[SOTA] Scene search failed: {e}")
             all_results["scenes"] = []

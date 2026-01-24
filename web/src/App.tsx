@@ -4,7 +4,7 @@ import {
   Outlet,
   NavLink,
 } from 'react-router-dom';
-import {useState, useMemo, lazy, Suspense} from 'react';
+import { useState, useMemo, lazy, Suspense } from 'react';
 import {
   ThemeProvider,
   CssBaseline,
@@ -34,16 +34,20 @@ import {
   DarkMode,
   Dashboard,
   RecordVoiceOver,
+  Architecture as EditorIcon,
+  SmartToy as AgentIcon,
+  Gavel as CouncilsIcon,
+  Hub as GraphIcon,
 } from '@mui/icons-material';
 import {
   QueryClient,
   QueryClientProvider,
   useQuery,
 } from '@tanstack/react-query';
-import {AnimatePresence, motion} from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 
-import {getTheme} from './theme';
-import {healthCheck} from './api/client';
+import { getTheme } from './theme';
+import { healthCheck } from './api/client';
 
 // Lazy load pages for faster initial load
 const DashboardPage = lazy(() => import('./pages/Dashboard'));
@@ -52,6 +56,10 @@ const IngestPage = lazy(() => import('./pages/Ingest'));
 const FacesPage = lazy(() => import('./pages/Faces'));
 const VoicesPage = lazy(() => import('./pages/Voices'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
+const EditorPage = lazy(() => import('./pages/Editor'));
+const AgentPage = lazy(() => import('./pages/Agent'));
+const CouncilsPage = lazy(() => import('./pages/Councils'));
+const GraphPage = lazy(() => import('./pages/Graph'));
 
 const PageLoader = () => (
   <Box
@@ -79,12 +87,16 @@ const queryClient = new QueryClient({
 });
 
 const navItems = [
-  {path: '/', label: 'Dashboard', icon: <Dashboard />},
-  {path: '/search', label: 'Search', icon: <Search />},
-  {path: '/ingest', label: 'Ingest', icon: <CloudUpload />},
-  {path: '/faces', label: 'Faces', icon: <Face />},
-  {path: '/voices', label: 'Voices', icon: <RecordVoiceOver />},
-  {path: '/settings', label: 'Settings', icon: <Settings />},
+  { path: '/', label: 'Dashboard', icon: <Dashboard /> },
+  { path: '/search', label: 'Search', icon: <Search /> },
+  { path: '/ingest', label: 'Ingest', icon: <CloudUpload /> },
+  { path: '/faces', label: 'Faces', icon: <Face /> },
+  { path: '/voices', label: 'Voices', icon: <RecordVoiceOver /> },
+  { path: '/agent', label: 'Agent', icon: <AgentIcon /> },
+  { path: '/graph', label: 'Graph', icon: <GraphIcon /> },
+  { path: '/councils', label: 'Councils', icon: <CouncilsIcon /> },
+  { path: '/editor', label: 'Editor', icon: <EditorIcon /> },
+  { path: '/settings', label: 'Settings', icon: <Settings /> },
 ];
 
 function Layout() {
@@ -120,7 +132,7 @@ function Layout() {
       : DRAWER_WIDTH_COLLAPSED;
 
   const drawerContent = (
-    <Box sx={{height: '100%', display: 'flex', flexDirection: 'column'}}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Toolbar
         sx={{
           px: 2,
@@ -161,9 +173,9 @@ function Layout() {
         )}
       </Toolbar>
       <Divider />
-      <List sx={{flex: 1, px: 1, py: 2}}>
+      <List sx={{ flex: 1, px: 1, py: 2 }}>
         {navItems.map(item => (
-          <ListItem key={item.path} disablePadding sx={{mb: 0.5}}>
+          <ListItem key={item.path} disablePadding sx={{ mb: 0.5 }}>
             <ListItemButton
               component={NavLink}
               to={item.path}
@@ -202,7 +214,7 @@ function Layout() {
         ))}
       </List>
       <Divider />
-      <Box sx={{p: 2, display: 'flex', justifyContent: 'center'}}>
+      <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
         <Chip
           size="small"
           label={health.isSuccess ? 'Online' : 'Offline'}
@@ -243,11 +255,11 @@ function Layout() {
                 edge="start"
                 color="inherit"
                 onClick={() => setDrawerOpen(true)}
-                sx={{mr: 2}}
+                sx={{ mr: 2 }}
               >
                 <MenuIcon />
               </IconButton>
-              <Typography variant="h6" sx={{flexGrow: 1, fontWeight: 700}}>
+              <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>
                 AI Media Indexer
               </Typography>
               <IconButton onClick={toggleColorMode} color="inherit">
@@ -304,11 +316,11 @@ function Layout() {
             >
               <IconButton
                 onClick={() => setDrawerOpen(!drawerOpen)}
-                sx={{mr: 2}}
+                sx={{ mr: 2 }}
               >
                 <MenuIcon />
               </IconButton>
-              <Box sx={{flexGrow: 1}} />
+              <Box sx={{ flexGrow: 1 }} />
               <IconButton onClick={toggleColorMode}>
                 {mode === 'dark' ? <LightMode /> : <DarkMode />}
               </IconButton>
@@ -318,10 +330,10 @@ function Layout() {
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
-              initial={{opacity: 0, y: 10}}
-              animate={{opacity: 1, y: 0}}
-              exit={{opacity: 0, y: -10}}
-              transition={{duration: 0.15}}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
             >
               <Outlet />
             </motion.div>
@@ -374,6 +386,38 @@ const router = createBrowserRouter([
         element: (
           <Suspense fallback={<PageLoader />}>
             <VoicesPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'editor',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <EditorPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'agent',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <AgentPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'councils',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <CouncilsPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'graph',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <GraphPage />
           </Suspense>
         ),
       },

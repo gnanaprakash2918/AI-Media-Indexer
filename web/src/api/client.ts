@@ -586,3 +586,118 @@ export const searchExplainable = async (query: string, limit = 10) => {
   });
   return res.data;
 };
+
+// ========== Manipulation (Inpainting/Redaction) ==========
+
+export interface RegionRequest {
+  video_path: string;
+  start_time: number;
+  end_time: number;
+  bbox: number[]; // [x, y, w, h]
+}
+
+export interface ManipulationJob {
+  job_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  result_path?: string;
+  error?: string;
+}
+
+export const triggerInpaint = async (request: RegionRequest) => {
+  const res = await apiClient.post<ManipulationJob>('/manipulation/inpaint', request);
+  return res.data;
+};
+
+export const triggerRedact = async (request: RegionRequest) => {
+  const res = await apiClient.post<ManipulationJob>('/manipulation/redact', request);
+  return res.data;
+};
+
+export const getManipulationJob = async (jobId: string) => {
+  const res = await apiClient.get<ManipulationJob>(`/manipulation/jobs/${jobId}`);
+  return res.data;
+};
+
+// ========== Councils API ==========
+
+export interface CouncilConfig {
+  mode: 'oss_only' | 'commercial_only' | 'combined';
+  councils: Record<string, Council>;
+}
+
+export interface Council {
+  models: ModelSpec[];
+  enabled: boolean;
+}
+
+export interface ModelSpec {
+  name: string;
+  model_type: 'oss' | 'commercial';
+  model_id: string;
+  enabled: boolean;
+  weight: number;
+  vram_gb: number;
+  description: string;
+}
+
+export const getCouncilsConfig = async () => {
+  const res = await apiClient.get<CouncilConfig>('/councils');
+  return res.data;
+};
+
+export const setCouncilMode = async (mode: string) => {
+  const res = await apiClient.put('/councils/mode', { mode });
+  return res.data;
+};
+
+export const updateCouncilModel = async (
+  councilName: string,
+  modelName: string,
+  update: { enabled?: boolean; weight?: number }
+) => {
+  const res = await apiClient.patch(`/councils/${councilName}/models/${modelName}`, update);
+  return res.data;
+};
+
+// ========== GraphRAG & Timeline API ==========
+
+export interface CoOccurrence {
+  name: string;
+  cluster_id: number;
+  count: number;
+  relationship_strength: number;
+}
+
+export interface SocialGraphResponse {
+  center_person: string;
+  center_cluster_id: number;
+  connections: CoOccurrence[];
+}
+
+export interface SceneNode {
+  type: 'scene' | 'action';
+  id: string;
+  timestamp: number;
+  description?: string;
+  characters?: string[];
+  thumbnail?: string;
+}
+
+export const getSocialGraph = async (name?: string, clusterId?: number) => {
+  const res = await apiClient.get<SocialGraphResponse>('/graph/social', {
+    params: { name, cluster_id: clusterId },
+  });
+  return res.data;
+};
+
+export const getSceneTimeline = async (videoPath: string) => {
+  // Use encodeURIComponent to handle paths safely
+  const res = await apiClient.get<{ timeline: SceneNode[] }>(`/graph/timeline/${encodeURIComponent(videoPath)}`);
+  return res.data;
+};
+
+export const getGraphStats = async () => {
+  const res = await apiClient.get<{ stats: any }>('/graph/stats');
+  return res.data;
+};

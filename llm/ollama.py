@@ -374,7 +374,7 @@ class OllamaLLM(LLMInterface):
                         example[name] = [build_example(args[0])]
                     else:
                         # Simple list like list[str] or list[int]
-                        example[name] = ["<item>"]
+                        example[name] = []
                 elif hasattr(annotation, "model_fields"):
                     # It's a nested Pydantic model like SceneContext
                     example[name] = build_example(annotation)

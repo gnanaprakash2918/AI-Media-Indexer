@@ -37,13 +37,13 @@ class SpeechEmotionAnalyzer:
                 return True
                 
             try:
-                from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2FeatureExtractor
+                from transformers import AutoModelForAudioClassification, Wav2Vec2FeatureExtractor
                 
                 # Using a popular fine-tuned model for emotion
                 model_name = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
                 
                 self.processor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
-                self.model = Wav2Vec2ForSequenceClassification.from_pretrained(model_name)
+                self.model = AutoModelForAudioClassification.from_pretrained(model_name)
                 
                 device = self._get_device()
                 self.model.to(device)

@@ -1131,42 +1131,38 @@ class IngestionPipeline:
                     audio_path = f"/thumbnails/voices/{clip_name}"
                     audio_extraction_success = True
                 else:
-                    logger.warning(
-                        f"[Voice] Audio clip missing or empty after ffmpeg: {clip_file}"
-                    )
-                    audio_path = None
-
-
-
-
+                    audio_extraction_success = False
 
                 # === STORE VOICE SEGMENT ===
-                # Policy: Only store if we have BOTH embedding AND audio
-                # This prevents "No audio" segments and invalid clusters
+                # Policy: Strict storage - MUST have audio and not be SILENCE
+                if not audio_extraction_success:
+                    continue
 
+                if global_speaker_id == "SILENCE":
+                    continue
+                
                 # Speech Emotion Recognition (SER)
                 emotion_meta = {}
-                if audio_extraction_success:
-                    try:
-                        if not hasattr(self, "_ser_analyzer"):
-                            from core.processing.speech_emotion import (
-                                SpeechEmotionAnalyzer,
-                            )
+                try:
+                    if not hasattr(self, "_ser_analyzer"):
+                        from core.processing.speech_emotion import (
+                            SpeechEmotionAnalyzer,
+                        )
 
-                            self._ser_analyzer = SpeechEmotionAnalyzer()
+                        self._ser_analyzer = SpeechEmotionAnalyzer()
 
-                        import librosa
+                    import librosa
 
-                        # Load the clip we just made (resample to 16k for Wav2Vec2)
-                        y, sr = librosa.load(str(clip_file), sr=16000)
-                        emotion_res = await self._ser_analyzer.analyze(y, sr)
-                        if emotion_res:
-                            emotion_meta = {
-                                "emotion": emotion_res.get("emotion"),
-                                "emotion_conf": emotion_res.get("confidence"),
-                            }
-                    except Exception as e:
-                        logger.warning(f"[Voice] SER failed: {e}")
+                    # Load the clip we just made (resample to 16k for Wav2Vec2)
+                    y, sr = librosa.load(str(clip_file), sr=16000)
+                    emotion_res = await self._ser_analyzer.analyze(y, sr)
+                    if emotion_res:
+                        emotion_meta = {
+                            "emotion": emotion_res.get("emotion"),
+                            "emotion_conf": emotion_res.get("confidence"),
+                        }
+                except Exception as e:
+                    logger.warning(f"[Voice] SER failed: {e}")
 
                 if seg.embedding is not None and audio_extraction_success:
                     # Ensure voice_cluster_id is always valid (never -1 or 0)
@@ -1273,7 +1269,7 @@ class IngestionPipeline:
 
             # Batch process
             all_events = await detector.detect_events_batch(
-                chunks, target_classes, sample_rate=sr, top_k=2, threshold=0.3
+                chunks, target_classes, sample_rate=sr, top_k=2, threshold=0.15
             )
             
             events_stored = 0

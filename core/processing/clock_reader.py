@@ -252,3 +252,6 @@ class ClockReader:
 
         result["matches"] = matches
         return result
+
+    # Alias read to read_time for backward compatibility
+    read = read_time
