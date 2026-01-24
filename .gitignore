@@ -4,15 +4,83 @@ __pycache__/
 *$py.class
 .cache/
 *.pyc
-logs/
+# logs/
 
-# Custom
+# Debug files
+debug_*.py
+debug_*.log
+debug_*.txt
+debug_output.txt
+test_debug.py
+verify_fixes.py
+.agents/
+.agent/
+
+# Temporary output/test files
+output.txt
+test_output.txt
+search_test.json
+clusters.json
+agent_err.json
+check_stats.py
+debug_import.py
+*.tmp
+*.bak
+
+# Langfuse local data
+langfuse_data/
+
+# Agents
+AGENTS.md
+ANTIGRAVITY.md
+
+# Custom - AI Media Indexer Data
 models/
 qdrant_data/
-get_files.py
-analyze_branch.py
-logs/
+qdrant_data_embedded/
+postgres_data/
+clickhouse_data/
+minio_data/
+thumbnails/
+.uv_cache/
 .face_cache/
+.cache/
+test_videos/
+uploads/
+
+# SQLite Databases (generated at runtime)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+jobs.db
+identity.db
+identity_graph.db
+
+# Logs
+logs/
+*.log
+debug.log
+debug_flow.log
+test_run.log
+app.log
+
+# Test artifacts
+tests/assets/
+tests/temp_frames/
+test_output.txt
+
+# Environment
+.env
+
+# Frontend (Web)
+web/node_modules/
+web/dist/
+web/dist-ssr/
+web/*.local
+web/.vscode/
+web/.DS_Store
+web/.env*
 
 # C extensions
 *.so
@@ -304,3 +372,33 @@ http-client.private.env.json
 # Github Copilot persisted session migrations, see: https://github.com/microsoft/copilot-intellij-feedback/issues/712#issuecomment-3322062215
 .idea/**/copilot.data.migration.*.xml
 t.py
+
+# Database files and reports
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+qdrant_data/
+qdrant_data_embedded/
+postgres_data/
+clickhouse_data/
+
+# Reports and analysis files
+*_report.txt
+*_report.md
+*_audit.txt
+*_audit.md
+eslint_report.txt
+pylint_report.txt
+search_audit.md
+implementation_plan.md
+walkthrough.md
+
+# Temporary/unwanted files
+OVERLAY_METHODS.py
+ADD_TO_DB.py
+*.tmp
+*.bak
+debug_*.py
+test_*.py
+verify_*.py
