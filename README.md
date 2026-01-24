@@ -1,7 +1,7 @@
 # AI-MEDIA-INDEXER
 
 > [!CAUTION]
-> **WORK IN PROGRESS**: The architecture and features documented below reflect the current development on the `query-decompose` branch. This is an experimental SOTA overhaul. For the stable version, please refer to the latest release or wait for the branch to be merged.
+> **WORK IN PROGRESS**: The architecture and features documented below reflect the current development on the `query-decompose` branch. This is an experiment I have been doing with some new models and agents. For the stable version, please refer to the latest release or wait for the branch to be merged.
 
 *Multimodal Intelligence for Media Discovery and Understanding*
 
