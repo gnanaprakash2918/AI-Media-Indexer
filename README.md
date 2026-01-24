@@ -1,132 +1,179 @@
-# AI-Media-Indexer
+# AI-MEDIA-INDEXER
 
-Commercial-grade AI engine for hyper-specific video search using identity, visual semantics, and audio.
+*Multimodal Intelligence for Media Discovery and Understanding*
 
-## Quick Start
+![last commit](https://img.shields.io/github/last-commit/gnanaprakash2918/AI-Media-Indexer)
+![python](https://img.shields.io/badge/python-3.12-blue)
+![qdrant](https://img.shields.io/badge/Qdrant-Vector%20DB-red)
 
-```powershell
-# Prerequisites: Python 3.12+, Node.js 18+, Docker Desktop, Ollama
+*Built with state-of-the-art AI technologies:*
 
-# 1. Clone and enter directory
-git clone https://github.com/your-org/AI-Media-Indexer.git
-cd AI-Media-Indexer
-
-# 2. Copy environment file and configure
-cp .env.example .env
-
-# 3. Start everything (Docker services + Backend + Frontend)
-./start.ps1 -Quick
-```
-
-**Services:**
-- Frontend: [http://localhost:3000](http://localhost:3000)
-- Backend API: [http://localhost:8000](http://localhost:8000)
-- API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-
-> For detailed architecture documentation, see [docs/architecture.md](docs/architecture.md)
+![InternVideo2.5](https://img.shields.io/badge/InternVideo2.5-SOTA_VLM-blue)
+![Whisper v3](https://img.shields.io/badge/Whisper_v3-General_ASR-green)
+![IndicConformer](https://img.shields.io/badge/IndicConformer-AI4Bharat-orange)
+![SAM 2](https://img.shields.io/badge/SAM_2-Visual_Tracking-purple)
+![NV-Embed-v2](https://img.shields.io/badge/NV--Embed--v2-7B_SOTA-red)
+![BGE-M3](https://img.shields.io/badge/BGE--M3-Hybrid_Retrieval-blue)
+![Pyannote 3.1](https://img.shields.io/badge/Pyannote_3.1-Diarization-yellow)
+![InsightFace](https://img.shields.io/badge/InsightFace-ArcFace_512D-green)
+![PP-OCRv5](https://img.shields.io/badge/PP--OCRv5-Indic_OCR-red)
 
 ---
-
-## 🔥 Hyper-Granular Search Engine
-
-This system supports **open-vocabulary** hyper-granular queries that go far beyond basic text search.
-
-### Capabilities
-
-| Module | Technology | Capability |
-|--------|------------|------------|
-| **Clothing/Objects** | CLIP (Open-Vocab) | "cyan tuxedo", "Nike Air Max", any description |
-| **Action Recognition** | TimeSformer (Kinetics-400) | "running", "falling", "dancing", "hugging" |
-| **Audio Events** | CLAP (Open-Vocab) | "duck quacking", "siren", any sound description |
-| **Depth/Distance** | DepthAnything V2 | "person 2 meters away", "close-up" |
-| **Speed Estimation** | RAFT Optical Flow | "running fast", "walking slowly", ">30km/h" |
-| **Clock Reading** | OCR + Geometry | "clock showing 10:00 AM" |
-| **Active Speaker** | Lip Motion Analysis | "person speaking", "who is talking" |
-| **OCR Text** | PaddleOCR/EasyOCR | "Brunswick Sports visible", any on-screen text |
-| **Face Identity** | InsightFace + HITL | "Prakash", named individuals |
-| **Loudness** | pyloudnorm | ">90dB cheer", "loud explosion" |
-
-### Example Queries
-
-| Query | Modules Used |
-|-------|--------------|
-| "Person in red shirt running fast" | Clothing (CLIP) + Action (TimeSformer) |
-| "Crowd cheering > 90dB" | Audio Events (CLAP) + Loudness |
-| "Clock showing 3 PM in background" | Clock Reader + OCR |
-| "Prakash speaking near the door" | Face ID + Active Speaker + Depth |
-| "Blue car moving at high speed" | Clothing (CLIP) + Speed (RAFT) |
-| "Text 'EXIT' visible on sign" | OCR (PaddleOCR) |
-| "Person falling down stairs" | Action (TimeSformer) |
-
-### Video Overlay Visualization
-
-The frontend supports real-time overlay rendering:
-- 🟢 **Face Boxes** - Green bounding boxes with names
-- 🔵 **OCR Text** - Blue boxes around detected text
-- 🔴 **Objects** - Red boxes for detected objects
-- 🟡 **Active Speaker** - Yellow dashed boxes for speaking persons
-
----
-
 
 ## Architecture Overview
 
+The AI-Media-Indexer implements a massively parallel ingestion pipeline coordinated by a centralized resource arbiter. It processes audio and video tracks independently before fusing them into a temporal context for hyper-granular hybrid search.
+
+### High-Fidelity Technical Schematic
+![SOTA Technical Schematic](assets/architecture.png)
+
+### Ingestion Council Flow
 ```mermaid
-graph TD
-    User[User] -->|Web UI| API[FastAPI Server]
-    API -->|Ingest| Pipeline[Ingestion Pipeline]
-    API -->|Search| Search[Search Engine]
+flowchart TD
+    A[Video Upload] --> B{File Validation}
+    B -->|Valid| C[Media Probing]
     
-    subgraph "Core Processing"
-        Pipeline -->|Extract| Frames[Frames & Audio]
-        Frames -->|Transcribe| Whisper[Whisper/AI4Bharat]
-        Frames -->|Vision| Vision[Ollama/Gemini]
-        Frames -->|Identify| Faces[InsightFace/Brave]
+    C --> D[Parallel Pipeline Orchestration]
+    
+    subgraph D[GPU-Aware Pipeline]
+        D1[Frame Extraction]
+        D2[Audio Demuxing]
     end
     
-    subgraph "Data Store"
-        Pipeline -->|Vectors| Qdrant[(Qdrant DB)]
-        Pipeline -->|Graph| SQLite[(Identity Graph)]
+    subgraph AudioLogic[Audio Council]
+        AL[Multi-pass Lang Detect] --> AC[ASR Council: ROVER voting]
+        AC -->|Whisper v3, Indic, Seamless| AT[Final Transcript]
+        AT --> AD[Analysis: Pyannote 3.1, SER, CLAP Events]
     end
     
-    subgraph "Agents (MCP)"
-        Search -->|A2A| Agents[Search Agents]
-        Agents -->|Tools| VideoRAG[VideoRAG]
-        Agents -->|Tools| Summary[Summarizer]
+    subgraph VideoLogic[Video Council]
+        VS[Text-Gated Smart Sampler] --> VC[Video Council: InternVideo2.5]
+        VC --> VT[SAM 2 Temporal Tracking]
+        VT --> VM[Metadata: InsightFace 512D, PP-OCRv5]
     end
     
-    Agents -.-> Qdrant
-    Search -.-> SQLite
+    D1 --> VS
+    D2 --> AL
+    
+    subgraph Memory[3-Tier Temporal Memory]
+        SW[Sensory Sliding Window]
+        WM[Working Entity Map]
+        LT[Long-term Identity Graph]
+    end
+    
+    VT --> SW
+    AT --> SW
 ```
 
-## AI4Bharat Indic ASR Setup
-
-For SOTA transcription of Indian languages (Tamil, Hindi, etc.), we support **AI4Bharat IndicConformer**.
-
-### Option 1: Native (Recommended)
-This uses the lightweight HuggingFace model (~600MB).
-```bash
-# Enabled by default if language is 'ta', 'hi', etc.
-# config.py: use_indic_asr = True
+### Search & Retrieval Council
+```mermaid
+flowchart TD
+    A[User Query] --> B[LLM Query Expansion]
+    B --> C[Constraint Decomposition: 7 Types]
+    
+    subgraph Retrieval[Retriever Council]
+        V[Vector Search: NV-Embed-v2]
+        K[Keyword Search: BM25 Dense]
+        F[Face/Identity Search: Identity Graph]
+    end
+    
+    C --> V
+    C --> K
+    C --> F
+    
+    subgraph Scoring[Reranker Council]
+        RRF[Hybrid RRF Fusion: 0.7/0.3]
+        CE[Cross-Encoder: MiniLM-L-12-v2]
+        BGE[BGE-Reranker v2: M3]
+        VV[VLM Visual Verification: Gemini 1.5]
+    end
+    
+    V --> RRF
+    K --> RRF
+    RRF --> CE
+    CE --> BGE
+    BGE --> VV
+    
+    VV --> Q[Final Ranked Results]
 ```
 
-### Option 2: Docker Container (SOTA Quality)
-Use the NVIDIA NeMo backend (requires ~5GB VRAM and Linux/WSL).
+---
 
-1. **Create Dockerfile.asr**:
-```dockerfile
-FROM python:3.10-slim
-RUN apt-get update && apt-get install -y libsndfile1 ffmpeg
-RUN pip install nemo_toolkit[asr]
-COPY . /app
-WORKDIR /app
-RUN pip install -r requirements.txt
-CMD ["python", "api/server.py"]
+## Core Features
+
+- **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration (Semaphores in `processing/identity.py`).
+- **Multimodal Intelligence**:
+    - **Audio**: Multi-pass language detection, **ROVER word-level voting** between Whisper v3, IndicConformer, and SeamlessM4T.
+    - **Vision**: **InternVideo2.5** for dense captioning, **SAM 2** for temporal visual tracking, and **PP-OCRv5** for Indic text extraction.
+    - **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
+- **Advanced Temporal Fusion**:
+    - **3-Tier Memory**: XMem-inspired sensory (sliding window), working, and long-term memory tiers.
+    - **Fused Scenelets**: 5s window fusion of visual descriptions and dialogue transcripts.
+- **Agentic Search Engine**:
+    - **Hybrid Retrieval**: RRF Fusion (0.7 Vector / 0.3 BM25) across **Multi-Vector Scenes** (Visual/Motion/Dialogue).
+    - **LLM Reranking**: Reasoning-based verification using **Gemini 1.5** or Ollama, with reasoning traces.
+
+## Capabilities
+
+| Module | Technology | Capability |
+|--------|------------|------------|
+| **VLM Intelligence** | Gemini 1.5 Pro/Flash | Narrative synthesis, reasoning traces, re-ranking |
+| **Action Recognition** | InternVideo2.5 | Dense motion description and semantic indexing |
+| **Face Identity** | InsightFace ArcFace | 512D biometric vectors with temporal track building |
+| **Object Tracking** | SAM 2 | Zero-shot visual segmentation and multi-frame tracking |
+| **Search Fusion** | RRF + Cross-Encoders | Hybrid ranking (MiniLM-L-12-v2 + BGE-Reranker v2) |
+
+## Tech Stack
+
+- **Backend**: Python 3.12, FastAPI, Celery, Redis
+- **Vector Database**: Qdrant with Multi-Vector support (Visual/Motion/Audio)
+- **Visual Intelligence**: 
+  - VLM: InternVideo2.5, LLAVA
+  - Face: InsightFace, SFace
+  - Detection: YOLO-World
+  - OCR: PP-OCRv5
+- **Audio Intelligence**: 
+  - ASR: Whisper v3, AI4Bharat IndicASR
+  - Diarization: Pyannote 4.0
+  - Embeddings: WeSpeaker
+- **LLM/VLM Providers**: Google Gemini 1.5, Ollama (Llama 3 / Moondream)
+- **Frontend**: React 19, Vite, Tailwind CSS 4.0, Framer Motion
+
+## Project Structure
+
 ```
-2. **Run**:
-```bash
-docker build -t ai-media-asr -f Dockerfile.asr .
-docker run --gpus all -v $(pwd)/data:/app/data ai-media-asr
+AI-Media-Indexer/
+├── api/                    # FastAPI route definitions
+├── core/                   # Processing logic
+│   ├── ingestion/         # Ingestion pipeline & task management
+│   ├── retrieval/         # Search agents & RRF fusion
+│   ├── processing/        # Model wrappers (ASR, VLM, Face)
+│   └── storage/           # Qdrant & SQLite adapters
+├── web/                    # Frontend assets
+├── architecture.d2        # Deep architectural source (D2 Format)
+└── init.ps1               # System initialization script
+```
+
+---
+
+## Getting Started
+
+### 1. Requirements
+Ensure you have Docker, Python 3.12, and Node.js 20+ installed.
+
+### 2. Initialization
+```powershell
+./init.ps1
+```
+
+### 3. Running the Application
+```powershell
+# Start Backend
+python run.py
+
+# Start Frontend
+cd web
+npm run dev
 ```
 
 ---
@@ -137,67 +184,28 @@ Settings are managed via `.env` (overrides `config.py` defaults).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| **Core** | | |
-| `PROJECT_ROOT` | (Auto) | Root directory path |
 | `QDRANT_HOST` | `localhost` | Vector DB host |
 | `QDRANT_PORT` | `6333` | Vector DB port |
-| `LOG_LEVEL` | `INFO` | Logging verbosity |
-| **AI Models** | | |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
-| `OLLAMA_MODEL` | `moondream` | Vision model (moondream/llava) |
-| `OLLAMA_VISION_MODEL`| `moondream:latest` | Vision model tag |
+| `OLLAMA_MODEL` | `moondream` | Default VLM model |
 | `GEMINI_API_KEY` | None | Google Gemini API Key |
-| `BRAVE_API_KEY` | None | Brave Search API (Identity Enrichment) |
-| `HF_TOKEN` | None | HuggingFace Token (Speaker Diarization) |
-| **Features** | | |
 | `USE_INDIC_ASR` | `True` | Enable AI4Bharat for Indic langs |
-| `AUTO_DETECT_LANGUAGE`| `True` | Detect audio language automatically |
-| `ENABLE_VISUAL_EMBEDDINGS`| `True` | Use SigLIP for visual search |
-| `ENABLE_HYBRID_SEARCH`| `True` | Use weights for ranking |
-| **Embeddings** | | |
-| `TEXT_EMBEDDING_DIM` | `1024` | Text vector dimension (BGE-M3) |
-| `VISUAL_EMBEDDING_DIM` | `1024` | Visual vector dimension |
-| `SIGLIP_MODEL` | `google/siglip...` | Visual embedding model |
-| **Tuning (New)** | | |
-| `FACE_MATCH_WEIGHT` | `0.20` | Boost for identity matches |
-| `SPEAKER_MATCH_WEIGHT`| `0.15` | Boost for speaker matches |
+| `ENABLE_HYBRID_SEARCH`| `True` | Use weighted RRF for ranking |
+| `FACE_RECOGNITION_THRESHOLD` | `0.45` | Global face matching threshold |
 
 ---
 
-## Tools
+## Search Examples
 
-### Search Optimization
-Tune search weights for your dataset:
-```bash
-python tools/tune_search.py
-```
-
-### Agent Verification
-Verify MCP server and tools:
-```bash
-python tests/verifymcp.py
-```
+| Query | Modalities Used |
+|-------|-----------------|
+| "Person in red shirt running fast" | Visual (SigLIP) + Action (InternVideo) |
+| "Crowd cheering in background" | Audio Events (CLAP) |
+| "Prakash speaking near the door" | Face ID + Voice ID + VLM |
+| "Text 'EXIT' visible on sign" | OCR (PP-OCRv5) |
 
 ---
 
-## Response Schema
-...
-
-```json
-{
-  "video_id": "abc123",
-  "file_path": "/path/to/video.mp4",
-  "start_time": 10.0,
-  "end_time": 15.0,
-  "score": 0.87,
-  "match_reasons": ["identity_face", "semantic_visual", "vlm_verified"],
-  "explanation": "Man in blue shirt bowling shown clearly",
-  "thumbnail_url": "/api/media/thumbnail?path=...&time=10.0"
-}
-```
-
-Score is normalized 0.0-1.0 (80% VLM weight when reranking enabled).
-
----
-
-For detailed docs: `docs/development.md`
+<!-- 
+## Screenshots
+[Coming Soon]
+-->
