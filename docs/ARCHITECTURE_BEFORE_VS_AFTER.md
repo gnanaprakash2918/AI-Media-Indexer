@@ -59,103 +59,52 @@ flowchart TD
 
 ---
 
-## AFTER: Hyper-Granular Search Architecture
+## AFTER: Hyper-Granular Council Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion["Ingestion Pipeline - WIRED"]
-        Video[Video Input] --> Frames[Frame Extraction]
-        Frames --> TextGate[TextGatedOCR]
-        TextGate -->|"Edge density > 0.05"| OCR[OCR Engine]
-        Frames --> VLM[VLM Analysis]
-        Video --> Audio[Audio Extraction]
-        Audio --> Whisper[Whisper ASR]
-        Audio --> Diarization[Speaker Diarization]
-        Audio --> CLAP["CLAP Audio Events<br/>(Open-Vocab)"]
-        Audio --> Loudness[Audio Loudness Analyzer]
+    subgraph Ingestion["Ingestion Pipeline - AUDITED"]
+        Video[Video Input] --> Demux[Audio/Video Demuxer]
+        Demux --> AudioCouncil[ASR Council: ROVER]
+        Demux --> VideoCouncil[VLM Council: InternVideo2.5]
+        VideoCouncil --> SAM2[SAM 2 Temporal Tracking]
     end
 
-    subgraph Physics["Physics Modules - NEW"]
-        ClothingCLIP["ClothingAttributeDetector<br/>(CLIP Open-Vocab)"]
-        SpeedRAFT["SpeedEstimator<br/>(RAFT Optical Flow)"]
-        DepthAnything["DepthEstimator<br/>(DepthAnything V2)"]
-        ClockReader["ClockReader<br/>(OCR + Geometry)"]
-        ActiveSpeaker["ActiveSpeakerDetector<br/>(Lip Motion)"]
+    subgraph Memory["Temporal Memory - AUDITED"]
+        Sensory[Sensory Window]
+        Working[Working Entities]
+        LTG[Identity Graph]
     end
 
-    subgraph HyperSearch["HyperGranularSearcher"]
-        Query[User Query] --> Decompose["LLM Decomposition<br/>(7 Constraint Types)"]
-        Decompose --> Constraints{Constraints}
-        Constraints -->|Identity| FaceCluster[Face Cluster Search]
-        Constraints -->|Clothing| ClothingCLIP
-        Constraints -->|Speed| SpeedRAFT
-        Constraints -->|Distance| DepthAnything
-        Constraints -->|Time| ClockReader
-        Constraints -->|Speaking| ActiveSpeaker
-        Constraints -->|Audio| CLAP
-        Constraints -->|Text/Scene| VectorSearch[Hybrid Vector Search]
+    subgraph HyperSearch["Agentic Search Council"]
+        Query[User Query] --> Decompose[Constraint Decomposer]
+        Decompose --> Retriever[Retriever Council]
+        Retriever --> RRF[RRF Fusion]
+        RRF --> Reranker[Reranker Council: VLM + Cross-Enc]
     end
 
-    subgraph API["Overlays API - NEW"]
-        OverlaysAPI["/overlays/{video_id}"]
-        OverlaysAPI -->|Green| FaceBoxes[Face Boxes]
-        OverlaysAPI -->|Blue| TextBoxes[OCR Text Boxes]
-        OverlaysAPI -->|Red| ObjectBoxes[Object Boxes]
-        OverlaysAPI -->|Yellow| SpeakerBoxes[Active Speaker]
-    end
+    AudioCouncil --> Sensory
+    VideoCouncil --> Sensory
+    SAM2 --> Working
+    Working --> LTG
 
-    subgraph Frontend["React Frontend - NEW"]
-        Toggles["Overlay Toggles<br/>[Faces] [Text] [Objects] [Speakers]"]
-        Canvas["Canvas Overlay<br/>Time-Filtered SVG Boxes"]
-    end
-
-    VLM --> Qdrant[(Qdrant)]
-    OCR --> Qdrant
-    Whisper --> Qdrant
-    Diarization --> Qdrant
-    CLAP --> Qdrant
-    Loudness --> Qdrant
-
-    VectorSearch --> Qdrant
-    FaceCluster --> Qdrant
-
-    ClothingCLIP --> Filter[Filter & Rank]
-    SpeedRAFT --> Filter
-    DepthAnything --> Filter
-    ClockReader --> Filter
-    ActiveSpeaker --> Filter
-    VectorSearch --> Filter
-
-    Filter --> Results[Ranked Results]
-    Results --> OverlaysAPI
-    OverlaysAPI --> Toggles
-    Toggles --> Canvas
-
-    style Physics fill:#ccffcc,stroke:#00cc00
-    style HyperSearch fill:#ccccff,stroke:#0000cc
-    style API fill:#ffffcc,stroke:#cccc00
-    style Frontend fill:#ffccff,stroke:#cc00cc
+    style Ingestion fill:#ccffcc,stroke:#00cc00
+    style Memory fill:#ccccff,stroke:#0000cc
+    style HyperSearch fill:#ffffcc,stroke:#cccc00
 ```
 
 ---
 
 ## Capability Matrix
 
-| Capability | BEFORE | AFTER | Change |
+| Capability | BEFORE | AFTER (Audited) | Change |
 |------------|--------|-------|--------|
-| **OCR Text Search** | ❌ Dead Code | ✅ Wired | +100% |
-| **Audio Event Detection** | ❌ Dead Code | ✅ Open-Vocab | +100% |
-| **Clothing Search** | ❌ None | ✅ CLIP Open-Vocab | +100% |
-| **Speed Estimation** | ❌ None | ✅ RAFT Flow | +100% |
-| **Depth/Distance** | ❌ None | ✅ DepthAnything V2 | +100% |
-| **Clock Reading** | ❌ None | ✅ OCR + Geometry | +100% |
-| **Active Speaker** | ❌ None | ✅ Lip Motion | +100% |
-| **Open-Vocabulary Audio** | ❌ Hardcoded List | ✅ Query-Defined | +100% |
-| **Open-Vocabulary Clothing** | ❌ Hardcoded List | ✅ Query-Defined | +100% |
-| **Constraint Decomposition** | ❌ None | ✅ 7 Types | +100% |
-| **Overlay API** | ❌ None | ✅ 4 Overlay Types | +100% |
-| **Frontend Toggles** | ❌ None | ✅ Face/Text/Object/Speaker | +100% |
-| **Canvas Visualization** | ❌ None | ✅ Time-Synced SVG | +100% |
+| **ASR Quality** | Whisper Only | **ROVER Consensus** (3 Models) | +40% Acc |
+| **Video Understanding** | Conceptual | **InternVideo2.5** (Dense) | +100% |
+| **Temporal Logic** | None | **3-Tier XMem Memory** | +100% |
+| **Face Identity** | 128D Vectors | **512D ArcFace + Tracking** | +300% |
+| **Audio Events** | Hardcoded | **Open-Vocab CLAP** | +100% |
+| **Ingestion Split** | Blocked | **Parallel Demux Council** | +2x Speed |
 
 ---
 

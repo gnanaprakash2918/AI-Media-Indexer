@@ -21,8 +21,10 @@ cp .env.example .env
 | `AGENT_MODEL` | string | `llama3.1` | Model for Agent CLI queries |
 | `LLM_PROVIDER` | enum | `ollama` | LLM provider: `ollama` or `gemini` |
 | `GOOGLE_API_KEY` | string | None | Google Gemini API key (required if using gemini) |
-| `GEMINI_MODEL` | string | `gemini-1.5-flash` | Gemini model name |
+| `GEMINI_MODEL` | string | `gemini-1.5-pro` | Gemini model name (Flash or Pro) |
 | `HF_TOKEN` | string | None | Hugging Face token for pyannote models |
+| `AI_PROVIDER_VISION` | string | `gemini` | Primary VLM for "Chairman" synthesis |
+| `USE_INDIC_ASR` | bool | `True` | Enable IndicConformer in ASR Council |
 
 ### Vector Database (Qdrant)
 
@@ -31,12 +33,14 @@ cp .env.example .env
 | `QDRANT_HOST` | string | `localhost` | Qdrant server hostname |
 | `QDRANT_PORT` | int | `6333` | Qdrant HTTP API port |
 | `QDRANT_BACKEND` | enum | `docker` | Backend type: `memory` or `docker` |
+| `QDRANT_RETRY_COUNT`| int | `3` | Retries for WinError 10053 resilience |
 
 ### Hardware Configuration
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `DEVICE_OVERRIDE` | enum | Auto | Force device: `cuda`, `cpu`, or `mps` |
+| `GPU_SEMAPHORE_LIMIT`| int | `1` | Max concurrent GPU tasks (OOM prevention) |
 
 ### Audio/Video Processing
 

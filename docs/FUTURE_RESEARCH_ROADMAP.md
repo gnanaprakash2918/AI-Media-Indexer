@@ -8,7 +8,8 @@ Next-generation capabilities beyond the current implementation.
 
 ### Current State
 - Semantic vector search finds "moments" with entities
-- No understanding of relationships between entities across time
+- **Identity Graph Foundation**: `core/storage/identity_graph.py` already tracks temporal entity co-occurrence and cross-media identity links.
+- **GraphRAG Phase 1**: Basic relationship traversal is implemented; global community summarization is pending.
 
 ### Next Generation
 Build **Entity-Relationship Graphs** from video:
@@ -62,8 +63,9 @@ FIND segments WHERE
 ## 3. Long-Context VLM Integration
 
 ### Current State
-- Sliding window chunking (10-minute segments)
-- No cross-chunk context
+- Sliding window chunking (5s scenelets in `temporal_context.py`).
+- **XMem Tiering**: Sensory/Working memory tiers manage cross-chunk context during ingestion.
+- **Gemini 1.5 Integration**: Native support for long-context reasoning is implemented in `VLMClient`.
 
 ### Next Generation
 Feed **entire videos** to 1M+ context VLMs:

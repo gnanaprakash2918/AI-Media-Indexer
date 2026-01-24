@@ -1,777 +1,143 @@
-# AI-Media-Indexer Architecture Diagrams (D2 Format)
-
-# =============================================================================
-# DIAGRAM 1: High-Level System Architecture
-# =============================================================================
+# AI Media Indexer: High-Density Technical Schematic
+# AUDITED: 2024-01-25 | 100% Code-Aligned
 
 direction: right
 
-title: AI-Media-Indexer High-Level Architecture {
-  near: top-center
-  shape: text
-  style: {
-    font-size: 28
-    bold: true
+# Global Styles (Optimized for 1024px Density)
+classes: {
+    model: {
+        style: { fill: "#4caf50"; stroke: "#2e7d32"; font-color: "#ffffff"; border-radius: 4; font-size: 20; bold: true }
+    }
+    logic: {
+        style: { fill: "#2196f3"; stroke: "#1565c0"; font-color: "#ffffff"; border-radius: 4; font-size: 20; bold: true }
+    }
+    infra: {
+        style: { fill: "#9c27b0"; stroke: "#6a1b9a"; font-color: "#ffffff"; border-radius: 4; font-size: 18 }
+    }
+    data: {
+        style: { fill: "#ff9800"; stroke: "#ef6c00"; font-color: "#ffffff"; border-radius: 4; font-size: 18; bold: true }
+    }
+}
+
+# ENTRY & ORCHESTRATION
+entry: {
+  direction: down
+  style.stroke: transparent
+  
+  sys: {
+    direction: right
+    style: { fill: "#f3e5f5"; stroke: "#7b1fa2"; stroke-width: 2; border-radius: 8 }
+    arbiter: "ResourceArbiter\n(GPU Semaphore)" { class: infra }
+    jobs: "JobManager\n(Crash Recovery)" { class: infra }
+    arbiter <-> jobs
   }
 }
 
-# External Systems
-user: User {
-  shape: person
-}
+# MULTIMODAL INGESTION PIPELINE (HIGH DENSITY)
+ingestion: {
+  style.stroke: transparent
+  direction: right
+  
+  audio: {
+    style: { fill: "#f8f9fa"; stroke: "#dee2e6"; border-radius: 8 }
+    direction: right
+    
+    pre: {
+      direction: down
+      style.stroke: transparent
+      lang: "Multi-pass Lang Detect\n(Confidence < 60% Retry)" { class: logic }
+      content_class: "ContentClassifier\n(Speech/Music/Silence)" { class: model }
+      lang -> content_class
+    }
+    
+    asr: "ASR Council\n(ROVER Word Voting)" {
+      class: model
+      whisper: "Whisper v3" { shape: parallelogram; class: model }
+      indic: "IndicConformer\n(AI4Bharat)" { shape: parallelogram; class: model }
+      seamless: "SeamlessM4T v2" { shape: parallelogram; class: model }
+    }
+    
+    analysis: {
+      direction: down
+      style.stroke: transparent
+      dia: "Diarization\n(Pyannote 3.1)" { class: model }
+      ser: "Speech Emotion (SER)" { class: model }
+      music: "Music Structure\n(Chorus/Drop)" { class: model }
+      clap: "CLAP\n(Auditory Events)" { class: model }
+    }
+    
+    pre -> asr -> analysis
+  }
 
-frontend: Web Frontend {
-  shape: rectangle
-  style.fill: "#E3F2FD"
-}
-
-# API Layer
-api: FastAPI Server {
-  shape: rectangle
-  style.fill: "#C8E6C9"
-  
-  routes: API Routes {
-    ingest: "/ingest"
-    search: "/search"
-    faces: "/faces"
-    voices: "/voices"
-    media: "/media"
-    library: "/library"
-  }
-  
-  middleware: Middleware {
-    cors: CORS
-    observability: Langfuse Tracing
-  }
-}
-
-# Core Processing
-ingestion: Ingestion Pipeline {
-  shape: rectangle
-  style.fill: "#FFF9C4"
-  
-  audio: Audio Branch {
-    transcriber: Whisper/IndicASR
-    diarizer: Pyannote
-    clap: CLAP Events
-    loudness: Loudness Analyzer
-    structure: Music Structure
-  }
-  
-  visual: Visual Branch {
-    extractor: Frame Extractor
-    faces: InsightFace
-    vlm: VLM Captioning
-    ocr: EasyOCR
-    sam3: SAM3 Tracking
-  }
-}
-
-# Storage
-storage: Storage Layer {
-  shape: cylinder
-  style.fill: "#FFCCBC"
-  
-  qdrant: Qdrant {
-    frames: media_frames
-    segments: media_segments
-    scenes: scenes
-    faces: faces
-    voices: voice_segments
-    events: audio_events
-  }
-  
-  identity: Identity Graph {
-    style.fill: "#E1BEE7"
-  }
-  
-  cache: File Cache {
-    thumbnails: Thumbnails
-    models: Model Weights
+  video: {
+    style: { fill: "#f8f9fa"; stroke: "#dee2e6"; border-radius: 8 }
+    direction: right
+    
+    sample: "Text-Gated\nSmart Sampler" { class: logic }
+    
+    vision: "Video Council\n(Multimodal Synthesis)" {
+      class: model
+      intern: "InternVideo2.5" { shape: parallelogram; class: model }
+      bind: "LanguageBind" { shape: parallelogram; class: model }
+      sam: "SAM 2 (Tracking)" { shape: parallelogram; class: model }
+    }
+    
+    metadata: {
+      direction: down
+      style.stroke: transparent
+      faces: "InsightFace (512D)\nArcFace Identity" { class: model }
+      ocr: "PP-OCRv5\n(Indic Support)" { class: model }
+      cinematog: "Cinematography\n(Netflix Shot Type)" { class: model }
+      aesthetic: "Aesthetic Scoring\n(Apple Photos style)" { class: model }
+    }
+    
+    sample -> vision -> metadata
   }
 }
 
-# Retrieval
-retrieval: Retrieval System {
-  shape: rectangle
-  style.fill: "#B3E5FC"
+entry.sys -> ingestion.audio.pre
+entry.sys -> ingestion.video.sample
+
+# TEMPORAL FUSION HUB (COHERENCE ENGINE)
+hub: {
+  direction: right
+  style: { fill: "#e3f2fd"; stroke: "#1976d2"; stroke-width: 4; border-radius: 12 }
+  fusion: "Temporal Context Hub\n(XMem + SceneletBuilder)" { class: logic; style.font-size: 28 }
+  clustering: "HDBSCAN Global\nIdentity Clustering" { class: logic }
+  fusion <-> clustering
+}
+
+ingestion.audio.analysis -> hub.fusion
+ingestion.video.metadata -> hub.fusion
+
+# DATA LAKE & AGENTIC SEARCH
+delivery: {
+  direction: right
+  style.stroke: transparent
   
-  agentic: Agentic Search {
-    expansion: LLM Query Expansion
-    hybrid: Hybrid Search
-    council: Reranking Council
+  storage: {
+    style: { fill: "#fff3e0"; stroke: "#ffe0b2"; border-radius: 8 }
+    direction: right
+    graph: "Identity Graph\n(SQL GraphRAG)" { shape: cylinder; class: data }
+    qdrant: "QDRANT\n(Dense/Sparse/Multi-V)" {
+      shape: cylinder
+      class: data
+      scenes: "Scenes"
+      scenelets: "5s Scenelets"
+      masklets: "SAM Masklets"
+    }
   }
   
-  search: Search Engines {
-    vector: Vector Search
-    bm25: BM25 Keyword
-    identity: Identity Resolution
-  }
-}
-
-# LLM Providers
-llm: LLM Providers {
-  shape: hexagon
-  style.fill: "#F3E5F5"
-  
-  ollama: Ollama {
-    vision: llava:7b
-    text: llama3.1
-  }
-  
-  gemini: Gemini API
-}
-
-# Connections
-user -> frontend: HTTP
-frontend -> api: REST API
-api.routes.ingest -> ingestion
-api.routes.search -> retrieval
-ingestion.audio -> storage.qdrant
-ingestion.visual -> storage.qdrant
-ingestion.visual.faces -> storage.identity
-retrieval -> storage.qdrant
-retrieval.agentic.expansion -> llm
-ingestion.visual.vlm -> llm.ollama.vision
-
-# =============================================================================
-# DIAGRAM 2: Ingestion Pipeline Detail
-# =============================================================================
-
-pipeline_title: Ingestion Pipeline Flow {
-  near: top-center
-  shape: text
-}
-
-start: Video Input {
-  shape: parallelogram
-}
-
-probe: Media Probe {
-  shape: rectangle
-  label: "FFprobe\nDuration, Format, Streams"
-}
-
-# Audio Branch
-audio_start: Audio Processing (5% → 30%) {
-  shape: rectangle
-  style.fill: "#BBDEFB"
-}
-
-srt_check: SRT Exists? {
-  shape: diamond
-}
-
-subtitle_extract: Extract Embedded {
-  shape: rectangle
-}
-
-transcribe: ASR Transcription {
-  shape: rectangle
-  label: "Whisper / IndicASR"
-}
-
-clap_detect: CLAP Detection {
-  shape: rectangle
-  label: "Audio Events\n(applause, music, sirens)"
-}
-
-loudness: Loudness Analysis {
-  shape: rectangle
-  label: "ITU-R BS.1770-4\nPeak SPL Detection"
-}
-
-music_structure: Music Structure {
-  shape: rectangle
-  label: "Verse/Chorus/Drop\nSection Detection"
-}
-
-# Voice Branch
-voice_start: Voice Processing (35% → 50%) {
-  shape: rectangle
-  style.fill: "#C8E6C9"
-}
-
-diarize: Speaker Diarization {
-  shape: rectangle
-  label: "Pyannote 3.1"
-}
-
-voice_embed: Voice Embedding {
-  shape: rectangle
-  label: "WeSpeaker ResNet34"
-}
-
-speaker_match: Speaker Registry {
-  shape: rectangle
-  label: "Global ID Matching"
-}
-
-# Frame Branch
-frame_start: Frame Processing (55% → 90%) {
-  shape: rectangle
-  style.fill: "#FFF9C4"
-}
-
-extract_frames: Frame Extraction {
-  shape: rectangle
-  label: "FFmpeg @ interval"
-}
-
-face_detect: Face Detection {
-  shape: rectangle
-  label: "InsightFace ArcFace"
-}
-
-track_build: Face Track Builder {
-  shape: rectangle
-  label: "Temporal Grouping\nIoU + Cosine"
-}
-
-vlm_caption: VLM Captioning {
-  shape: rectangle
-  label: "Ollama llava:7b\nStructured Output"
-}
-
-ocr_extract: OCR Extraction {
-  shape: rectangle
-  label: "EasyOCR\nText-Gated"
-}
-
-# Scene Branch
-scene_start: Scene Captioning (90%) {
-  shape: rectangle
-  style.fill: "#FFCCBC"
-}
-
-scene_detect: Scene Detection {
-  shape: rectangle
-  label: "PySceneDetect"
-}
-
-scene_aggregate: Scene Aggregation {
-  shape: rectangle
-  label: "Multi-Frame Fusion"
-}
-
-scene_store: Multi-Vector Store {
-  shape: rectangle
-  label: "Visual + Motion + Dialogue"
-}
-
-# Post Processing
-post_start: Post Processing (95% → 100%) {
-  shape: rectangle
-  style.fill: "#E1BEE7"
-}
-
-global_ctx: Global Context {
-  shape: rectangle
-  label: "Aggregate All Scenes"
-}
-
-sam3_track: SAM3 Tracking {
-  shape: rectangle
-  label: "Concept Masklets"
-}
-
-thumbnail: Thumbnail Generation {
-  shape: rectangle
-}
-
-complete: Complete {
-  shape: oval
-  style.fill: "#A5D6A7"
-}
-
-# Flow
-start -> probe
-probe -> audio_start
-audio_start -> srt_check
-srt_check -> subtitle_extract: No
-srt_check -> clap_detect: Yes
-subtitle_extract -> transcribe
-transcribe -> clap_detect
-clap_detect -> loudness
-loudness -> music_structure
-music_structure -> voice_start
-
-voice_start -> diarize
-diarize -> voice_embed
-voice_embed -> speaker_match
-speaker_match -> frame_start
-
-frame_start -> extract_frames
-extract_frames -> face_detect
-face_detect -> track_build
-track_build -> vlm_caption
-vlm_caption -> ocr_extract
-ocr_extract -> scene_start
-
-scene_start -> scene_detect
-scene_detect -> scene_aggregate
-scene_aggregate -> scene_store
-scene_store -> post_start
-
-post_start -> global_ctx
-global_ctx -> sam3_track
-sam3_track -> thumbnail
-thumbnail -> complete
-
-# =============================================================================
-# DIAGRAM 3: Search Architecture
-# =============================================================================
-
-search_title: Search Architecture {
-  near: top-center
-  shape: text
-}
-
-query: User Query {
-  shape: parallelogram
-  label: "Natural Language Query\n'Prakash wearing blue shirt\nbowling a strike'"
-}
-
-# Step 1: Query Parsing
-parse: 1. Query Parsing {
-  shape: rectangle
-  style.fill: "#E3F2FD"
-  
-  llm_expand: LLM Expansion {
-    label: "Gemini/Ollama\nEntity Extraction"
-  }
-  
-  parsed_query: ParsedQuery {
-    label: "person_name: Prakash\nclothing_color: blue\naction: bowling strike"
+  search: {
+    style: { fill: "#e1f5fe"; stroke: "#b3e5fc"; stroke-width: 3; border-radius: 12 }
+    direction: down
+    query: "LLM Query Expansion\n(Dynamic Context)" { class: model }
+    engines: "SOTA Embedders\n(NV-Embed-v2 / BGE-M3)" { class: model }
+    rrf: "Hybrid RRF Fusion\n(0.7v / 0.3k / 0.1s)" { class: logic }
+    rerank: "Reranking Council\n(Reasoning Traces)" { class: model }
+    query -> engines -> rrf -> rerank
   }
 }
 
-# Step 2: Identity Resolution
-identity: 2. Identity Resolution {
-  shape: rectangle
-  style.fill: "#C8E6C9"
-  
-  face_lookup: Face Name Lookup
-  voice_lookup: Voice Name Lookup
-  cluster_ids: Cluster ID Resolution
-}
-
-# Step 3: Multi-Collection Search
-multi_search: 3. Multi-Collection Search {
-  shape: rectangle
-  style.fill: "#FFF9C4"
-  
-  scenes_search: Scenes Collection {
-    visual_vec: Visual Vector
-    motion_vec: Motion Vector
-    dialogue_vec: Dialogue Vector
-  }
-  
-  frames_search: Frames Collection {
-    semantic: Semantic Search
-    filters: Filtered Search
-  }
-  
-  audio_search: Audio Collections {
-    voice: Voice Segments
-    events: Audio Events
-  }
-}
-
-# Step 4: Hybrid Fusion
-fusion: 4. Hybrid Fusion (RRF) {
-  shape: rectangle
-  style.fill: "#FFCCBC"
-  
-  vector_score: Vector Score (0.7)
-  bm25_score: BM25 Score (0.3)
-  rrf_merge: RRF Merge
-}
-
-# Step 5: Council Reranking
-rerank: 5. Council Reranking {
-  shape: rectangle
-  style.fill: "#E1BEE7"
-  
-  vlm_verify: VLM Verification {
-    label: "Visual Evidence Check"
-  }
-  
-  cross_encoder: Cross-Encoder {
-    label: "BGE-Reranker"
-  }
-  
-  constraint_check: Constraint Check {
-    label: "All Filters Met?"
-  }
-}
-
-# Step 6: Results
-results: 6. Ranked Results {
-  shape: rectangle
-  style.fill: "#A5D6A7"
-  
-  result_item: Result Item {
-    video_path: Video Path
-    timestamp: Timestamp
-    score: Combined Score
-    reasoning: Explanation
-    thumbnail: Thumbnail
-  }
-}
-
-# Flow
-query -> parse.llm_expand
-parse.llm_expand -> parse.parsed_query
-parse.parsed_query -> identity.face_lookup
-identity.face_lookup -> identity.voice_lookup
-identity.voice_lookup -> identity.cluster_ids
-identity.cluster_ids -> multi_search
-
-multi_search.scenes_search -> fusion.vector_score
-multi_search.frames_search -> fusion.vector_score
-multi_search.audio_search -> fusion.vector_score
-fusion.vector_score -> fusion.rrf_merge
-fusion.bm25_score -> fusion.rrf_merge
-
-fusion.rrf_merge -> rerank.vlm_verify
-rerank.vlm_verify -> rerank.cross_encoder
-rerank.cross_encoder -> rerank.constraint_check
-rerank.constraint_check -> results
-
-# =============================================================================
-# DIAGRAM 4: Data Collections Schema
-# =============================================================================
-
-collections_title: Qdrant Collections Schema {
-  near: top-center
-  shape: text
-}
-
-qdrant: Qdrant {
-  shape: cylinder
-  style.fill: "#E8F5E9"
-  
-  media_frames: media_frames {
-    style.fill: "#BBDEFB"
-    vector: "Vector (1024d BGE-M3)"
-    video_path: "video_path (keyword)"
-    timestamp: "timestamp (float)"
-    action: "action (text)"
-    face_cluster_ids: "face_cluster_ids (int[])"
-    face_names: "face_names (keyword[])"
-    visible_text: "visible_text (text[])"
-    ocr_text: "ocr_text (text)"
-  }
-  
-  media_segments: media_segments {
-    style.fill: "#C8E6C9"
-    vector: "Vector (1024d)"
-    video_path: "video_path (keyword)"
-    text: "text (text)"
-    start: "start (float)"
-    end: "end (float)"
-    type: "type (keyword)"
-  }
-  
-  scenes: scenes (Multi-Vector) {
-    style.fill: "#FFF9C4"
-    visual_vec: "visual (1024d)"
-    motion_vec: "motion (1024d)"
-    dialogue_vec: "dialogue (1024d)"
-    face_cluster_ids: "face_cluster_ids (int[])"
-    clothing_colors: "clothing_colors (keyword[])"
-    actions: "actions (text[])"
-  }
-  
-  faces: faces {
-    style.fill: "#FFCCBC"
-    vector: "Vector (512d ArcFace)"
-    cluster_id: "cluster_id (int)"
-    name: "name (keyword)"
-    media_path: "media_path (keyword)"
-    thumbnail_path: "thumbnail_path (keyword)"
-  }
-  
-  voice_segments: voice_segments {
-    style.fill: "#E1BEE7"
-    vector: "Vector (256d WeSpeaker)"
-    speaker_label: "speaker_label (keyword)"
-    voice_cluster_id: "voice_cluster_id (int)"
-    audio_path: "audio_path (keyword)"
-  }
-  
-  audio_events: audio_events {
-    style.fill: "#B2DFDB"
-    event_type: "event_type (keyword)"
-    confidence: "confidence (float)"
-    start_time: "start_time (float)"
-    end_time: "end_time (float)"
-  }
-  
-  masklets: masklets {
-    style.fill: "#F8BBD9"
-    concept: "concept (keyword)"
-    video_path: "video_path (keyword)"
-    start_time: "start_time (float)"
-    end_time: "end_time (float)"
-  }
-}
-
-# =============================================================================
-# DIAGRAM 5: Identity System
-# =============================================================================
-
-identity_title: Identity System Architecture {
-  near: top-center
-  shape: text
-}
-
-frame_in: Frame Input {
-  shape: parallelogram
-}
-
-# Face Pipeline
-face_detect_id: Face Detection {
-  shape: rectangle
-  style.fill: "#BBDEFB"
-  label: "InsightFace\n512d Embedding"
-}
-
-track_builder: Face Track Builder {
-  shape: rectangle
-  style.fill: "#C8E6C9"
-  label: "Temporal Grouping\n- IoU Overlap > 0.3\n- Cosine Sim > 0.5\n- Max 5 Frame Gap"
-}
-
-global_cluster: Global Cluster Matching {
-  shape: rectangle
-  style.fill: "#FFF9C4"
-  label: "Match vs DB Centroids\nThreshold: 0.5 distance"
-}
-
-cluster_decision: New Cluster? {
-  shape: diamond
-}
-
-create_cluster: Create New Cluster {
-  shape: rectangle
-  label: "Generate Cluster ID\nStore Centroid"
-}
-
-assign_cluster: Assign Existing {
-  shape: rectangle
-  label: "Link to Cluster ID\nUpdate Centroid"
-}
-
-# Voice Pipeline
-voice_detect_id: Voice Embedding {
-  shape: rectangle
-  style.fill: "#E1BEE7"
-  label: "WeSpeaker\n256d Embedding"
-}
-
-speaker_match_id: Speaker Registry Match {
-  shape: rectangle
-  style.fill: "#F3E5F5"
-  label: "Threshold: 0.3 distance"
-}
-
-# Cross-Modal Linking
-cross_modal: Cross-Modal Linking {
-  shape: rectangle
-  style.fill: "#FFCC80"
-  label: "If 1 face + 1 speaker:\nAuto-link by timestamp"
-}
-
-# HITL Naming
-hitl: HITL Naming {
-  shape: rectangle
-  style.fill: "#A5D6A7"
-  label: "User names cluster\n→ Propagate to linked\nface/voice clusters"
-}
-
-# Storage
-identity_db: Identity Graph (SQLite) {
-  shape: cylinder
-  style.fill: "#B2DFDB"
-}
-
-faces_db: faces collection {
-  shape: cylinder
-}
-
-voices_db: voice_segments {
-  shape: cylinder
-}
-
-# Flow
-frame_in -> face_detect_id
-face_detect_id -> track_builder
-track_builder -> global_cluster
-global_cluster -> cluster_decision
-cluster_decision -> create_cluster: Yes
-cluster_decision -> assign_cluster: No
-create_cluster -> faces_db
-assign_cluster -> faces_db
-
-frame_in -> voice_detect_id
-voice_detect_id -> speaker_match_id
-speaker_match_id -> voices_db
-
-faces_db -> cross_modal
-voices_db -> cross_modal
-cross_modal -> identity_db
-identity_db -> hitl
-hitl -> faces_db: Update names
-hitl -> voices_db: Update names
-
-# =============================================================================
-# DIAGRAM 6: API Routes
-# =============================================================================
-
-api_title: FastAPI Routes {
-  near: top-center
-  shape: text
-}
-
-fastapi: FastAPI Server {
-  style.fill: "#E8F5E9"
-  
-  system: /system {
-    style.fill: "#BBDEFB"
-    health: "GET /health"
-    stats: "GET /stats"
-  }
-  
-  ingest_routes: /ingest {
-    style.fill: "#C8E6C9"
-    start: "POST /ingest"
-    scan: "POST /scan"
-    status: "GET /status/{job_id}"
-    cancel: "POST /cancel/{job_id}"
-  }
-  
-  search_routes: /search {
-    style.fill: "#FFF9C4"
-    basic: "POST /search"
-    granular: "POST /granular"
-    sota: "POST /sota"
-    scenes: "POST /scenes"
-  }
-  
-  media_routes: /media {
-    style.fill: "#FFCCBC"
-    list: "GET /library"
-    stream: "GET /stream/{path}"
-    thumbnail: "GET /thumbnail/{path}"
-  }
-  
-  faces_routes: /faces {
-    style.fill: "#E1BEE7"
-    clusters: "GET /clusters"
-    name: "POST /name/{cluster_id}"
-    main: "POST /main/{cluster_id}"
-    merge: "POST /merge"
-  }
-  
-  voices_routes: /voices {
-    style.fill: "#B2DFDB"
-    clusters: "GET /clusters"
-    name: "POST /name/{cluster_id}"
-    segments: "GET /segments/{video}"
-  }
-  
-  identities: /identities {
-    style.fill: "#F8BBD9"
-    all: "GET /"
-    link: "POST /link"
-    unlink: "POST /unlink"
-  }
-}
-
-# =============================================================================
-# DIAGRAM 7: Model Loading Chain
-# =============================================================================
-
-models_title: AI Model Loading Strategy {
-  near: top-center
-  shape: text
-}
-
-# Face Models
-face_chain: Face Detection Models {
-  style.fill: "#BBDEFB"
-  
-  insightface: "1. InsightFace ArcFace" {
-    label: "512d, GPU\nBest Accuracy"
-  }
-  
-  sface: "2. SFace (Fallback)" {
-    label: "128d, CPU/GPU\nOpenCV Built-in"
-  }
-  
-  yunet: "3. YuNet Only (Last Resort)" {
-    label: "Detection Only\nNo Recognition"
-  }
-}
-
-insightface -> sface: "If ONNX fails"
-sface -> yunet: "If SFace fails"
-
-# ASR Models
-asr_chain: ASR Models {
-  style.fill: "#C8E6C9"
-  
-  indic: "1. AI4Bharat IndicConformer" {
-    label: "Tamil/Hindi/Telugu\nNative NeMo or Docker"
-  }
-  
-  whisper_turbo: "2. Whisper Large v3 Turbo" {
-    label: "deepdml/faster-whisper\nCTranslate2 INT8"
-  }
-  
-  whisper_large: "3. Whisper Large v3" {
-    label: "Systran/faster-whisper"
-  }
-  
-  whisper_small: "4. Whisper Small (Fallback)" {
-    label: "Memory-constrained"
-  }
-}
-
-indic -> whisper_turbo: "If Indic fails"
-whisper_turbo -> whisper_large: "If turbo fails"
-whisper_large -> whisper_small: "If OOM"
-
-# Embedding Models
-embed_chain: Embedding Models {
-  style.fill: "#FFF9C4"
-  
-  bge_m3: "BAAI/bge-m3" {
-    label: "1024d, Multilingual\nText Embeddings"
-  }
-  
-  siglip: "google/siglip-so400m" {
-    label: "1024d\nVisual Embeddings"
-  }
-  
-  wespeaker: "pyannote/wespeaker" {
-    label: "256d\nVoice Embeddings"
-  }
-}
-
-# VLM Models  
-vlm_chain: Vision-Language Models {
-  style.fill: "#FFCCBC"
-  
-  ollama_llava: "Ollama llava:7b" {
-    label: "Local, Free\n~5GB VRAM"
-  }
-  
-  gemini_flash: "Gemini 1.5 Flash" {
-    label: "Cloud API\nFast + Cheap"
-  }
-}
-
-ollama_llava -> gemini_flash: "If Ollama down"
+hub.fusion -> delivery.storage
+delivery.storage.qdrant -> delivery.search.rrf

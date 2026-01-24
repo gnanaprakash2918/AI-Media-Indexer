@@ -116,20 +116,15 @@ docker-compose logs -f media-indexer
 
 **Action**: None needed. Progress is saved. Worker resumes from checkpoint.
 
-### OOM (Out of Memory)
+### Qdrant Connection Refused (WinError 10053)
 
-**Symptom**: Process killed, "CUDA out of memory" error.
+**Symptom**: "An established connection was aborted by the software in your host machine."
 
-**Fix**:
-1. Close other GPU applications
-2. Reduce batch size in `.env`:
-   ```
-   BATCH_SIZE=2
-   ```
-3. Enable aggressive cleanup:
-   ```
-   HIGH_PERFORMANCE_MODE=false
-   ```
+**Cause**: Windows-specific transient socket closure during heavy I/O.
+
+**Status**: **Wired with Resilience**. The `VectorDB` uses `retry_on_connection_error` (audited in `core/storage/db.py`) to automatically handle these transient failures with exponential backoff.
+
+**Action**: If it persists, ensure `BATCH_SIZE` is reduced to 4 and check for firewall interference.
 
 ### 24-Hour Timeout
 

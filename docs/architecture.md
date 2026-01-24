@@ -16,7 +16,7 @@ AI-Media-Indexer is a multimodal video search and indexing system that combines:
 
 ```mermaid
 graph TB
-    subgraph Frontend["Frontend (React + Vite)"]
+    subgraph Frontend["Frontend (Reac)"]
         UI[Web UI]
         RC[React Query Client]
     end
@@ -91,83 +91,89 @@ graph LR
 
 ---
 
-## Ingestion Flow
+## Ingestion Flow (Ultra-High-Fidelity)
 
 ```mermaid
 flowchart TD
     A[Video Upload] --> B{File Validation}
     B -->|Valid| C[Media Probing]
-    B -->|Invalid| Z[Error Response]
     
-    C --> D[Parallel Processing]
+    C --> D[Parallel Pipeline Orchestration]
     
-    subgraph D[Parallel Processing]
+    subgraph D[GPU-Aware Pipeline]
         D1[Frame Extraction]
-        D2[Audio Extraction]
-        D3[Subtitle Detection]
+        D2[Audio Demuxing]
     end
     
-    D1 --> E[Scene Detection]
-    E --> F[Visual Analysis]
-    F --> G[Face Detection]
-    F --> H[Object/Action Detection]
-    
-    D2 --> I[Transcription]
-    I --> J[Speaker Diarization]
-    J --> K[Voice Clustering]
-    
-    D3 --> L[Subtitle Parsing]
-    
-    G --> M[Face Clustering]
-    M --> N[Identity Resolution]
-    
-    subgraph VectorDB["Vector Database"]
-        O[(media_frames)]
-        P[(voice_segments)]
-        Q[(media_transcripts)]
-        R[(scenelets)]
+    subgraph AudioLogic[Audio Council]
+        AL[Multi-pass Lang Detect] --> AC[ASR Council: ROVER voting]
+        AC -->|Whisper v3, Indic, Seamless| AT[Final Transcript]
+        AT --> AD[Analysis: Pyannote 3.1, SER, CLAP Events]
     end
     
-    H --> O
-    K --> P
-    L --> Q
-    I --> Q
-    N --> R
+    subgraph VideoLogic[Video Council]
+        VS[Text-Gated Smart Sampler] --> VC[Video Council: InternVideo2.5]
+        VC --> VT[SAM 2 Temporal Tracking]
+        VT --> VM[Metadata: InsightFace 512D, PP-OCRv5]
+    end
+    
+    D1 --> VS
+    D2 --> AL
+    
+    subgraph Memory[3-Tier Temporal Memory]
+        SW[Sensory Sliding Window]
+        WM[Working Entity Map]
+        LT[Long-term Identity Graph]
+    end
+    
+    VT --> SW
+    AT --> SW
+    
+    subgraph VectorDB["Qdrant Multi-Vector Store"]
+        O[(media_frames: 512D)]
+        S[(scenes: Visual/Motion/Dialogue)]
+        P[(masklets: SAM 2)]
+    end
+    
+    SW --> S
+    VM --> O
+    VT --> P
 ```
 
 ---
 
-## Search Flow
+## Search Flow (Agentic & Hybrid)
 
 ```mermaid
 flowchart TD
-    A[Search Query] --> B[Query Parser]
-    B --> C{Search Type}
+    A[User Query] --> B[LLM Query Expansion]
+    B --> C[Constraint Decomposition: 7 Types]
     
-    C -->|Hybrid| D[Hybrid Search]
-    C -->|Agentic| E[Agentic Search]
-    C -->|Granular| F[Granular Search]
+    subgraph Retrieval[Retriever Council]
+        V[Vector Search: NV-Embed-v2]
+        K[Keyword Search: BM25 Dense]
+        F[Face/Identity Search: Identity Graph]
+    end
     
-    D --> G[Vector Search]
-    D --> H[Keyword Search]
-    G --> I[RRF Fusion]
-    H --> I
+    C --> V
+    C --> K
+    C --> F
     
-    E --> J[LLM Query Expansion]
-    J --> K[Identity Resolution]
-    K --> L[Multi-Vector Search]
-    L --> M[LLM Reranking]
+    subgraph Scoring[Reranker Council]
+        RRF[Hybrid RRF Fusion: 0.7/0.3]
+        CE[Cross-Encoder: MiniLM-L-12-v2]
+        BGE[BGE-Reranker v2: M3]
+        VV[VLM Visual Verification: Gemini 1.5]
+    end
     
-    F --> N[Query Decomposition]
-    N --> O[Constraint Matching]
-    O --> P[Chain-of-Thought Scoring]
+    V --> RRF
+    K --> RRF
+    RRF --> CE
+    CE --> BGE
+    BGE --> VV
     
-    I --> Q[Results]
-    M --> Q
-    P --> Q
-    
-    Q --> R[Response Formatting]
-    R --> S[Thumbnail/Playback URLs]
+    VV --> Q[Final Ranked Results]
+    Q --> R[Reasoning Traces]
 ```
 
 ---
@@ -184,20 +190,20 @@ flowchart TD
 ### 2. Processing (`core/processing/`)
 | File | Purpose |
 |------|---------|
-| `transcriber.py` | Whisper-based transcription |
-| `indic_transcriber.py` | Tamil/Hindi ASR with NeMo |
-| `vision_analyzer.py` | LLM vision analysis via Ollama |
-| `face_clustering.py` | HDBSCAN face clustering |
-| `voice_clustering.py` | Speaker clustering |
-| `segmentation.py` | Scene/shot detection |
+| `asr_council.py` | ROVER-based multi-ASR consensus |
+| `vlm_council.py` | Multi-model frame description with synthesis |
+| `temporal_context.py` | 3-tier XMem temporal memory management |
+| `identity.py` | InsightFace 512D + temporal track building |
+| `scene_aggregator.py` | Fusing visual/dialogue into Scenelets |
+| `indic_transcriber.py` | AI4Bharat/NeMo Indic ASR wrapper |
 
 ### 3. Retrieval (`core/retrieval/`)
 | File | Purpose |
 |------|---------|
-| `agentic_search.py` | SOTA search with LLM reranking |
-| `advanced_query.py` | Multi-constraint query handling |
-| `rag.py` | VideoRAG orchestrator |
-| `engine.py` | Core search engine |
+| `reranker.py` | RRF fusion + Cross-Encoder reranking council |
+| `agentic_search.py` | Constraint decomposition & search agents |
+| `late_interaction.py` | ColBERT-style MaxSim scoring |
+| `hitl_feedback.py` | Human-in-the-loop scoring boosts |
 
 ### 4. Storage (`core/storage/`)
 | File | Purpose |
@@ -236,12 +242,10 @@ flowchart TD
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React, Vite, TanStack Query, TailwindCSS |
-| Backend | FastAPI, Uvicorn, Python 3.12 |
-| Vector DB | Qdrant |
-| LLM | Ollama (local), Gemini (optional) |
-| Embeddings | BAAI/bge-m3 |
-| Vision | InsightFace, OpenCV |
-| ASR | Whisper, NeMo |
-| Task Queue | Celery + Redis (optional) |
-| Observability | Langfuse (optional) |
+| Vector DB | Qdrant (Multi-Vector Scene Schema) |
+| LLM | Gemini 1.5 Pro (Reasoning), Ollama (Local) |
+| Embeddings | NV-Embed-v2 (7B), BGE-M3 (Hybrid) |
+| Vision | InternVideo2.5, SAM 2, InsightFace ArcFace |
+| ASR | Whisper v3, AI4Bharat, SeamlessM4T v2 |
+| Reranking | MiniLM-L-12-v2, BGE-Reranker v2 |
+| Memory | 3-Tier XMem Memory (Sensory/Working/LT) |
