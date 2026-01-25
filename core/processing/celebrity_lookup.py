@@ -253,23 +253,97 @@ class CelebrityIdentifier:
         self,
         face_embedding: list[float],
         cast: list[CelebrityMatch],
+        face_manager: Any,  # Avoid circular import, pass instance
     ) -> CelebrityMatch | None:
         """Match a face embedding against movie cast.
 
         Args:
             face_embedding: 512D face embedding.
             cast: List of CelebrityMatch from TMDB.
+            face_manager: Instance of FaceManager to detect faces in cast photos.
 
         Returns:
             Best matching celebrity or None.
-
-        Note:
-            This is a placeholder - actual face matching requires
-            downloading cast photos and comparing embeddings.
         """
-        # TODO: Implement actual face comparison
-        # For now, return None - requires HITL
-        log.info("[Celebrity] Face matching requires HITL verification")
+        import numpy as np
+        from pathlib import Path
+        import tempfile
+        import os
+
+        if not cast:
+            return None
+
+        target_emb = np.array(face_embedding, dtype=np.float64)
+        target_emb /= np.linalg.norm(target_emb) + 1e-9
+        
+        best_match: CelebrityMatch | None = None
+        best_score = 0.0
+        
+        # Create a temp dir for downloading images
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            
+            # Process cast members with profile images
+            # Optimisation: Check top 10 billed actors first
+            client = await self.tmdb._get_client()
+            if not client:
+                 return None
+
+            for actor in cast[:10]:
+                if not actor.image_url:
+                    continue
+                
+                try:
+                    # Download image
+                    ext = actor.image_url.split(".")[-1]
+                    local_img_path = temp_path / f"{actor.metadata['id']}.{ext}"
+                    
+                    # Download
+                    resp = await client.get(actor.image_url)
+                    if resp.status_code != 200:
+                        continue
+                        
+                    with open(local_img_path, "wb") as f:
+                        f.write(resp.content)
+                    
+                    # Detect face
+                    # Use SFace or InsightFace - FaceManager handles this
+                    faces = await face_manager.detect_faces(local_img_path)
+                    if not faces:
+                        continue
+                        
+                    # Find best matching face in the actor's photo
+                    # (Actor photo might have other people, but usually it's a headshot)
+                    # We assume the largest face is the actor
+                    largest_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
+                    
+                    if largest_face.embedding is None:
+                        continue
+                        
+                    actor_emb = np.array(largest_face.embedding, dtype=np.float64)
+                    actor_emb /= np.linalg.norm(actor_emb) + 1e-9
+                    
+                    score = float(np.dot(target_emb, actor_emb))
+                    log.info(f"[Celebrity] Checking {actor.name}: score={score:.3f}")
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = actor
+                        
+                except Exception as e:
+                    log.warning(f"[Celebrity] Failed to check {actor.name}: {e}")
+                    continue
+
+        # Threshold for identity match
+        # InsightFace threshold is usually around 0.3-0.5 depending on loss
+        # We'll be conservative
+        MATCH_THRESHOLD = 0.45
+        
+        if best_score > MATCH_THRESHOLD and best_match:
+            best_match.confidence = best_score
+            log.info(f"[Celebrity] MATCH FOUND: {best_match.name} (score={best_score:.3f})")
+            return best_match
+            
         return None
 
     async def close(self) -> None:

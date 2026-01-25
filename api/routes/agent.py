@@ -112,16 +112,51 @@ async def agent_chat(
                 "duration": 0,
             }
 
-        # Tool calling logic (Mock for now as detailed tool calling logic was embedded
-        # and depends on dynamic dispatch. For simplicity, we are returning a direct chat response
-        # or would implement full tool calling if dependencies are ready).
-        # Assuming simple chat for now to match extraction scope.
+        # Real Orchestrator Logic
+        from core.orchestration.orchestrator import get_orchestrator
+        
+        start_time = time.time()
+        orchestrator = get_orchestrator()
+        
+        # Execute query through orchestrator
+        # The orchestrator uses its own LLM for routing
+        # The result includes the tool execution and result
+        execution_result = await orchestrator.execute(request.message)
+        
+        duration = time.time() - start_time
+        
+        # Format response
+        route = execution_result.get("route", {})
+        results = execution_result.get("results")
+        
+        # Generate a final answer based on the tool result
+        tool_name = route.get("tool", "unknown")
+        agent_type = route.get("agent", "unknown")
+        
+        final_answer_prompt = f"""
+        User Query: {request.message}
+        Tool Used: {tool_name} ({agent_type})
+        Tool Result: {results}
+        
+        Based on the tool result, answer the user's query gracefully.
+        """
+        
+        final_response = ollama.chat(
+            model=request.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": final_answer_prompt},
+            ]
+        )
 
-        response = ollama.chat(model=request.model, messages=messages)
         return {
-            "response": response["message"]["content"],
-            "tools_used": [],
-            "duration": 0,
+            "response": final_response["message"]["content"],
+            "tools_used": [{
+                "name": tool_name,
+                "agent": agent_type,
+                "result": results
+            }],
+            "duration": duration,
         }
 
     except Exception as e:

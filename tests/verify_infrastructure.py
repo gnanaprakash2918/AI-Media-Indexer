@@ -141,6 +141,8 @@ def test_hardware_profile() -> dict:
             print("   ✅ CPU_ONLY profile (no GPU detected)")
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         results["error"] = str(e)
         print(f"   ❌ Failed to detect hardware profile: {e}")
 

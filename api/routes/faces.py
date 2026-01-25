@@ -481,3 +481,107 @@ async def name_face_cluster(
     except Exception as e:
         logger.error(f"[Faces] App naming failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/faces/cluster/{cluster_id}/identify")
+async def identify_face_cluster(
+    cluster_id: int,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Attempt to auto-identify a face cluster using TMDB cast lists.
+    
+    1. Finds a video associated with this cluster.
+    2. Looks up the movie/show metadata.
+    3. Downloads cast photos and compares embeddings.
+    4. Returns the best match.
+    """
+    if not pipeline or not pipeline.db:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    try:
+        # 1. Get cluster representative embedding and a sample video path
+        faces = pipeline.db.get_faces_in_cluster(cluster_id, limit=1)
+        if not faces:
+             raise HTTPException(status_code=404, detail="Cluster empty or not found")
+        
+        sample_face = faces[0]
+        media_path = sample_face.get("media_path")
+        
+        # Get centroid embedding for the cluster (better than single face)
+        # We need to fetch it from the graph or average the points
+        # For now, we'll retrieve 5 faces and average
+        faces_for_avg = pipeline.db.get_faces_in_cluster(cluster_id, limit=5)
+        embeddings = []
+        # We need vectors, get_faces_in_cluster might not return vectors by default depending on impl
+        # pipeline.db.client.retrieve...
+        
+        # Fast path: Use the sample face's vector. 
+        # Ideally we want the cluster centroid.
+        # Let's assume pipeline.db.get_face_embedding exists or we fetch it
+        from qdrant_client import models
+        points = pipeline.db.client.retrieve(
+            collection_name=pipeline.db.FACES_COLLECTION,
+            ids=[sample_face["id"]],
+            with_vectors=True
+        )
+        if not points:
+             raise HTTPException(status_code=404, detail="Face point not found")
+        
+        target_embedding = points[0].vector
+        if not target_embedding:
+             raise HTTPException(status_code=500, detail="Face has no embedding")
+
+        # 2. Lookup Metadata
+        from core.processing.metadata import get_metadata_engine
+        metadata_engine = get_metadata_engine()
+        
+        # We need to re-enrich to ensure we have the TMDB ID/Cast
+        # In a real app, we should store TMDB ID in the media table.
+        # Here we re-run heuristic
+        metadata = await metadata_engine.enrich_video(None, media_path)
+        if not metadata or not metadata.cast:
+             return {"status": "failed", "reason": "No metadata/cast found for video"}
+
+        # 3. Match against cast
+        from core.processing.celebrity_lookup import CelebrityIdentifier, CelebrityMatch
+        
+        identifier = CelebrityIdentifier()
+        # Convert metadata cast to CelebrityMatch objects
+        cast_matches = []
+        for member in metadata.cast:
+             cast_matches.append(CelebrityMatch(
+                 name=member.name, 
+                 confidence=0.8, 
+                 source="tmdb", 
+                 image_url=f"https://image.tmdb.org/t/p/w185{member.profile_path}" if member.profile_path else None,
+                 metadata={"id": member.tmdb_id}
+             ))
+             
+        # Initialize FaceManager if needed (borrow from pipeline)
+        if not pipeline.faces:
+             # Should be initialized by now usually
+             from core.processing.identity import FaceManager
+             pipeline.faces = FaceManager(db_client=pipeline.db.client)
+        
+        match = await identifier.match_face_to_cast(
+            target_embedding, 
+            cast_matches,
+            pipeline.faces
+        )
+        await identifier.close()
+        
+        if match:
+             return {
+                 "status": "success",
+                 "match": {
+                     "name": match.name,
+                     "confidence": match.confidence,
+                     "image": match.image_url
+                 }
+             }
+        else:
+             return {"status": "failed", "reason": "No match found in cast"}
+
+    except Exception as e:
+        logger.error(f"[Faces] Identification failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e

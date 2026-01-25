@@ -701,3 +701,8 @@ export const getGraphStats = async () => {
   const res = await apiClient.get<{ stats: any }>('/graph/stats');
   return res.data;
 };
+
+export const identifyFaceCluster = async (clusterId: number) => {
+  const res = await apiClient.post(`/faces/cluster/${clusterId}/identify`);
+  return res.data;
+};

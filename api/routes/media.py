@@ -16,6 +16,26 @@ from core.utils.logger import logger
 router = APIRouter()
 
 
+def validate_path(path_str: str) -> Path:
+    """Security check to prevent path traversal to sensitive system files.
+    
+    Allowing arbitrary paths because this is a local desktop app, but blocking
+    obviously dangerous OS files.
+    """
+    path = Path(path_str).resolve()
+    path_str_lower = str(path).lower()
+    
+    # Block Windows System files
+    if "windows\\system32" in path_str_lower or "windows/system32" in path_str_lower:
+        raise HTTPException(status_code=403, detail="Access to System32 denied")
+        
+    # Block sensitive Linux/Unix files
+    if path_str_lower.startswith(("/etc", "/var/log", "/proc", "/sys")):
+        raise HTTPException(status_code=403, detail="Access to system files denied")
+        
+    return path
+
+
 @router.get("/thumbnails/faces/{filename}")
 async def get_face_thumbnail(
     filename: str,
@@ -314,7 +334,7 @@ async def stream_segment(
     Raises:
         HTTPException: If encoding or caching fails.
     """
-    file_path = Path(path)
+    file_path = validate_path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -397,12 +417,14 @@ async def get_media_thumbnail(
         HTTPException: If frame extraction via OpenCV fails.
     """
     import cv2
+    import asyncio
+    import numpy as np
 
     file_path = Path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
-    try:
+    def _generate_thumbnail():
         cap = cv2.VideoCapture(str(file_path))
         if not cap.isOpened():
             raise ValueError("Could not open video")
@@ -425,8 +447,12 @@ async def get_media_thumbnail(
         )
         if not success:
             raise ValueError("Encoding failed")
+        return buffer.tobytes()
 
-        return Response(content=buffer.tobytes(), media_type="image/jpeg")
+    try:
+        # Run blocking CV2 operations in a separate thread
+        image_bytes = await asyncio.to_thread(_generate_thumbnail)
+        return Response(content=image_bytes, media_type="image/jpeg")
 
     except Exception as e:
         logger.error(f"Thumbnail generation failed: {e}")

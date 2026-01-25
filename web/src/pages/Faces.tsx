@@ -224,6 +224,7 @@ function ClusterCard({
   onMerge,
   onSetMain,
   onDeleteCluster,
+  onIdentify,
 }: {
   cluster: FaceClusterData;
   onLabelCluster: (clusterId: number) => void;
@@ -234,6 +235,7 @@ function ClusterCard({
   onMerge?: () => void;
   onSetMain?: (clusterId: number, isMain: boolean) => void;
   onDeleteCluster?: (clusterId: number) => void;
+  onIdentify?: (clusterId: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -322,6 +324,19 @@ function ClusterCard({
             <MoveUp fontSize="small" sx={{ mr: 0.5 }} /> Merge
           </Button>
         )}
+
+        <Button
+          size="small"
+          variant="outlined"
+          color="secondary"
+          onClick={e => {
+            e.stopPropagation();
+            onIdentify?.(cluster.cluster_id);
+          }}
+          sx={{ mr: 1 }}
+        >
+          <AutoAwesome fontSize="small" sx={{ mr: 0.5 }} /> Auto ID
+        </Button>
 
         <Button
           size="small"
@@ -602,6 +617,23 @@ export default function FacesPage() {
       queryClient.invalidateQueries({ queryKey: ['faces'] });
     } finally {
       setIsClustering(false);
+    }
+  };
+
+  const handleIdentifyCluster = async (clusterId: number) => {
+    try {
+      // Optimistic UI or loading state could be added here
+      const result = await import('../api/client').then(m => m.identifyFaceCluster(clusterId));
+      if (result.status === 'success' && result.match) {
+        if (confirm(`Match Found: ${result.match.name} (${Math.round(result.match.confidence * 100)}%)\n\nApply this name to the cluster?`)) {
+          labelClusterMutation.mutate({ clusterId, name: result.match.name });
+        }
+      } else {
+        alert('No confident match found for this cluster.');
+      }
+    } catch (e) {
+      console.error('Identification failed:', e);
+      alert('Face identification failed. See console for details.');
     }
   };
 
@@ -911,6 +943,7 @@ export default function FacesPage() {
                   setMainMutation.mutate({ clusterId: cid, isMain })
                 }
                 onDeleteCluster={handleDeleteCluster}
+                onIdentify={handleIdentifyCluster}
               />
             ))}
           </Box>

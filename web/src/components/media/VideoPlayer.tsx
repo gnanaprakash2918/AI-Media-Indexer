@@ -54,6 +54,7 @@ function InnerVideoPlayer({
   const [isFullVideo, setIsFullVideo] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [videoDims, setVideoDims] = useState({ width: 1920, height: 1080 });
   const theme = useTheme();
 
   // Fetch masklets for the video
@@ -134,13 +135,17 @@ function InnerVideoPlayer({
 
     setIsLoading(false);
 
+    // Update SVG viewBox to match video dimensions
+    if (video.videoWidth && video.videoHeight) {
+      setVideoDims({ width: video.videoWidth, height: video.videoHeight });
+    }
+
     // Seek to segment start (or 0 for full video)
     if (hasSegment && !isFullVideo) {
       video.currentTime = segmentStart;
       try {
         video.play();
       } catch (e) {
-        // Autoplay might be blocked, user intervention needed
         console.warn('Autoplay blocked', e);
       }
     }
@@ -331,8 +336,8 @@ function InnerVideoPlayer({
                     pointerEvents: 'none',
                     zIndex: 3,
                   }}
-                  viewBox="0 0 1920 1080"
-                  preserveAspectRatio="xMidYMid slice"
+                  viewBox={`0 0 ${videoDims.width} ${videoDims.height}`}
+                  preserveAspectRatio="none"
                 >
                   {activeOverlays.map((o, i) => (
                     <g key={`${o.type}-${i}`}>
@@ -352,7 +357,7 @@ function InnerVideoPlayer({
                           x={o.bbox[0]}
                           y={o.bbox[1] - 8}
                           fill={o.color}
-                          fontSize="18"
+                          fontSize={Math.max(16, videoDims.width / 60)}
                           fontWeight="bold"
                           style={{ textShadow: '0 0 4px rgba(0,0,0,0.9)' }}
                         >

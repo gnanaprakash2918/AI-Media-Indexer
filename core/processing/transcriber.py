@@ -591,7 +591,7 @@ class AudioTranscriber:
         return out
 
     @observe("transcription")
-    def transcribe(
+    async def transcribe(
         self,
         audio_path: Path,
         language: str | None = None,
@@ -602,21 +602,7 @@ class AudioTranscriber:
         force_lyrics: bool = False,
         task: str = "transcribe",
     ) -> list[dict[str, Any]] | None:
-        """Transcribe audio using the Best-of-Council (BoC) strategy.
-
-        Args:
-            audio_path: Path to the audio file.
-            language: Override language detection.
-            subtitle_path: Path to existing subtitle file.
-            output_path: Path to save result.
-            start_time: Start offset in seconds.
-            end_time: End offset in seconds.
-            force_lyrics: Whether to prioritize music-based models.
-            task: Task to perform ('transcribe' or 'translate').
-
-        Returns:
-            Full transcription results including segments and words.
-        """
+        """Transcribe audio using the Best-of-Council (BoC) strategy."""
         if not audio_path.exists():
             log(f"[ERROR] Input file not found: {audio_path}")
             return None
@@ -642,7 +628,7 @@ class AudioTranscriber:
         proc_path = self._slice_audio(audio_path, start_time, end_time)
 
         try:
-            return self._run_whisper_inference(
+            return await self._inference(
                 proc_path,
                 lang,
                 out_srt,
@@ -657,8 +643,7 @@ class AudioTranscriber:
                 except Exception:
                     pass
 
-    @observe("whisper_inference")
-    def _inference(
+    async def _inference(
         self,
         audio_path: Path,
         lang: str | None,
@@ -667,6 +652,7 @@ class AudioTranscriber:
         is_temp_file: bool = False,
         force_lyrics: bool = False,
     ) -> list[dict[str, Any]] | None:
+        """Run Whisper inference in a non-blocking thread."""
         chunks: list[dict[str, Any]] = []
 
         candidates = settings.whisper_model_map.get(
@@ -677,59 +663,70 @@ class AudioTranscriber:
         )
 
         try:
-            # Check shared model state
-            if AudioTranscriber._SHARED_BATCHED is None or (
-                AudioTranscriber._SHARED_SIZE != model_to_use
-            ):
-                self._load_model(model_to_use)
+            # ------------------------------------------------------------------
+            # BLOCKING SECTION START: Model Loading & Inference
+            # ------------------------------------------------------------------
+            def _blocking_inference():
+                # Check shared model state
+                if AudioTranscriber._SHARED_BATCHED is None or (
+                    AudioTranscriber._SHARED_SIZE != model_to_use
+                ):
+                    self._load_model(model_to_use)
 
-            if AudioTranscriber._SHARED_BATCHED is None:
-                raise RuntimeError("Model failed to initialize")
+                if AudioTranscriber._SHARED_BATCHED is None:
+                    raise RuntimeError("Model failed to initialize")
 
-            log(
-                f"[INFO] Running Inference on {audio_path} with {model_to_use}."
-                + (" (lyrics mode)" if force_lyrics else "")
-            )
+                log(
+                    f"[INFO] Running Inference on {audio_path} with {model_to_use}."
+                    + (" (lyrics mode)" if force_lyrics else "")
+                )
 
-            # Language locking: detect once, force for all chunks
-            effective_lang = lang
-            if settings.whisper_language_lock:
-                if self._locked_language:
-                    effective_lang = self._locked_language
-                else:
-                    effective_lang = None  # Auto-detect on first run
+                # Language locking: detect once, force for all chunks
+                effective_lang = lang
+                if settings.whisper_language_lock:
+                    if self._locked_language:
+                        effective_lang = self._locked_language
+                    else:
+                        effective_lang = None  # Auto-detect on first run
 
-            # VAD settings: ALWAYS enable vad_filter to avoid "No clip timestamps" error
-            # Use very permissive settings for lyrics mode to capture singing/music
-            no_speech_thresh = (
-                0.9 if force_lyrics else 0.6
-            )  # More permissive for lyrics
+                no_speech_thresh = (
+                    0.9 if force_lyrics else 0.6
+                )  # More permissive for lyrics
 
-            segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
-                str(audio_path),
-                batch_size=settings.batch_size,
-                language=effective_lang,
-                task="transcribe",
-                beam_size=3,
-                condition_on_previous_text=False,
-                initial_prompt="♪"
-                if force_lyrics
-                else None,  # Hint that this is music
-                repetition_penalty=1.2,
-                word_timestamps=True,
-                vad_filter=True,  # ALWAYS enable to avoid "No clip timestamps" error
-                vad_parameters={
-                    # Very permissive for lyrics mode to capture more audio
-                    "min_speech_duration_ms": 10 if force_lyrics else 100,
-                    "min_silence_duration_ms": 1000 if force_lyrics else 500,
-                    "speech_pad_ms": 2000 if force_lyrics else 800,
-                    "threshold": 0.1
+                segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
+                    str(audio_path),
+                    batch_size=settings.batch_size,
+                    language=effective_lang,
+                    task="transcribe",
+                    beam_size=3,
+                    condition_on_previous_text=False,
+                    initial_prompt="♪"
                     if force_lyrics
-                    else 0.3,  # Very low threshold for lyrics
-                },
-                no_speech_threshold=no_speech_thresh,
-                log_prob_threshold=-1.0,
-            )
+                    else None,
+                    repetition_penalty=1.2,
+                    word_timestamps=True,
+                    vad_filter=True,
+                    vad_parameters={
+                        "min_speech_duration_ms": 10 if force_lyrics else 100,
+                        "min_silence_duration_ms": 1000 if force_lyrics else 500,
+                        "speech_pad_ms": 2000 if force_lyrics else 800,
+                        "threshold": 0.1
+                        if force_lyrics
+                        else 0.3,
+                    },
+                    no_speech_threshold=no_speech_thresh,
+                    log_prob_threshold=-1.0,
+                )
+                
+                # Consume generator here in thread to avoid blocking later
+                return list(segments), info
+
+            # Run the heavy blocking part in a thread
+            segments_list, info = await asyncio.to_thread(_blocking_inference)
+            
+            # ------------------------------------------------------------------
+            # BLOCKING SECTION END
+            # ------------------------------------------------------------------
 
             # Lock detected language for subsequent chunks
             if (
@@ -740,7 +737,8 @@ class AudioTranscriber:
                 self._locked_language = info.language
                 log(f"[INFO] Language locked to: {self._locked_language}")
 
-            for segment in segments:
+            for segment in segments_list: # Iterator exhausted to list in thread
+
                 if (segment.end - segment.start) < 0.2:
                     continue
                 if segment.words:

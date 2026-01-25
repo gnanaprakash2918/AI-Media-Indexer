@@ -777,7 +777,8 @@ class FaceManager:
         assert self._insightface_app is not None, "InsightFace not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
-            faces = self._insightface_app.get(bgr)
+            # Run InsightFace in a thread to avoid blocking the event loop
+            faces = await asyncio.to_thread(self._insightface_app.get, bgr)
 
         results = []
         for face in faces:

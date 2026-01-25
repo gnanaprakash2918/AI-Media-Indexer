@@ -161,7 +161,8 @@ class OCRProcessor:
             return {"text": "", "boxes": [], "lines": [], "confidence": 0.0}
 
         try:
-            result = self.ocr.ocr(frame, cls=True)
+            # Run OCR in a thread to prevent blocking the event loop
+            result = await asyncio.to_thread(self.ocr.ocr, frame, cls=True)
 
             if not result or not result[0]:
                 return {
@@ -418,7 +419,8 @@ class EasyOCRProcessor:
             return {"text": "", "boxes": [], "confidence": 0.0}
 
         try:
-            result = self.reader.readtext(frame)
+            # Run EasyOCR in a thread
+            result = await asyncio.to_thread(self.reader.readtext, frame)
 
             lines = []
             boxes = []

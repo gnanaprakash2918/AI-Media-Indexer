@@ -181,7 +181,7 @@ class IngestionPipeline:
         _ = await self.metadata_engine.identify(path, user_hint=hint_enum)
 
         try:
-            probed = self.prober.probe(path)
+            probed = await self.prober.probe(path)
             duration = float(probed.get("format", {}).get("duration", 0.0))
         except MediaProbeError as e:
             progress_tracker.fail(job_id, error=f"Media probe failed: {e}")
@@ -420,7 +420,7 @@ class IngestionPipeline:
                     if detection_confidence < 0.5:
                         try:
                             # Probe for duration
-                            probed = self.prober.probe(path)
+                            probed = await self.prober.probe(path)
                             duration = float(
                                 probed.get("format", {}).get("duration", 0.0)
                             )
@@ -480,9 +480,9 @@ class IngestionPipeline:
 
                     # Generate SRT sidecar file alongside the video
                     srt_path = path.with_suffix(".srt")
-                    async with GPU_SEMAPHORE:
+                            width GPU_SEMAPHORE:
                         audio_segments = (
-                            indic_transcriber.transcribe(
+                            await indic_transcriber.transcribe(
                                 path, output_srt=srt_path
                             )
                             or []
@@ -510,7 +510,7 @@ class IngestionPipeline:
                                 "whisper", vram_gb=1.5
                             ):
                                 audio_segments = (
-                                    transcriber.transcribe(
+                                    await transcriber.transcribe(
                                         path, language=detected_lang
                                     )
                                     or []
@@ -529,17 +529,17 @@ class IngestionPipeline:
                 )
                 try:
                     with AudioTranscriber() as transcriber:
-                        async with RESOURCE_ARBITER.acquire(
-                            "whisper", vram_gb=1.5
-                        ):
-                            audio_segments = (
-                                transcriber.transcribe(
-                                    path,
-                                    language=detected_lang,
-                                    force_lyrics=use_lyrics_mode,
+                            async with RESOURCE_ARBITER.acquire(
+                                "whisper", vram_gb=1.5
+                            ):
+                                audio_segments = (
+                                    await transcriber.transcribe(
+                                        path,
+                                        language=detected_lang,
+                                        force_lyrics=use_lyrics_mode,
+                                    )
+                                    or []
                                 )
-                                or []
-                            )
 
                             # Auto-retry with lyrics mode if no segments and wasn't already lyrics mode
                             if not audio_segments and not use_lyrics_mode:
@@ -547,7 +547,7 @@ class IngestionPipeline:
                                     "[Audio] No segments found, retrying with lyrics mode..."
                                 )
                                 audio_segments = (
-                                    transcriber.transcribe(
+                                    await transcriber.transcribe(
                                         path,
                                         language=detected_lang,
                                         force_lyrics=True,
@@ -566,7 +566,7 @@ class IngestionPipeline:
                 # NEVER-EMPTY GUARANTEE: Create a placeholder segment to preserve timeline
                 # This ensures search can still find the media by path/timestamp
                 try:
-                    probed = self.prober.probe(path)
+                    probed = await self.prober.probe(path)
                     duration = float(
                         probed.get("format", {}).get("duration", 0.0)
                     )
@@ -592,7 +592,7 @@ class IngestionPipeline:
             log(f"[Audio] Stored {len(prepared)} dialogue segments in DB")
 
             try:
-                probed = self.prober.probe(path)
+                probed = await self.prober.probe(path)
                 total_duration = float(
                     probed.get("format", {}).get("duration", 0.0)
                 )
@@ -687,7 +687,9 @@ class IngestionPipeline:
                     ]
 
                     # BATCH PROCESSING: Single GPU acquisition for all chunks
-                    batch_results = await audio_detector.detect_events_batch(
+                    # Run CLAP in a thread to prevent blocking
+                    batch_results = await asyncio.to_thread(
+                        audio_detector.detect_events_batch,
                         audio_chunks=audio_chunks,
                         target_classes=target_classes,
                         sample_rate=int(sr),

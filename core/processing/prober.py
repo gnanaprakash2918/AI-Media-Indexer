@@ -86,7 +86,7 @@ class MediaProber:
     """
 
     @requires_ffprobe
-    def probe(self, file_path: str | Path) -> dict[str, Any]:
+    async def probe(self, file_path: str | Path) -> dict[str, Any]:
         """Probe a media file with ffprobe and return its metadata.
 
         This method invokes `ffprobe` with JSON output enabled and parses the
@@ -132,17 +132,19 @@ class MediaProber:
         ]
 
         try:
-            process = subprocess.Popen(
-                args=args_to_ffprobe,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                shell=False,
-                encoding="utf-8",
-                errors="replace",
+            # Use asyncio to run ffprobe asynchronously
+            args = args_to_ffprobe[1:]  # Remove 'ffprobe' as create_subprocess_exec takes program as first arg
+            
+            process = await asyncio.create_subprocess_exec(
+                "ffprobe",
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
 
-            out, err = process.communicate()
+            stdout_data, stderr_data = await process.communicate()
+            out = stdout_data.decode("utf-8", errors="replace")
+            err = stderr_data.decode("utf-8", errors="replace")
             return_code = process.returncode
 
             if return_code != 0:
