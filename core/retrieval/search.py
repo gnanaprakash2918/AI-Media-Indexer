@@ -71,7 +71,8 @@ class SearchEngine:
         log(f"[Search] Expanded search: '{search_text}'")
 
         # 4. Execute search with optional identity filter
-        query_vector = self.db.encode_texts(search_text, is_query=True)[0]
+        query_vector = await self.db.encode_texts(search_text, is_query=True)
+        query_vector = query_vector[0]
         results = self.db.search_frames_filtered(
             query_vector=query_vector,
             face_cluster_ids=cluster_ids if cluster_ids else None,
@@ -118,12 +119,12 @@ class SearchEngine:
         # Fallback
         return {"person_name": None, "visual_keywords": query}
 
-    def search(
+    async def search(
         self, query: str, limit: int = 10
     ) -> dict[str, list[dict[str, Any]]]:
-        """Synchronous search (backward compatible)."""
-        frame_results = self.db.search_frames(query, limit=limit)
-        dialogue_results = self.db.search_media(query, limit=limit)
+        """Backward compatible search."""
+        frame_results = await self.db.search_frames(query, limit=limit)
+        dialogue_results = await self.db.search_media(query, limit=limit)
 
         return {
             "visual_matches": frame_results,

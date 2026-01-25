@@ -775,6 +775,20 @@ class ParsedQuery(BaseModel):
         description="Location (e.g., 'Brunswick sports', 'red signal intersection')",
     )
 
+    # Deep Research / Cinematography Fields
+    mood: str | None = Field(
+        default=None,
+        description="Cinematic mood (e.g., 'happy', 'tense', 'dramatic', 'calm')",
+    )
+    shot_type: str | None = Field(
+        default=None,
+        description="Camera shot type (e.g., 'close-up', 'wide shot', 'aerial')",
+    )
+    aesthetic_score: float | None = Field(
+        default=None,
+        description="Minimum aesthetic score (0.0-10.0) for filtering high-quality shots",
+    )
+
     # Scene description for very complex queries
     scene_description: str = Field(
         default="", description="LLM-generated summary of what to search for"

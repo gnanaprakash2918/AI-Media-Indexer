@@ -108,7 +108,7 @@ class HybridSearcher:
             query_embedding = await self.db.get_embedding(query)
 
             # Search scenes
-            results = self.db.search_scenes(
+            results = await self.db.search_scenes(
                 query_embedding,
                 limit=limit,
                 video_id=video_id,

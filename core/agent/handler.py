@@ -241,20 +241,8 @@ class MediaAgentHandler(RequestHandler):
         params: MessageSendParams,
         context: ServerCallContext | None = None,
     ) -> Task:
-        """Handle an A2A `message.send` request.
+        """Handle an A2A `message.send` request."""
 
-        This implementation treats the most recent user message as a
-        single-turn query and lets the model decide whether to call any
-        tools.
-
-        Args:
-            params: The A2A message-send parameters object. The handler
-                expects a `message` attribute with a `parts` list.
-            context: Optional transport-specific context (unused).
-
-        Returns:
-            A :class:`Task` whose status contains the agent's reply.
-        """
         # 1. Extract user text
         logger.info("DEBUG: Handler received request!")
         user_message: Message = params.message  # type: ignore[assignment]

@@ -171,7 +171,13 @@ class VectorDB:
 
     MEDIA_VECTOR_SIZE = settings.visual_embedding_dim
     FACE_VECTOR_SIZE = 512  # InsightFace ArcFace
-    TEXT_DIM = settings.text_embedding_dim
+    
+    # DYNAMICALLY FIX DIM: If model is bge-m3, we force 1024, otherwise use config
+    if "bge-m3" in _SELECTED_MODEL.lower() or "mxbai" in _SELECTED_MODEL.lower():
+        TEXT_DIM = 1024
+    else:
+        TEXT_DIM = settings.text_embedding_dim
+        
     VOICE_VECTOR_SIZE = 256
 
     MODEL_NAME = _SELECTED_MODEL
@@ -225,7 +231,8 @@ class VectorDB:
         log(
             f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
         )
-        self._ensure_collections()
+        self._ensure_collections() # This is sync and should stay sync as it's in __init__
+
 
         # Thread-safe cluster ID counter (uses timestamp + counter for uniqueness)
         import threading
@@ -383,12 +390,6 @@ class VectorDB:
                 repo_id=self.MODEL_NAME,
                 local_dir=str(local_model_dir),
                 token=settings.hf_token,
-                ignore_patterns=[
-                    "*.msgpack",
-                    "*.h5",
-                    "*.ot",
-                    "*.bin",
-                ],  # Ignore PyTorch bin if safetensors exists
             )
         except Exception as dl_exc:
             log(f"Snapshot Download Failed: {dl_exc}", level="error")
@@ -437,14 +438,34 @@ class VectorDB:
             except Exception as e:
                 log(f"Failed to move encoder to GPU: {e}", level="WARNING")
 
-    def _ensure_encoder_loaded(self) -> None:
+    async def _ensure_encoder_loaded(self, job_id: str | None = None) -> None:
         """Initializes the encoder model if it hasn't been loaded yet.
 
         Updates the last used timestamp for idle unloading logic.
+        Uses RESOURCE_ARBITER to manage VRAM.
         """
         if self.encoder is None:
-            log(f"Lazy loading encoder: {self.MODEL_NAME}...")
-            self.encoder = self._load_encoder()
+            # Determine VRAM requirement
+            vram_gb = 1.0  # Default for small models
+            model_lower = self.MODEL_NAME.lower()
+            if "nv-embed-v2" in model_lower:
+                vram_gb = 16.0
+            elif "sfr-embedding-2" in model_lower:
+                vram_gb = 4.0
+            elif "bge-m3" in model_lower:
+                vram_gb = 2.0
+
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+
+            log(
+                f"Lazy loading encoder: {self.MODEL_NAME} ({vram_gb}GB VRAM requested)..."
+            )
+
+            async with RESOURCE_ARBITER.acquire(
+                "embedding_encoder", vram_gb=vram_gb, job_id=job_id
+            ):
+                self.encoder = self._load_encoder()
+
         self._encoder_last_used = time.time()
 
     def unload_encoder_if_idle(self) -> bool:
@@ -471,12 +492,13 @@ class VectorDB:
         return False
 
     @observe("db_encode_texts")
-    def encode_texts(
+    async def encode_texts(
         self,
         texts: str | list[str],
         batch_size: int = 1,
         show_progress_bar: bool = False,
         is_query: bool = False,
+        job_id: str | None = None,
     ) -> list[list[float]]:
         """Transforms text or a list of texts into vector embeddings.
 
@@ -493,7 +515,7 @@ class VectorDB:
             A list of embedding vectors (list of floats).
         """
         # LAZY LOAD on first use
-        self._ensure_encoder_loaded()
+        await self._ensure_encoder_loaded(job_id=job_id)
 
         if isinstance(texts, str):
             texts_list = [texts]
@@ -528,7 +550,7 @@ class VectorDB:
 
         if self.encoder is None:
             # Lazy load if needed or raise error
-            self._ensure_encoder_loaded()
+            await self._ensure_encoder_loaded(job_id=job_id)
             if self.encoder is None:
                 log("Encoder not available", level="ERROR")
                 return []
@@ -540,7 +562,7 @@ class VectorDB:
         )
         return [list(e) for e in embeddings]
 
-    def get_embedding(self, text: str) -> list[float]:
+    async def get_embedding(self, text: str) -> list[float]:
         """Convenience method to get a single query embedding for a string.
 
         Args:
@@ -550,7 +572,7 @@ class VectorDB:
             The embedding vector as a list of floats.
         """
         try:
-            return self.encode_texts(text, is_query=True)[0]
+            return (await self.encode_texts(text, is_query=True))[0]
         except Exception as e:
             log(
                 f"Error generating embedding for '{text[:20]}...': {e}",
@@ -559,9 +581,9 @@ class VectorDB:
             # Return zero vector as fallback to prevent crash
             return [0.0] * self.MEDIA_VECTOR_SIZE
 
-    def encode_text(self, text: str) -> list[float]:
+    async def encode_text(self, text: str) -> list[float]:
         """Encodes a single text string."""
-        return self.encode_texts(text, is_query=True)[0]
+        return (await self.encode_texts(text, is_query=True))[0]
 
     def get_indexed_videos(self) -> list[str]:
         """Retrieves a list of all unique video paths currently indexed in the database.
@@ -623,158 +645,156 @@ class VectorDB:
                 break
         return frames
 
-    def _ensure_collections(self) -> None:
-        if not self.client.collection_exists(self.MEDIA_SEGMENTS_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.TEXT_DIM,
-                    distance=models.Distance.COSINE,
-                ),
-            )
-
-        # Check media_frames collection dimension
-        if self.client.collection_exists(self.MEDIA_COLLECTION):
+    def _check_and_fix_collection(
+        self,
+        collection_name: str,
+        expected_size: int,
+        distance: models.Distance = models.Distance.COSINE,
+        is_multi_vector: bool = False,
+        multi_vector_config: dict | None = None,
+    ) -> None:
+        """Checks if a collection exists and has the correct dimension. Recreates if mismatch."""
+        if self.client.collection_exists(collection_name):
             try:
-                info = self.client.get_collection(self.MEDIA_COLLECTION)
-                # Handle both single vector and named vectors
+                info = self.client.get_collection(collection_name)
                 vectors_config = info.config.params.vectors
-                if isinstance(vectors_config, dict):
-                    # If named vectors, check specific vector or just pass (complex mismatch)
-                    # For now, let's assume if it's a dict, we might be using named vectors
-                    # and simple size check might need specific key.
-                    # Defaulting to checking typical key if known, or skip/log.
+
+                # Check if we need to check specific multi-vector keys
+                if is_multi_vector and isinstance(vectors_config, dict):
+                    # For multi-vector, we just assume it's correct for now unless we do deep check
+                    # Or we check one key if we know it
                     pass
-                elif vectors_config and hasattr(vectors_config, "size"):
-                    existing_size = vectors_config.size  # type: ignore
-                    if existing_size != self.MEDIA_VECTOR_SIZE:
+                elif not is_multi_vector and isinstance(vectors_config, dict):
+                     # Mismatch: expected single, got multi
+                     log(f"Collection {collection_name} is multi-vector but expected single. Recreating.", level="WARNING")
+                     self.client.delete_collection(collection_name)
+                elif hasattr(vectors_config, "size"):
+                    existing_size = vectors_config.size
+                    if existing_size != expected_size:
                         log(
-                            f"media_frames dimension mismatch: {existing_size} vs {self.MEDIA_VECTOR_SIZE}. Recreating.",
+                            f"Collection {collection_name} dimension mismatch: {existing_size} vs {expected_size}. Recreating.",
                             level="WARNING",
                         )
-                        self.client.delete_collection(self.MEDIA_COLLECTION)
+                        self.client.delete_collection(collection_name)
             except Exception as e:
-                log(f"Failed to check media_frames dimension: {e}")
+                log(f"Failed to check {collection_name} dimension: {e}", level="ERROR")
 
-        if not self.client.collection_exists(self.MEDIA_COLLECTION):
+        # Create if missing (or deleted above)
+        if not self.client.collection_exists(collection_name):
+            if is_multi_vector and multi_vector_config:
+                vectors_config = multi_vector_config
+            else:
+                vectors_config = models.VectorParams(
+                    size=expected_size,
+                    distance=distance,
+                )
+
             self.client.create_collection(
-                collection_name=self.MEDIA_COLLECTION,
-                vectors_config=models.VectorParams(
+                collection_name=collection_name,
+                vectors_config=vectors_config,
+            )
+            log(f"Created collection {collection_name} with valid config.")
+
+    def _ensure_collections(self) -> None:
+        # 1. Media Segments (Text Only)
+        self._check_and_fix_collection(
+            self.MEDIA_SEGMENTS_COLLECTION, self.TEXT_DIM
+        )
+
+        # 2. Media Frames (Visual + Metadata)
+        self._check_and_fix_collection(
+            self.MEDIA_COLLECTION, self.MEDIA_VECTOR_SIZE
+        )
+        # Re-create indexes for Frames if they were wiped
+        self.client.create_payload_index(
+            collection_name=self.MEDIA_COLLECTION,
+            field_name="video_path",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        self._create_text_index(
+            collection_name=self.MEDIA_COLLECTION,
+            field_name="transcript",
+            type=models.TextIndexType.TEXT,
+            tokenizer=models.TokenizerType.WORD,
+        )
+        self.client.create_payload_index(
+            collection_name=self.MEDIA_COLLECTION,
+            field_name="scan_id",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        self._create_text_index(
+            collection_name=self.MEDIA_COLLECTION,
+            field_name="ocr_text",
+            type=models.TextIndexType.TEXT,
+            tokenizer=models.TokenizerType.WORD,
+            min_token_len=2,
+            max_token_len=20,
+            lowercase=True,
+        )
+
+        # 3. Faces (Euclidean Distance)
+        self._check_and_fix_collection(
+            self.FACES_COLLECTION,
+            self.FACE_VECTOR_SIZE,
+            distance=models.Distance.EUCLID,
+        )
+
+        # 4. Scenelets (Multi-Vector-ish: "content")
+        self._check_and_fix_collection(
+            self.SCENELETS_COLLECTION,
+            self.MEDIA_VECTOR_SIZE,
+            is_multi_vector=True,
+            multi_vector_config={
+                "content": models.VectorParams(
                     size=self.MEDIA_VECTOR_SIZE,
                     distance=models.Distance.COSINE,
                 ),
-            )
+            },
+        )
+        self.client.create_payload_index(
+            collection_name=self.SCENELETS_COLLECTION,
+            field_name="media_path",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        self.client.create_payload_index(
+            collection_name=self.SCENELETS_COLLECTION,
+            field_name="start_time",
+            field_schema=models.PayloadSchemaType.FLOAT,
+        )
 
-            # Create Payload Indexes for fast filtering
-            self.client.create_payload_index(
-                collection_name=self.MEDIA_COLLECTION,
-                field_name="video_path",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-            self._create_text_index(
-                collection_name=self.MEDIA_COLLECTION,
-                field_name="transcript",
-                type=models.TextIndexType.TEXT,
-                tokenizer=models.TokenizerType.WORD,
-            )
-            self.client.create_payload_index(
-                collection_name=self.MEDIA_COLLECTION,
-                field_name="scan_id",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-            self._create_text_index(
-                collection_name=self.MEDIA_COLLECTION,
-                field_name="ocr_text",
-                type=models.TextIndexType.TEXT,
-                tokenizer=models.TokenizerType.WORD,
-                min_token_len=2,
-                max_token_len=20,
-                lowercase=True,
-            )
-            log(
-                f"Created media_frames collection with dim={self.MEDIA_VECTOR_SIZE}"
-            )
+        # 5. Voice Segments
+        self._check_and_fix_collection(
+            self.VOICE_COLLECTION, self.VOICE_VECTOR_SIZE
+        )
 
-        if not self.client.collection_exists(self.FACES_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.FACES_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.FACE_VECTOR_SIZE,
-                    distance=models.Distance.EUCLID,
-                ),
-            )
+        # 6. Masklets (Minimal)
+        self._check_and_fix_collection("masklets", 1)
 
-        if not self.client.collection_exists(self.SCENELETS_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.SCENELETS_COLLECTION,
-                vectors_config={
-                    "content": models.VectorParams(
-                        size=self.MEDIA_VECTOR_SIZE,
-                        distance=models.Distance.COSINE,
-                    ),
-                },
-            )
-            # Create indexing for filters
-            self.client.create_payload_index(
-                collection_name=self.SCENELETS_COLLECTION,
-                field_name="media_path",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-            self.client.create_payload_index(
-                collection_name=self.SCENELETS_COLLECTION,
-                field_name="start_time",
-                field_schema=models.PayloadSchemaType.FLOAT,
-            )
-
-        if not self.client.collection_exists(self.VOICE_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.VOICE_COLLECTION,
-                vectors_config=models.VectorParams(
-                    size=self.VOICE_VECTOR_SIZE,
-                    distance=models.Distance.COSINE,
-                ),
-            )
-
-        # SAM 3 Masklets collection (for spatio-temporal segmentation)
-        if not self.client.collection_exists("masklets"):
-            self.client.create_collection(
-                collection_name="masklets",
-                vectors_config=models.VectorParams(
-                    size=1,  # Minimal vector, queries use payload filters
-                    distance=models.Distance.COSINE,
-                ),
-            )
-
-        # SCENES collection with MULTI-VECTOR support (Twelve Labs architecture)
-        # Each scene has 3 vectors: visual (what's seen), motion (actions), dialogue (audio)
-        if not self.client.collection_exists(self.SCENES_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.SCENES_COLLECTION,
-                vectors_config={
-                    "visual": models.VectorParams(
-                        size=self.MEDIA_VECTOR_SIZE,
-                        distance=models.Distance.COSINE,
-                    ),
-                    "motion": models.VectorParams(
-                        size=self.MEDIA_VECTOR_SIZE,
-                        distance=models.Distance.COSINE,
-                    ),
-                    "dialogue": models.VectorParams(
-                        size=self.MEDIA_VECTOR_SIZE,
-                        distance=models.Distance.COSINE,
-                    ),
-                },
-            )
-            log("Created scenes collection with multi-vector support")
-
-        if not self.client.collection_exists(self.SUMMARIES_COLLECTION):
-            self.client.create_collection(
-                collection_name=self.SUMMARIES_COLLECTION,
-                vectors_config=models.VectorParams(
+        # 7. Scenes (True Multi-Vector)
+        self._check_and_fix_collection(
+            self.SCENES_COLLECTION,
+            self.MEDIA_VECTOR_SIZE,
+            is_multi_vector=True,
+            multi_vector_config={
+                "visual": models.VectorParams(
                     size=self.MEDIA_VECTOR_SIZE,
                     distance=models.Distance.COSINE,
                 ),
-            )
+                "motion": models.VectorParams(
+                    size=self.MEDIA_VECTOR_SIZE,
+                    distance=models.Distance.COSINE,
+                ),
+                "dialogue": models.VectorParams(
+                    size=self.MEDIA_VECTOR_SIZE,
+                    distance=models.Distance.COSINE,
+                ),
+            },
+        )
+
+        # 8. Summaries
+        self._check_and_fix_collection(
+            self.SUMMARIES_COLLECTION, self.MEDIA_VECTOR_SIZE
+        )
 
         # Create Payload Indexes for Keyword Search (Full Text)
         # This is CRITICAL for hybrid search to work without scanning the entire DB in memory
@@ -868,10 +888,11 @@ class VectorDB:
         return self.client.get_collections()
 
     @observe("db_insert_media_segments")
-    def insert_media_segments(
+    async def insert_media_segments(
         self,
         video_path: str,
         segments: list[dict[str, Any]],
+        job_id: str | None = None,
     ) -> None:
         """Insert media segments (dialogue, subtitles) into the database.
 
@@ -883,7 +904,7 @@ class VectorDB:
             return
 
         texts = [s.get("text", "") for s in segments]
-        embeddings = self.encode_texts(texts, batch_size=1)
+        embeddings = await self.encode_texts(texts, batch_size=1, job_id=job_id)
 
         points: list[models.PointStruct] = []
 
@@ -914,7 +935,7 @@ class VectorDB:
         )
 
     @observe("db_search_media")
-    def search_frames(
+    async def search_frames(
         self,
         query: str,
         limit: int = 10,
@@ -934,7 +955,7 @@ class VectorDB:
         Returns:
             A list of payload dictionaries containing frame metadata.
         """
-        query_vector = self.encode_text(query)
+        query_vector = await self.encode_text(query)
 
         # Build filter conditions
         filter_conditions = []
@@ -971,7 +992,7 @@ class VectorDB:
         return [point.payload for point in results if point.payload]
 
     @observe("db_search_media")
-    def search_media(
+    async def search_media(
         self,
         query: str,
         limit: int = 5,
@@ -991,7 +1012,7 @@ class VectorDB:
         Returns:
             A list of result dictionaries containing score, text, and timestamps.
         """
-        query_vector = self.encode_texts(query, is_query=True)[0]
+        query_vector = (await self.encode_texts(query, is_query=True))[0]
 
         conditions: list[models.Condition] = []
         if video_path:
@@ -1076,7 +1097,7 @@ class VectorDB:
         if payload.get("scan_id"):
             payload["scan_id"] = str(payload["scan_id"])
 
-        # Sanitize numpy types to native Python types before upsert
+
         payload = sanitize_numpy_types(payload)
 
         self.client.upsert(
@@ -1250,7 +1271,7 @@ class VectorDB:
             return None
 
     @observe("db_match_speaker")
-    def match_speaker(
+    async def match_speaker(
         self,
         embedding: list[float],
         threshold: float = 0.5,
@@ -1327,9 +1348,9 @@ class VectorDB:
         )
 
     @observe("db_search_frames_filtered")
-    def search_frames_filtered(
+    async def search_frames_filtered(
         self,
-        query_vector: list[float],
+        query_vector: list[float] | str,
         face_cluster_ids: list[int] | None = None,
         limit: int = 20,
         score_threshold: float | None = None,
@@ -1342,7 +1363,7 @@ class VectorDB:
         IMPORTANT: Always pass video_path to prevent cross-video identity leakage.
 
         Args:
-            query_vector: The query embedding vector.
+            query_vector: The query embedding vector OR natural language query string.
             face_cluster_ids: Face cluster IDs to filter by (identity filter).
             limit: Maximum number of results.
             score_threshold: Minimum similarity score.
@@ -1351,6 +1372,10 @@ class VectorDB:
         Returns:
             A list of matching frames with full payload.
         """
+        # Auto-encode if string passed
+        if isinstance(query_vector, str):
+            query_vector = await self.get_embedding(query_vector)
+
         # Build filter conditions
         conditions: list[models.Condition] = []
 
@@ -1427,7 +1452,7 @@ class VectorDB:
             return []
 
     @observe("db_search_frames_hybrid")
-    def search_frames_hybrid(
+    async def search_frames_hybrid(
         self,
         query: str,
         limit: int = 20,
@@ -1438,24 +1463,8 @@ class VectorDB:
         music_section: str | None = None,
         high_energy: bool = False,
     ) -> list[dict[str, Any]]:
-        """Performs a hybrid search combining vector, keyword, and identity filters.
+        """Performs a hybrid search combining vector, keyword, and identity filters."""
 
-        Uses Reciprocal Rank Fusion (RRF) to merge results from different
-        retrieval modalities. RRF Formula: score = sum(1 / (k + rank_i)).
-
-        Args:
-            query: The search query string.
-            limit: Maximum number of results to return.
-            video_paths: Optional filter for specific video paths.
-            face_cluster_ids: Optional filter for specific face identities.
-            rrf_k: Constant for RRF scoring (default 60).
-            transcript_query: Optional specific transcript to search for.
-            music_section: Filter by music section (chorus, verse, etc.).
-            high_energy: Filter for high-energy moments only.
-
-        Returns:
-            A list of result dictionaries with hybrid scores and match reasons.
-        """
         from collections import defaultdict
 
         results_by_id: dict[str, dict] = {}
@@ -1467,8 +1476,8 @@ class VectorDB:
 
         # === 1. VECTOR SEARCH (Semantic Understanding) ===
         try:
-            self._ensure_encoder_loaded()
-            query_vector = self.encode_texts(query, is_query=True)[0]
+            await self._ensure_encoder_loaded()
+            query_vector = (await self.encode_texts(query, is_query=True))[0]
 
             conditions = []
             if video_paths:
@@ -1724,10 +1733,15 @@ class VectorDB:
                                 if len(rank_lists.get("identity", {})) <= 5
                                 else "medium"
                             )
+                            # Better formatting for unknown faces
+                            display_name = name
+                            if not display_name or display_name.lower().startswith("unknown"):
+                                display_name = f"Person {cluster_id}"
+                            
                             results_by_id[point_id]["match_reasons"].append(
-                                f"Face identity: '{name}' (cluster={cluster_id}, conf={confidence}, visible_faces={face_names})"
+                                f"Face identity: '{display_name}' (cluster={cluster_id}, conf={confidence}, visible_faces={face_names})"
                             )
-                            results_by_id[point_id]["matched_identity"] = name
+                            results_by_id[point_id]["matched_identity"] = display_name
         except Exception as e:
             log(f"Identity search failed: {e}")
 
@@ -2930,7 +2944,7 @@ class VectorDB:
         return scenelet_id
 
     @observe("db_search_scenelets")
-    def search_scenelets(
+    async def search_scenelets(
         self,
         query: str,
         limit: int = 10,
@@ -2938,7 +2952,7 @@ class VectorDB:
         score_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
         """Search short temporal segments (scenelets)."""
-        query_vec = self.encode_texts(query, is_query=True)[0]
+        query_vec = (await self.encode_texts(query, is_query=True))[0]
 
         conditions = []
         if video_path:
@@ -2974,8 +2988,71 @@ class VectorDB:
             log(f"Scenelet search failed: {e}")
             return []
 
+    @observe("db_search_voice_segments")
+    async def search_voice_segments(
+        self,
+        query: str,
+        limit: int = 10,
+        score_threshold: float | None = None,
+        video_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search voice segments using semantic vector similarity.
+        
+        Args:
+            query: The search query.
+            limit: Maximum number of results.
+            score_threshold: Minimum similarity score.
+            video_path: Optional filter by video path.
+
+        Returns:
+            List of matching voice segments with scores.
+        """
+        try:
+            query_vec = (await self.encode_texts(query, is_query=True))[0]
+
+            conditions: list[models.Condition] = []
+            if video_path:
+                conditions.append(
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchValue(value=video_path),
+                    )
+                )
+
+            query_filter = models.Filter(must=conditions) if conditions else None
+
+            resp = self.client.query_points(
+                collection_name=self.VOICE_COLLECTION,
+                query=query_vec,
+                limit=limit,
+                score_threshold=score_threshold,
+                query_filter=query_filter,
+            )
+
+            results = []
+            for hit in resp.points:
+                payload = hit.payload or {}
+                results.append(
+                    {
+                        "id": str(hit.id),
+                        "score": hit.score,
+                        "type": "voice_segment",
+                        "speaker_id": payload.get("speaker_id"),
+                        "speaker_name": payload.get("speaker_name", "Unknown Speaker"),
+                        "text": payload.get("text", payload.get("transcription", "")),
+                        "start": payload.get("start", 0),
+                        "end": payload.get("end", 0),
+                        "video_path": payload.get("media_path"),
+                        **payload,
+                    }
+                )
+            return results
+        except Exception as e:
+            log(f"search_voice_segments failed: {e}")
+            return []
+
     @observe("db_search_audio_events")
-    def search_audio_events(
+    async def search_audio_events(
         self,
         query: str,
         limit: int = 10,
@@ -3012,7 +3089,7 @@ class VectorDB:
             return []
 
     @observe("db_search_audio_events_semantic")
-    def search_audio_events_semantic(
+    async def search_audio_events_semantic(
         self,
         query: str,
         limit: int = 10,
@@ -3035,7 +3112,7 @@ class VectorDB:
             List of matching audio events with scores.
         """
         try:
-            query_vec = self.encode_texts(query, is_query=True)[0]
+            query_vec = (await self.encode_texts(query, is_query=True))[0]
 
             conditions: list[models.Condition] = []
             if video_path:
@@ -3122,9 +3199,9 @@ class VectorDB:
             return []
 
     @observe("db_search_scenes")
-    def search_scenes(
+    async def search_scenes(
         self,
-        query: str,
+        query: str | list[float],
         *,
         limit: int = 20,
         score_threshold: float | None = None,
@@ -3140,6 +3217,10 @@ class VectorDB:
         visible_text: list[str] | None = None,
         # Action filters
         action_keywords: list[str] | None = None,
+        # Deep Research Filters
+        mood: str | None = None,
+        shot_type: str | None = None,
+        aesthetic_score: float | None = None,
         # Time filters
         video_path: str | None = None,
         # Search mode
@@ -3169,7 +3250,10 @@ class VectorDB:
             List of matching scenes with timestamps and metadata.
         """
         # Build query vector based on mode
-        query_vec = self.encode_texts(query, is_query=True)[0]
+        if isinstance(query, str):
+            query_vec = (await self.encode_texts(query, is_query=True))[0]
+        else:
+            query_vec = query
 
         # Build filter conditions
         conditions: list[models.Condition] = []
@@ -3249,6 +3333,29 @@ class VectorDB:
                 models.FieldCondition(
                     key="actions",
                     match=models.MatchAny(any=action_keywords),
+                )
+            )
+
+        # Deep Research Filters (Cinematography)
+        if mood:
+            conditions.append(
+                models.FieldCondition(
+                    key="mood", match=models.MatchAny(any=[mood])
+                )
+            )
+        
+        if shot_type:
+            conditions.append(
+                models.FieldCondition(
+                    key="shot_type", match=models.MatchAny(any=[shot_type])
+                )
+            )
+            
+        if aesthetic_score is not None:
+             conditions.append(
+                models.FieldCondition(
+                    key="aesthetic_score", 
+                    range=models.Range(gte=aesthetic_score)
                 )
             )
 
@@ -5708,6 +5815,72 @@ class VectorDB:
             return results
         except Exception as e:
             log(f"get_frames_by_face_cluster error: {e}")
+            return []
+
+    @observe("db_search_voice")
+    def search_voice_segments(
+        self,
+        query: str,
+        limit: int = 20,
+        video_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search for voice segments using vector similarity.
+
+        Args:
+            query: The search query (e.g., "angry man shouting").
+            limit: Maximum number of results.
+            video_path: Optional filter for specific video.
+
+        Returns:
+            List of voice segments with scores.
+        """
+        try:
+            # 1. Encode query
+            query_vector = self.encode_texts(query, is_query=True)[0]
+
+            # 2. Build filters
+            conditions = []
+            if video_path:
+                conditions.append(
+                    models.FieldCondition(
+                        key="video_path",  # Note: Voice collection uses 'media_path' usually, check schema
+                        match=models.MatchValue(value=video_path),
+                    )
+                )
+
+            # Check if we should use media_path or video_path
+            # Based on _propagate_speaker_name_to_frames, it uses 'media_path'
+            # Let's support both or check schema. pipeline.py inserts 'media_path'.
+            if video_path:
+                course_correction = models.FieldCondition(
+                    key="media_path",
+                    match=models.MatchValue(value=video_path),
+                )
+                # Overwrite the previous condition which assumed video_path
+                conditions = [course_correction]
+
+            scroll_filter = models.Filter(must=conditions) if conditions else None
+
+            # 3. Execute search
+            results = self.client.search(
+                collection_name=self.VOICE_COLLECTION,
+                query_vector=query_vector,
+                query_filter=scroll_filter,
+                limit=limit,
+                with_payload=True,
+            )
+
+            # 4. Format results
+            return [
+                {
+                    "id": str(hit.id),
+                    "score": hit.score,
+                    **(hit.payload or {}),
+                }
+                for hit in results
+            ]
+        except Exception as e:
+            log(f"search_voice_segments failed: {e}")
             return []
 
     @observe("db_search_hybrid_legacy")

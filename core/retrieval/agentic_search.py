@@ -93,13 +93,13 @@ class SearchAgent:
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:
         """Parses and expands a natural language search query using an LLM.
-
         Args:
             query: The user's natural language search query.
 
         Returns:
             A ParsedQuery object containing structured filters and expanded text.
         """
+
         prompt = QUERY_EXPANSION_PROMPT.format(query=query)
 
         try:
@@ -211,7 +211,7 @@ class SearchAgent:
 
         # 4. Execute scene search with comprehensive filters
         try:
-            results = self.db.search_scenes(
+            results = await self.db.search_scenes(
                 query=search_text,
                 limit=limit,
                 person_name=resolved_name,
@@ -229,6 +229,9 @@ class SearchAgent:
                 if parsed.action_keywords
                 else None,
                 video_path=video_path,
+                mood=parsed.mood,
+                shot_type=parsed.shot_type,
+                aesthetic_score=parsed.aesthetic_score,
                 search_mode="hybrid",
             )
             log(f"[Search] Found {len(results)} scene results")
@@ -407,9 +410,9 @@ class SearchAgent:
 
         # 5. Execute HYBRID search (Vector + Filters)
         try:
-            query_vector = self.db.encode_texts(
+            query_vector = (await self.db.encode_texts(
                 search_text or "scene activity", is_query=True
-            )[0]
+            ))[0]
 
             if filters:
                 conditions: list[models.Condition] = list(filters)
@@ -430,13 +433,13 @@ class SearchAgent:
                     for hit in results
                 ]
             else:
-                results = self.db.search_frames(
+                results = await self.db.search_frames(
                     query=search_text,
                     limit=limit,
                 )
         except Exception as e:
             log(f"[Search] Hybrid search failed: {e}, falling back to simple")
-            results = self.db.search_frames(
+            results = await self.db.search_frames(
                 query=search_text,
                 limit=limit,
             )
@@ -469,7 +472,7 @@ class SearchAgent:
             A list of search result dictionaries.
         """
         try:
-            return self.db.search_frames(query=search_text, limit=limit)
+            return await self.db.search_frames(query=search_text, limit=limit)
         except Exception:
             return []
 
@@ -525,7 +528,7 @@ class SearchAgent:
                 log(f"[Search] Hybrid search failed, falling back: {e}")
 
         # Fallback to vector-only search
-        return self.db.search_frames(query=query, limit=limit)
+        return await self.db.search_frames(query=query, limit=limit)
 
     # =========================================================================
     # SOTA SEARCH METHODS
@@ -633,25 +636,8 @@ class SearchAgent:
         use_expansion: bool = False,  # Default OFF to prevent LLM hallucination
         expansion_fallback: bool = True,
     ) -> dict[str, Any]:
-        """Performs a state-of-the-art search with full verification and explainability.
+        """Performs a state-of-the-art search with full verification and explainability."""
 
-        This pipeline combines dynamic query expansion, multi-vector hybrid
-        search, and LLM-based re-ranking to provide highly accurate and
-        transparent search results.
-
-        Args:
-            query: The complex natural language query.
-            limit: Maximum number of results to return.
-            video_path: Optional filter for a specific video.
-            use_reranking: Whether to perform second-stage LLM verification.
-            use_expansion: Whether to use LLM query expansion (can be disabled
-                if expansion is hurting results, e.g., for non-English content).
-            expansion_fallback: If True and expansion yields < 3 results,
-                retry with original query and merge results.
-
-        Returns:
-            A dictionary containing ranked results and reasoning for each match.
-        """
         log(f"[SOTA Search] Query: '{query[:100]}...'")
         log(f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}")
 
@@ -696,7 +682,7 @@ class SearchAgent:
         all_results = {}
         
         try:
-            scene_results = self.db.search_scenes(
+            scene_results = await self.db.search_scenes(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
                 person_name=person_names[0] if person_names else None,
@@ -720,6 +706,9 @@ class SearchAgent:
                 if hasattr(parsed, "action_keywords")
                 else None,
                 video_path=video_path,
+                mood=parsed.mood,
+                shot_type=parsed.shot_type,
+                aesthetic_score=parsed.aesthetic_score,
                 search_mode="hybrid",
             )
             all_results["scenes"] = scene_results
@@ -729,7 +718,7 @@ class SearchAgent:
             if not scene_results and (person_names or parsed.clothing_color or parsed.location):
                 log(f"[SOTA] Strict scene search yielded 0 results. Retrying with relaxed semantic search...")
                 try:
-                    fallback_scenes = self.db.search_scenes(
+                    fallback_scenes = await self.db.search_scenes(
                         query=search_text,
                         limit=limit,
                         search_mode="hybrid",
@@ -751,7 +740,7 @@ class SearchAgent:
             all_results["scenes"] = []
 
         try:
-            scenelet_results = self.db.search_scenelets(
+            scenelet_results = await self.db.search_scenelets(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
                 video_path=video_path,
@@ -764,7 +753,7 @@ class SearchAgent:
 
         try:
             face_cluster_id = face_ids[0] if face_ids else None
-            frame_results = self.db.search_frames_hybrid(
+            frame_results = await self.db.search_frames_hybrid(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
                 face_cluster_ids=[face_cluster_id]
@@ -779,7 +768,7 @@ class SearchAgent:
             all_results["frames"] = []
 
         try:
-            voice_results = self.db.search_voice_segments(
+            voice_results = await self.db.search_voice_segments(
                 query=search_text,
                 limit=limit * 2,
                 video_path=video_path,
@@ -791,7 +780,7 @@ class SearchAgent:
             all_results["voice"] = []
 
         try:
-            audio_results = self.db.search_audio_events(
+            audio_results = await self.db.search_audio_events(
                 query=search_text,
                 limit=limit * 2,
             )
@@ -1177,7 +1166,7 @@ class SearchAgent:
 
         # 3a. Scene-level search (visual + motion + dialogue)
         try:
-            scene_results = self.db.search_scenes(
+            scene_results = await self.db.search_scenes(
                 query=search_text,
                 limit=limit * 2,
                 person_name=person_names[0] if person_names else None,
@@ -1262,7 +1251,7 @@ class SearchAgent:
 
         # 3d. Audio events search (CLAP-detected sounds, music sections)
         try:
-            audio_events = self.db.search_audio_events(
+            audio_events = await self.db.search_audio_events(
                 query=search_text,
                 limit=limit,
             )

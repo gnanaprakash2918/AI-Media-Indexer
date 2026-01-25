@@ -420,16 +420,16 @@ class Settings(BaseSettings):
 
     # Advanced Overrides - SOTA Embeddings for 100% accuracy
     embedding_model_override: str = Field(
-        default="BAAI/bge-m3",
-        description="Text embedding model (BGE-M3 = 1024d, SOTA multilingual)",
+        default="", # Empty = Auto-detect based on VRAM (SOTA preferred)
+        description="Text embedding model (NV-Embed-v2 = 4096d, SOTA)",
     )
     text_embedding_dim: int = Field(
-        default=1024,
+        default=4096, # Updated for NV-Embed-v2
         description="Dimension of text embeddings (must match model)",
     )
     visual_embedding_dim: int = Field(
-        default=1024,
-        description="Dimension of visual embeddings (SigLIP=768, BGE-Visual=1024)",
+        default=1024, # BGE-Visual / SigLIP Large
+        description="Dimension of visual embeddings ",
     )
 
     siglip_model: str = Field(
@@ -448,7 +448,7 @@ class Settings(BaseSettings):
     )
 
     enable_vlm_reranking: bool = Field(
-        default=False,  # OFF by default to prevent timeouts
+        default=True,  # ENABLED for max quality
         description="Enable VLM-based reranking for higher accuracy (uses more VRAM and time)",
     )
 
@@ -469,31 +469,31 @@ class Settings(BaseSettings):
 
     # Hybrid Search Weights
     search_vector_weight: float = Field(
-        default=0.6,
+        default=0.5, # Balanced for better identity matching
         description="Weight for vector similarity in hybrid search (0.0-1.0)",
     )
     search_keyword_weight: float = Field(
-        default=0.4,
+        default=0.5,
         description="Weight for keyword/BM25 in hybrid search (0.0-1.0)",
     )
 
     # Retrieval Limits
     search_default_limit: int = Field(
-        default=20,
+        default=50, # Higher recall
         description="Default number of search results",
     )
     search_rerank_multiplier: int = Field(
-        default=3,
+        default=5, # Rerank top 250 for best precision
         description="Multiply limit by this for reranking pool (get 3x candidates)",
     )
 
     # Reranking Thresholds
     search_min_score_threshold: float = Field(
-        default=0.3,
+        default=0.2, # Lower threshold to let RRF/Reranker decide
         description="Minimum score to include in results (0.0-1.0)",
     )
     search_vlm_confidence_threshold: int = Field(
-        default=50,
+        default=60,
         description="VLM confidence threshold for verification (0-100)",
     )
 
@@ -537,6 +537,44 @@ class Settings(BaseSettings):
         description="Seconds tolerance for temporal matching in feedback",
     )
 
+    # Deep Research Cinematography Concepts (Configurable)
+    # Allows users to inject their own film theory concepts without code changes
+    cinematography_shot_types: list[str] = Field(
+        default=[
+            "close-up shot",
+            "medium shot",
+            "wide shot",
+            "extreme close-up",
+            "establishing shot",
+            "over-the-shoulder shot",
+            "point-of-view shot",
+            "high angle shot",
+            "low angle shot",
+            "dutch angle shot",
+            "aerial shot",
+            "tracking shot",
+        ],
+        description="List of shot types for Zero-Shot classification",
+    )
+
+    cinematography_moods: list[str] = Field(
+        default=[
+            "happy",
+            "sad",
+            "tense",
+            "romantic",
+            "action-packed",
+            "mysterious",
+            "peaceful",
+            "dramatic",
+            "comedic",
+            "horror",
+            "melancholic",
+            "euphoric",
+        ],
+        description="List of cinematic moods for Zero-Shot classification",
+    )
+
     # Memory Management - STRATEGY: SOTA Always, Throttle Resources
     high_performance_mode: bool = Field(
         default=True,
@@ -564,12 +602,8 @@ class Settings(BaseSettings):
                     "Auto-adjusting text_embedding_dim to 4096 for NV-Embed-v2"
                 )
                 self.text_embedding_dim = 4096
-                self.visual_embedding_dim = 4096  # If using for both (likely not, usually SigLIP is separate)
-                # But VectorDB.MEDIA_VECTOR_SIZE uses visual_embedding_dim.
-                # If we use LLM for vision, SigLIP is still 768 or 1024.
-                # Wait, visual_embedding_dim configures Media Collection.
-                # If we use SigLIP, it stays SigLIP dim.
-                # Only TEXT DIM changes.
+                # visual_embedding_dim is independent (SigLIP)
+
         elif "bge-m3" in model:
             if self.text_embedding_dim != 1024:
                 self.text_embedding_dim = 1024
@@ -583,7 +617,7 @@ class Settings(BaseSettings):
     @property
     def effective_embedding_model(self) -> str:
         """ALWAYS use SOTA embedding model. Never downgrade for quality."""
-        return self.embedding_model_override  # BAAI/bge-m3 (1024d) always
+        return self.embedding_model_override  # NV-Embed-v2 (4096d) always
 
     @computed_field
     @property
@@ -602,7 +636,7 @@ class Settings(BaseSettings):
     def compute_type(self) -> str:
         """Determine the compute type (float16/int8) based on device."""
         if self.device == "cuda":
-            return "float16"
+            return "float16" # SOTA precision
         return "int8"
 
     @computed_field

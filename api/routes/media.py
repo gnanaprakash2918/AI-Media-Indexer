@@ -250,7 +250,7 @@ async def stream_media(
             with open(file_path, "rb") as f:
                 f.seek(range_start)
                 remaining = content_length
-                chunk_size = 64 * 1024  # 64KB chunks
+                chunk_size = 1024 * 1024  # 1MB chunks for better seeking performance
                 while remaining > 0:
                     read_size = min(chunk_size, remaining)
                     data = f.read(read_size)
@@ -276,7 +276,7 @@ async def stream_media(
 
         def iterfile():
             with open(file_path, "rb") as f:
-                chunk_size = 64 * 1024
+                chunk_size = 1024 * 1024  # 1MB chunks
                 while chunk := f.read(chunk_size):
                     yield chunk
 

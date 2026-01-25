@@ -26,7 +26,7 @@ class ModelVRAM:
     vlm_7b: float = 6.0
     vlm_3b: float = 3.0
     timesformer: float = 1.0  # fp16
-    nv_embed_v2: float = 4.0
+    nv_embed_v2: float = 16.0
     yolo_world: float = 1.0
     pyannote: float = 1.5
     clap: float = 1.0

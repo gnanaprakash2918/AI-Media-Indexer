@@ -266,9 +266,9 @@ class SuryaOCR:
 
             try:
                 from surya.detection import batch_detection
-                from surya.recognition import batch_recognition
                 from surya.model.detection import load_detector
                 from surya.model.recognition import load_recognizer
+                from surya.recognition import batch_recognition
 
                 log.info("[SuryaOCR] Loading models...")
                 self._detector = load_detector()

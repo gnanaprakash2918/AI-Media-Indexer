@@ -144,23 +144,7 @@ class IngestionPipeline:
         job_id: str | None = None,
         content_type_hint: str = "auto",
     ) -> str:
-        """Orchestrates the full ingestion of a video file.
-
-        Executes audio transcription, voice diarization, visual frame analysis,
-        and scene-level summarization. Supports resume from crash if job_id
-        is provided.
-
-        Args:
-            video_path: Path to the media file to ingest.
-            media_type_hint: Optional hint ('movie', 'episode', etc).
-            start_time: Optional start timestamp for clipped ingestion.
-            end_time: Optional end timestamp for clipped ingestion.
-            job_id: Optional existing job ID for resuming after a crash.
-            content_type_hint: Optional hint for processing ('song', etc).
-
-        Returns:
-            The job ID associated with this ingestion task.
-        """
+        """Orchestrates the full ingestion of a video file."""
         resume = False
         if job_id:
             resume = True
@@ -604,7 +588,7 @@ class IngestionPipeline:
             prepared = self._prepare_segments_for_db(
                 path=path, chunks=audio_segments
             )
-            self.db.insert_media_segments(str(path), prepared)
+            await self.db.insert_media_segments(str(path), prepared)
             log(f"[Audio] Stored {len(prepared)} dialogue segments in DB")
 
             try:
@@ -1064,7 +1048,7 @@ class IngestionPipeline:
 
                 # Check Global Registry if embedding exists
                 if seg.embedding is not None and global_speaker_id != "SILENCE":
-                    match = self.db.match_speaker(
+                    match = await self.db.match_speaker(
                         seg.embedding,
                         threshold=settings.voice_clustering_threshold,
                     )
@@ -1723,7 +1707,10 @@ class IngestionPipeline:
                 try:
                     import cv2
                     import numpy as np
-                    from core.processing.deep_research import get_deep_research_processor
+
+                    from core.processing.deep_research import (
+                        get_deep_research_processor,
+                    )
 
                     nparr = np.frombuffer(frame_bytes, np.uint8)
                     img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -2048,9 +2035,9 @@ class IngestionPipeline:
             if name:
                 identity_parts.append(f"Person {idx + 1}: {name}")
             else:
-                identity_parts.append(
-                    f"Person {idx + 1}: Unknown (cluster {cid})"
-                )
+                # Use a neutral placeholder to avoid confusing the VLM with "Unknown (cluster X)"
+                # which leads to descriptions like "Unknown (cluster 15) is walking..."
+                identity_parts.append(f"Person {idx + 1}")
 
         # Get speaker name at this timestamp
         try:
@@ -2157,8 +2144,8 @@ class IngestionPipeline:
             ocr_boxes = []
             try:
                 # Load frame as numpy array (Windows path safe)
-                import numpy as np
                 import cv2
+                import numpy as np
 
                 frame_data = np.fromfile(str(frame_path), dtype=np.uint8)
                 frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
@@ -2669,10 +2656,10 @@ class IngestionPipeline:
             # SOTA SCENE INDEXING (Adaptive Scene Segmentation)
             # ------------------------------------------------------------
             try:
-                from core.processing.scene_detector import detect_scenes
                 from core.processing.scene_aggregator import (
                     aggregate_frames_to_scene,
                 )
+                from core.processing.scene_detector import detect_scenes
 
                 # 1. Detect logical scenes (shots)
                 raw_scenes = detect_scenes(media_path)

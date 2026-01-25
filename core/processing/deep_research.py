@@ -321,34 +321,14 @@ class DeepResearchProcessor:
                 log.warning(f"[DeepResearch] Frame load error: {e}")
                 return result
 
-        # Default concepts for dynamic classification
+        # Default concepts for dynamic classification (Use Config)
+        from config import settings
+
         if shot_concepts is None:
-            shot_concepts = [
-                "close-up shot",
-                "medium shot",
-                "wide shot",
-                "extreme close-up",
-                "establishing shot",
-                "over-the-shoulder shot",
-                "point-of-view shot",
-                "high angle shot",
-                "low angle shot",
-                "dutch angle shot",
-            ]
+            shot_concepts = settings.cinematography_shot_types
 
         if mood_concepts is None:
-            mood_concepts = [
-                "happy",
-                "sad",
-                "tense",
-                "romantic",
-                "action-packed",
-                "mysterious",
-                "peaceful",
-                "dramatic",
-                "comedic",
-                "horror",
-            ]
+            mood_concepts = settings.cinematography_moods
 
         # 1. Cinematography Analysis (shot type, mood)
         classifier = await self._get_dynamic_classifier()

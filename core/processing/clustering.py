@@ -14,21 +14,8 @@ except ImportError:
 
 
 async def cluster_faces(db: VectorDB) -> dict[str, Any]:
-    """Re-clusters all faces in the database using HDBSCAN.
+    """Re-clusters all faces in the database using HDBSCAN."""
 
-    This is a heavy operation that:
-    1. Fetches all face vectors (including those with assigned names if needed,
-       though usually we only cluster unnamed ones or re-cluster everything).
-    2. Runs HDBSCAN.
-    3. If >50% noise, falls back to Agglomerative Clustering.
-    4. Updates cluster_ids in Qdrant.
-
-    Args:
-        db: The VectorDB instance.
-
-    Returns:
-        Statistics dictionary {total_faces, num_clusters, noise_points}.
-    """
     try:
         from sklearn.cluster import AgglomerativeClustering
 

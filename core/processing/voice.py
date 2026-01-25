@@ -212,14 +212,8 @@ class VoiceProcessor:
         log.info("Voice processor resources released")
 
     async def process(self, audio_path: Path) -> list[SpeakerSegment]:
-        """Performs speaker diarization and embedding extraction on an audio file.
+        """Performs speaker diarization and embedding extraction on an audio file."""
 
-        Args:
-            audio_path: Path to the input audio or video file.
-
-        Returns:
-            A list of SpeakerSegment objects containing timestamps and embeddings.
-        """
         if not self.enabled or not audio_path.exists():
             if not self.enabled:
                 log.warning(f"[Voice] SKIPPED - Voice analysis disabled")

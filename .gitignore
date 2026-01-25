@@ -35,6 +35,8 @@ AGENTS.md
 ANTIGRAVITY.md
 
 # Custom - AI Media Indexer Data
+.vscode/
+reports/
 models/
 qdrant_data/
 qdrant_data_embedded/

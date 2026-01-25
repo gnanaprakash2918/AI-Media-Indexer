@@ -758,6 +758,7 @@ class FaceManager:
     @observe("face_detect")
     async def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
         """Detect faces in an image with automatic model selection."""
+
         await self._lazy_init()
         path = Path(image_path)
         image = self._load_image(path)
@@ -975,6 +976,24 @@ class FaceManager:
             if similarity > (1.0 - threshold) and similarity > best_similarity:
                 best_similarity = similarity
                 best_cluster_id = cluster_id
+
+        if best_cluster_id is not None:
+            # INTEGRATION: Use BiometricArbitrator for marginal cases
+            # If similarity is high but not perfect, double-check
+            if best_similarity < 0.6:  # Marginal zone
+                from core.processing.biometric_arbitrator import BIOMETRIC_ARBITRATOR
+                
+                # Check with arbitrator (uses L2 distance and stricter thresholds)
+                should_merge = BIOMETRIC_ARBITRATOR.should_merge_sync(
+                    emb_norm, 
+                    np.array(existing_clusters[best_cluster_id], dtype=np.float64),
+                    primary_sim=best_similarity
+                )
+                
+                if not should_merge:
+                    # Arbitrator rejected the merge -> Treat as new person
+                    print(f"[FaceManager] Arbitrator rejected marginal match ({best_similarity:.3f})")
+                    best_cluster_id = None
 
         if best_cluster_id is not None:
             # Update centroid with running average

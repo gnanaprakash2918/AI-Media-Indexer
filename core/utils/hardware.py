@@ -171,7 +171,11 @@ def get_system_profile(
         or "moondream:latest"
     )
 
-    if "bge-m3" in embedding_model or "large" in embedding_model:
+    if "nv-embed-v2" in embedding_model.lower():
+        embedding_dim = 4096
+    elif "sfr-embedding-2" in embedding_model.lower():
+        embedding_dim = 1024
+    elif "bge-m3" in embedding_model or "large" in embedding_model:
         embedding_dim = 1024
     elif "base" in embedding_model:
         embedding_dim = 768
@@ -228,17 +232,21 @@ def get_system_profile(
 
 
 def select_embedding_model() -> tuple[str, int]:
-    """Selects the optimal embedding model, prioritizing SOTA models.
+    """Selects the optimal embedding model based on available VRAM.
 
-    Checks for environment overrides before falling back to the default
-    SOTA model (BGE-M3).
+    STRATEGY: SOTA Quality Always.
+    - 24GB+ VRAM: NV-Embed-v2 (4096d)
+    - 12GB+ VRAM: Salesforce/SFR-Embedding-2_R (1024d)
+    - Else: BGE-M3 (1024d)
 
     Returns:
         A tuple of (model_name, embedding_dimension).
     """
     override = os.getenv("EMBEDDING_MODEL_OVERRIDE")
     if override:
-        if "large" in override or "m3" in override:
+        if "nv-embed-v2" in override.lower():
+            dim = 4096
+        elif "large" in override or "m3" in override or "sfr" in override:
             dim = 1024
         elif "base" in override:
             dim = 768
@@ -247,9 +255,18 @@ def select_embedding_model() -> tuple[str, int]:
         log(f"Embedding model (override): {override} ({dim}d)")
         return override, dim
 
-    model = "BAAI/bge-m3"
-    dim = 1024
-    log(f"Embedding model (SOTA): {model} ({dim}d)")
+    vram = get_available_vram()
+    if vram >= 23.0:  # 24GB cards (3090/4090/A100)
+        model = "nvidia/NV-Embed-v2"
+        dim = 4096
+    elif vram >= 11.0:  # 12GB+ cards (3060 12GB, 4070, etc)
+        model = "Salesforce/SFR-Embedding-2_R"
+        dim = 1024
+    else:
+        model = "BAAI/bge-m3"
+        dim = 1024
+
+    log(f"Embedding model (Auto-SOTA for {vram:.1f}GB VRAM): {model} ({dim}d)")
     return model, dim
 
 

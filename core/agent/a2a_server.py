@@ -82,9 +82,8 @@ async def log_routes(request, call_next):
 
 if __name__ == "__main__":
     uvicorn.run(
-        "core.agent.a2a_server:app",
+        app,
         host="0.0.0.0",
         port=int(os.getenv("MEDIA_AGENT_PORT", "8000")),
         # reload=True,
-        factory=False,
     )
