@@ -102,6 +102,12 @@ flowchart TD
 
 ---
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=gnanaprakash2918/AI-Media-Indexer&type=date&legend=top-left)](https://www.star-history.com/#gnanaprakash2918/AI-Media-Indexer&type=date&legend=top-left)
+
+---
+
 ## Core Features
 
 - **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration (Semaphores in `processing/identity.py`).
