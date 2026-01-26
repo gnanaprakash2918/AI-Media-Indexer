@@ -172,6 +172,12 @@ function Check-Port-Availability {
             $procName = "Unknown"
         }
         
+        if ($procName -match "com.docker.backend" -or $procName -match "docker") {
+             Write-Host "Note: Port $Port is used by Docker ($procName). This is usually normal." -ForegroundColor Gray
+             Write-Host "Skipping kill check to avoid breaking the daemon." -ForegroundColor Gray
+             return
+        }
+
         Write-Host "Warning: Port $Port ($ServiceName) is currently in use by process '$procName' (PID: $procId)" -ForegroundColor Yellow
         $choice = Read-Host "Do you want to kill this process to free the port? (Y/N)"
         if ($choice -eq 'Y' -or $choice -eq 'y') {

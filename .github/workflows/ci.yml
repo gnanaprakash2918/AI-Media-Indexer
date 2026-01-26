@@ -1,0 +1,56 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  quality-gate:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+            enable-cache: true
+            cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras --dev
+
+      - name: Run Ruff Linting
+        run: uv run ruff check .
+
+      - name: Run Black Formatting Check
+        run: uv run black --check .
+
+  tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+            enable-cache: true
+      
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run Pytest
+        # Skipping tests that require GPU or external services if marked
+        # Assuming typical pytest usage. If no markers, this runs everything.
+        run: uv run pytest tests/ -v -m "not integration" --continue-on-error

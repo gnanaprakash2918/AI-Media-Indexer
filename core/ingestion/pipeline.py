@@ -480,13 +480,13 @@ class IngestionPipeline:
 
                     # Generate SRT sidecar file alongside the video
                     srt_path = path.with_suffix(".srt")
-                            width GPU_SEMAPHORE:
-                        audio_segments = (
-                            await indic_transcriber.transcribe(
-                                path, output_srt=srt_path
-                            )
-                            or []
+
+                    audio_segments = (
+                        await indic_transcriber.transcribe(
+                            path, output_srt=srt_path
                         )
+                        or []
+                    )
 
                     if audio_segments:
                         log(
@@ -1442,7 +1442,7 @@ class IngestionPipeline:
                 video_duration = total_duration
                 if not video_duration:
                     try:
-                        probe_data = self.prober.probe(path)
+                        probe_data = await self.prober.probe(path)
                         video_duration = float(
                             probe_data.get("format", {}).get("duration", 0.0)
                         )
@@ -1572,7 +1572,7 @@ class IngestionPipeline:
             )
 
             for sl in scenelets:
-                self.db.store_scenelet(
+                await self.db.store_scenelet(
                     media_path=str(path),
                     start_time=sl.start_ts,
                     end_time=sl.end_ts,
@@ -1800,7 +1800,7 @@ class IngestionPipeline:
                          f"aesthetic_score: {dr_meta.get('aesthetic_score', 0):.2f}"
                      )
 
-                self.db.store_scene(
+                await self.db.store_scene(
                     media_path=str(path),
                     start_time=scene.start_time,
                     end_time=scene.end_time,
@@ -2224,7 +2224,7 @@ class IngestionPipeline:
                 pass
 
         if description:
-            vector = self.db.encode_texts(description)[0]
+            vector = (await self.db.encode_texts(description))[0]
 
             # Build structured payload for accurate search with filterable fields
             payload: dict[str, Any] = {
@@ -2437,7 +2437,7 @@ class IngestionPipeline:
                         else description
                     )
 
-            vector = self.db.encode_texts(full_text)[0]
+            vector = (await self.db.encode_texts(full_text))[0]
 
             # Generate a proper UUID for Qdrant (file paths are not valid point IDs)
             import uuid
@@ -2718,11 +2718,11 @@ class IngestionPipeline:
                     # For now, using the main encoder for all text representations is standard for dense retrieval
                     vectors = {}
                     if visual_text:
-                        vectors["visual"] = self.db.encode_text(visual_text)
+                        vectors["visual"] = await self.db.encode_text(visual_text)
                     if motion_text:
-                        vectors["motion"] = self.db.encode_text(motion_text)
+                        vectors["motion"] = await self.db.encode_text(motion_text)
                     if dialogue_text:
-                        vectors["dialogue"] = self.db.encode_text(dialogue_text)
+                        vectors["dialogue"] = await self.db.encode_text(dialogue_text)
 
                     # Generate deterministic ID
                     import uuid

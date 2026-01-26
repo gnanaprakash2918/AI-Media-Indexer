@@ -73,7 +73,7 @@ class SearchEngine:
         # 4. Execute search with optional identity filter
         query_vector = await self.db.encode_texts(search_text, is_query=True)
         query_vector = query_vector[0]
-        results = self.db.search_frames_filtered(
+        results = await self.db.search_frames_filtered(
             query_vector=query_vector,
             face_cluster_ids=cluster_ids if cluster_ids else None,
             limit=limit,

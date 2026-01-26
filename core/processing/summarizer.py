@@ -434,7 +434,7 @@ class HierarchicalSummarizer:
 
         # Add L1 summary
         if l1_summary and l1_summary.get("summary"):
-            embedding = self.db.encode_texts([l1_summary["summary"]])[0]
+            embedding = (await self.db.encode_texts([l1_summary["summary"]]))[0]
             points.append(
                 PointStruct(
                     id=str(uuid.uuid4()),
@@ -446,7 +446,7 @@ class HierarchicalSummarizer:
         # Add L2 summaries
         for s in l2_summaries:
             if s.get("summary"):
-                embedding = self.db.encode_texts([s["summary"]])[0]
+                embedding = (await self.db.encode_texts([s["summary"]]))[0]
                 points.append(
                     PointStruct(
                         id=str(uuid.uuid4()),

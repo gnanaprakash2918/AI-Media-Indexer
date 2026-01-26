@@ -486,7 +486,7 @@ class SearchAgent:
         Returns:
             A list of search result dictionaries.
         """
-        return self.db.search_frames(query=query, limit=limit)
+        return await self.db.search_frames(query=query, limit=limit)
 
     async def hybrid_search(
         self,
@@ -1068,7 +1068,7 @@ class SearchAgent:
             log(
                 "[Scenelet Search] DB method not found, falling back to frame simulation"
             )
-            candidates = self.db.search_frames(
+            candidates = await self.db.search_frames(
                 query=search_text, limit=limit * 2
             )
 
@@ -1270,7 +1270,7 @@ class SearchAgent:
 
         # 3e. Video metadata search (summaries, titles, context)
         try:
-            video_meta = self.db.search_video_metadata(
+            video_meta = await self.db.search_video_metadata(
                 query=search_text,
                 limit=limit,
             )

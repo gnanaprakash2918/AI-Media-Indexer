@@ -2816,15 +2816,15 @@ class VectorDB:
     # =========================================================================
 
     @observe("db_store_scene")
-    def store_scene(
+
+    async def store_scene(
         self,
-        *,
         media_path: str,
         start_time: float,
         end_time: float,
-        visual_text: str,
-        motion_text: str,
-        dialogue_text: str,
+        visual_text: str = "",
+        motion_text: str = "",
+        dialogue_text: str = "",
         payload: dict[str, Any] | None = None,
     ) -> str:
         """Store a scene with multi-vector embeddings (visual, motion, dialogue).
@@ -2845,9 +2845,9 @@ class VectorDB:
             The generated scene ID.
         """
         # Generate multi-vector embeddings
-        visual_vec = self.encode_texts(visual_text or "scene")[0]
-        motion_vec = self.encode_texts(motion_text or "activity")[0]
-        dialogue_vec = self.encode_texts(dialogue_text or "silence")[0]
+        visual_vec = (await self.encode_texts(visual_text or "scene"))[0]
+        motion_vec = (await self.encode_texts(motion_text or "activity"))[0]
+        dialogue_vec = (await self.encode_texts(dialogue_text or "silence"))[0]
 
         # Normalize empty texts
         visual_vec = (
@@ -2898,7 +2898,7 @@ class VectorDB:
         return scene_id
 
     @observe("db_store_scenelet")
-    def store_scenelet(
+    async def store_scenelet(
         self,
         *,
         media_path: str,
@@ -2916,7 +2916,7 @@ class VectorDB:
             content_text: Fused text (Visual + Audio).
             payload: Additional metadata.
         """
-        vector = self.encode_texts(content_text or "scenelet")[0]
+        vector = (await self.encode_texts(content_text or "scenelet"))[0]
 
         scenelet_id = str(
             uuid.uuid5(uuid.NAMESPACE_DNS, f"{media_path}_sl_{start_time:.3f}")
@@ -3154,7 +3154,7 @@ class VectorDB:
             return []
 
     @observe("db_search_video_metadata")
-    def search_video_metadata(
+    async def search_video_metadata(
         self,
         query: str,
         limit: int = 5,
@@ -3170,7 +3170,7 @@ class VectorDB:
             List of matching videos with metadata.
         """
         try:
-            query_vec = self.encode_texts(query, is_query=True)[0]
+            query_vec = (await self.encode_texts(query, is_query=True))[0]
 
             resp = self.client.query_points(
                 collection_name=self.VIDEO_METADATA_COLLECTION,
@@ -5884,7 +5884,7 @@ class VectorDB:
             return []
 
     @observe("db_search_hybrid_legacy")
-    def search_frames_hybrid_legacy(
+    async def search_frames_hybrid_legacy(
         self,
         query: str,
         video_paths: str | list[str] | None = None,
@@ -5965,7 +5965,7 @@ class VectorDB:
             combined_filter = models.Filter(must=conditions)
 
         # 3. Vector search
-        query_vector = self.encode_texts(query, is_query=True)[0]
+        query_vector = (await self.encode_texts(query, is_query=True))[0]
 
         vector_results = self.client.query_points(
             collection_name=self.MEDIA_COLLECTION,
@@ -6054,7 +6054,7 @@ class VectorDB:
         return results[:limit]
 
     @observe("db_update_frame_description")
-    def update_frame_description(self, frame_id: str, description: str) -> bool:
+    async def update_frame_description(self, frame_id: str, description: str) -> bool:
         """Update frame description manually and re-embed. HITL correction for VLM errors."""
         try:
             resp = self.client.retrieve(
@@ -6079,7 +6079,7 @@ class VectorDB:
                 else description
             )
 
-            new_vector = self.encode_texts(full_text, is_query=False)[0]
+            new_vector = (await self.encode_texts(full_text, is_query=False))[0]
 
             self.client.upsert(
                 collection_name=self.MEDIA_COLLECTION,
@@ -6097,7 +6097,7 @@ class VectorDB:
             log(f"Failed to update frame description: {e}")
             return False
 
-    def update_frame_identity_text(
+    async def update_frame_identity_text(
         self,
         frame_id: str,
         face_names: list[str],
@@ -6157,7 +6157,7 @@ class VectorDB:
                 return False
 
             # 4. Re-encode
-            new_vector = self.encode_texts(full_text, is_query=False)[0]
+            new_vector = (await self.encode_texts(full_text, is_query=False))[0]
 
             # 5. Update payload
             payload["face_names"] = face_names
