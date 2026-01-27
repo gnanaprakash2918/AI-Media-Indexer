@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import numpy as np
 from qdrant_client.http import models
 
 from config import settings
@@ -41,6 +42,46 @@ from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 from core.utils.retry import retry
+
+
+class FrameBuffer:
+    """Buffers frame data for batch database writes.
+    
+    Accumulates processed frame data and flushes to DB in batches
+    of `batch_size` for ~10x performance over individual writes.
+    """
+    
+    def __init__(self, db: VectorDB, batch_size: int = 50):
+        self.db = db
+        self.batch_size = batch_size
+        self._buffer: list[dict] = []
+        self._total_flushed = 0
+    
+    def add(self, frame_data: dict) -> int:
+        """Add a frame to the buffer. Returns frames flushed (0 or batch_size)."""
+        self._buffer.append(frame_data)
+        if len(self._buffer) >= self.batch_size:
+            return self.flush()
+        return 0
+    
+    def flush(self) -> int:
+        """Flush all buffered frames to database."""
+        if not self._buffer:
+            return 0
+        count = self.db.upsert_media_frames_batch(self._buffer)
+        self._total_flushed += count
+        self._buffer.clear()
+        return count
+    
+    @property
+    def pending(self) -> int:
+        """Number of frames waiting to be flushed."""
+        return len(self._buffer)
+    
+    @property
+    def total_written(self) -> int:
+        """Total frames written to database."""
+        return self._total_flushed + len(self._buffer)
 
 
 class IngestionPipeline:
@@ -1211,11 +1252,23 @@ class IngestionPipeline:
     async def _process_audio_events(
         self, path: Path, job_id: str | None = None
     ) -> None:
-        """Detects and indexes discrete audio events (CLAP)."""
+        """Detects and indexes discrete audio events (CLAP) using streaming chunks.
+        
+        Uses FFmpeg to stream audio in chunks instead of loading the entire file
+        into memory, preventing OOM on long videos (the 55% stall fix).
+        
+        Design decisions:
+        - 30s chunks: Fits ~3MB RAM at 48kHz stereo
+        - 5s overlap: Catches events spanning chunk boundaries
+        - Per-chunk progress: User always sees what's processing
+        - Immediate cleanup: gc.collect() after each chunk
+        """
         logger.info(f"Starting audio event detection for {path.name}")
         
         try:
             from core.processing.audio_events import AudioEventDetector
+            import subprocess
+            import numpy as np
             
             # Common audio events to detect
             target_classes = [
@@ -1229,67 +1282,204 @@ class IngestionPipeline:
             
             detector = AudioEventDetector()
             
-            # Use chunks from audio processing or re-read
-            import librosa
-            import numpy as np
+            # Get duration via FFprobe (doesn't load file into memory)
+            try:
+                probe_cmd = [
+                    'ffprobe', '-v', 'quiet', '-show_entries', 
+                    'format=duration', '-of', 'csv=p=0', str(path)
+                ]
+                duration = float(subprocess.check_output(probe_cmd).decode().strip())
+            except Exception as e:
+                logger.warning(f"FFprobe failed, falling back to librosa for duration: {e}")
+                import librosa
+                duration = librosa.get_duration(path=str(path))
             
-            # Load audio for event detection (resampled to 48k for CLAP)
-            # Use a smaller duration if file is huge, or process in stream
-            # For now load full file as we have memory efficient batching
-            audio, sr = librosa.load(str(path), sr=48000)
+            # Streaming parameters
+            chunk_seconds = 30  # Process 30s at a time
+            overlap_seconds = 5  # 5s overlap to catch events at boundaries
+            stride_seconds = chunk_seconds - overlap_seconds  # 25s stride
+            sample_rate = 48000  # CLAP expected sample rate
             
-            # Split into 5s chunks with 2.5s overlap
-            chunk_duration = 5.0
-            stride = 2.5
-            samples_per_chunk = int(chunk_duration * sr)
-            stride_samples = int(stride * sr)
-            
-            chunks = []
-            for i in range(0, len(audio) - samples_per_chunk, stride_samples):
-                chunk = audio[i : i + samples_per_chunk]
-                start_time = i / sr
-                chunks.append((chunk, start_time))
-                
-            if not chunks:
-                return
-
-            # Batch process
-            all_events = await detector.detect_events_batch(
-                chunks, target_classes, sample_rate=sr, top_k=2, threshold=0.15
-            )
-            
+            total_chunks = max(1, int(duration / stride_seconds) + 1)
             events_stored = 0
-            for (chunk_audio, start_time), events in zip(chunks, all_events):
-                if not events:
-                    continue
-                    
-                end_time = start_time + chunk_duration
+            previous_events = []  # For deduplication
+            
+            # CLAP processing parameters (within each chunk)
+            clap_window = 5.0  # 5s windows for CLAP
+            clap_stride = 2.5  # 2.5s stride
+            
+            for chunk_idx in range(total_chunks):
+                chunk_start = chunk_idx * stride_seconds
+                chunk_end = min(chunk_start + chunk_seconds, duration)
                 
-                # Store mostly high confidence events
-                for event in events:
-                    self.db.client.upsert(
-                        collection_name=self.db.AUDIO_EVENTS_COLLECTION,
-                        points=[
-                            models.PointStruct(
-                                id=str(uuid.uuid4()),
-                                vector=[0.0],  # Dummy vector, payload search only
-                                payload={
-                                    "media_path": str(path),
-                                    "start_time": start_time,
-                                    "end_time": end_time,
-                                    "event_class": event["event"], # e.g. "applause"
-                                    "confidence": event["confidence"],
-                                },
-                            )
-                        ],
+                # Skip if we've gone past the end
+                if chunk_start >= duration:
+                    break
+                
+                # === PROGRESS UPDATE ===
+                if job_id:
+                    progress = 45 + (chunk_idx / total_chunks) * 10  # 45% → 55%
+                    progress_tracker.update(
+                        job_id, 
+                        progress, 
+                        stage="audio_events",
+                        message=f"Detecting audio events: chunk {chunk_idx+1}/{total_chunks} ({chunk_start:.0f}s-{chunk_end:.0f}s)"
                     )
-                    events_stored += 1
+                
+                # Stream only this chunk using FFmpeg (doesn't load full file)
+                try:
+                    audio_chunk = await self._extract_audio_segment(
+                        path, chunk_start, chunk_end, sample_rate
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to extract audio chunk {chunk_idx}: {e}")
+                    continue
+                
+                if audio_chunk is None or len(audio_chunk) == 0:
+                    continue
+                
+                # Split chunk into CLAP windows
+                samples_per_window = int(clap_window * sample_rate)
+                stride_samples = int(clap_stride * sample_rate)
+                
+                clap_chunks = []
+                for i in range(0, len(audio_chunk) - samples_per_window + 1, stride_samples):
+                    window = audio_chunk[i : i + samples_per_window]
+                    window_start = chunk_start + (i / sample_rate)
+                    clap_chunks.append((window, window_start))
+                
+                if not clap_chunks:
+                    continue
+                
+                # Batch process this chunk's windows
+                try:
+                    chunk_events = await detector.detect_events_batch(
+                        clap_chunks, target_classes, sample_rate=sample_rate, 
+                        top_k=2, threshold=0.15
+                    )
+                except Exception as e:
+                    logger.warning(f"CLAP detection failed for chunk {chunk_idx}: {e}")
+                    continue
+                
+                # Store events with deduplication
+                for (window_audio, window_start), events in zip(clap_chunks, chunk_events):
+                    if not events:
+                        continue
+                        
+                    window_end = window_start + clap_window
+                    
+                    for event in events:
+                        # Deduplicate events in overlap region
+                        if self._is_duplicate_event(event, window_start, previous_events, overlap_seconds):
+                            continue
+                        
+                        self.db.client.upsert(
+                            collection_name=self.db.AUDIO_EVENTS_COLLECTION,
+                            points=[
+                                models.PointStruct(
+                                    id=str(uuid.uuid4()),
+                                    vector=[0.0],  # Dummy vector, payload search only
+                                    payload={
+                                        "media_path": str(path),
+                                        "start_time": window_start,
+                                        "end_time": window_end,
+                                        "event_class": event["event"],
+                                        "confidence": event["confidence"],
+                                    },
+                                )
+                            ],
+                        )
+                        events_stored += 1
+                        previous_events.append({
+                            "event": event["event"],
+                            "start_time": window_start,
+                        })
+                
+                # Cleanup chunk memory immediately
+                del audio_chunk
+                gc.collect()
             
             logger.info(f"Indexed {events_stored} audio events for {path.name}")
             detector.cleanup()
             
         except Exception as e:
             logger.error(f"Audio event detection failed: {e}")
+    
+    async def _extract_audio_segment(
+        self, path: Path, start: float, end: float, sample_rate: int = 48000
+    ) -> np.ndarray | None:
+        """Extract a specific audio segment using FFmpeg streaming.
+        
+        This avoids loading the entire file into memory.
+        
+        Args:
+            path: Path to the media file.
+            start: Start time in seconds.
+            end: End time in seconds.
+            sample_rate: Target sample rate (default 48000 for CLAP).
+            
+        Returns:
+            NumPy array of audio samples, or None on failure.
+        """
+        import subprocess
+        import numpy as np
+        
+        duration = end - start
+        
+        try:
+            # Use FFmpeg to extract just this segment
+            cmd = [
+                'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+                '-ss', str(start),  # Seek to start (before input for speed)
+                '-i', str(path),
+                '-t', str(duration),  # Duration to extract
+                '-vn',  # No video
+                '-ac', '1',  # Mono
+                '-ar', str(sample_rate),  # Target sample rate
+                '-f', 'f32le',  # 32-bit float PCM
+                '-'  # Output to stdout
+            ]
+            
+            result = subprocess.run(
+                cmd, capture_output=True, timeout=60
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"FFmpeg extraction failed: {result.stderr.decode()[:200]}")
+                return None
+            
+            # Convert bytes to numpy array
+            audio = np.frombuffer(result.stdout, dtype=np.float32)
+            return audio
+            
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Audio extraction timed out for {start}-{end}s")
+            return None
+        except Exception as e:
+            logger.warning(f"Audio extraction failed: {e}")
+            return None
+    
+    def _is_duplicate_event(
+        self, event: dict, event_time: float, 
+        previous_events: list, overlap_window: float
+    ) -> bool:
+        """Check if an event is a duplicate from the overlap region.
+        
+        Args:
+            event: The event dict with 'event' key.
+            event_time: Start time of the event.
+            previous_events: List of previously stored events.
+            overlap_window: Size of overlap region in seconds.
+            
+        Returns:
+            True if this is a duplicate, False otherwise.
+        """
+        for prev in previous_events:
+            # Same event class within overlap window
+            if (prev["event"] == event["event"] and 
+                abs(prev["start_time"] - event_time) < overlap_window):
+                return True
+        return False
 
     @observe("frame_processing")
     async def _process_frames(
@@ -1341,17 +1531,13 @@ class IngestionPipeline:
         self._current_media_id = str(path)
 
         # Pass time range to extractor for partial processing
+        # NOTE: Extractor now yields ExtractedFrame objects with ACTUAL PTS timestamps
         frame_generator = self.extractor.extract(
             path,
             interval=self.frame_interval_seconds,
             start_time=getattr(self, "_start_time", None),
             end_time=getattr(self, "_end_time", None),
         )
-
-        # Time offset for accurate timestamps in partial extraction
-        time_offset = getattr(self, "_start_time", None) or 0.0
-
-        frame_count = 0
 
         # Resume support: skip already processed frames
         resume_from_frame = getattr(self, "_resume_from_frame", 0)
@@ -1371,24 +1557,27 @@ class IngestionPipeline:
             self._get_audio_segments_for_video(str(path))
         )
 
-        async for frame_path in frame_generator:
+        async for extracted_frame in frame_generator:
             if job_id:
                 if progress_tracker.is_cancelled(
                     job_id
                 ) or progress_tracker.is_paused(job_id):
                     break
 
+            # ExtractedFrame contains: path, timestamp (actual PTS), frame_index
+            frame_path = extracted_frame.path
+            frame_count = extracted_frame.frame_index
+            
             # RESUME: Skip already processed frames
             if frame_count < resume_from_frame:
-                frame_count += 1
                 if frame_path.exists():
                     frame_path.unlink()
                 continue
 
-            # Calculate actual timestamp including offset
-            timestamp = time_offset + (
-                frame_count * float(self.frame_interval_seconds)
-            )
+            # USE ACTUAL PTS TIMESTAMP (from FFprobe, not calculated)
+            # This fixes timestamp drift on VFR videos
+            timestamp = extracted_frame.timestamp
+            
             if self.frame_sampler.should_sample(frame_count):
                 # Get temporal context from XMem-style memory
                 narrative_context = temporal_ctx.get_context_for_vlm()
@@ -1705,6 +1894,9 @@ class IngestionPipeline:
 
             # 6. Deep Research Analysis (Cinematography, Aesthetics, Mood)
             dr_meta = {}
+            internvideo_features = None
+            languagebind_features = None
+            
             if frame_bytes:
                 try:
                     import cv2
@@ -1732,6 +1924,28 @@ class IngestionPipeline:
                         "aesthetic_score": dr_result.aesthetic_score,
                         "is_black_frame": dr_result.is_black_frame,
                     }
+                    
+                    # Video understanding embeddings (InternVideo, LanguageBind)
+                    # Only compute if enabled in settings (saves VRAM on low-end systems)
+                    if settings.enable_video_embeddings:
+                        try:
+                            video_result = await processor.analyze_video_segment(
+                                video_path=path,
+                                start_time=scene.start_time,
+                                end_time=scene.end_time,
+                                sample_frames=8,
+                            )
+                            
+                            # Extract video embeddings for action search
+                            if "internvideo" in video_result.video_features:
+                                internvideo_features = video_result.video_features["internvideo"].tolist()
+                            if "languagebind" in video_result.video_features:
+                                languagebind_features = video_result.video_features["languagebind"].tolist()
+                                
+                            logger.debug(f"Scene {idx}: InternVideo={internvideo_features is not None}, LanguageBind={languagebind_features is not None}")
+                        except Exception as e:
+                            logger.debug(f"Video understanding failed for scene {idx}: {e}")
+                            
                 except Exception as e:
                     logger.warning(f"Deep Research failed for scene {idx}: {e}")
 
@@ -1807,6 +2021,8 @@ class IngestionPipeline:
                     visual_text=visual_text,
                     motion_text=motion_text,
                     dialogue_text=dialogue_text,
+                    internvideo_features=internvideo_features,
+                    languagebind_features=languagebind_features,
                     payload=payload,
                 )
                 scenes_stored += 1

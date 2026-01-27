@@ -442,6 +442,22 @@ class Settings(BaseSettings):
         description="Store SigLIP visual embeddings for cross-modal retrieval",
     )
 
+    # --- Video Understanding (InternVideo, LanguageBind) ---
+    enable_video_embeddings: bool = Field(
+        default=True,
+        description="Compute InternVideo/LanguageBind embeddings for action search (disable for low-VRAM)",
+    )
+    
+    video_embedding_dim: int = Field(
+        default=768,
+        description="Dimension of video embeddings (InternVideo/LanguageBind)",
+    )
+    
+    visual_features_dim: int = Field(
+        default=768,
+        description="Dimension of visual features (CLIP ViT-L)",
+    )
+
     enable_hybrid_search: bool = Field(
         default=True,
         description="Use hybrid search (vector + keyword + identity)",

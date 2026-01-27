@@ -1,22 +1,49 @@
-"""Extract frames from video files at specified intervals using FFmpeg."""
+"""Extract frames from video files at specified intervals using FFmpeg.
+
+TIMESTAMP ACCURACY FIX: This module now extracts actual PTS (Presentation Time Stamps)
+from FFmpeg rather than calculating timestamps from frame count * interval.
+This fixes timestamp drift on VFR (Variable Frame Rate) videos.
+"""
 
 import asyncio
+import json
+import re
 import shutil
 import subprocess
 import tempfile
 import traceback
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path
 
 from core.utils.logger import log
 from core.utils.observe import observe
 
 
+@dataclass
+class ExtractedFrame:
+    """A frame extracted from video with its actual timestamp.
+    
+    Attributes:
+        path: Path to the extracted frame image file.
+        timestamp: Actual presentation timestamp in seconds (from PTS, not calculated).
+        frame_index: Sequential frame index (0-based).
+    """
+    path: Path
+    timestamp: float
+    frame_index: int
+
+
 class FrameExtractor:
-    """Class to extract frames from video files at specified intervals."""
+    """Class to extract frames from video files with accurate PTS timestamps.
+    
+    DESIGN DECISION: We extract actual timestamps from FFmpeg rather than
+    calculating them as (frame_count * interval). This handles VFR videos
+    correctly and prevents timestamp drift on long videos.
+    """
 
     class FrameCache:
-        """Dont clutter the user's video folder with thousands of JPEGs."""
+        """Don't clutter the user's video folder with thousands of JPEGs."""
 
         def __init__(self):
             """Initialize temporary directory for frame storage."""
@@ -44,8 +71,8 @@ class FrameExtractor:
         interval: float = 2.0,
         start_time: float | None = None,
         end_time: float | None = None,
-    ) -> AsyncGenerator[Path, None]:
-        """Generator that extracts frames from a video file at specified intervals.
+    ) -> AsyncGenerator[ExtractedFrame, None]:
+        """Generator that extracts frames from a video file with accurate timestamps.
 
         Args:
             video_path: Path to the video file.
@@ -53,8 +80,8 @@ class FrameExtractor:
             start_time: Optional start time in seconds for partial extraction.
             end_time: Optional end time in seconds for partial extraction.
 
-        Returns:
-            An async generator yielding Paths to the extracted frame images.
+        Yields:
+            ExtractedFrame objects containing path and actual PTS timestamp.
         """
         # Store time offset for timestamp calculation
         self._time_offset = start_time or 0.0
@@ -79,11 +106,17 @@ class FrameExtractor:
             if not path_obj.is_file():
                 raise FileNotFoundError(f"Path is not a file: {path_obj}")
 
+            # Get frame timestamps using FFprobe first (for accuracy)
+            frame_timestamps = await self._get_frame_timestamps(
+                path_obj, interval, start_time, end_time
+            )
+
             with FrameExtractor.FrameCache() as cache_dir:
-                output_pattern = cache_dir / "frame_%04d.jpg"
+                # Use timestamp-based filenames for accurate mapping
+                output_pattern = cache_dir / "frame_%06d.jpg"
 
                 # Build FFmpeg command with optional time range
-                args_to_ffmpeg = ["ffmpeg"]
+                args_to_ffmpeg = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
 
                 # -ss before -i for fast seeking (input seeking)
                 if start_time is not None:
@@ -114,6 +147,7 @@ class FrameExtractor:
                         "2",  # High quality JPEG
                         "-f",
                         "image2",
+                        "-start_number", "0",
                         str(output_pattern),
                     ]
                 )
@@ -139,8 +173,20 @@ class FrameExtractor:
                     return
 
                 frames = sorted(cache_dir.glob("frame_*.jpg"))
-                for frame_path in frames:
-                    yield frame_path
+                
+                for idx, frame_path in enumerate(frames):
+                    # Use actual PTS if available, otherwise calculate
+                    if frame_timestamps and idx < len(frame_timestamps):
+                        actual_ts = frame_timestamps[idx]
+                    else:
+                        # Fallback: calculated timestamp (less accurate for VFR)
+                        actual_ts = (start_time or 0.0) + (idx * interval)
+                    
+                    yield ExtractedFrame(
+                        path=frame_path,
+                        timestamp=actual_ts,
+                        frame_index=idx
+                    )
 
         except (
             ValueError,
@@ -163,6 +209,109 @@ class FrameExtractor:
             traceback.print_exc()
             return
 
+    async def _get_frame_timestamps(
+        self,
+        video_path: Path,
+        interval: float,
+        start_time: float | None,
+        end_time: float | None,
+    ) -> list[float]:
+        """Extract actual PTS timestamps for sampled frames using FFprobe.
+        
+        This is the key fix for VFR (Variable Frame Rate) videos.
+        
+        Args:
+            video_path: Path to the video file.
+            interval: Sampling interval in seconds.
+            start_time: Optional start time.
+            end_time: Optional end time.
+            
+        Returns:
+            List of actual timestamps in seconds.
+        """
+        try:
+            # Build FFprobe command to get frame timestamps
+            cmd = [
+                'ffprobe', '-v', 'quiet',
+                '-select_streams', 'v:0',
+                '-show_entries', 'frame=pkt_pts_time,best_effort_timestamp_time',
+                '-of', 'json',
+            ]
+            
+            # Add time range if specified
+            if start_time is not None:
+                cmd.extend(['-read_intervals', f'{start_time}%'])
+            
+            cmd.append(str(video_path))
+            
+            def run_probe():
+                return subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=120
+                )
+            
+            result = await asyncio.to_thread(run_probe)
+            
+            if result.returncode != 0:
+                log(f"FFprobe timestamp extraction failed, using calculated timestamps")
+                return []
+            
+            data = json.loads(result.stdout)
+            frames = data.get('frames', [])
+            
+            # Extract all frame timestamps
+            all_timestamps = []
+            for frame in frames:
+                # Try pkt_pts_time first, then best_effort_timestamp_time
+                ts = frame.get('pkt_pts_time') or frame.get('best_effort_timestamp_time')
+                if ts is not None:
+                    all_timestamps.append(float(ts))
+            
+            if not all_timestamps:
+                return []
+            
+            # Sample at the specified interval
+            if interval <= 0:
+                return all_timestamps
+            
+            sampled_timestamps = []
+            last_sampled = -interval  # Ensures first frame is sampled
+            
+            for ts in all_timestamps:
+                if ts >= last_sampled + interval:
+                    # Apply start/end time filters
+                    if start_time and ts < start_time:
+                        continue
+                    if end_time and ts > end_time:
+                        break
+                    sampled_timestamps.append(ts)
+                    last_sampled = ts
+            
+            log(f"Extracted {len(sampled_timestamps)} actual PTS timestamps")
+            return sampled_timestamps
+            
+        except json.JSONDecodeError:
+            log("Failed to parse FFprobe JSON output")
+            return []
+        except subprocess.TimeoutExpired:
+            log("FFprobe timestamp extraction timed out")
+            return []
+        except Exception as e:
+            log(f"Timestamp extraction failed: {e}")
+            return []
+
+
+# Legacy compatibility: yield just path for backward compatibility
+async def extract_frames_legacy(
+    video_path: str | Path,
+    interval: float = 2.0,
+    start_time: float | None = None,
+    end_time: float | None = None,
+) -> AsyncGenerator[Path, None]:
+    """Legacy wrapper that yields only paths (for backward compatibility)."""
+    extractor = FrameExtractor()
+    async for frame in extractor.extract(video_path, interval, start_time, end_time):
+        yield frame.path
+
 
 if __name__ == "__main__":
 
@@ -170,6 +319,7 @@ if __name__ == "__main__":
         """Test the FrameExtractor with a sample video file."""
         extractor = FrameExtractor()
         async for frame in extractor.extract("test_video.mp4"):
-            log(f"Got frame: {frame}")
+            log(f"Got frame: {frame.path} at {frame.timestamp:.3f}s")
 
     # asyncio.run(main())
+
