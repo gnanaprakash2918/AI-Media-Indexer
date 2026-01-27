@@ -142,6 +142,9 @@ class IngestionPipeline:
             Sam3Tracker() if settings.enable_sam3_tracking else None
         )
         self.frame_sampler = FrameSampler(every_n=5)
+        
+        # Visual encoder for CLIP/SigLIP embeddings (lazy-loaded)
+        self._visual_encoder = None
 
     @property
     def enhanced_config(self):
@@ -666,39 +669,66 @@ class IngestionPipeline:
             if self.enhanced_config and getattr(
                 self.enhanced_config, "enable_clap", True
             ):
-                import librosa
-
                 from core.processing.audio_events import AudioEventDetector
 
                 log("[CLAP] Starting audio event detection...")
                 audio_detector = AudioEventDetector()
 
-                # Load audio for CLAP (16kHz mono)
+                # === STREAMING APPROACH (OOM FIX) ===
+                # Instead of loading entire audio file at once, we stream in chunks
+                # This prevents OOM on videos longer than 15 minutes
                 try:
-                    log("[CLAP] Loading audio file with librosa...")
-                    # Run librosa.load in a thread to avoid blocking
-                    audio_array, sr = await asyncio.to_thread(
-                        librosa.load, str(path), sr=16000, mono=True
+                    # Get duration via FFprobe (doesn't load file into memory)
+                    import subprocess
+                    probe_cmd = [
+                        'ffprobe', '-v', 'quiet', '-show_entries',
+                        'format=duration', '-of', 'csv=p=0', str(path)
+                    ]
+                    duration_str = await asyncio.to_thread(
+                        lambda: subprocess.check_output(probe_cmd).decode().strip()
                     )
-                    log(
-                        f"[CLAP] Audio loaded: {len(audio_array)} samples, {sr}Hz"
-                    )
-
-                    # Prepare 2-second chunks for BATCH processing (single GPU acquisition)
-                    chunk_duration = 2.0
-                    chunk_samples = int(chunk_duration * sr)
-
+                    total_duration = float(duration_str)
+                    log(f"[CLAP] Video duration: {total_duration:.1f}s (streaming mode)")
+                    
+                    # Streaming parameters
+                    sr = 16000  # CLAP expected sample rate
+                    chunk_duration = 30.0  # 30s chunks (~1MB RAM each)
+                    stride = 25.0  # 5s overlap to catch boundary events
+                    
+                    # Prepare 2-second CLAP windows within each chunk
+                    clap_window_duration = 2.0
+                    clap_samples_per_window = int(clap_window_duration * sr)
+                    
                     # Build list of (chunk, start_time) tuples for batch processing
                     audio_chunks: list[tuple] = []
-                    for i in range(0, len(audio_array), chunk_samples):
-                        chunk = audio_array[i : i + chunk_samples]
-                        if len(chunk) < sr:  # Skip chunks < 1 second
+                    
+                    # Stream each chunk using FFmpeg (NOT librosa)
+                    for chunk_start in range(0, int(total_duration), int(stride)):
+                        chunk_end = min(chunk_start + chunk_duration, total_duration)
+                        
+                        # Use FFmpeg to extract just this chunk
+                        chunk_array = await self._extract_audio_segment(
+                            path, float(chunk_start), float(chunk_end), sr
+                        )
+                        
+                        if chunk_array is None or len(chunk_array) < sr:
                             continue
-                        start_time = i / sr
-                        audio_chunks.append((chunk, start_time))
-
+                        
+                        # Split chunk into 2-second CLAP windows  
+                        for i in range(0, len(chunk_array) - clap_samples_per_window + 1, clap_samples_per_window):
+                            window = chunk_array[i : i + clap_samples_per_window]
+                            if len(window) < sr:  # Skip windows < 1 second
+                                continue
+                            window_start = chunk_start + (i / sr)
+                            audio_chunks.append((window, window_start))
+                        
+                        # Aggressive cleanup after each chunk
+                        del chunk_array
+                        import gc
+                        gc.collect()
+                    
                     log(
-                        f"[CLAP] Prepared {len(audio_chunks)} chunks for batch processing"
+                        f"[CLAP] Prepared {len(audio_chunks)} windows for batch processing (streaming mode)"
                     )
 
                     # Define target classes once
@@ -782,50 +812,67 @@ class IngestionPipeline:
         try:
             from core.processing.audio_levels import AudioLoudnessAnalyzer
 
-            log("[Loudness] Starting audio level analysis...")
-            loudness_analyzer = AudioLoudnessAnalyzer()
-
-            # Load audio if not already loaded
-            if "audio_array" not in locals():
-                import librosa
-
-                audio_array, sr = librosa.load(str(path), sr=16000, mono=True)
-
-            # Analyze overall loudness
-            loudness_result = await loudness_analyzer.analyze(audio_array)
-            log(
-                f"[Loudness] Overall: {loudness_result['estimated_spl']} dB SPL ({loudness_result['loudness_category']})"
-            )
-
-            # Detect loud moments (useful for queries like "crowd cheer at 92dB")
-            loud_moments = await loudness_analyzer.detect_loud_moments(
-                audio_array,
-                threshold_spl=80,  # Detect moments above 80 dB
-            )
-
-            if loud_moments:
-                log(f"[Loudness] Found {len(loud_moments)} loud moments")
-                # Store loud moments in database
-                for moment in loud_moments:
-                    self.db.insert_audio_event(
-                        media_path=str(path),
-                        event_type=f"loud_moment_{moment['category']}",
-                        start_time=moment["start"],
-                        end_time=moment["end"],
-                        confidence=0.9,  # High confidence for dB-based detection
-                        payload={"peak_spl": moment["peak_spl"]},
-                    )
-
-            # Store overall loudness in media metadata
-            self.db.update_media_metadata(
-                media_path=str(path),
-                metadata={
-                    "loudness_lufs": loudness_result["lufs"],
-                    "peak_db": loudness_result["peak_db"],
-                    "estimated_spl": loudness_result["estimated_spl"],
-                    "loudness_category": loudness_result["loudness_category"],
-                },
-            )
+            log("[Loudness] Starting audio level analysis (FFmpeg streaming)...")
+            
+            # === FFmpeg EBUR128 LOUDNESS ANALYSIS (OOM-SAFE) ===
+            # Uses FFmpeg's ebur128 filter which streams the audio (~50MB RAM max)
+            # instead of loading entire file into RAM (3-4GB for long videos)
+            import subprocess
+            import re
+            
+            try:
+                # Run FFmpeg with ebur128 loudness filter
+                cmd = [
+                    "ffmpeg", "-i", str(path),
+                    "-af", "ebur128=framelog=verbose:peak=true",
+                    "-f", "null", "-"
+                ]
+                result = await asyncio.to_thread(
+                    lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                )
+                
+                # Parse the summary line from stderr
+                # Format: "Summary: Integrated loudness: -23.0 LUFS, Loudness range: 5.0 LU"
+                stderr = result.stderr
+                
+                lufs = -23.0  # Default
+                peak_db = 0.0
+                
+                # Extract integrated loudness
+                lufs_match = re.search(r"I:\s*(-?\d+\.?\d*)\s*LUFS", stderr)
+                if lufs_match:
+                    lufs = float(lufs_match.group(1))
+                
+                # Extract true peak
+                peak_match = re.search(r"Peak:\s*(-?\d+\.?\d*)\s*dBFS", stderr)
+                if peak_match:
+                    peak_db = float(peak_match.group(1))
+                
+                # Estimate SPL from LUFS (rough conversion)
+                estimated_spl = max(0, 85 + lufs + 23)  # 85dB baseline at -23 LUFS
+                
+                # Categorize
+                if estimated_spl < 60:
+                    category = "quiet"
+                elif estimated_spl < 75:
+                    category = "moderate"
+                elif estimated_spl < 85:
+                    category = "loud"
+                else:
+                    category = "very_loud"
+                
+                log(f"[Loudness] Overall: {estimated_spl:.0f} dB SPL ({category}) [LUFS: {lufs:.1f}]")
+                
+                # Store overall loudness in media metadata
+                self.db.update_media_metadata(
+                    media_path=str(path),
+                    metadata={
+                        "loudness_lufs": lufs,
+                        "peak_db": peak_db,
+                        "estimated_spl": estimated_spl,
+                        "loudness_category": category,
+                    },
+                )
         except Exception as e:
             log(f"[Loudness] Analysis failed: {e}")
 
@@ -840,10 +887,16 @@ class IngestionPipeline:
             music_analyzer = get_music_analyzer()
 
             # Load audio if not already loaded
+            # SAFETY: Only load first 5 minutes for music structure to prevent OOM
+            # Music structure (verse/chorus) is typically established early
             if "audio_array" not in locals():
                 import librosa
 
-                audio_array, sr = librosa.load(str(path), sr=22050, mono=True)
+                max_duration = 300.0  # 5 minutes max for music analysis
+                audio_array, sr = librosa.load(
+                    str(path), sr=22050, mono=True, duration=max_duration
+                )
+                log(f"[MusicStructure] Loaded {len(audio_array)/sr:.1f}s audio (limited to {max_duration}s)")
             else:
                 # Resample to 22050 for librosa if needed
                 if "sr" in locals() and sr != 22050:
@@ -1949,7 +2002,32 @@ class IngestionPipeline:
                 except Exception as e:
                     logger.warning(f"Deep Research failed for scene {idx}: {e}")
 
-            # 7. Store scene with multi-vector
+            # 7. Generate CLIP/SigLIP visual features for true multimodal search
+            visual_features = None
+            if settings.enable_visual_features and frame_bytes:
+                try:
+                    # Lazy load the encoder to save VRAM until needed
+                    if self._visual_encoder is None:
+                        from core.processing.visual_encoder import get_default_visual_encoder
+                        logger.info("Initializing Visual Encoder (CLIP/SigLIP) for ingestion...")
+                        self._visual_encoder = get_default_visual_encoder()
+                    
+                    # Convert frame bytes to numpy array
+                    import io
+                    from PIL import Image
+                    img = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
+                    img_np = np.array(img)
+                    
+                    # Encode the frame to get visual embeddings
+                    visual_features_arr = await self._visual_encoder.encode_image(img_np)
+                    if visual_features_arr is not None:
+                        visual_features = visual_features_arr.tolist() if hasattr(visual_features_arr, 'tolist') else list(visual_features_arr)
+                        logger.debug(f"Scene {idx}: Visual features generated (dim={len(visual_features)})")
+                except Exception as e:
+                    logger.warning(f"Failed to generate visual features for scene {idx}: {e}")
+                    visual_features = None
+
+            # 8. Store scene with multi-vector
             try:
                 # Save representative thumbnail
                 thumb_path = None
@@ -2021,6 +2099,7 @@ class IngestionPipeline:
                     visual_text=visual_text,
                     motion_text=motion_text,
                     dialogue_text=dialogue_text,
+                    visual_features=visual_features,  # CLIP/SigLIP embedding
                     internvideo_features=internvideo_features,
                     languagebind_features=languagebind_features,
                     payload=payload,

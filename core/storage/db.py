@@ -3783,16 +3783,43 @@ class VectorDB:
         results = []
 
         if search_mode == "hybrid":
-            # Search all 3 vectors and combine results
-            for vector_name in ["visual", "motion", "dialogue"]:
+            # Search all enabled vectors and combine results
+            # Core text vectors (always searched)
+            target_vectors = ["visual", "motion", "dialogue"]
+            
+            # Video understanding vectors (if enabled and stored)
+            if getattr(settings, 'enable_video_embeddings', True):
+                target_vectors.extend(["internvideo", "languagebind"])
+            
+            # Visual features (CLIP/SigLIP) if enabled
+            if getattr(settings, 'enable_visual_features', True):
+                target_vectors.append("visual_features")
+            
+            for vector_name in target_vectors:
                 try:
+                    # For video/visual vectors, add filter to only search scenes with those embeddings
+                    search_filter = query_filter
+                    if vector_name in ["internvideo", "languagebind", "visual_features"]:
+                        has_key = f"has_{vector_name}"
+                        embedding_filter = models.FieldCondition(
+                            key=has_key,
+                            match=models.MatchValue(value=True),
+                        )
+                        if search_filter:
+                            # Combine with existing filter
+                            search_filter = models.Filter(
+                                must=[*search_filter.must, embedding_filter] if search_filter.must else [embedding_filter]
+                            )
+                        else:
+                            search_filter = models.Filter(must=[embedding_filter])
+                    
                     resp = self.client.query_points(
                         collection_name=self.SCENES_COLLECTION,
                         query=query_vec,
                         using=vector_name,
                         limit=limit,
                         score_threshold=score_threshold,
-                        query_filter=query_filter,
+                        query_filter=search_filter,
                     )
                     for hit in resp.points:
                         results.append(
