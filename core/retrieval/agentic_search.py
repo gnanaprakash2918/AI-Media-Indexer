@@ -69,6 +69,11 @@ class SearchAgent:
         self._hybrid_searcher = None
         self._enable_hybrid = enable_hybrid
         self._council = None
+        
+        # Query embedding cache for instant repeat queries
+        self._query_cache: dict[str, tuple[list[float], float]] = {}  # {hash: (vector, timestamp)}
+        self._cache_ttl = 3600  # 1 hour TTL
+        self._cache_max_size = 1000  # Max 1000 entries (~1MB)
 
     @property
     def hybrid_searcher(self):
@@ -89,6 +94,41 @@ class SearchAgent:
         if self._council is None:
             self._council = RerankingCouncil()
         return self._council
+
+    async def _get_cached_embedding(self, query: str) -> list[float] | None:
+        """Get cached query embedding if exists and not expired.
+        
+        Returns None if not cached or expired, requiring fresh encoding.
+        """
+        import hashlib
+        import time
+        
+        cache_key = hashlib.md5(query.encode()).hexdigest()
+        
+        if cache_key in self._query_cache:
+            vector, timestamp = self._query_cache[cache_key]
+            if time.time() - timestamp < self._cache_ttl:
+                return vector
+            else:
+                # Expired, remove
+                del self._query_cache[cache_key]
+        
+        return None
+    
+    def _cache_embedding(self, query: str, vector: list[float]) -> None:
+        """Cache a query embedding with current timestamp."""
+        import hashlib
+        import time
+        
+        cache_key = hashlib.md5(query.encode()).hexdigest()
+        
+        # LRU eviction if cache is full
+        if len(self._query_cache) >= self._cache_max_size:
+            # Remove oldest entry
+            oldest_key = min(self._query_cache, key=lambda k: self._query_cache[k][1])
+            del self._query_cache[oldest_key]
+        
+        self._query_cache[cache_key] = (vector, time.time())
 
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:

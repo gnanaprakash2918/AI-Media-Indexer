@@ -240,6 +240,10 @@ class VectorDB:
         self._cluster_id_lock = threading.Lock()
         self._cluster_id_counter = 0
 
+        # Embedding cache for repeated queries
+        self._embedding_cache = {}
+        self._embedding_cache_max_size = 1000
+
     def get_next_voice_cluster_id(self) -> int:
         """Generate a unique voice cluster ID.
 
@@ -517,21 +521,47 @@ class VectorDB:
         # LAZY LOAD on first use
         await self._ensure_encoder_loaded(job_id=job_id)
 
+        # Prepare texts
         if isinstance(texts, str):
-            texts_list = [texts]
+            input_texts = [texts]
         else:
-            texts_list = list(texts)
+            input_texts = list(texts)
+
+        # Check Cache
+        cached_embeddings = []
+        indices_to_compute = []
+        
+        # Keys involve text + is_query + model_name to be safe
+        cache_keys = [(t, is_query, self.MODEL_NAME) for t in input_texts]
+        
+        results = [None] * len(input_texts)
+        
+        for i, key in enumerate(cache_keys):
+            if key in self._embedding_cache:
+                # Cache hit - move to end (LRU behavior)
+                results[i] = self._embedding_cache.pop(key)
+                self._embedding_cache[key] = results[i]
+            else:
+                indices_to_compute.append(i)
+
+        if not indices_to_compute:
+            return [list(r) for r in results]
+
+        # Prepare texts for computing
+        texts_to_compute = [input_texts[i] for i in indices_to_compute]
 
         # e5 models require prefix (query: or passage:)
         model_lower = self.MODEL_NAME.lower()
+        processed_texts = texts_to_compute
+        
         if "e5" in model_lower:
             prefix = "query: " if is_query else "passage: "
-            texts_list = [prefix + t for t in texts_list]
+            processed_texts = [prefix + t for t in texts_to_compute]
         elif "nv-embed-v2" in model_lower:
             # NV-Embed-v2 instructions
             if is_query:
                 prefix = "Instruction: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
-                texts_list = [prefix + t for t in texts_list]
+                processed_texts = [prefix + t for t in texts_to_compute]
             # No prefix for passages
         elif "mxbai" in model_lower:
             # mxbai-embed-large-v1 instructions
@@ -539,7 +569,7 @@ class VectorDB:
                 prefix = (
                     "Represent this sentence for searching relevant passages: "
                 )
-                texts_list = [prefix + t for t in texts_list]
+                processed_texts = [prefix + t for t in texts_to_compute]
             # No prefix for passages
 
         try:
@@ -555,12 +585,32 @@ class VectorDB:
                 log("Encoder not available", level="ERROR")
                 return []
 
+        # Encode uncached texts
         embeddings = self.encoder.encode(
-            texts_list,
+            processed_texts,
             batch_size=batch_size,
             show_progress_bar=show_progress_bar,
         )
-        return [list(e) for e in embeddings]
+        
+        # Update results and cache
+        computed_list = [list(e) for e in embeddings]
+        for idx_in_batch, original_idx in enumerate(indices_to_compute):
+            emb = computed_list[idx_in_batch]
+            results[original_idx] = emb
+            
+            # Add to cache
+            key = cache_keys[original_idx]
+            self._embedding_cache[key] = emb
+            
+            # Simple eviction
+            if len(self._embedding_cache) > self._embedding_cache_max_size:
+                # Remove first element (LRU)
+                try:
+                    self._embedding_cache.pop(next(iter(self._embedding_cache)))
+                except Exception:
+                    pass
+
+        return results
 
     async def get_embedding(self, text: str) -> list[float]:
         """Convenience method to get a single query embedding for a string.
@@ -3640,6 +3690,7 @@ class VectorDB:
         aesthetic_score: float | None = None,
         # Time filters
         video_path: str | None = None,
+        video_paths: list[str] | None = None,
         # Search mode
         search_mode: str = "hybrid",  # "visual", "motion", "dialogue", "hybrid"
     ) -> list[dict[str, Any]]:
@@ -3681,6 +3732,15 @@ class VectorDB:
                 models.FieldCondition(
                     key="media_path",
                     match=models.MatchValue(value=video_path),
+                )
+            )
+
+        # Hierarchical Filter (Multiple Videos)
+        if video_paths:
+            conditions.append(
+                models.FieldCondition(
+                    key="media_path",
+                    match=models.MatchAny(any=video_paths),
                 )
             )
 

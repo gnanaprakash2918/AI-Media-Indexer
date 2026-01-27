@@ -43,6 +43,11 @@ from core.utils.resource import resource_manager
 from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 from core.utils.retry import retry
 
+# Global semaphore for VLM parallelism (limits concurrent VLM calls to 4)
+# This prevents OOM when using Ollama/Gemini with large contexts
+VLM_SEMAPHORE = asyncio.Semaphore(4)
+
+
 
 class FrameBuffer:
     """Buffers frame data for batch database writes.
@@ -873,6 +878,8 @@ class IngestionPipeline:
                         "loudness_category": category,
                     },
                 )
+            except Exception as e:
+                log(f"[Loudness] FFmpeg analysis failed: {e}")
         except Exception as e:
             log(f"[Loudness] Analysis failed: {e}")
 
@@ -1610,6 +1617,70 @@ class IngestionPipeline:
             self._get_audio_segments_for_video(str(path))
         )
 
+        # Batch Processing Helper
+        async def _process_batch_items(frames_to_process: list):
+            if not frames_to_process:
+                return
+
+            paths = [f.path for f in frames_to_process]
+            try:
+                # 1. Batch Face Detection (Speedup)
+                batch_faces = await self.faces.detect_faces_batch(paths)
+            except Exception as e:
+                logger.warning(f"Batch face detection failed: {e}")
+                batch_faces = [None] * len(frames_to_process)
+
+            # 2. Process frames with pre-detected faces
+            for idx, frame_item in enumerate(frames_to_process):
+                f_path = frame_item.path
+                f_ts = frame_item.timestamp
+                f_idx = frame_item.frame_index
+                
+                # Update context
+                narrative_context = temporal_ctx.get_context_for_vlm()
+                neighbor_timestamps = [c.timestamp for c in temporal_ctx.sensory]
+
+                new_desc = await self._process_single_frame(
+                    video_path=path,
+                    frame_path=f_path,
+                    timestamp=f_ts,
+                    index=f_idx,
+                    context=narrative_context,
+                    neighbor_timestamps=neighbor_timestamps,
+                    pre_detected_faces=batch_faces[idx] if idx < len(batch_faces) else None
+                )
+
+                if new_desc:
+                    # Add to temporal context memory
+                    t_ctx = TemporalContext(
+                        timestamp=f_ts,
+                        description=new_desc[:200],
+                        faces=list(self._face_clusters.keys())
+                        if hasattr(self, "_face_clusters")
+                        else [],
+                    )
+                    temporal_ctx.add_frame(t_ctx)
+
+                    # Add to Scenelet Builder
+                    s_ctx = TemporalContext(
+                        timestamp=f_ts,
+                        description=new_desc,
+                        faces=list(self._face_clusters.keys())
+                        if hasattr(self, "_face_clusters")
+                        else [],
+                    )
+                    scenelet_builder.add_frame(s_ctx)
+                
+                # Cleanup processed frame immediately
+                if f_path.exists():
+                     try:
+                         f_path.unlink()
+                     except Exception:
+                         pass
+
+        pending_frames = []
+
+
         async for extracted_frame in frame_generator:
             if job_id:
                 if progress_tracker.is_cancelled(
@@ -1632,41 +1703,10 @@ class IngestionPipeline:
             timestamp = extracted_frame.timestamp
             
             if self.frame_sampler.should_sample(frame_count):
-                # Get temporal context from XMem-style memory
-                narrative_context = temporal_ctx.get_context_for_vlm()
-                neighbor_timestamps = [
-                    c.timestamp for c in temporal_ctx.sensory
-                ]
-
-                new_desc = await self._process_single_frame(
-                    video_path=path,
-                    frame_path=frame_path,
-                    timestamp=timestamp,
-                    index=frame_count,
-                    context=narrative_context,
-                    neighbor_timestamps=neighbor_timestamps,
-                )
-                if new_desc:
-                    # Add to temporal context memory
-                    t_ctx = TemporalContext(
-                        timestamp=timestamp,
-                        description=new_desc[:200],
-                        faces=list(self._face_clusters.keys())
-                        if hasattr(self, "_face_clusters")
-                        else [],
-                    )
-                    temporal_ctx.add_frame(t_ctx)
-
-                    # Add to Scenelet Builder
-                    # Use full description for scenelets
-                    s_ctx = TemporalContext(
-                        timestamp=timestamp,
-                        description=new_desc,
-                        faces=list(self._face_clusters.keys())
-                        if hasattr(self, "_face_clusters")
-                        else [],
-                    )
-                    scenelet_builder.add_frame(s_ctx)
+                pending_frames.append(extracted_frame)
+                if len(pending_frames) >= 16:
+                    await _process_batch_items(pending_frames)
+                    pending_frames = []
 
             if job_id:
                 if progress_tracker.is_paused(job_id):
@@ -1730,11 +1770,13 @@ class IngestionPipeline:
 
             await asyncio.sleep(0.01)  # Minimal sleep for responsiveness
             # Always delete the frame file after processing
-            if frame_path.exists():
-                try:
-                    frame_path.unlink()
-                except Exception:
-                    pass
+            # Only delete if NOT in pending batch (processed frames are deleted by helper)
+            if extracted_frame not in pending_frames:
+                if frame_path.exists():
+                    try:
+                        frame_path.unlink()
+                    except Exception:
+                        pass
 
             frame_count += 1
 
@@ -1771,6 +1813,11 @@ class IngestionPipeline:
                 )
                 job_manager.update_heartbeat(job_id)
                 logger.debug(f"Checkpoint saved at frame {frame_count}")
+
+        # Process any remaining frames in the batch
+        if pending_frames:
+            await _process_batch_items(pending_frames)
+            pending_frames = []
 
         # Finalize face tracks and store in Identity Graph
         # This is the key step: convert frame-by-frame detections into stable tracks
@@ -2123,6 +2170,7 @@ class IngestionPipeline:
         index: int,
         context: str | None = None,
         neighbor_timestamps: list[float] | None = None,
+        pre_detected_faces: list | None = None,
     ) -> str | None:
         """Processes a single frame for identities and visual description.
 
@@ -2137,6 +2185,7 @@ class IngestionPipeline:
             index: Sequential index of the frame.
             context: Narrative context from previous frames for VLM.
             neighbor_timestamps: Timestamps of neighboring frames for search.
+            pre_detected_faces: Optional list of faces detected in batch mode.
 
         Returns:
             The generated frame description or None if processing failed.
@@ -2148,7 +2197,10 @@ class IngestionPipeline:
         face_cluster_ids: list[int] = []
         detected_faces = []
         try:
-            detected_faces = await self.faces.detect_faces(frame_path)
+            if pre_detected_faces is not None:
+                detected_faces = pre_detected_faces
+            else:
+                detected_faces = await self.faces.detect_faces(frame_path)
         except Exception:
             pass
 
@@ -2495,12 +2547,13 @@ class IngestionPipeline:
                 logger.warning(f"[OCR] Failed: {e}")
 
             # Run structured vision analysis
-            analysis = await self.vision.analyze_frame(
-                frame_path,
-                video_context=video_context,
-                identity_context=identity_context,
-                temporal_context=context,
-            )
+            async with VLM_SEMAPHORE:
+                analysis = await self.vision.analyze_frame(
+                    frame_path,
+                    video_context=video_context,
+                    identity_context=identity_context,
+                    temporal_context=context,
+                )
             if analysis:
                 description = analysis.to_search_content()
                 analysis.face_ids = [str(cid) for cid in face_cluster_ids]
@@ -2512,9 +2565,10 @@ class IngestionPipeline:
         # Fallback to unstructured description
         if not description:
             try:
-                description = await self.vision.describe(
-                    frame_path, context=context
-                )
+                async with VLM_SEMAPHORE:
+                    description = await self.vision.describe(
+                        frame_path, context=context
+                    )
             except Exception:
                 pass
 
