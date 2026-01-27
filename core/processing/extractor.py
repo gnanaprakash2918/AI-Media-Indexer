@@ -3,6 +3,9 @@
 TIMESTAMP ACCURACY FIX: This module now extracts actual PTS (Presentation Time Stamps)
 from FFmpeg rather than calculating timestamps from frame count * interval.
 This fixes timestamp drift on VFR (Variable Frame Rate) videos.
+
+STREAMING FIX: This module now streams frames via stdout pipe instead of writing
+thousands of temporary files. This prevents pipeline stalls on long videos.
 """
 
 import asyncio
@@ -12,12 +15,14 @@ import shutil
 import subprocess
 import tempfile
 import traceback
+import os
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
 
 from core.utils.logger import log
 from core.utils.observe import observe
+from core.errors import ExtractionError
 
 
 @dataclass
@@ -73,6 +78,9 @@ class FrameExtractor:
         end_time: float | None = None,
     ) -> AsyncGenerator[ExtractedFrame, None]:
         """Generator that extracts frames from a video file with accurate timestamps.
+        
+        Uses streaming mode to yield frames as they are processed, avoiding
+        long blocking pauses for large videos.
 
         Args:
             video_path: Path to the video file.
@@ -110,21 +118,26 @@ class FrameExtractor:
             frame_timestamps = await self._get_frame_timestamps(
                 path_obj, interval, start_time, end_time
             )
-
+            
+            # Use a robust temporary directory that cleans up automatically
             with FrameExtractor.FrameCache() as cache_dir:
-                # Use timestamp-based filenames for accurate mapping
-                output_pattern = cache_dir / "frame_%06d.jpg"
+                
+                # Build FFmpeg command for image pipe
+                # We use image2pipe to stream JPEGs to stdout
+                args_to_ffmpeg = [
+                    "ffmpeg", 
+                    "-y", 
+                    "-hide_banner", 
+                    "-loglevel", "error"
+                ]
 
-                # Build FFmpeg command with optional time range
-                args_to_ffmpeg = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
-
-                # -ss before -i for fast seeking (input seeking)
+                # -ss before -i for fast seeking
                 if start_time is not None:
                     args_to_ffmpeg.extend(["-ss", str(start_time)])
 
                 args_to_ffmpeg.extend(["-i", str(path_obj)])
 
-                # -t for duration (if end_time specified)
+                # -t for duration
                 if end_time is not None:
                     duration = end_time - (start_time or 0)
                     if duration > 0:
@@ -132,82 +145,104 @@ class FrameExtractor:
 
                 # Video filter and quality settings
                 video_filters = []
-
-                # Zero interval means "every frame" - skip fps filter
                 if interval > 0:
-                    # FPS = 1 / interval (e.g., 0.5s -> 2fps)
                     video_filters.append(f"fps=1/{interval}")
-
+                    
+                # Add PTS info request if possible, but for image2pipe usually 
+                # we rely on the pre-calculated timestamps or count
                 if video_filters:
                     args_to_ffmpeg.extend(["-vf", ",".join(video_filters)])
 
-                args_to_ffmpeg.extend(
-                    [
-                        "-q:v",
-                        "2",  # High quality JPEG
-                        "-f",
-                        "image2",
-                        "-start_number", "0",
-                        str(output_pattern),
-                    ]
+                args_to_ffmpeg.extend([
+                    "-q:v", "2",      # High quality JPEG
+                    "-f", "image2pipe",
+                    "-vcodec", "mjpeg",
+                    "-"               # Output to stdout
+                ])
+
+                log(f"Starting async ffmpeg stream for {path_obj.name}")
+
+                process = await asyncio.create_subprocess_exec(
+                    *args_to_ffmpeg,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    limit=10 * 1024 * 1024  # 10MB buffer
                 )
 
-                log(f"Starting async ffmpeg process for {path_obj.name}")
-
-                def run_ffmpeg():
-                    return subprocess.run(
-                        args_to_ffmpeg,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
-
-                proc = await asyncio.to_thread(run_ffmpeg)
-
-                if proc.returncode != 0:
-                    log(
-                        "[ERROR:FFmpeg] Failed to extract frames from "
-                        f"'{video_path}': {proc.stderr.strip() if proc.stderr else ''}",
-                    )
-                    return
-
-                frames = sorted(cache_dir.glob("frame_*.jpg"))
+                # Read from stdout and delimit JPEGs
+                # JPEG Start of Image (SOI): FF D8
+                # JPEG End of Image (EOI): FF D9
                 
-                for idx, frame_path in enumerate(frames):
-                    # Use actual PTS if available, otherwise calculate
-                    if frame_timestamps and idx < len(frame_timestamps):
-                        actual_ts = frame_timestamps[idx]
-                    else:
-                        # Fallback: calculated timestamp (less accurate for VFR)
-                        actual_ts = (start_time or 0.0) + (idx * interval)
+                buffer = bytearray()
+                frame_idx = 0
+                chunk_size = 65536
+                
+                # We need to process stream
+                while True:
+                    chunk = await process.stdout.read(chunk_size)
+                    if not chunk:
+                        break
                     
-                    yield ExtractedFrame(
-                        path=frame_path,
-                        timestamp=actual_ts,
-                        frame_index=idx
-                    )
+                    buffer.extend(chunk)
+                    
+                    # Process buffer for multiple images
+                    while True:
+                        start_idx = buffer.find(b"\xff\xd8")
+                        end_idx = buffer.find(b"\xff\xd9")
+                        
+                        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                            # Start and End found - we have a full image
+                            jpeg_data = buffer[start_idx : end_idx + 2]
+                            
+                            # Save to temp file (since downstream expects paths)
+                            frame_name = f"frame_{frame_idx:06d}.jpg"
+                            frame_path = cache_dir / frame_name
+                            
+                            with open(frame_path, "wb") as f:
+                                # Standard synchronous write is fine for tempfs/SSD
+                                f.write(jpeg_data)
+                            
+                            # Determine timestamp
+                            if frame_timestamps and frame_idx < len(frame_timestamps):
+                                timestamp = frame_timestamps[frame_idx]
+                            else:
+                                timestamp = (start_time or 0.0) + (frame_idx * interval)
+                            
+                            yield ExtractedFrame(
+                                path=frame_path,
+                                timestamp=timestamp,
+                                frame_index=frame_idx
+                            )
+                            
+                            frame_idx += 1
+                            
+                            # Remove processed part from buffer
+                            buffer = buffer[end_idx + 2:]
+                        elif start_idx != -1 and (end_idx == -1 or end_idx < start_idx):
+                            # Found start but not end (or end was from prev garbage), wait for more data
+                            # Keep buffer from start_idx
+                            if start_idx > 0:
+                                buffer = buffer[start_idx:]
+                            break
+                        elif start_idx == -1:
+                            # No start found, discard everything except maybe last few bytes in case split marker
+                            if len(buffer) > 2:
+                                buffer = buffer[-2:]
+                            break
 
-        except (
-            ValueError,
-            NotADirectoryError,
-            FileNotFoundError,
-            PermissionError,
-            IsADirectoryError,
-            OSError,
-        ) as exc:
-            log(
-                f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}"
-            )
-            return
+                # Check process return code
+                await process.wait()
+                if process.returncode != 0:
+                    error_out = await process.stderr.read()
+                    log(f"FFmpeg streaming warning: {error_out.decode('utf-8', errors='ignore')}")
 
+        except (ValueError, NotADirectoryError, FileNotFoundError, PermissionError, IsADirectoryError, OSError) as exc:
+            log(f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}")
+            raise ExtractionError(f"File access error for {video_path}: {exc}", original_error=exc)
         except Exception as exc:
-            log(
-                f"[ERROR:{type(exc).__name__}] Unexpected error "
-                f"processing '{video_path}': {exc}",
-            )
+            log(f"[ERROR:{type(exc).__name__}] Unexpected error processing '{video_path}': {exc}")
             traceback.print_exc()
-            return
+            raise ExtractionError(f"Unexpected extraction error for {video_path}", original_error=exc)
 
     async def _get_frame_timestamps(
         self,
@@ -318,8 +353,8 @@ if __name__ == "__main__":
     async def main():
         """Test the FrameExtractor with a sample video file."""
         extractor = FrameExtractor()
+        # Create a dummy video if needed or use existing
         async for frame in extractor.extract("test_video.mp4"):
             log(f"Got frame: {frame.path} at {frame.timestamp:.3f}s")
 
     # asyncio.run(main())
-

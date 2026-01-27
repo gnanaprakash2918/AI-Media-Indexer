@@ -9,6 +9,9 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from core.utils.observability import end_span, start_span
+from core.utils.logger import log
+import traceback
+from core.errors import MediaIndexerError
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -31,6 +34,11 @@ def observe(name: str) -> Callable[[F], F]:
                 end_span("success")
                 return result
             except Exception as exc:
+                if isinstance(exc, MediaIndexerError):
+                    log(f"[OBSERVE] {name} failed with known error: {exc}")
+                else:
+                    log(f"[OBSERVE] {name} CRASHED: {exc}")
+                    log(traceback.format_exc())
                 end_span("error", str(exc))
                 raise
             finally:
@@ -50,6 +58,11 @@ def observe(name: str) -> Callable[[F], F]:
                 end_span("success")
                 return result
             except Exception as exc:
+                if isinstance(exc, MediaIndexerError):
+                    log(f"[OBSERVE] {name} failed with known error: {exc}")
+                else:
+                    log(f"[OBSERVE] {name} CRASHED: {exc}")
+                    log(traceback.format_exc())
                 end_span("error", str(exc))
                 raise
             finally:

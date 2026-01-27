@@ -11,6 +11,7 @@ Features:
 - Self-Healing: Automatically repairs corrupted model caches.
 """
 
+import asyncio
 import gc
 import os
 import shutil
@@ -29,6 +30,7 @@ from config import settings
 from core.processing.text_utils import parse_srt
 from core.utils.logger import log
 from core.utils.observe import observe
+from core.errors import TranscriberError, ModelLoadError
 
 warnings.filterwarnings("ignore")
 
@@ -265,7 +267,7 @@ class AudioTranscriber:
         return False
 
     @observe("transcriber_slice_audio")
-    def _slice_audio(
+    async def _slice_audio(
         self, input_path: Path, start: float, end: float | None
     ) -> Path:
         """Slices a segment of audio from a source file into a temporary WAV.
@@ -299,7 +301,8 @@ class AudioTranscriber:
         )
 
         log(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
-        subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
+        # Run blocking subprocess in thread
+        await asyncio.to_thread(subprocess.run, cmd, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
     @observe("transcriber_convert_model")
@@ -383,7 +386,7 @@ class AudioTranscriber:
 
         except Exception as e:
             log(f"[ERROR] Model download/conversion failed: {e}")
-            raise RuntimeError(f"Could not prepare {model_id}.") from e
+            raise ModelLoadError(f"Could not prepare {model_id}: {e}", original_error=e)
 
     def _convert_and_cache_model(self, model_id: str) -> Path:
         """Alias for _convert_to_ct2 for backwards compatibility."""
@@ -492,7 +495,7 @@ class AudioTranscriber:
                                 f"[WARN] Fallback {fallback_model} also failed: {fallback_err}"
                             )
                             continue
-            raise RuntimeError(f"Failed to load Faster-Whisper: {e}") from e
+            raise ModelLoadError(f"Failed to load Faster-Whisper model {model_key}: {e}", original_error=e)
 
     def _format_timestamp(self, seconds: float) -> str:
         hours, remainder = divmod(seconds, 3600)
@@ -625,7 +628,7 @@ class AudioTranscriber:
 
         # Run Whisper (If no subs found) ---
         is_sliced = True
-        proc_path = self._slice_audio(audio_path, start_time, end_time)
+        proc_path = await self._slice_audio(audio_path, start_time, end_time)
 
         try:
             return await self._inference(
@@ -791,7 +794,7 @@ class AudioTranscriber:
 
         except Exception as e:
             log(f"[ERROR] Inference failed: {e}")
-            raise
+            raise TranscriberError(f"Whisper inference failed for {audio_path}: {e}", original_error=e)
 
     def _run_whisper_inference(
         self,

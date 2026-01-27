@@ -41,7 +41,17 @@ from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
+from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 from core.utils.retry import retry
+from core.errors import (
+    MediaIndexerError,
+    IngestionError,
+    ExtractionError,
+    TranscriberError,
+    VisionError,
+    ResourceError
+)
+import traceback
 
 # Global semaphore for VLM parallelism (limits concurrent VLM calls to 4)
 # This prevents OOM when using Ollama/Gemini with large contexts
@@ -355,9 +365,16 @@ class IngestionPipeline:
 
             return job_id
 
-        except Exception as e:
+        except MediaIndexerError as e:
+            logger.error(f"Ingestion failed with known error: {e}")
             progress_tracker.fail(job_id, error=str(e))
             raise
+
+        except Exception as e:
+            logger.critical(f"Ingestion failed with UNEXPECTED error: {e}")
+            logger.critical(traceback.format_exc())
+            progress_tracker.fail(job_id, error=f"Unexpected: {e}")
+            raise IngestionError(f"Unexpected pipeline failure: {e}", original_error=e)
 
     @observe("audio_processing")
     async def _process_audio(self, path: Path) -> None:

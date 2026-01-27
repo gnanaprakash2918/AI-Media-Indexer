@@ -3316,10 +3316,21 @@ class VectorDB:
         
         if visual_features is None:
             visual_features = [0.0] * visual_features_dim
+        elif len(visual_features) != visual_features_dim:
+             log(f"Visual features dim mismatch: got {len(visual_features)}, expected {visual_features_dim}", level="ERROR")
+             visual_features = [0.0] * visual_features_dim
+
         if internvideo_features is None:
             internvideo_features = [0.0] * video_embedding_dim
+        elif len(internvideo_features) != video_embedding_dim:
+             log(f"InternVideo features dim mismatch: got {len(internvideo_features)}, expected {video_embedding_dim}", level="ERROR")
+             internvideo_features = [0.0] * video_embedding_dim
+
         if languagebind_features is None:
             languagebind_features = [0.0] * video_embedding_dim
+        elif len(languagebind_features) != video_embedding_dim:
+             log(f"LanguageBind features dim mismatch: got {len(languagebind_features)}, expected {video_embedding_dim}", level="ERROR")
+             languagebind_features = [0.0] * video_embedding_dim
 
         # Generate unique scene ID
         scene_key = f"{media_path}_{start_time:.3f}_{end_time:.3f}"
