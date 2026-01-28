@@ -6,6 +6,7 @@ NOT hardcoded synonyms during ingestion. Prompts loaded from external files.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from core.knowledge.schemas import ParsedQuery
@@ -199,6 +200,27 @@ class SearchAgent:
             return self.db.get_face_ids_by_cluster(cluster_id)
         except Exception:
             return []
+
+    def _get_models_for_modalities(self, modalities: list[str]) -> list[str]:
+        """Maps modality sources to the AI models that were used.
+        
+        Args:
+            modalities: List of modality source names (scenes, frames, voice, etc.)
+            
+        Returns:
+            List of model names that contributed to the search.
+        """
+        model_map = {
+            "scenes": ["E5-Large", "CLIP/SigLIP", "InternVideo", "LanguageBind"],
+            "frames": ["E5-Large", "CLIP/SigLIP"],
+            "scenelets": ["E5-Large"],
+            "voice": ["E5-Large", "Whisper"],
+            "audio_events": ["E5-Large", "CLAP"],
+        }
+        models = set()
+        for modality in modalities:
+            models.update(model_map.get(modality, []))
+        return list(models)
 
     @observe("search_scenes_agentic")
     async def search_scenes(
@@ -725,7 +747,8 @@ class SearchAgent:
             scene_results = await self.db.search_scenes(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
-                person_name=person_names[0] if person_names else None,
+                # FIX: Pass ALL person names, not just first
+                person_names=person_names if person_names else None,
                 face_cluster_ids=face_ids if face_ids else None,
                 clothing_color=parsed.clothing_color
                 if hasattr(parsed, "clothing_color")
@@ -792,13 +815,11 @@ class SearchAgent:
             all_results["scenelets"] = []
 
         try:
-            face_cluster_id = face_ids[0] if face_ids else None
+            # FIX: Use ALL face_ids, not just first one
             frame_results = await self.db.search_frames_hybrid(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
-                face_cluster_ids=[face_cluster_id]
-                if face_cluster_id is not None
-                else None,
+                face_cluster_ids=face_ids if face_ids else None,
                 video_paths=[video_path] if video_path else None,
             )
             all_results["frames"] = frame_results
@@ -830,18 +851,134 @@ class SearchAgent:
             log(f"[SOTA] Audio event search failed: {e}")
             all_results["audio_events"] = []
 
+        # DIALOGUE/TRANSCRIPT SEARCH - searches media_segments for spoken text/subs
+        try:
+            dialogue_results = await self.db.search_dialogue(
+                query=search_text,
+                limit=limit * 2,
+                video_path=video_path,
+            )
+            all_results["dialogue"] = dialogue_results if dialogue_results else []
+            log(f"[SOTA] Dialogue: {len(all_results['dialogue'])} results")
+        except Exception as e:
+            log(f"[SOTA] Dialogue search failed: {e}")
+            all_results["dialogue"] = []
+
         from collections import defaultdict
         
         fused_scores = defaultdict(float)
         result_data = {}
         
-        weights = {
-            "scenes": 0.30,
-            "frames": 0.25,
-            "scenelets": 0.20,
-            "voice": 0.15,
-            "audio_events": 0.10,
-        }
+        # QUERY-ADAPTIVE WEIGHTING: Detect query intent and adjust weights dynamically
+        def _compute_adaptive_weights(query: str, parsed: Any) -> dict[str, float]:
+            """Compute modality weights based on detected query intent."""
+            query_lower = query.lower()
+            
+            # Base weights (sum = 1.0)
+            weights = {
+                "scenes": 0.20,
+                "frames": 0.18,
+                "scenelets": 0.15,
+                "voice": 0.15,
+                "dialogue": 0.17,
+                "audio_events": 0.15,
+            }
+            
+            # Intent detection patterns
+            visual_keywords = {"wearing", "shirt", "dress", "color", "blue", "red", "green", 
+                             "looking", "standing", "sitting", "walking", "running", "temple",
+                             "near", "beside", "background", "scene", "shot", "frame", "image"}
+            audio_keywords = {"music", "sound", "cheering", "clapping", "singing", "playing",
+                            "background music", "loud", "quiet", "noise", "crowd"}
+            dialogue_keywords = {"said", "says", "saying", "spoke", "speaking", "told", "tells",
+                               "asked", "dialogue", "conversation", "talking", "speech", "words",
+                               "mentioned", "quote", "transcript"}
+            identity_keywords = {"who", "person", "face", "speaker", "voice of", "recognize"}
+            action_keywords = {"running", "jumping", "dancing", "fighting", "driving", "playing",
+                              "bowling", "kicking", "throwing", "catching", "hitting"}
+            
+            # Detect intents
+            query_words = set(query_lower.split())
+            
+            visual_score = len(query_words & visual_keywords)
+            audio_score = len(query_words & audio_keywords)
+            dialogue_score = len(query_words & dialogue_keywords)
+            identity_score = len(query_words & identity_keywords)
+            action_score = len(query_words & action_keywords)
+            
+            # Also check parsed query for entities (visual) and person names (identity)
+            if parsed:
+                if hasattr(parsed, 'entities') and parsed.entities:
+                    visual_score += len(parsed.entities)
+                if hasattr(parsed, 'person_names') and parsed.person_names:
+                    identity_score += len(parsed.person_names) * 2  # Strong signal
+            
+            # Determine dominant intent and adjust weights
+            total_signal = visual_score + audio_score + dialogue_score + identity_score + action_score
+            
+            if total_signal > 0:
+                detected_intents = []
+                intent_profiles = []
+                
+                # Define weight profiles for each intent type
+                VISUAL_PROFILE = {"scenes": 0.30, "frames": 0.25, "scenelets": 0.15, "voice": 0.10, "dialogue": 0.10, "audio_events": 0.10}
+                DIALOGUE_PROFILE = {"scenes": 0.15, "frames": 0.10, "scenelets": 0.10, "voice": 0.25, "dialogue": 0.35, "audio_events": 0.05}
+                AUDIO_PROFILE = {"scenes": 0.15, "frames": 0.10, "scenelets": 0.20, "voice": 0.05, "dialogue": 0.15, "audio_events": 0.35}
+                IDENTITY_PROFILE = {"scenes": 0.25, "frames": 0.20, "scenelets": 0.10, "voice": 0.25, "dialogue": 0.15, "audio_events": 0.05}
+                ACTION_PROFILE = {"scenes": 0.25, "frames": 0.20, "scenelets": 0.30, "voice": 0.10, "dialogue": 0.10, "audio_events": 0.05}
+                BALANCED_PROFILE = {"scenes": 0.18, "frames": 0.17, "scenelets": 0.16, "voice": 0.16, "dialogue": 0.17, "audio_events": 0.16}
+                
+                # VISUAL-heavy query (clothing, objects, scene description)
+                if visual_score >= 1:
+                    intent_profiles.append((VISUAL_PROFILE, visual_score))
+                    detected_intents.append("VISUAL")
+                    
+                # DIALOGUE-heavy query (what someone said)
+                if dialogue_score >= 1 or any(kw in query_lower for kw in ["said", "says", "telling", "speaking"]):
+                    intent_profiles.append((DIALOGUE_PROFILE, max(dialogue_score, 1)))
+                    detected_intents.append("DIALOGUE")
+                    
+                # AUDIO-heavy query (sounds, music)
+                if audio_score >= 1 or any(kw in query_lower for kw in ["music", "sound", "cheering"]):
+                    intent_profiles.append((AUDIO_PROFILE, max(audio_score, 1)))
+                    detected_intents.append("AUDIO")
+                    
+                # IDENTITY-heavy query (person search)
+                if identity_score >= 1 or (parsed and hasattr(parsed, 'person_names') and parsed.person_names):
+                    intent_profiles.append((IDENTITY_PROFILE, max(identity_score, 1)))
+                    detected_intents.append("IDENTITY")
+                    
+                # ACTION-heavy query (motion, activity)
+                if action_score >= 1:
+                    intent_profiles.append((ACTION_PROFILE, action_score))
+                    detected_intents.append("ACTION")
+                
+                # BLEND WEIGHTS based on detected intents
+                if len(intent_profiles) == 0:
+                    # No clear intent - use balanced weights
+                    weights = BALANCED_PROFILE.copy()
+                    detected_intents = ["BALANCED"]
+                elif len(intent_profiles) == 1:
+                    # Single intent - use that profile directly
+                    weights = intent_profiles[0][0].copy()
+                else:
+                    # MULTIPLE INTENTS - blend weights proportionally
+                    total_strength = sum(strength for _, strength in intent_profiles)
+                    blended = {"scenes": 0, "frames": 0, "scenelets": 0, "voice": 0, "dialogue": 0, "audio_events": 0}
+                    
+                    for profile, strength in intent_profiles:
+                        weight_factor = strength / total_strength
+                        for key in blended:
+                            blended[key] += profile[key] * weight_factor
+                    
+                    weights = blended
+                    detected_intents.append(f"BLENDED({len(intent_profiles)})")
+                
+                log(f"[ADAPTIVE] Query intent: {', '.join(detected_intents)} | Weights: scenes={weights['scenes']:.0%}, frames={weights['frames']:.0%}, dialogue={weights['dialogue']:.0%}, voice={weights['voice']:.0%}, audio={weights['audio_events']:.0%}")
+            
+            return weights
+        
+        weights = _compute_adaptive_weights(search_text, parsed)
         
         k = 60
         
@@ -853,16 +990,45 @@ class SearchAgent:
                 if not result_id:
                     continue
                 
+                # Create a FUSION KEY based on video + timestamp for proper multi-modal merging
+                # This allows same moment from different modalities to combine
+                video_path = result.get("video_path") or result.get("media_path") or ""
+                start_time = result.get("start_time") or result.get("start") or result.get("timestamp") or 0
+                
+                # Round timestamp to 2s window for fuzzy matching across modalities
+                time_bucket = int(float(start_time) / 2) * 2
+                fusion_key = f"{video_path}:{time_bucket}"
+                
                 rrf_score = 1.0 / (k + rank)
                 weighted_score = rrf_score * weight
                 
-                fused_scores[result_id] += weighted_score
+                fused_scores[fusion_key] += weighted_score
                 
-                if result_id not in result_data:
-                    result_data[result_id] = result
-                    result_data[result_id]["modality_sources"] = []
+                # Keep best result for this fusion key, but track ALL modalities
+                if fusion_key not in result_data:
+                    result_data[fusion_key] = result.copy()
+                    result_data[fusion_key]["modality_sources"] = []
+                    result_data[fusion_key]["_original_id"] = result_id
                 
-                result_data[result_id]["modality_sources"].append(modality)
+                # Always add modality source (might be same moment from multiple modalities)
+                if modality not in result_data[fusion_key]["modality_sources"]:
+                    result_data[fusion_key]["modality_sources"].append(modality)
+                
+                # Merge richer data from other modalities
+                existing = result_data[fusion_key]
+                if not existing.get("face_names") and result.get("face_names"):
+                    existing["face_names"] = result["face_names"]
+                if not existing.get("person_names") and result.get("person_names"):
+                    existing["person_names"] = result["person_names"]
+                if not existing.get("face_cluster_ids") and result.get("face_cluster_ids"):
+                    existing["face_cluster_ids"] = result["face_cluster_ids"]
+                if not existing.get("description") and result.get("description"):
+                    existing["description"] = result["description"]
+                if not existing.get("entities") and result.get("entities"):
+                    existing["entities"] = result["entities"]
+                if not existing.get("scene_location") and result.get("scene_location"):
+                    existing["scene_location"] = result["scene_location"]
+        
         
         ranked = sorted(
             fused_scores.items(),
@@ -871,9 +1037,73 @@ class SearchAgent:
         )[:limit * 3 if use_reranking else limit]
         
         candidates = []
-        for result_id, score in ranked:
-            result = result_data[result_id]
+        max_fused_score = ranked[0][1] if ranked else 1.0  # For normalization
+        
+        for fusion_key, score in ranked:
+            result = result_data[fusion_key]
+            
+            # Normalize fused score to 0-1 range for consistent display
+            normalized_score = score / max_fused_score if max_fused_score > 0 else score
+            result["score"] = normalized_score
             result["fused_score"] = score
+            
+            # ENSURE face_names is always present - resolve from face_cluster_ids if needed
+            face_names = result.get("face_names") or []
+            person_names = result.get("person_names") or []
+            face_cluster_ids = result.get("face_cluster_ids") or []
+            
+            # If no face_names but we have cluster_ids, resolve them from DB
+            if not face_names and face_cluster_ids:
+                resolved_names = []
+                for cluster_id in face_cluster_ids:
+                    try:
+                        name = self.db.get_face_name_by_cluster(cluster_id)
+                        if name:
+                            resolved_names.append(name)
+                    except Exception:
+                        pass
+                if resolved_names:
+                    face_names = resolved_names
+            
+            # Merge person_names if still empty
+            if not face_names and person_names:
+                face_names = person_names
+            
+            result["face_names"] = face_names
+            
+            # ADD DEBUG INFO for descriptive reasoning
+            sources = result.get("modality_sources", [])
+            result["_debug"] = {
+                "modalities_used": sources,
+                "raw_fused_score": score,
+                "normalized_score": normalized_score,
+                "models_contributed": self._get_models_for_modalities(sources),
+                "match_type": "multimodal_fusion" if len(sources) > 1 else "single_modality",
+            }
+            
+            # Build descriptive match reason with actual content
+            if sources:
+                source_desc = ", ".join(sources)
+                desc_preview = result.get("description") or result.get("action") or result.get("visual_summary") or ""
+                
+                # Build a richer reason with people and location
+                reason_parts = []
+                if face_names:
+                    reason_parts.append(f"People: {', '.join(face_names)}")
+                if result.get("scene_location"):
+                    reason_parts.append(f"Location: {result['scene_location']}")
+                if result.get("entities"):
+                    entities = result["entities"][:5]  # First 5 entities
+                    reason_parts.append(f"Objects: {', '.join(entities)}")
+                
+                if reason_parts:
+                    reason_extra = " | ".join(reason_parts)
+                    result["match_reason"] = f"Matched via {source_desc} ({normalized_score*100:.0f}%) - {reason_extra}"
+                elif desc_preview:
+                    result["match_reason"] = f"Semantic match (score={normalized_score:.2f}): {desc_preview[:100]}..."
+                else:
+                    result["match_reason"] = f"Matched via {source_desc} (score={normalized_score:.2f})"
+            
             candidates.append(result)
         
         log(f"[SOTA] After weighted fusion: {len(candidates)} candidates")

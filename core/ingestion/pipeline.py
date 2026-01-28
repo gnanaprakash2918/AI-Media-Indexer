@@ -1799,7 +1799,7 @@ class IngestionPipeline:
                         except Exception:
                             pass
 
-                frame_count += 1
+                # frame_count is already set from extracted_frame.frame_index
 
                 # Aggressive memory cleanup every 5 frames to prevent OOM
                 # This preserves timestamps and accuracy while managing VRAM
@@ -1901,7 +1901,7 @@ class IngestionPipeline:
             del self.vision
             del self.faces
             self.vision = None
-        self.faces = None
+            self.faces = None
         if hasattr(self, "_face_track_builder"):
             del self._face_track_builder
         self._cleanup_memory()
@@ -2567,6 +2567,25 @@ class IngestionPipeline:
             except Exception as e:
                 logger.warning(f"[OCR] Failed: {e}")
 
+            # ============================================================
+            # OBJECT DETECTION: YOLO-World for general objects (lazy-loaded)
+            # ============================================================
+            detected_objects: list[str] = []
+            try:
+                if self.enhanced_config and self.enhanced_config.object_detector:
+                    obj_detector = self.enhanced_config.object_detector
+                    if frame_img is not None:
+                        # Run YOLO-World detection on frame
+                        detections = obj_detector.detect(frame_img)
+                        if detections:
+                            detected_objects = [d.get("label", d.get("class", "")) for d in detections if d.get("confidence", 0) > 0.3]
+                            if detected_objects:
+                                unique_objects = list(set(detected_objects))
+                                video_context += f"\n[DETECTED-OBJECTS]: {', '.join(unique_objects)}"
+                                logger.debug(f"[ObjectDetection] Found: {unique_objects}")
+            except Exception as e:
+                logger.debug(f"[ObjectDetection] Skipped: {e}")
+
             # Run structured vision analysis
             async with VLM_SEMAPHORE:
                 analysis = await self.vision.analyze_frame(
@@ -2686,6 +2705,12 @@ class IngestionPipeline:
                     if analysis.entities
                     else []
                 )
+                # Merge YOLO-World detected objects into entities
+                if detected_objects:
+                    vlm_entities = set(e.lower() for e in payload["entities"])
+                    for obj in detected_objects:
+                        if obj.lower() not in vlm_entities:
+                            payload["entities"].append(obj)
                 payload["entity_categories"] = (
                     list({e.category for e in analysis.entities})
                     if analysis.entities
@@ -3159,6 +3184,31 @@ class IngestionPipeline:
                     "dialogue_summary": dialogue_summary,
                 }
                 global_ctx.add_scene(scene_data_global)
+                
+                # Wire to Knowledge Graph / GraphRAG for social network and timeline queries
+                try:
+                    from core.storage.identity_graph import identity_graph
+                    
+                    # Get face_cluster_ids from all frames
+                    all_face_cluster_ids = list({
+                        cid for f in frames
+                        for cid in f.get("face_cluster_ids", [])
+                    })
+                    
+                    # Create scene in SQLite graph database
+                    identity_graph.create_scene(
+                        media_id=media_path,
+                        start_time=scene_data_global["start_time"],
+                        end_time=scene_data_global["end_time"],
+                        location=scene_data_global.get("location"),
+                        description=scene_data_global.get("visual_summary"),
+                        face_cluster_ids=all_face_cluster_ids,
+                        entities=scene_data_global.get("entities", []),
+                        actions=[f.get("action", "") for f in frames[:10] if f.get("action")],
+                    )
+                    logger.debug(f"[GraphRAG] Created scene with {len(all_face_cluster_ids)} faces")
+                except Exception as e:
+                    logger.debug(f"[GraphRAG] Scene creation skipped: {e}")
 
                 global_summary = global_ctx.to_payload()
 

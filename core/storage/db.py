@@ -3566,6 +3566,72 @@ class VectorDB:
             log(f"Audio event search failed: {e}")
             return []
 
+    @observe("db_search_dialogue")
+    async def search_dialogue(
+        self,
+        query: str,
+        limit: int = 10,
+        score_threshold: float | None = None,
+        video_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search dialogue/transcripts using semantic vector similarity.
+        
+        This searches the media_segments collection which contains transcribed
+        speech and subtitles from ASR (Whisper).
+        
+        Args:
+            query: The search query text.
+            limit: Maximum number of results.
+            score_threshold: Minimum similarity score.
+            video_path: Optional filter by video path.
+
+        Returns:
+            List of matching dialogue segments with scores.
+        """
+        try:
+            query_vec = (await self.encode_texts(query, is_query=True))[0]
+
+            conditions: list[models.Condition] = []
+            if video_path:
+                conditions.append(
+                    models.FieldCondition(
+                        key="media_path",
+                        match=models.MatchValue(value=video_path),
+                    )
+                )
+
+            query_filter = models.Filter(must=conditions) if conditions else None
+
+            resp = self.client.query_points(
+                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                query=query_vec,
+                limit=limit,
+                score_threshold=score_threshold,
+                query_filter=query_filter,
+            )
+
+            results = []
+            for hit in resp.points:
+                payload = hit.payload or {}
+                results.append(
+                    {
+                        "id": str(hit.id),
+                        "score": hit.score,
+                        "type": "dialogue",
+                        "text": payload.get("text", payload.get("transcription", "")),
+                        "start": payload.get("start_time", payload.get("start", 0)),
+                        "end": payload.get("end_time", payload.get("end", 0)),
+                        "timestamp": payload.get("start_time", payload.get("start", 0)),
+                        "video_path": payload.get("media_path"),
+                        "language": payload.get("language", "en"),
+                        **payload,
+                    }
+                )
+            return results
+        except Exception as e:
+            log(f"search_dialogue failed: {e}")
+            return []
+
     @observe("db_search_audio_events_semantic")
     async def search_audio_events_semantic(
         self,
@@ -3683,8 +3749,9 @@ class VectorDB:
         *,
         limit: int = 20,
         score_threshold: float | None = None,
-        # Identity filters
-        person_name: str | None = None,
+        # Identity filters - FIX: Accept list of names instead of single name
+        person_names: list[str] | None = None,
+        person_name: str | None = None,  # DEPRECATED: kept for backwards compat
         face_cluster_ids: list[int] | None = None,
         # Clothing/appearance filters (for complex queries)
         clothing_color: str | None = None,
@@ -3714,7 +3781,8 @@ class VectorDB:
             query: Natural language search query.
             limit: Maximum results.
             score_threshold: Minimum similarity score.
-            person_name: Filter by person name.
+            person_names: Filter by person names (list). Matches ANY name in list.
+            person_name: DEPRECATED. Use person_names instead.
             face_cluster_ids: Filter by face clusters.
             clothing_color: Filter by clothing color (e.g., "blue").
             clothing_type: Filter by clothing type (e.g., "shirt").
@@ -3755,12 +3823,17 @@ class VectorDB:
                 )
             )
 
-        # Identity filter
-        if person_name:
+        # Identity filter - FIX: Support multiple person names
+        # Merge person_names list with deprecated person_name for backwards compat
+        all_person_names = list(person_names) if person_names else []
+        if person_name and person_name not in all_person_names:
+            all_person_names.append(person_name)
+        
+        if all_person_names:
             conditions.append(
                 models.FieldCondition(
                     key="person_names",
-                    match=models.MatchAny(any=[person_name]),
+                    match=models.MatchAny(any=all_person_names),  # Match ANY name
                 )
             )
 
@@ -3938,8 +4011,9 @@ class VectorDB:
 
         # HITL Name Confidence Boosting
         # Boost scores for results containing HITL-named identities that match the query
-        if person_name:
-            query_name_lower = person_name.lower()
+        # FIX: Use all_person_names list instead of single person_name
+        if all_person_names:
+            query_names_lower = [n.lower() for n in all_person_names]
             for result in results:
                 # Check if result has face_names or person_names that match
                 face_names = result.get("face_names", []) or result.get(
@@ -3947,10 +4021,11 @@ class VectorDB:
                 )
                 if face_names:
                     for name in face_names:
-                        if name and query_name_lower in name.lower():
+                        if name and any(qn in name.lower() for qn in query_names_lower):
                             # 50% boost for exact HITL name match
                             result["score"] = result.get("score", 0) * 1.5
                             result["hitl_boost"] = True
+                            result["matched_person"] = name  # Track which person matched
                             break
 
         # Re-sort after boosting

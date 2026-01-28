@@ -38,6 +38,7 @@ import {
   SmartToy as AgentIcon,
   Gavel as CouncilsIcon,
   Hub as GraphIcon,
+  MovieEdit as VideoEditorIcon,
 } from '@mui/icons-material';
 import {
   QueryClient,
@@ -60,6 +61,7 @@ const EditorPage = lazy(() => import('./pages/Editor'));
 const AgentPage = lazy(() => import('./pages/Agent'));
 const CouncilsPage = lazy(() => import('./pages/Councils'));
 const GraphPage = lazy(() => import('./pages/Graph'));
+const VideoEditorPage = lazy(() => import('./pages/VideoEditor'));
 
 const PageLoader = () => (
   <Box
@@ -96,6 +98,7 @@ const navItems = [
   { path: '/graph', label: 'Graph', icon: <GraphIcon /> },
   { path: '/councils', label: 'Councils', icon: <CouncilsIcon /> },
   { path: '/editor', label: 'Editor', icon: <EditorIcon /> },
+  { path: '/video-editor', label: 'Video Editor', icon: <VideoEditorIcon /> },
   { path: '/settings', label: 'Settings', icon: <Settings /> },
 ];
 
@@ -426,6 +429,14 @@ const router = createBrowserRouter([
         element: (
           <Suspense fallback={<PageLoader />}>
             <SettingsPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'video-editor',
+        element: (
+          <Suspense fallback={<PageLoader />}>
+            <VideoEditorPage />
           </Suspense>
         ),
       },

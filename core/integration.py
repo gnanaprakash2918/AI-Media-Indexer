@@ -49,7 +49,7 @@ class EnhancedPipelineConfig:
         enable_smart_sampling: bool = True,
         enable_clap: bool = True,
         enable_ocr: bool = True,
-        enable_object_detection: bool = False,
+        enable_object_detection: bool = True,
         enable_temporal: bool = False,
         enable_hybrid_search: bool = True,
         bm25_path: Path | None = None,

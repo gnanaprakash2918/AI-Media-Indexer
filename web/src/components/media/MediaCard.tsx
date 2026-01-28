@@ -13,6 +13,8 @@ import {
   Edit,
   ThumbUp,
   ThumbDown,
+  ExpandMore,
+  BugReport,
 } from '@mui/icons-material';
 import {
   Card,
@@ -74,6 +76,19 @@ interface MediaResult {
   vector_score?: number;
   keyword_score?: number;
   matched_identity?: string;
+  // Deep debug info from backend
+  _debug?: {
+    modalities_used?: string[];
+    models_contributed?: string[];
+    raw_fused_score?: number;
+    normalized_score?: number;
+    match_type?: string;
+  };
+  modality_sources?: string[];
+  fused_score?: number;
+  person_names?: string[];
+  visual_summary?: string;
+  dialogue_summary?: string;
 }
 
 interface MediaCardProps {
@@ -98,6 +113,7 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
   const [saving, setSaving] = useState(false);
   const [feedbackGiven, setFeedbackGiven] = useState<'up' | 'down' | null>(null);
   const [snackOpen, setSnackOpen] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
   // HITL Feedback handler
   const handleFeedback = async (isRelevant: boolean) => {
@@ -529,8 +545,179 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
             </Box>
           )}
 
+          {/* 🔍 DETAILED DEBUG PANEL - Toggle to see ALL internal data */}
+          <Box sx={{ mt: 1 }}>
+            <Button
+              size="small"
+              startIcon={<BugReport sx={{ fontSize: 14 }} />}
+              endIcon={<ExpandMore sx={{
+                transform: showDebug ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s'
+              }} />}
+              onClick={(e) => { e.stopPropagation(); setShowDebug(!showDebug); }}
+              sx={{
+                fontSize: '0.65rem',
+                textTransform: 'none',
+                color: 'text.secondary',
+                '&:hover': { bgcolor: alpha(theme.palette.info.main, 0.1) }
+              }}
+            >
+              {showDebug ? 'Hide Debug Info' : 'Show All Details'}
+            </Button>
+
+            <Collapse in={showDebug}>
+              <Box
+                sx={{
+                  mt: 1,
+                  p: 1.5,
+                  bgcolor: alpha(theme.palette.info.main, 0.05),
+                  borderRadius: 1,
+                  border: `1px solid ${alpha(theme.palette.info.main, 0.2)}`,
+                  fontSize: '0.7rem',
+                }}
+              >
+                {/* Score Breakdown */}
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                    📊 SCORE DETAILS
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
+                    <Typography variant="caption">Final Score: <strong>{(item.score * 100).toFixed(1)}%</strong></Typography>
+                    {item.fused_score && <Typography variant="caption">Fused: {item.fused_score.toFixed(4)}</Typography>}
+                    {item.vector_score && <Typography variant="caption">Vector: {(item.vector_score * 100).toFixed(1)}%</Typography>}
+                    {item.keyword_score && <Typography variant="caption">Keyword: {(item.keyword_score * 100).toFixed(1)}%</Typography>}
+                    {item._debug?.raw_fused_score && <Typography variant="caption">Raw Fused: {item._debug.raw_fused_score.toFixed(4)}</Typography>}
+                    {item._debug?.match_type && <Typography variant="caption">Match Type: {item._debug.match_type}</Typography>}
+                  </Box>
+                </Box>
+
+                {/* Modalities Used */}
+                {(item._debug?.modalities_used || item.modality_sources) && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                      🔗 MODALITIES SEARCHED
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                      {(item._debug?.modalities_used || item.modality_sources || []).map((mod, i) => (
+                        <Chip key={i} label={mod} size="small" sx={{ height: 18, fontSize: '0.6rem' }} color="info" variant="outlined" />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+
+                {/* AI Models Used */}
+                {item._debug?.models_contributed && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                      🤖 AI MODELS USED
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                      {item._debug.models_contributed.map((model, i) => (
+                        <Chip key={i} label={model} size="small" sx={{ height: 18, fontSize: '0.6rem' }} color="secondary" variant="outlined" />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+
+                {/* Visual Summary */}
+                {(item.visual_summary || item.action || item.description) && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                      👁️ VISUAL DESCRIPTION (from VLM)
+                    </Typography>
+                    <Typography variant="caption" sx={{ display: 'block', bgcolor: 'background.paper', p: 0.5, borderRadius: 0.5 }}>
+                      {item.visual_summary || item.action || item.description || 'No visual description available'}
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* Dialogue Summary */}
+                {item.dialogue_summary && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                      🎤 DIALOGUE (from ASR/Whisper)
+                    </Typography>
+                    <Typography variant="caption" sx={{ display: 'block', bgcolor: 'background.paper', p: 0.5, borderRadius: 0.5, fontStyle: 'italic' }}>
+                      "{item.dialogue_summary}"
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* All People Detected */}
+                {(item.face_names || item.person_names) && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                      👤 ALL PEOPLE DETECTED
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                      {[...(item.face_names || []), ...(item.person_names || [])].filter((v, i, a) => a.indexOf(v) === i).map((name, i) => (
+                        <Chip key={i} icon={<Face sx={{ fontSize: 10 }} />} label={name} size="small" sx={{ height: 18, fontSize: '0.6rem' }} />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+
+                {/* Face Cluster IDs */}
+                {item.face_cluster_ids && item.face_cluster_ids.length > 0 && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                      🆔 FACE CLUSTER IDs
+                    </Typography>
+                    <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                      [{item.face_cluster_ids.join(', ')}]
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* Raw ID */}
+                {item.id && (
+                  <Box>
+                    <Typography variant="caption" fontWeight={700} color="info.main" sx={{ display: 'block', mb: 0.5 }}>
+                      🔑 RESULT ID
+                    </Typography>
+                    <Typography variant="caption" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                      {item.id}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            </Collapse>
+          </Box>
+
           <Collapse in={expanded}>
             <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+              {/* Face Names - SHOW ALL detected faces */}
+              {hasFaces && (
+                <Box sx={{ mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      mb: 0.5,
+                    }}
+                  >
+                    <Face sx={{ fontSize: 12, color: 'primary.main' }} />
+                    <Typography variant="caption" color="primary.main" fontWeight={600}>
+                      People Detected
+                    </Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                    {item.face_names!.map((name, i) => (
+                      <Chip
+                        key={i}
+                        icon={<Face sx={{ fontSize: 10 }} />}
+                        label={name}
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        sx={{ height: 20, fontSize: '0.7rem' }}
+                      />
+                    ))}
+                  </Box>
+                </Box>
+              )}
+
               {/* Entities */}
               {hasEntities && (
                 <Box sx={{ mb: 1 }}>

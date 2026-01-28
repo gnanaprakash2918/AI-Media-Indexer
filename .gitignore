@@ -38,6 +38,7 @@ RESEARCH_LINKS.md
 
 
 # Custom - AI Media Indexer Data
+*.db
 .vscode/
 .vite/
 reports/
