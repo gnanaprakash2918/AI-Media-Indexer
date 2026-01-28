@@ -286,8 +286,7 @@ class VideoRAGOrchestrator:
 
             # 1. Search Visual
             visual_query = " ".join(structured.visual_cues)
-            visual_results = await asyncio.to_thread(
-                self.db.search_frames_hybrid,
+            visual_results = await self.db.search_frames_hybrid(
                 query=visual_query,
                 limit=limit * 2,
                 video_paths=video_path,
@@ -296,8 +295,7 @@ class VideoRAGOrchestrator:
 
             # 2. Search Audio
             audio_query = " ".join(structured.audio_cues)
-            audio_results = await asyncio.to_thread(
-                self.db.search_frames_hybrid,
+            audio_results = await self.db.search_frames_hybrid(
                 query=audio_query,
                 limit=limit * 2,
                 video_paths=video_path,
@@ -317,8 +315,7 @@ class VideoRAGOrchestrator:
         search_query = structured.scene_description or structured.original_query
 
         # Call hybrid search
-        raw_results = await asyncio.to_thread(
-            self.db.search_frames_hybrid,
+        raw_results = await self.db.search_frames_hybrid(
             query=search_query,
             limit=limit,
             video_paths=video_path,

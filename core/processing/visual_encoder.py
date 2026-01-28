@@ -99,6 +99,7 @@ class CLIPEncoder(VisualEncoderInterface):
         if self._model is not None:
             return
         
+        # Try open_clip first (preferred for OpenCLIP models)
         try:
             import open_clip
             
@@ -111,8 +112,25 @@ class CLIPEncoder(VisualEncoderInterface):
             import torch
             if torch.cuda.is_available():
                 self._model = self._model.cuda()
+                
         except ImportError:
-            raise ImportError("open_clip is required for CLIP encoder: pip install open-clip-torch")
+            # Fallback to transformers (HuggingFace)
+            try:
+                from transformers import CLIPModel, CLIPProcessor
+                
+                # Map OpenCLIP names to HF Hub ID if possible, or use standard
+                hf_model = "openai/clip-vit-large-patch14"  # Default fallback for ViT-L-14
+                
+                self._preprocess = CLIPProcessor.from_pretrained(hf_model)
+                self._model = CLIPModel.from_pretrained(hf_model)
+                self._model.eval()
+                
+                import torch
+                if torch.cuda.is_available():
+                    self._model = self._model.to("cuda")
+                    
+            except ImportError:
+                raise ImportError("Neither open_clip nor transformers is installed. Please install one.")
     
     async def encode_image(self, image: np.ndarray | bytes | Path) -> list[float]:
         self._load_model()
@@ -130,14 +148,27 @@ class CLIPEncoder(VisualEncoderInterface):
             pil_img = Image.fromarray(image).convert("RGB")
         
         # Preprocess and encode
-        img_tensor = self._preprocess(pil_img).unsqueeze(0)
-        if torch.cuda.is_available():
-            img_tensor = img_tensor.cuda()
+        import torch
         
-        with torch.no_grad():
-            features = self._model.encode_image(img_tensor)
-            features = features / features.norm(dim=-1, keepdim=True)
-        
+        # Check if using HF Processor or OpenCLIP transform
+        if hasattr(self._preprocess, "feature_extractor") or hasattr(self._preprocess, "image_processor"):
+            # Transformers (HF)
+            inputs = self._preprocess(images=pil_img, return_tensors="pt")
+            if torch.cuda.is_available():
+                inputs = {k: v.cuda() for k, v in inputs.items()}
+            
+            with torch.no_grad():
+                features = self._model.get_image_features(**inputs)
+        else:
+            # OpenCLIP
+            img_tensor = self._preprocess(pil_img).unsqueeze(0)
+            if torch.cuda.is_available():
+                img_tensor = img_tensor.cuda()
+            
+            with torch.no_grad():
+                features = self._model.encode_image(img_tensor)
+
+        features = features / features.norm(dim=-1, keepdim=True)
         return features.cpu().numpy().flatten().tolist()
     
     async def encode_batch(
@@ -149,24 +180,43 @@ class CLIPEncoder(VisualEncoderInterface):
         from PIL import Image
         import io
         
-        # Convert all to tensors
-        tensors = []
-        for image in images:
-            if isinstance(image, Path):
-                pil_img = Image.open(image).convert("RGB")
-            elif isinstance(image, bytes):
-                pil_img = Image.open(io.BytesIO(image)).convert("RGB")
-            else:
-                pil_img = Image.fromarray(image).convert("RGB")
-            tensors.append(self._preprocess(pil_img))
+        # Preprocess and encode batch
+        import torch
         
-        batch = torch.stack(tensors)
-        if torch.cuda.is_available():
-            batch = batch.cuda()
+        if hasattr(self._preprocess, "feature_extractor") or hasattr(self._preprocess, "image_processor"):
+            # Transformers (HF)
+            inputs = self._preprocess(images=[
+                Image.fromarray(img).convert("RGB") if isinstance(img, np.ndarray) and not isinstance(img, (bytes, Path)) else
+                Image.open(io.BytesIO(img)).convert("RGB") if isinstance(img, bytes) else
+                Image.open(img).convert("RGB") if isinstance(img, Path) else img
+                for img in images
+            ], return_tensors="pt")
+            
+            if torch.cuda.is_available():
+                inputs = {k: v.cuda() for k, v in inputs.items()}
+                
+            with torch.no_grad():
+                features = self._model.get_image_features(**inputs)
+        else:
+            # OpenCLIP
+            tensors = []
+            for image in images:
+                if isinstance(image, Path):
+                    pil_img = Image.open(image).convert("RGB")
+                elif isinstance(image, bytes):
+                    pil_img = Image.open(io.BytesIO(image)).convert("RGB")
+                else:
+                    pil_img = Image.fromarray(image).convert("RGB")
+                tensors.append(self._preprocess(pil_img))
+            
+            batch = torch.stack(tensors)
+            if torch.cuda.is_available():
+                batch = batch.cuda()
+            
+            with torch.no_grad():
+                features = self._model.encode_image(batch)
         
-        with torch.no_grad():
-            features = self._model.encode_image(batch)
-            features = features / features.norm(dim=-1, keepdim=True)
+        features = features / features.norm(dim=-1, keepdim=True)
         
         return features.cpu().numpy().tolist()
     

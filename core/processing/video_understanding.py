@@ -189,6 +189,11 @@ class LanguageBindEncoder:
             if norm > 0:
                 avg_embedding = avg_embedding / norm
 
+            # Pad to 768 dimensions if needed (for CLIP fallback compatibility with LanguageBind DB)
+            if avg_embedding.shape[0] < 768:
+                padding = np.zeros((768 - avg_embedding.shape[0],))
+                avg_embedding = np.concatenate([avg_embedding, padding])
+
             log.info(
                 f"[LanguageBind] Encoded Video: {len(sampled)} frames, "
                 f"Embedding dim={avg_embedding.shape[0]}, "
@@ -444,6 +449,37 @@ class InternVideoEncoder:
         except Exception as e:
             log.error(f"[InternVideo] Encoding failed: {e}")
             return None
+
+    async def recognize_action(
+        self,
+        frames: list[np.ndarray],
+    ) -> dict[str, Any] | None:
+        """Recognize action in video frames.
+
+        Args:
+            frames: List of video frames.
+
+        Returns:
+            Dictionary with action labels and features.
+        """
+        # Common kinetic actions to check for
+        common_actions = [
+            "running", "walking", "eating", "drinking", "talking",
+            "driving", "dancing", "cooking", "fighting", "playing sports"
+        ]
+        
+        # Get features
+        features = await self.encode_action(frames)
+        if features is None:
+            return None
+
+        # Classify
+        actions = await self.classify_action(frames, common_actions)
+        
+        return {
+            "actions": [a["action"] for a in actions[:3]], # Top 3
+            "features": features
+        }
 
     async def classify_action(
         self,

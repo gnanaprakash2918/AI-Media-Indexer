@@ -173,7 +173,7 @@ async def hybrid_search(
             )
             # Use hybrid search instead of pure vector search for better accuracy
             results = _normalize_results(
-                pipeline.db.search_frames_hybrid(query=q, limit=limit)
+                await pipeline.db.search_frames_hybrid(query=q, limit=limit)
             )
             duration = time.perf_counter() - start_time
             return {
@@ -192,7 +192,7 @@ async def hybrid_search(
         try:
             # Fallback to hybrid search
             results = _normalize_results(
-                pipeline.db.search_frames_hybrid(query=q, limit=limit)
+                await pipeline.db.search_frames_hybrid(query=q, limit=limit)
             )
             return {
                 "query": q,
@@ -305,9 +305,8 @@ async def search(
         "total_frames_scanned": 0,
     }
 
-    # Dialogue/transcript search
     if search_type in ("all", "dialogue"):
-        dialogue_results = pipeline.db.search_media(q, limit=limit * 2)
+        dialogue_results = await pipeline.db.search_media(q, limit=limit * 2)
 
         # Post-filter by video_path
         if video_path:
@@ -332,10 +331,9 @@ async def search(
         results.extend(dialogue_results[:limit])
         logger.info(f"  Dialogue results: {len(dialogue_results)}")
 
-    # Visual/frame search
     if search_type in ("all", "visual"):
         # Fetch more results to allow for deduplication and filtering
-        frame_results = pipeline.db.search_frames(q, limit=limit * 4)
+        frame_results = await pipeline.db.search_frames(q, limit=limit * 4)
 
         # Post-filter by video_path
         if video_path:
@@ -484,7 +482,7 @@ async def agentic_search(
     except Exception as e:
         logger.error(f"Agentic search failed: {e}")
         # Fallback to hybrid search
-        regular_results = pipeline.db.search_frames_hybrid(query=q, limit=limit)
+        regular_results = await pipeline.db.search_frames_hybrid(query=q, limit=limit)
         return {
             "query": q,
             "parsed": None,
@@ -551,7 +549,7 @@ async def scene_search(
             "query": q,
             "error": str(e),
             "fallback": True,
-            "results": pipeline.db.search_frames_hybrid(query=q, limit=limit),
+            "results": await pipeline.db.search_frames_hybrid(query=q, limit=limit),
         }
 
 
@@ -642,7 +640,7 @@ async def granular_search(
         logger.error(f"[GranularSearch] Error: {e}")
         # Fallback to hybrid search
         results = _normalize_results(
-            pipeline.db.search_frames_hybrid(query=query, limit=limit)
+            await pipeline.db.search_frames_hybrid(query=query, limit=limit)
         )
         return {
             "query": query,
@@ -729,7 +727,7 @@ async def explainable_search(
         logger.error(f"[ExplainableSearch] Error: {e}")
         # Fallback to hybrid search
         results = _normalize_results(
-            pipeline.db.search_frames_hybrid(query=q, limit=limit)
+            await pipeline.db.search_frames_hybrid(query=q, limit=limit)
         )
         return {
             "query": q,

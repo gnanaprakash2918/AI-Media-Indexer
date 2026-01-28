@@ -76,6 +76,7 @@ class FrameExtractor:
         interval: float = 2.0,
         start_time: float | None = None,
         end_time: float | None = None,
+        output_dir: Path | None = None,
     ) -> AsyncGenerator[ExtractedFrame, None]:
         """Generator that extracts frames from a video file with accurate timestamps.
         
@@ -87,6 +88,7 @@ class FrameExtractor:
             interval: Time interval in seconds between extracted frames. 0.0 = every frame.
             start_time: Optional start time in seconds for partial extraction.
             end_time: Optional end time in seconds for partial extraction.
+            output_dir: Optional directory to write frames to. If None, a temp dir is used.
 
         Yields:
             ExtractedFrame objects containing path and actual PTS timestamp.
@@ -119,9 +121,8 @@ class FrameExtractor:
                 path_obj, interval, start_time, end_time
             )
             
-            # Use a robust temporary directory that cleans up automatically
-            with FrameExtractor.FrameCache() as cache_dir:
-                
+            # Helper to run extraction logic (avoids code duplication)
+            async def _run_extraction(cache_dir: Path):
                 # Build FFmpeg command for image pipe
                 # We use image2pipe to stream JPEGs to stdout
                 args_to_ffmpeg = [
@@ -235,6 +236,17 @@ class FrameExtractor:
                 if process.returncode != 0:
                     error_out = await process.stderr.read()
                     log(f"FFmpeg streaming warning: {error_out.decode('utf-8', errors='ignore')}")
+
+            # Execute the extraction logic
+            if output_dir:
+                # Use provided directory (caller manages lifecycle)
+                async for frame in _run_extraction(output_dir):
+                    yield frame
+            else:
+                # Use internal temp directory (auto-cleanup)
+                with FrameExtractor.FrameCache() as cache_dir:
+                    async for frame in _run_extraction(cache_dir):
+                        yield frame
 
         except (ValueError, NotADirectoryError, FileNotFoundError, PermissionError, IsADirectoryError, OSError) as exc:
             log(f"[ERROR:{type(exc).__name__}] Cannot read '{video_path}': {exc}")

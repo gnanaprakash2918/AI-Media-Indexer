@@ -23,7 +23,7 @@ from typing import Any
 
 import ctranslate2.converters
 import torch
-from faster_whisper import BatchedInferencePipeline, WhisperModel
+from faster_whisper import BatchedInferencePipeline, WhisperModel, download_model
 from huggingface_hub import login, snapshot_download
 
 from config import settings
@@ -446,6 +446,48 @@ class AudioTranscriber:
             )
             AudioTranscriber._SHARED_SIZE = model_key
             log(f"[SUCCESS] Loaded {model_key} on {self.device}")
+
+        except Exception as e:
+            # Check for corruption/consistency errors
+            error_msg = str(e).lower()
+            if "consistency check failed" in error_msg or "invalid load" in error_msg:
+                log(f"[WARN] Model corruption detected for {model_key}: {e}")
+                log("[INFO] Attempting self-healing: Forcing fresh download...")
+                
+                try:
+                    # Force re-download using huggingface_hub directly (faster_whisper wrapper lacks force_download)
+                    from huggingface_hub import snapshot_download
+                    
+                    log(f"[INFO] Downloading fresh copy of {model_key} using huggingface_hub...")
+                    match_path = snapshot_download(
+                        repo_id=model_key,
+                        cache_dir=str(settings.model_cache_dir),
+                        force_download=True,
+                        allow_patterns=["*.json", "*.bin", "vocabulary.*"], 
+                    )
+                    
+                    # Retry initialization with explicit path
+                    AudioTranscriber._SHARED_MODEL = WhisperModel(
+                        match_path,
+                        device=self.device,
+                        compute_type=self.compute_type,
+                        download_root=str(settings.model_cache_dir),
+                        cpu_threads=cpu_threads,
+                        num_workers=1,
+                    )
+                    AudioTranscriber._SHARED_BATCHED = BatchedInferencePipeline(
+                        model=AudioTranscriber._SHARED_MODEL
+                    )
+                    AudioTranscriber._SHARED_SIZE = model_key
+                    log(f"[SUCCESS] Self-healing successful. Loaded {model_key}")
+                    return
+
+                except Exception as retry_err:
+                    log(f"[ERROR] Self-healing failed: {retry_err}")
+                    raise ModelLoadError(f"Could not load {model_key} even after re-download", original_error=retry_err)
+            
+            # Re-raise if it's not a corruption error or recovery failed
+            raise e
         except (RuntimeError, MemoryError, Exception) as e:
             error_msg = str(e).lower()
             # Check for memory-related errors
@@ -696,6 +738,8 @@ class AudioTranscriber:
                     0.9 if force_lyrics else 0.6
                 )  # More permissive for lyrics
 
+                # Run blocking inference in a separate thread
+                # Run blocking inference in a separate thread
                 segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
                     str(audio_path),
                     batch_size=settings.batch_size,
@@ -703,9 +747,7 @@ class AudioTranscriber:
                     task="transcribe",
                     beam_size=3,
                     condition_on_previous_text=False,
-                    initial_prompt="♪"
-                    if force_lyrics
-                    else None,
+                    initial_prompt="♪" if force_lyrics else None,
                     repetition_penalty=1.2,
                     word_timestamps=True,
                     vad_filter=True,
@@ -811,7 +853,7 @@ class AudioTranscriber:
         )
 
     @observe("language_detection")
-    def detect_language(self, audio_path: Path) -> str:
+    async def detect_language(self, audio_path: Path) -> str:
         """Detect the dominant language in an audio file.
 
         Args:
@@ -836,7 +878,7 @@ class AudioTranscriber:
             # Extract first 30s as WAV to avoid container/codec issues (Opus, etc)
             try:
                 # Use _slice_audio which uses ffmpeg to generate a clean 16kHz WAV
-                wav_path = self._slice_audio(audio_path, start=0.0, end=30.0)
+                wav_path = await self._slice_audio(audio_path, start=0.0, end=30.0)
             except Exception as e:
                 log(
                     f"[WARN] Slicing for detection failed: {e}. Trying raw file."

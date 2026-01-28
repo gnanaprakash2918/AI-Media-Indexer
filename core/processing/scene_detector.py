@@ -59,7 +59,7 @@ def _get_video_fps(video_path: Path) -> float:
     return 30.0  # Fallback
 
 
-def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
+async def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     """Detects logical scene boundaries in a video using adaptive thresholding.
 
     Args:
@@ -84,14 +84,17 @@ def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
     # Get actual video FPS instead of assuming 30fps
     fps = _get_video_fps(path)
 
+    import asyncio
+
     try:
-        scene_list = detect(
+        scene_list = await asyncio.to_thread(
+            detect,
             str(path),
             adaptive_detector_cls(
                 adaptive_threshold=settings.scene_detect_threshold,
                 min_scene_len=int(
                     settings.scene_detect_min_length * fps
-                ),  # Use actual FPS, not hardcoded 30
+                ),
             ),
             show_progress=False,
         )

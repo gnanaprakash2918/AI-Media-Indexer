@@ -780,9 +780,8 @@ class IngestionPipeline:
                     ]
 
                     # BATCH PROCESSING: Single GPU acquisition for all chunks
-                    # Run CLAP in a thread to prevent blocking
-                    batch_results = await asyncio.to_thread(
-                        audio_detector.detect_events_batch,
+                    # Run CLAP directly (it handles GPU locking internally)
+                    batch_results = await audio_detector.detect_events_batch(
                         audio_chunks=audio_chunks,
                         target_classes=target_classes,
                         sample_rate=int(sr),
@@ -1580,6 +1579,7 @@ class IngestionPipeline:
 
         # Use the configured LLM provider from settings
         from llm.factory import LLMFactory
+        from core.processing.extractor import FrameExtractor
 
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)
@@ -1607,296 +1607,300 @@ class IngestionPipeline:
         # Store video path for Identity Graph
         self._current_media_id = str(path)
 
-        # Pass time range to extractor for partial processing
-        # NOTE: Extractor now yields ExtractedFrame objects with ACTUAL PTS timestamps
-        frame_generator = self.extractor.extract(
-            path,
-            interval=self.frame_interval_seconds,
-            start_time=getattr(self, "_start_time", None),
-            end_time=getattr(self, "_end_time", None),
-        )
-
-        # Resume support: skip already processed frames
-        resume_from_frame = getattr(self, "_resume_from_frame", 0)
-
-        # XMem-style temporal context for video coherence
-        from core.processing.temporal_context import (
-            TemporalContext,
-        )
-
-        temporal_ctx = TemporalContextManager(sensory_size=5)
-
-        # Scenelet Builder (Sliding Window: 5s window, 2.5s stride)
-        scenelet_builder = SceneletBuilder(
-            window_seconds=5.0, stride_seconds=2.5
-        )
-        scenelet_builder.set_audio_segments(
-            self._get_audio_segments_for_video(str(path))
-        )
-
-        # Batch Processing Helper
-        async def _process_batch_items(frames_to_process: list):
-            if not frames_to_process:
-                return
-
-            paths = [f.path for f in frames_to_process]
-            try:
-                # 1. Batch Face Detection (Speedup)
-                batch_faces = await self.faces.detect_faces_batch(paths)
-            except Exception as e:
-                logger.warning(f"Batch face detection failed: {e}")
-                batch_faces = [None] * len(frames_to_process)
-
-            # 2. Process frames with pre-detected faces
-            for idx, frame_item in enumerate(frames_to_process):
-                f_path = frame_item.path
-                f_ts = frame_item.timestamp
-                f_idx = frame_item.frame_index
-                
-                # Update context
-                narrative_context = temporal_ctx.get_context_for_vlm()
-                neighbor_timestamps = [c.timestamp for c in temporal_ctx.sensory]
-
-                new_desc = await self._process_single_frame(
-                    video_path=path,
-                    frame_path=f_path,
-                    timestamp=f_ts,
-                    index=f_idx,
-                    context=narrative_context,
-                    neighbor_timestamps=neighbor_timestamps,
-                    pre_detected_faces=batch_faces[idx] if idx < len(batch_faces) else None
-                )
-
-                if new_desc:
-                    # Add to temporal context memory
-                    t_ctx = TemporalContext(
-                        timestamp=f_ts,
-                        description=new_desc[:200],
-                        faces=list(self._face_clusters.keys())
-                        if hasattr(self, "_face_clusters")
-                        else [],
-                    )
-                    temporal_ctx.add_frame(t_ctx)
-
-                    # Add to Scenelet Builder
-                    s_ctx = TemporalContext(
-                        timestamp=f_ts,
-                        description=new_desc,
-                        faces=list(self._face_clusters.keys())
-                        if hasattr(self, "_face_clusters")
-                        else [],
-                    )
-                    scenelet_builder.add_frame(s_ctx)
-                
-                # Cleanup processed frame immediately
-                if f_path.exists():
-                     try:
-                         f_path.unlink()
-                     except Exception:
-                         pass
-
-        pending_frames = []
-
-
-        async for extracted_frame in frame_generator:
-            if job_id:
-                if progress_tracker.is_cancelled(
-                    job_id
-                ) or progress_tracker.is_paused(job_id):
-                    break
-
-            # ExtractedFrame contains: path, timestamp (actual PTS), frame_index
-            frame_path = extracted_frame.path
-            frame_count = extracted_frame.frame_index
-            
-            # RESUME: Skip already processed frames
-            if frame_count < resume_from_frame:
-                if frame_path.exists():
-                    frame_path.unlink()
-                continue
-
-            # USE ACTUAL PTS TIMESTAMP (from FFprobe, not calculated)
-            # This fixes timestamp drift on VFR videos
-            timestamp = extracted_frame.timestamp
-            
-            if self.frame_sampler.should_sample(frame_count):
-                pending_frames.append(extracted_frame)
-                if len(pending_frames) >= 16:
-                    await _process_batch_items(pending_frames)
-                    pending_frames = []
-
-            if job_id:
-                if progress_tracker.is_paused(job_id):
-                    logger.info(f"Job {job_id} paused. Stopping frame loop.")
-                    break
-
-                if progress_tracker.is_cancelled(job_id):
-                    logger.warning(
-                        f"Job {job_id} cancelled. Aborting pipeline."
-                    )
-                    return
-
-                # Update Granular Stats
-                # Use provided duration for 100% accuracy, fallback to metadata
-                video_duration = total_duration
-                if not video_duration:
-                    try:
-                        probe_data = await self.prober.probe(path)
-                        video_duration = float(
-                            probe_data.get("format", {}).get("duration", 0.0)
-                        )
-                    except Exception:
-                        video_duration = 0.0
-
-                interval = float(self.frame_interval_seconds)
-
-                total_est_frames = (
-                    int(video_duration / interval) if video_duration else 0
-                )
-                current_ts = timestamp
-                current_frame_index = (
-                    int(current_ts / interval) if interval > 0 else frame_count
-                )
-
-                status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
-
-                progress_tracker.update_granular(
-                    job_id,
-                    processed_frames=current_frame_index,
-                    total_frames=total_est_frames,
-                    current_timestamp=current_ts,
-                    total_duration=video_duration,
-                )
-
-                if frame_count % 5 == 0:
-                    progress = (
-                        55.0
-                        + min(
-                            40.0,
-                            (current_ts / (video_duration or 1)) * 40.0,
-                        )
-                        if video_duration
-                        else 55.0
-                    )
-                    progress_tracker.update(
-                        job_id,
-                        progress,
-                        stage="frames",
-                        message=status_msg,
-                    )
-
-            await asyncio.sleep(0.01)  # Minimal sleep for responsiveness
-            # Always delete the frame file after processing
-            # Only delete if NOT in pending batch (processed frames are deleted by helper)
-            if extracted_frame not in pending_frames:
-                if frame_path.exists():
-                    try:
-                        frame_path.unlink()
-                    except Exception:
-                        pass
-
-            frame_count += 1
-
-            # Aggressive memory cleanup every 5 frames to prevent OOM
-            # This preserves timestamps and accuracy while managing VRAM
-            cleanup_interval = 5
-            if frame_count % cleanup_interval == 0:
-                self._cleanup_memory(context=f"frame_{frame_count}")
-                # Extra VRAM flush for video processing
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-
-                # Thermal throttling - pause if system overheating
-                await resource_manager.throttle_if_needed("compute")
-
-            # CHECKPOINT: Save progress every 50 frames for crash recovery
-            checkpoint_interval = 50
-            if job_id and frame_count % checkpoint_interval == 0:
-                from core.ingestion.jobs import job_manager
-
-                checkpoint_data = {
-                    "last_frame": frame_count,
-                    "last_timestamp": timestamp,
-                    "audio_complete": True,
-                    "voice_complete": True,
-                    "frames_complete": False,
-                }
-                job_manager.update_job(
-                    job_id,
-                    checkpoint_data=checkpoint_data,
-                    processed_frames=frame_count,
-                    current_frame_timestamp=timestamp,
-                )
-                job_manager.update_heartbeat(job_id)
-                logger.debug(f"Checkpoint saved at frame {frame_count}")
-
-        # Process any remaining frames in the batch
-        if pending_frames:
-            await _process_batch_items(pending_frames)
-            pending_frames = []
-
-        # Finalize face tracks and store in Identity Graph
-        # This is the key step: convert frame-by-frame detections into stable tracks
-        if hasattr(self, "_face_track_builder") and self._face_track_builder:
-            try:
-                finalized_tracks = self._face_track_builder.finalize_all()
-                logger.info(
-                    f"Finalized {len(finalized_tracks)} face tracks for {path.name}"
-                )
-
-                # Store each track in the Identity Graph
-                media_id = getattr(self, "_current_media_id", str(path))
-                for (
-                    _track_id,
-                    avg_embedding,
-                    metadata,
-                ) in self._face_track_builder.get_track_embeddings():
-                    try:
-                        identity_graph.create_face_track(
-                            media_id=media_id,
-                            start_frame=metadata["start_frame"],
-                            end_frame=metadata["end_frame"],
-                            start_time=metadata["start_time"],
-                            end_time=metadata["end_time"],
-                            avg_embedding=avg_embedding,
-                            avg_confidence=metadata.get("avg_confidence", 0.0),
-                            frame_count=metadata.get("frame_count", 1),
-                        )
-                    except Exception as track_err:
-                        logger.warning(
-                            f"Failed to store face track: {track_err}"
-                        )
-            except Exception as e:
-                logger.warning(f"Track finalization failed: {e}")
-
-        # Build and Store Scenelets (Temporal Sequence Indexing)
-        try:
-            scenelets = scenelet_builder.build_scenelets()
-            logger.info(
-                f"Building {len(scenelets)} temporal scenelets for {path.name}..."
+        # Use persistent cache context to prevent premature deletion
+        # This fixes race conditions where frames are deleted before batch processing ends
+        with FrameExtractor.FrameCache() as frame_cache_dir:
+            # Pass time range to extractor for partial processing
+            # NOTE: Extractor now yields ExtractedFrame objects with ACTUAL PTS timestamps
+            frame_generator = self.extractor.extract(
+                path,
+                interval=self.frame_interval_seconds,
+                start_time=getattr(self, "_start_time", None),
+                end_time=getattr(self, "_end_time", None),
+                output_dir=frame_cache_dir,
             )
 
-            for sl in scenelets:
-                await self.db.store_scenelet(
-                    media_path=str(path),
-                    start_time=sl.start_ts,
-                    end_time=sl.end_ts,
-                    content_text=sl.fused_content,
-                    payload={
-                        "entities": sl.all_entities,
-                        "actions": sl.all_actions,
-                        "audio_text": sl.audio_text,
-                    },
-                )
-            logger.info(f"Stored {len(scenelets)} scenelets successfully.")
-        except Exception as e:
-            logger.warning(f"Scenelet build/store failed: {e}")
+            # Resume support: skip already processed frames
+            resume_from_frame = getattr(self, "_resume_from_frame", 0)
 
-        # Final cleanup
-        del self.vision
-        del self.faces
-        self.vision = None
+            # XMem-style temporal context for video coherence
+            from core.processing.temporal_context import (
+                TemporalContext,
+            )
+
+            temporal_ctx = TemporalContextManager(sensory_size=5)
+
+            # Scenelet Builder (Sliding Window: 5s window, 2.5s stride)
+            scenelet_builder = SceneletBuilder(
+                window_seconds=5.0, stride_seconds=2.5
+            )
+            scenelet_builder.set_audio_segments(
+                self._get_audio_segments_for_video(str(path))
+            )
+
+            # Batch Processing Helper
+            async def _process_batch_items(frames_to_process: list):
+                if not frames_to_process:
+                    return
+
+                paths = [f.path for f in frames_to_process]
+                try:
+                    # 1. Batch Face Detection (Speedup)
+                    batch_faces = await self.faces.detect_faces_batch(paths)
+                except Exception as e:
+                    logger.warning(f"Batch face detection failed: {e}")
+                    batch_faces = [None] * len(frames_to_process)
+
+                # 2. Process frames with pre-detected faces
+                for idx, frame_item in enumerate(frames_to_process):
+                    f_path = frame_item.path
+                    f_ts = frame_item.timestamp
+                    f_idx = frame_item.frame_index
+                    
+                    # Update context
+                    narrative_context = temporal_ctx.get_context_for_vlm()
+                    neighbor_timestamps = [c.timestamp for c in temporal_ctx.sensory]
+
+                    new_desc = await self._process_single_frame(
+                        video_path=path,
+                        frame_path=f_path,
+                        timestamp=f_ts,
+                        index=f_idx,
+                        context=narrative_context,
+                        neighbor_timestamps=neighbor_timestamps,
+                        pre_detected_faces=batch_faces[idx] if idx < len(batch_faces) else None
+                    )
+
+                    if new_desc:
+                        # Add to temporal context memory
+                        t_ctx = TemporalContext(
+                            timestamp=f_ts,
+                            description=new_desc[:200],
+                            faces=list(self._face_clusters.keys())
+                            if hasattr(self, "_face_clusters")
+                            else [],
+                        )
+                        temporal_ctx.add_frame(t_ctx)
+
+                        # Add to Scenelet Builder
+                        s_ctx = TemporalContext(
+                            timestamp=f_ts,
+                            description=new_desc,
+                            faces=list(self._face_clusters.keys())
+                            if hasattr(self, "_face_clusters")
+                            else [],
+                        )
+                        scenelet_builder.add_frame(s_ctx)
+                    
+                    # Cleanup processed frame immediately
+                    if f_path.exists():
+                         try:
+                             f_path.unlink()
+                         except Exception:
+                             pass
+
+            pending_frames = []
+
+
+            async for extracted_frame in frame_generator:
+                if job_id:
+                    if progress_tracker.is_cancelled(
+                        job_id
+                    ) or progress_tracker.is_paused(job_id):
+                        break
+
+                # ExtractedFrame contains: path, timestamp (actual PTS), frame_index
+                frame_path = extracted_frame.path
+                frame_count = extracted_frame.frame_index
+                
+                # RESUME: Skip already processed frames
+                if frame_count < resume_from_frame:
+                    if frame_path.exists():
+                        frame_path.unlink()
+                    continue
+
+                # USE ACTUAL PTS TIMESTAMP (from FFprobe, not calculated)
+                # This fixes timestamp drift on VFR videos
+                timestamp = extracted_frame.timestamp
+                
+                if self.frame_sampler.should_sample(frame_count):
+                    pending_frames.append(extracted_frame)
+                    if len(pending_frames) >= 16:
+                        await _process_batch_items(pending_frames)
+                        pending_frames = []
+
+                if job_id:
+                    if progress_tracker.is_paused(job_id):
+                        logger.info(f"Job {job_id} paused. Stopping frame loop.")
+                        break
+
+                    if progress_tracker.is_cancelled(job_id):
+                        logger.warning(
+                            f"Job {job_id} cancelled. Aborting pipeline."
+                        )
+                        return
+
+                    # Update Granular Stats
+                    # Use provided duration for 100% accuracy, fallback to metadata
+                    video_duration = total_duration
+                    if not video_duration:
+                        try:
+                            probe_data = await self.prober.probe(path)
+                            video_duration = float(
+                                probe_data.get("format", {}).get("duration", 0.0)
+                            )
+                        except Exception:
+                            video_duration = 0.0
+
+                    interval = float(self.frame_interval_seconds)
+
+                    total_est_frames = (
+                        int(video_duration / interval) if video_duration else 0
+                    )
+                    current_ts = timestamp
+                    current_frame_index = (
+                        int(current_ts / interval) if interval > 0 else frame_count
+                    )
+
+                    status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
+
+                    progress_tracker.update_granular(
+                        job_id,
+                        processed_frames=current_frame_index,
+                        total_frames=total_est_frames,
+                        current_timestamp=current_ts,
+                        total_duration=video_duration,
+                    )
+
+                    if frame_count % 5 == 0:
+                        progress = (
+                            55.0
+                            + min(
+                                40.0,
+                                (current_ts / (video_duration or 1)) * 40.0,
+                            )
+                            if video_duration
+                            else 55.0
+                        )
+                        progress_tracker.update(
+                            job_id,
+                            progress,
+                            stage="frames",
+                            message=status_msg,
+                        )
+
+                await asyncio.sleep(0.01)  # Minimal sleep for responsiveness
+                # Always delete the frame file after processing
+                # Only delete if NOT in pending batch (processed frames are deleted by helper)
+                if extracted_frame not in pending_frames:
+                    if frame_path.exists():
+                        try:
+                            frame_path.unlink()
+                        except Exception:
+                            pass
+
+                frame_count += 1
+
+                # Aggressive memory cleanup every 5 frames to prevent OOM
+                # This preserves timestamps and accuracy while managing VRAM
+                cleanup_interval = 5
+                if frame_count % cleanup_interval == 0:
+                    self._cleanup_memory(context=f"frame_{frame_count}")
+                    # Extra VRAM flush for video processing
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+
+                    # Thermal throttling - pause if system overheating
+                    await resource_manager.throttle_if_needed("compute")
+
+                # CHECKPOINT: Save progress every 50 frames for crash recovery
+                checkpoint_interval = 50
+                if job_id and frame_count % checkpoint_interval == 0:
+                    from core.ingestion.jobs import job_manager
+
+                    checkpoint_data = {
+                        "last_frame": frame_count,
+                        "last_timestamp": timestamp,
+                        "audio_complete": True,
+                        "voice_complete": True,
+                        "frames_complete": False,
+                    }
+                    job_manager.update_job(
+                        job_id,
+                        checkpoint_data=checkpoint_data,
+                        processed_frames=frame_count,
+                        current_frame_timestamp=timestamp,
+                    )
+                    job_manager.update_heartbeat(job_id)
+                    logger.debug(f"Checkpoint saved at frame {frame_count}")
+
+            # Process any remaining frames in the batch
+            if pending_frames:
+                await _process_batch_items(pending_frames)
+                pending_frames = []
+
+            # Finalize face tracks and store in Identity Graph
+            # This is the key step: convert frame-by-frame detections into stable tracks
+            if hasattr(self, "_face_track_builder") and self._face_track_builder:
+                try:
+                    finalized_tracks = self._face_track_builder.finalize_all()
+                    logger.info(
+                        f"Finalized {len(finalized_tracks)} face tracks for {path.name}"
+                    )
+
+                    # Store each track in the Identity Graph
+                    media_id = getattr(self, "_current_media_id", str(path))
+                    for (
+                        _track_id,
+                        avg_embedding,
+                        metadata,
+                    ) in self._face_track_builder.get_track_embeddings():
+                        try:
+                            identity_graph.create_face_track(
+                                media_id=media_id,
+                                start_frame=metadata["start_frame"],
+                                end_frame=metadata["end_frame"],
+                                start_time=metadata["start_time"],
+                                end_time=metadata["end_time"],
+                                avg_embedding=avg_embedding,
+                                avg_confidence=metadata.get("avg_confidence", 0.0),
+                                frame_count=metadata.get("frame_count", 1),
+                            )
+                        except Exception as track_err:
+                            logger.warning(
+                                f"Failed to store face track: {track_err}"
+                            )
+                except Exception as e:
+                    logger.warning(f"Track finalization failed: {e}")
+
+            # Build and Store Scenelets (Temporal Sequence Indexing)
+            try:
+                scenelets = scenelet_builder.build_scenelets()
+                logger.info(
+                    f"Building {len(scenelets)} temporal scenelets for {path.name}..."
+                )
+
+                for sl in scenelets:
+                    await self.db.store_scenelet(
+                        media_path=str(path),
+                        start_time=sl.start_ts,
+                        end_time=sl.end_ts,
+                        content_text=sl.fused_content,
+                        payload={
+                            "entities": sl.all_entities,
+                            "actions": sl.all_actions,
+                            "audio_text": sl.audio_text,
+                        },
+                    )
+                logger.info(f"Stored {len(scenelets)} scenelets successfully.")
+            except Exception as e:
+                logger.warning(f"Scenelet build/store failed: {e}")
+
+            # Final cleanup
+            del self.vision
+            del self.faces
+            self.vision = None
         self.faces = None
         if hasattr(self, "_face_track_builder"):
             del self._face_track_builder
@@ -1916,7 +1920,7 @@ class IngestionPipeline:
             path: Path to the media file.
             job_id: Optional ID for progress tracking.
         """
-        scenes = detect_scenes(path)
+        scenes = await detect_scenes(path)
         if not scenes:
             logger.info(f"No scene boundaries detected in {path.name}")
             return
@@ -2068,7 +2072,7 @@ class IngestionPipeline:
 
             # 7. Generate CLIP/SigLIP visual features for true multimodal search
             visual_features = None
-            if settings.enable_visual_features and frame_bytes:
+            if settings.enable_visual_embeddings and frame_bytes:
                 try:
                     # Lazy load the encoder to save VRAM until needed
                     if self._visual_encoder is None:

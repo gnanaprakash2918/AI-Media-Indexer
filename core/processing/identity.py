@@ -763,6 +763,10 @@ class FaceManager:
         path = Path(image_path)
         image = self._load_image(path)
 
+        image = self._load_image(path)
+        if image.size == 0:
+            return []
+
         if self._model_type == "insightface":
             return await self._detect_insightface(image)
         elif self._model_type == "sface":
@@ -830,6 +834,9 @@ class FaceManager:
         self, image: NDArray[np.uint8]
     ) -> list[DetectedFace]:
         """Detect faces using InsightFace with quality metrics."""
+        if image.size == 0:
+            return []
+            
         assert self._insightface_app is not None, "InsightFace not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
@@ -871,6 +878,9 @@ class FaceManager:
         self, image: NDArray[np.uint8]
     ) -> list[DetectedFace]:
         """Detect faces using SFace with CLAHE normalization and quality metrics."""
+        if image.size == 0:
+            return []
+            
         assert self._opencv_detector is not None, (
             "OpenCV detector not initialized"
         )
@@ -948,6 +958,9 @@ class FaceManager:
         self, image: NDArray[np.uint8]
     ) -> list[DetectedFace]:
         """Detect faces with YuNet only (no embeddings)."""
+        if image.size == 0:
+            return []
+
         assert self._opencv_detector is not None, (
             "OpenCV detector not initialized"
         )
@@ -1114,6 +1127,11 @@ class FaceManager:
 
     @staticmethod
     def _load_image(path: Path) -> NDArray[np.uint8]:
+        if not path.exists():
+            print(f"[FaceManager] Warning: Image file missing: {path}")
+            # Return empty array to signal failure safely
+            return np.array([], dtype=np.uint8)
+            
         with Image.open(path) as img:
             return np.asarray(img.convert("RGB"), dtype=np.uint8)
 

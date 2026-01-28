@@ -173,14 +173,29 @@ function Check-Port-Availability {
         }
         
         if ($procName -match "com.docker.backend" -or $procName -match "docker") {
-             Write-Host "Note: Port $Port is used by Docker ($procName). This is usually normal." -ForegroundColor Gray
-             Write-Host "Skipping kill check to avoid breaking the daemon." -ForegroundColor Gray
-             return
+             # Docker backend is allowed to hold ports mostly
+             if (-not $Nuclear) {
+                 Write-Host "Note: Port $Port is used by Docker ($procName). This is usually normal." -ForegroundColor Gray
+                 Write-Host "Skipping kill check to avoid breaking the daemon." -ForegroundColor Gray
+                 return
+             }
         }
 
         Write-Host "Warning: Port $Port ($ServiceName) is currently in use by process '$procName' (PID: $procId)" -ForegroundColor Yellow
-        $choice = Read-Host "Do you want to kill this process to free the port? (Y/N)"
-        if ($choice -eq 'Y' -or $choice -eq 'y') {
+        
+        $shouldKill = $false
+        
+        if ($Nuclear -or $NoInteractive) {
+            Write-Host "  [NUCLEAR/AUTO] Automatically terminating process '$procName' on port $Port..." -ForegroundColor Red
+            $shouldKill = $true
+        } else {
+            $choice = Read-Host "Do you want to kill this process to free the port? (Y/N)"
+            if ($choice -eq 'Y' -or $choice -eq 'y') {
+                $shouldKill = $true
+            }
+        }
+
+        if ($shouldKill) {
             try {
                 Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
                 Write-Host "Process $procId terminated. Port $Port is free." -ForegroundColor Green
@@ -532,7 +547,15 @@ if ($NukeQdrant) {
     
     # 1. Kill any existing backend/frontend processes to release locks
     Write-Host "  Terminating existing AI-Media-Indexer processes..." -ForegroundColor Gray
-    Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*api/server.py*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    
+    # Aggressive cleanup of potential zombies
+    Get-Process ffmpeg -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process ffprobe -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    
+    # Kill Python processes related to this project (api/server.py, worker.py, ingestion, etc)
+    Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*api/server.py*" -or $_.CommandLine -like "*worker*" -or $_.CommandLine -like "*ingest*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    
+    # Kill Node/Vite
     Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*vite*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 
     # 2. Stop Docker and remove named volumes (Critical for MinIO/ClickHouse)
