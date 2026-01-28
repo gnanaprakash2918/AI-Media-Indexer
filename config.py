@@ -442,10 +442,22 @@ class Settings(BaseSettings):
         description="Store SigLIP visual embeddings for cross-modal retrieval",
     )
 
+    # --- Frame VLM (per-frame dense captioning) ---
+    enable_frame_vlm: bool = Field(
+        default=True,
+        description="Enable per-frame VLM captioning (fine-grained: faces, text, objects)",
+    )
+
     # --- Video Understanding (InternVideo, LanguageBind) ---
     enable_video_embeddings: bool = Field(
         default=True,
-        description="Compute InternVideo/LanguageBind embeddings for action search (disable for low-VRAM)",
+        description="Compute InternVideo/LanguageBind embeddings for action/motion search",
+    )
+    
+    # --- Hybrid VLM (best of both) ---
+    enable_hybrid_vlm: bool = Field(
+        default=True,
+        description="Combine frame VLM + video VLM for complete understanding (recommended)",
     )
     
     video_embedding_dim: int = Field(

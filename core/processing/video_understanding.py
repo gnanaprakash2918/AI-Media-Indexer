@@ -189,6 +189,10 @@ class LanguageBindEncoder:
             if norm > 0:
                 avg_embedding = avg_embedding / norm
 
+            # CRITICAL FIX: Flatten to 1D before dimension check to avoid concatenation error
+            # np.mean can return 2D array if input embeddings are 2D, causing ValueError
+            avg_embedding = avg_embedding.flatten()
+
             # Pad to 768 dimensions if needed (for CLIP fallback compatibility with LanguageBind DB)
             if avg_embedding.shape[0] < 768:
                 padding = np.zeros((768 - avg_embedding.shape[0],))

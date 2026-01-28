@@ -536,7 +536,7 @@ class DeepResearchProcessor:
         videomae = await self._get_videomae()
         if videomae:
             try:
-                mae_features = await videomae.encode(frames)
+                mae_features = await videomae.extract_action_features(frames)
                 if mae_features is not None:
                     result.video_features["videomae"] = mae_features
             except Exception as e:

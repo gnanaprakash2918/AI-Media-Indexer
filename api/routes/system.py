@@ -114,6 +114,12 @@ async def get_system_config():
             "max_concurrent_jobs": settings.max_concurrent_jobs,
             "lazy_unload": settings.lazy_unload,
             "high_performance_mode": settings.high_performance_mode,
+            # VLM / Video Understanding options
+            "enable_frame_vlm": getattr(settings, "enable_frame_vlm", True),
+            "enable_video_embeddings": getattr(settings, "enable_video_embeddings", True),
+            "enable_hybrid_vlm": getattr(settings, "enable_hybrid_vlm", True),
+            "enable_visual_embeddings": getattr(settings, "enable_visual_embeddings", True),
+            "enable_voice_analysis": getattr(settings, "enable_voice_analysis", True),
         },
     }
 
@@ -130,6 +136,14 @@ async def update_system_config(updates: dict):
         "max_concurrent_jobs",
         "lazy_unload",
         "high_performance_mode",
+        # VLM / Video Understanding options
+        "enable_frame_vlm",
+        "enable_video_embeddings",
+        "enable_hybrid_vlm",
+        # Visual features
+        "enable_visual_embeddings",
+        # Voice analysis
+        "enable_voice_analysis",
     }
     applied = {}
     for key, value in updates.items():

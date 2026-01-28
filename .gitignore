@@ -33,9 +33,13 @@ langfuse_data/
 # Agents
 AGENTS.md
 ANTIGRAVITY.md
+MY_RESEARCH.md
+RESEARCH_LINKS.md
+
 
 # Custom - AI Media Indexer Data
 .vscode/
+.vite/
 reports/
 models/
 qdrant_data/

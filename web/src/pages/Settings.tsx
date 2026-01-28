@@ -54,6 +54,9 @@ interface ConfigData {
   enable_resource_monitoring: boolean;
   enable_vlm_reranking?: boolean;
   enable_hybrid_search?: boolean;
+  enable_frame_vlm?: boolean;
+  enable_video_embeddings?: boolean;
+  enable_hybrid_vlm?: boolean;
   max_cpu_percent: number;
   max_ram_percent: number;
   google_api_key?: string;
@@ -615,6 +618,48 @@ function SettingsContent({
                 label="Hybrid Search"
               />
             </Box>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+              Video Understanding (Hybrid VLM)
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.enable_frame_vlm ?? true}
+                    onChange={e =>
+                      handleChange('enable_frame_vlm', e.target.checked)
+                    }
+                  />
+                }
+                label="Frame VLM (faces, text, objects)"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.enable_video_embeddings ?? true}
+                    onChange={e =>
+                      handleChange('enable_video_embeddings', e.target.checked)
+                    }
+                  />
+                }
+                label="Video Embeddings (actions, motion)"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.enable_hybrid_vlm ?? true}
+                    onChange={e =>
+                      handleChange('enable_hybrid_vlm', e.target.checked)
+                    }
+                  />
+                }
+                label="Hybrid VLM (combine both - recommended)"
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              Frame VLM: Fine-grained per-frame details. Video Embeddings: Action/motion understanding (InternVideo, LanguageBind).
+            </Typography>
           </ConfigSection>
         </Grid>
       </Grid>
