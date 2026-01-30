@@ -2,7 +2,6 @@
 import time
 import torch
 import shutil
-from pathlib import Path
 from huggingface_hub import snapshot_download
 from sentence_transformers import SentenceTransformer
 

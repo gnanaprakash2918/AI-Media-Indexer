@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from threading import Lock
 from typing import Any
@@ -83,6 +83,10 @@ class JobInfo:
     # Checkpoint data for resuming
     checkpoint_data: dict[str, Any] | None = None
 
+    # Detailed stage statistics (timing, status, retries)
+    # Format: { "stage_name": { "status": "completed", "start": 123.0, "end": 124.0, "duration": 1.0, "retries": 0 } }
+    stage_stats: dict[str, Any] = field(default_factory=dict)
+
 
 class JobManager:
     """SQLite-backed job manager for persistent state."""
@@ -124,6 +128,7 @@ class JobManager:
                     total_duration REAL DEFAULT 0.0,
                     last_heartbeat REAL DEFAULT 0.0,
                     checkpoint_data TEXT,
+                    stage_stats TEXT,
                     created_at REAL DEFAULT (unixepoch())
                 )
             """)
@@ -141,7 +146,10 @@ class JobManager:
             ("pipeline_stage", "TEXT DEFAULT 'init'"),
             ("current_item_index", "INTEGER DEFAULT 0"),
             ("total_items", "INTEGER DEFAULT 0"),
+            ("current_item_index", "INTEGER DEFAULT 0"),
+            ("total_items", "INTEGER DEFAULT 0"),
             ("last_heartbeat", "REAL DEFAULT 0.0"),
+            ("stage_stats", "TEXT DEFAULT '{}'"),
         ]
 
         for col_name, col_def in migrations:
@@ -200,7 +208,9 @@ class JobManager:
             "current_frame_timestamp",
             "total_duration",
             "last_heartbeat",
+            "last_heartbeat",
             "checkpoint_data",
+            "stage_stats",
         }
 
         updates = []
@@ -211,6 +221,8 @@ class JobManager:
                 if k == "status" and isinstance(v, JobStatus):
                     v = v.value
                 elif k == "checkpoint_data" and isinstance(v, dict):
+                    v = json.dumps(v, default=_numpy_safe_serializer)
+                elif k == "stage_stats" and isinstance(v, dict):
                     v = json.dumps(v, default=_numpy_safe_serializer)
                 updates.append(f"{k} = ?")
                 values.append(v)
@@ -262,6 +274,13 @@ class JobManager:
             except Exception:
                 pass
 
+        stage_stats = {}
+        if "stage_stats" in row.keys() and row["stage_stats"]:
+            try:
+                stage_stats = json.loads(row["stage_stats"])
+            except Exception:
+                pass
+
         return JobInfo(
             job_id=row["job_id"],
             file_path=row["file_path"],
@@ -289,7 +308,9 @@ class JobManager:
             last_heartbeat=row["last_heartbeat"]
             if "last_heartbeat" in row.keys()
             else 0.0,
+
             checkpoint_data=checkpoint,
+            stage_stats=stage_stats,
         )
 
     def update_heartbeat(self, job_id: str) -> None:

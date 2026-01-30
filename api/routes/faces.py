@@ -518,7 +518,6 @@ async def identify_face_cluster(
         # Fast path: Use the sample face's vector. 
         # Ideally we want the cluster centroid.
         # Let's assume pipeline.db.get_face_embedding exists or we fetch it
-        from qdrant_client import models
         points = pipeline.db.client.retrieve(
             collection_name=pipeline.db.FACES_COLLECTION,
             ids=[sample_face["id"]],

@@ -11,6 +11,7 @@ import uuid
 from functools import wraps
 from pathlib import Path
 from typing import Any, cast
+import numpy as np
 
 import torch
 from huggingface_hub import snapshot_download
@@ -823,7 +824,7 @@ class VectorDB:
                     "category": payload.get("event_class", ""),
                 })
         except Exception as e:
-            logger.warning(f"Failed to get loudness events: {e}")
+            log(f"Failed to get loudness events: {e}")
         
         events.sort(key=lambda x: x.get("timestamp", 0))
         return events
@@ -891,7 +892,7 @@ class VectorDB:
                     "transcript": payload.get("transcript", ""),
                 })
         except Exception as e:
-            logger.warning(f"Failed to get voice segments: {e}")
+            log(f"Failed to get voice segments: {e}")
         
         segments.sort(key=lambda x: x.get("start", 0))
         return segments
@@ -1206,6 +1207,7 @@ class VectorDB:
         self.client.upsert(
             collection_name=self.MEDIA_SEGMENTS_COLLECTION,
             points=points,
+            wait=False,
         )
 
     @observe("db_search_media")
@@ -1379,6 +1381,7 @@ class VectorDB:
             points=[
                 models.PointStruct(id=point_id, vector=vector, payload=payload)
             ],
+            wait=False,
         )
 
     @observe("db_upsert_media_frames_batch")
@@ -1436,6 +1439,7 @@ class VectorDB:
         self.client.upsert(
             collection_name=self.MEDIA_COLLECTION,
             points=points,
+            wait=False,
         )
         
         return len(points)
@@ -1484,6 +1488,7 @@ class VectorDB:
                         payload=final_payload,
                     )
                 ],
+                wait=False,
             )
         except Exception as e:
             log(f"Failed to insert masklet: {e}", level="ERROR")
@@ -1658,7 +1663,7 @@ class VectorDB:
                 if r.payload
             ]
         except Exception as e:
-            logger.warning(f"Masklet search failed: {e}")
+            log(f"Masklet search failed: {e}")
             return []
 
     async def search_global_summaries(
@@ -1705,7 +1710,7 @@ class VectorDB:
                 if r.payload
             ]
         except Exception as e:
-            logger.warning(f"Summary search failed: {e}")
+            log(f"Summary search failed: {e}")
             return []
 
     @observe("db_match_speaker")
@@ -4056,7 +4061,6 @@ class VectorDB:
             List of matching scenes with scores.
         """
         from core.processing.visual_encoder import get_default_visual_encoder
-        from pathlib import Path
         
         # Encode query image
         encoder = get_default_visual_encoder()
@@ -4106,7 +4110,7 @@ class VectorDB:
                 if r.payload
             ]
         except Exception as e:
-            logger.warning(f"Image search failed: {e}")
+            log(f"Image search failed: {e}")
             return []
 
     @observe("db_search_scenes_by_action")
@@ -4158,7 +4162,7 @@ class VectorDB:
             
             query_embedding = list(query_embedding) if query_embedding is not None else None
         except Exception as e:
-            logger.warning(f"Failed to encode action query: {e}")
+            log(f"Failed to encode action query: {e}")
             query_embedding = (await self.encode_texts(query))[0]
         
         if query_embedding is None:
@@ -4201,7 +4205,7 @@ class VectorDB:
                             **r.payload,
                         })
             except Exception as e:
-                logger.debug(f"LanguageBind search failed: {e}")
+                log(f"LanguageBind search failed: {e}")
         
         if search_mode in ("internvideo", "hybrid"):
             try:
@@ -4239,7 +4243,7 @@ class VectorDB:
                             **r.payload,
                         })
             except Exception as e:
-                logger.debug(f"InternVideo search failed: {e}")
+                log(f"InternVideo search failed: {e}")
         
         # RRF fusion if hybrid
         if search_mode == "hybrid" and results:

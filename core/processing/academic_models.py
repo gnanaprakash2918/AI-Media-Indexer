@@ -13,7 +13,6 @@ Based on Research (Part 4):
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import numpy as np
 

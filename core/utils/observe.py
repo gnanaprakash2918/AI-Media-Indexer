@@ -42,7 +42,8 @@ def observe(name: str) -> Callable[[F], F]:
                 end_span("error", str(exc))
                 raise
             finally:
-                _ = time.perf_counter() - start
+                duration = time.perf_counter() - start
+                log(f"[PERF] {name} took {duration:.4f}s")
 
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -66,7 +67,8 @@ def observe(name: str) -> Callable[[F], F]:
                 end_span("error", str(exc))
                 raise
             finally:
-                _ = time.perf_counter() - start
+                duration = time.perf_counter() - start
+                log(f"[PERF] {name} took {duration:.4f}s")
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper  # type: ignore

@@ -129,6 +129,7 @@ class MusicStructureAnalyzer:
 
         try:
             import librosa
+            _ = librosa
 
             self._initialized = True
             return True

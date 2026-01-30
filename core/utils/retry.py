@@ -13,6 +13,7 @@ async def retry(
     fn: Callable[[], Awaitable[None]],
     retries: int = 2,
     delay: float = 3.0,
+    on_retry: Callable[[Exception], None] | None = None,
 ) -> None:
     """Retry an async function with exponential backoff on failure.
 
@@ -30,6 +31,11 @@ async def retry(
                     f"[RETRY] Attempt {attempt + 1}/{retries + 1} failed: {type(exc).__name__}: {exc}. "
                     f"Retrying in {delay}s..."
                 )
+                if on_retry:
+                    try:
+                        on_retry(exc)
+                    except Exception:
+                        pass
             else:
                 logger.error(
                     f"[RETRY] All {retries + 1} attempts failed. Last error: {type(exc).__name__}: {exc}"

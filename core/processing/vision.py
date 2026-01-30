@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from core.utils.logger import log
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
-from core.errors import VisionError
 from llm.factory import LLMFactory
 from llm.interface import LLMInterface
 

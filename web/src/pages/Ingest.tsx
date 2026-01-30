@@ -22,6 +22,8 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import {
   CloudUpload,
@@ -72,6 +74,7 @@ interface Job {
   total_frames?: number;
   timestamp?: number;
   duration?: number;
+  stage_stats?: Record<string, { status: string; duration?: number; start?: number; end?: number; error?: string; retries?: number }>;
 }
 
 // Pipeline stage labels for human-readable display
@@ -148,11 +151,9 @@ function JobCard({
   const hasFrameData = job.processed_frames !== undefined && job.total_frames;
   const hasTimeData = job.timestamp !== undefined && job.duration;
 
-  // Calculate accurate percentage based on timestamp (most reliable)
-  let progress = job.progress;
-  if (hasTimeData && job.duration && job.timestamp !== undefined) {
-    progress = (job.timestamp / job.duration) * 100;
-  }
+  // Use backend reported progress which includes stage weighting
+  // (timestamp/duration is only for the video timeline, not overall job status)
+  const progress = job.progress;
 
   // ETA calculation (based on video timestamp, not frame count)
   const eta = hasTimeData
@@ -242,7 +243,7 @@ function JobCard({
           >
             <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
               {/* Frame Progress */}
-              {hasFrameData && (
+              {job.processed_frames !== undefined && (
                 <Typography variant="caption" sx={{
                   bgcolor: 'action.hover',
                   px: 1,
@@ -250,7 +251,7 @@ function JobCard({
                   borderRadius: 1,
                   fontFamily: 'monospace'
                 }}>
-                  🎞️ {job.processed_frames} / {job.total_frames} frames
+                  🎞️ {job.processed_frames} {job.total_frames ? `/ ${job.total_frames}` : ''} frames
                 </Typography>
               )}
               {/* Time Progress */}
@@ -321,25 +322,62 @@ function JobCard({
           }}>
             {ORDERED_STAGES.filter(s => s !== 'complete').map((stage, idx) => {
               const info = STAGE_LABELS[stage];
-              const isDone = idx < currentStageIndex;
-              const isCurrent = stage === currentStage;
+              // Use stage_stats if available, otherwise fallback to simple order logic
+              const stats = job.stage_stats?.[stage];
+
+              let isDone = idx < currentStageIndex;
+              let isCurrent = stage === currentStage;
+              let isSkipped = false;
+              let duration = null;
+
+              if (stats) {
+                if (stats.status === 'completed') isDone = true;
+                if (stats.status === 'running') isCurrent = true;
+                if (stats.status === 'skipped') isSkipped = true;
+                if (stats.duration) duration = stats.duration;
+              } else if (job.pipeline_stage === 'complete') {
+                isDone = true;
+                isCurrent = false;
+              }
+
+              // Format duration if available
+              const durationStr = duration ? (duration < 60 ? `${duration.toFixed(1)}s` : `${(duration / 60).toFixed(1)}m`) : '';
+
               return (
-                <Chip
+                <Tooltip
                   key={stage}
-                  size="small"
-                  label={`${info.icon} ${info.label.split(' ')[0]}`}
-                  variant={isDone ? 'filled' : 'outlined'}
-                  color={isCurrent ? 'primary' : isDone ? 'success' : 'default'}
-                  sx={{
-                    opacity: isDone || isCurrent ? 1 : 0.5,
-                    fontWeight: isCurrent ? 700 : 400,
-                    animation: isCurrent ? 'pulse 1.5s infinite' : 'none',
-                    '@keyframes pulse': {
-                      '0%, 100%': { opacity: 1 },
-                      '50%': { opacity: 0.7 },
-                    },
-                  }}
-                />
+                  title={
+                    <Box sx={{ textAlign: 'center' }}>
+                      <Typography variant="caption" fontWeight="bold">{info.label}</Typography>
+                      {duration && <Typography variant="body2">{duration.toFixed(2)}s</Typography>}
+                      {isSkipped && <Typography variant="caption" color="warning.light">Skipped</Typography>}
+                      {stats?.retries ? <Typography variant="caption" color="warning.light">{stats.retries} retries</Typography> : null}
+                      {stats?.error && <Typography variant="caption" color="error.light">{stats.error}</Typography>}
+                    </Box>
+                  }
+                >
+                  <Chip
+                    size="small"
+                    label={`${info.icon} ${info.label.split(' ')[0]}${durationStr ? ` (${durationStr})` : ''}`}
+                    variant={isDone || isSkipped ? 'filled' : 'outlined'}
+                    color={
+                      isCurrent ? 'primary'
+                        : isSkipped ? 'default'
+                          : isDone ? 'success'
+                            : 'default'
+                    }
+                    sx={{
+                      opacity: isDone || isCurrent || isSkipped ? 1 : 0.5,
+                      fontWeight: isCurrent ? 700 : 400,
+                      textDecoration: isSkipped ? 'line-through' : 'none',
+                      animation: isCurrent ? 'pulse 1.5s infinite' : 'none',
+                      '@keyframes pulse': {
+                        '0%, 100%': { opacity: 1 },
+                        '50%': { opacity: 0.7 },
+                      },
+                    }}
+                  />
+                </Tooltip>
               );
             })}
           </Box>
@@ -387,6 +425,7 @@ export default function IngestPage() {
   const [mediaType, setMediaType] = useState('unknown');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [enableChunking, setEnableChunking] = useState(true); // Default ON
   const [pendingJobs, setPendingJobs] = useState<string[]>([]);
 
   interface SummaryData {
@@ -426,7 +465,8 @@ export default function IngestPage() {
       hint: string;
       start?: number;
       end?: number;
-    }) => ingestMedia(data.path, data.hint, data.start, data.end),
+      enableChunking?: boolean;
+    }) => ingestMedia(data.path, data.hint, data.start, data.end, data.enableChunking),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['jobs'] });
     },
@@ -493,7 +533,7 @@ export default function IngestPage() {
     const end = parseTime(endTime);
     validPaths.forEach(path => {
       setPendingJobs(prev => [...prev, path.trim()]);
-      ingestMutation.mutate({ path: path.trim(), hint: mediaType, start, end });
+      ingestMutation.mutate({ path: path.trim(), hint: mediaType, start, end, enableChunking });
     });
     setPaths(['']);
     setStartTime('');
@@ -653,6 +693,19 @@ export default function IngestPage() {
               <MenuItem value="personal">Personal</MenuItem>
             </Select>
           </FormControl>
+          <Tooltip title="Split long media into smaller segments to prevent Out-Of-Memory errors">
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={enableChunking}
+                  onChange={e => setEnableChunking(e.target.checked)}
+                  size="small"
+                />
+              }
+              label={<Typography variant="body2">Memory Chunking</Typography>}
+              sx={{ mr: 2 }}
+            />
+          </Tooltip>
           <Button
             variant="contained"
             startIcon={<CloudUpload />}

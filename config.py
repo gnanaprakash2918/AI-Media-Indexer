@@ -618,6 +618,92 @@ class Settings(BaseSettings):
         default=True, description="Unload models after use to free VRAM."
     )
 
+    # --- Memory Chunking (OOM Prevention) ---
+    enable_chunking: bool = Field(
+        default=True,
+        description="Auto-chunk long videos/audio to prevent OOM. Always ON by default.",
+    )
+    chunk_duration_seconds: int = Field(
+        default=600,
+        description="Duration of each chunk in seconds (600 = 10 minutes)",
+    )
+    min_media_length_for_chunking: int = Field(
+        default=1800,
+        description="Only chunk if media > this length in seconds (1800 = 30 min). Set to 0 for always.",
+    )
+    auto_chunk_by_hardware: bool = Field(
+        default=True,
+        description="Auto-adjust chunking based on VRAM. Low VRAM = smaller chunks.",
+    )
+
+    # --- Search Feature Flags (Master Switches) ---
+    enable_face_recognition: bool = Field(
+        default=True, description="Master switch for face detection and clustering."
+    )
+    enable_ocr: bool = Field(
+        default=True, description="Master switch for text extraction (OCR)."
+    )
+    enable_content_moderation: bool = Field(
+        default=False,
+        description="Master switch for NSFW/Safety checks (default OFF for speed).",
+    )
+    enable_time_extraction: bool = Field(
+        default=False, description="Master switch for clock/time extraction (default OFF)."
+    )
+    enable_object_detection: bool = Field(
+        default=True, description="Master switch for YOLO object detection."
+    )
+
+    # --- Audio Analysis (BPM/Beat Detection) ---
+    enable_audio_analysis: bool = Field(
+        default=False,
+        description="Enable tempo/beat detection. OFF by default (only useful for music videos).",
+    )
+
+    # --- OCR Optimization ---
+    ocr_skip_unchanged_frames: bool = Field(
+        default=True,
+        description="Skip OCR if frame is visually similar to previous (perceptual hash).",
+    )
+    ocr_batch_size: int = Field(
+        default=8,
+        description="Batch size for OCR processing (if using GPU-capable OCR).",
+    )
+    ocr_keyframes_only: bool = Field(
+        default=False,
+        description="Run OCR only on scene keyframes (faster but may miss some text).",
+    )
+
+    # --- Unified Search Configuration ---
+    search_use_reasoning: bool = Field(
+        default=False,
+        description="Enable LLM query decomposition/reasoning. OFF by default for speed.",
+    )
+    search_use_reranking: bool = Field(
+        default=False,
+        description="Enable LLM re-ranking for higher accuracy. OFF by default for speed.",
+    )
+    search_auto_mode: bool = Field(
+        default=True,
+        description="Auto-select search mode based on query complexity.",
+    )
+
+    # --- Visual Encoder ---
+    visual_encoder_type: str = Field(
+        default="siglip",
+        description="Primary visual encoder: 'siglip' (SOTA) or 'clip' (fallback).",
+    )
+    visual_encoder_fallback: bool = Field(
+        default=True,
+        description="Auto-fallback from SigLIP to CLIP on OOM.",
+    )
+
+    # --- Deep Research Optimization ---
+    deep_research_per_scene: bool = Field(
+        default=True,
+        description="Run Deep Research (shot type, mood) on scene keyframes only, not every frame.",
+    )
+
     @model_validator(mode="after")
     def adjust_dimensions(self) -> "Settings":
         """Auto-adjust embedding dimensions based on model name."""

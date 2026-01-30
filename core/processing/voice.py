@@ -91,6 +91,76 @@ class VoiceProcessor:
         self.inference: Inference | None = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
+        
+        # Audio cache for load-once optimization (avoids repeated I/O)
+        self._cached_audio: tuple[str, np.ndarray, int] | None = None  # (path, data, sample_rate)
+
+        if not self.enabled:
+            log.info("Voice analysis disabled by config.")
+            return
+
+        if not self.hf_token:
+            log.warning("HF_TOKEN missing. Voice analysis disabled.")
+            self.enabled = False
+
+    def _get_cached_audio(self, path: Path) -> tuple[np.ndarray, int] | None:
+        """Get audio from cache, loading if necessary.
+        
+        Optimization: Loads audio file once into memory, reuses for all segment slicing.
+        
+        Args:
+            path: Path to audio file.
+            
+        Returns:
+            Tuple of (audio_data, sample_rate) or None on failure.
+        """
+        path_str = str(path)
+        
+        # Return cached if same file
+        if self._cached_audio and self._cached_audio[0] == path_str:
+            return (self._cached_audio[1], self._cached_audio[2])
+        
+        try:
+            import soundfile as sf
+            audio_data, sample_rate = sf.read(path_str, dtype='float32')
+            
+            # Convert stereo to mono if needed
+            if len(audio_data.shape) > 1:
+                audio_data = np.mean(audio_data, axis=1)
+            
+            self._cached_audio = (path_str, audio_data, sample_rate)
+            log.debug(f"[Voice] Cached audio: {path.name} ({len(audio_data)/sample_rate:.1f}s)")
+            return (audio_data, sample_rate)
+        except Exception as e:
+            log.warning(f"[Voice] Failed to cache audio {path.name}: {e}")
+            return None
+
+    def _slice_audio_memory(
+        self, audio_data: np.ndarray, sample_rate: int, start: float, end: float
+    ) -> np.ndarray:
+        """Slice audio segment from in-memory buffer (fast, no I/O).
+        
+        Args:
+            audio_data: Full audio array.
+            sample_rate: Sample rate of audio.
+            start: Start time in seconds.
+            end: End time in seconds.
+            
+        Returns:
+            Sliced audio segment as numpy array.
+        """
+        start_sample = int(start * sample_rate)
+        end_sample = int(end * sample_rate)
+        
+        # Clamp to valid range
+        start_sample = max(0, start_sample)
+        end_sample = min(len(audio_data), end_sample)
+        
+        return audio_data[start_sample:end_sample]
+
+    def _clear_audio_cache(self) -> None:
+        """Clear the audio cache to free memory."""
+        self._cached_audio = None
 
         if not self.enabled:
             log.info("Voice analysis disabled by config.")
@@ -265,20 +335,27 @@ class VoiceProcessor:
                     end = start + MAX_SEGMENT_DURATION
                 
                 
-                # Check for silence/garbage audio
+                # Check for silence/garbage audio using cached audio (OPTIMIZED)
                 # Pyannote is good but can hallucinate speech on noise or breaths
                 is_silence_segment = False
                 try:
-                    import soundfile as sf
-                    # Read just this segment (assuming 16kHz from _convert_to_wav)
-                    audio_chunk, _ = sf.read(
-                        str(processing_path), 
-                        start=int(start * 16000), 
-                        frames=int((end - start) * 16000)
-                    )
-                    if is_audio_silent(audio_chunk):
-                        is_silence_segment = True
-                        # log.debug(f"Marking silent segment: {start:.2f}-{end:.2f}s")
+                    # Use cached audio (loads once, slices in-memory for all segments)
+                    cached = self._get_cached_audio(processing_path)
+                    if cached:
+                        audio_data, sr = cached
+                        audio_chunk = self._slice_audio_memory(audio_data, sr, start, end)
+                        if is_audio_silent(audio_chunk):
+                            is_silence_segment = True
+                    else:
+                        # Fallback: read from file if caching failed
+                        import soundfile as sf
+                        audio_chunk, _ = sf.read(
+                            str(processing_path), 
+                            start=int(start * 16000), 
+                            frames=int((end - start) * 16000)
+                        )
+                        if is_audio_silent(audio_chunk):
+                            is_silence_segment = True
                 except Exception as e:
                     log.warning(f"[Voice] Silence check failed: {e}")
 
@@ -323,6 +400,9 @@ class VoiceProcessor:
             return []
 
         finally:
+            # Clear audio cache to free memory
+            self._clear_audio_cache()
+            
             if temp_wav and temp_wav.exists():
                 try:
                     temp_wav.unlink()

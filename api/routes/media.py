@@ -418,7 +418,6 @@ async def get_media_thumbnail(
     """
     import cv2
     import asyncio
-    import numpy as np
 
     file_path = Path(path)
     if not file_path.exists():

@@ -19,7 +19,6 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from core.utils.logger import get_logger
 

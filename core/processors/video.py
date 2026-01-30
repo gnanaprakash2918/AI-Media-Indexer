@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import logging
-from typing import Any
 
 import torch
 from core.utils.resource import resource_manager

@@ -6,12 +6,12 @@ Manages a job queue for potentially long-running video processing tasks.
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Optional
+import numpy as np
 
-from core.manipulation.inpainting import InpaintRequest, get_inpainter
 from core.manipulation.painters import PrivacyBlur
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,6 @@ class ManipulationPipeline:
     async def _process_redact(self, job: ManipulationJob, mask_frames: Dict[int, "np.ndarray"]):
         """Run redaction logic."""
         import cv2
-        import numpy as np
         
         video_path = str(job.video_path)
         output_path = job.video_path.parent / f"{job.video_path.stem}_redacted{job.video_path.suffix}"

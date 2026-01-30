@@ -1,3 +1,15 @@
+from __future__ import annotations
+import asyncio
+import logging
+from pathlib import Path
+
+from core.utils.resource import resource_manager
+from core.processing.transcriber import AudioTranscriber
+
+logger = logging.getLogger(__name__)
+
+
+class AudioProcessor:
     async def detect_language(self, path: Path) -> str:
         """Detects the audio language using Whisper's language detection.
 

@@ -53,6 +53,7 @@ export default function SearchPage() {
   const [selectedVideo, setSelectedVideo] = useState<string>('');
   const [deepSearch, setDeepSearch] = useState(false);
   const [useReranking, setUseReranking] = useState(false);  // OFF by default to prevent timeouts
+  const [useReasoning, setUseReasoning] = useState(false);  // OFF by default for speed
 
   // Overlay visibility toggles
   const [overlayToggles, setOverlayToggles] = useState({
@@ -78,7 +79,7 @@ export default function SearchPage() {
       if (deepSearch) {
         return (await searchGranular(q, selectedVideo || undefined, 10, useReranking)) as SearchResponse;
       }
-      const response = await searchHybrid(q, selectedVideo || undefined, 20, useReranking);
+      const response = await searchHybrid(q, selectedVideo || undefined, 20, useReranking, useReasoning);
       return response as SearchResponse;
     },
   });
@@ -218,6 +219,20 @@ export default function SearchPage() {
                 variant={useReranking ? "filled" : "outlined"}
                 size="small"
                 onClick={() => setUseReranking(!useReranking)}
+                sx={{ fontWeight: 700 }}
+              />
+            </Tooltip>
+          </Box>
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="body2" color="text.secondary">Reasoning (Slow)</Typography>
+            <Tooltip title="Decompose complex queries with LLM (Adds latency)">
+              <Chip
+                label={useReasoning ? "ON" : "OFF"}
+                color={useReasoning ? "warning" : "default"}
+                variant={useReasoning ? "filled" : "outlined"}
+                size="small"
+                onClick={() => setUseReasoning(!useReasoning)}
                 sx={{ fontWeight: 700 }}
               />
             </Tooltip>

@@ -77,8 +77,8 @@ class LanguageBindEncoder:
 
                 model_id = "LanguageBind/LanguageBind_Video_V1.5_FT"
 
-                self._tokenizer = AutoTokenizer.from_pretrained(model_id)
-                self._model = AutoModel.from_pretrained(model_id)
+                self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+                self._model = AutoModel.from_pretrained(model_id, trust_remote_code=True)
 
                 device = self._get_device()
                 self._model.to(device)
@@ -253,6 +253,12 @@ class LanguageBindEncoder:
             if norm > 0:
                 embedding = embedding / norm
 
+            # CRITICAL FIX: Pad to 768 dimensions to match encode_video output
+            # This prevents dimension mismatch when computing similarity
+            if embedding.shape[0] < 768:
+                padding = np.zeros((768 - embedding.shape[0],))
+                embedding = np.concatenate([embedding, padding])
+
             return embedding
 
         except Exception as e:
@@ -349,6 +355,10 @@ class InternVideoEncoder:
         self._processor = None
         self._init_lock = asyncio.Lock()
         self._load_failed = False
+        # Cache LanguageBindEncoder to avoid redundant instantiation
+        self._languagebind_encoder: LanguageBindEncoder | None = None
+        # Cache text embeddings for common action labels to avoid redundant encoding
+        self._text_embedding_cache: dict[str, np.ndarray] = {}
 
     async def _lazy_load(self) -> bool:
         """Load InternVideo model lazily."""
@@ -501,8 +511,10 @@ class InternVideoEncoder:
         Returns:
             List of {action, confidence} sorted by confidence.
         """
-        # Use LanguageBind for zero-shot classification
-        encoder = LanguageBindEncoder(device=self._device)
+        # Reuse cached encoder to avoid redundant model loading (critical perf fix)
+        if self._languagebind_encoder is None:
+            self._languagebind_encoder = LanguageBindEncoder(device=self._device)
+        encoder = self._languagebind_encoder
 
         video_emb = await encoder.encode_video(frames)
         if video_emb is None:
@@ -510,7 +522,13 @@ class InternVideoEncoder:
 
         results = []
         for label in action_labels:
-            text_emb = await encoder.encode_text(f"a video of {label}")
+            cache_key = f"a video of {label}"
+            if cache_key in self._text_embedding_cache:
+                text_emb = self._text_embedding_cache[cache_key]
+            else:
+                text_emb = await encoder.encode_text(cache_key)
+                if text_emb is not None:
+                    self._text_embedding_cache[cache_key] = text_emb
             if text_emb is None:
                 continue
 

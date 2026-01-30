@@ -414,15 +414,55 @@ _visual_encoder: VisualEncoderInterface | None = None
 
 
 def get_default_visual_encoder() -> VisualEncoderInterface:
-    """Get the default visual encoder based on settings."""
+    """Get the default visual encoder with SOTA-first fallback strategy.
+    
+    Strategy:
+    1. Try SigLIP (SOTA, best accuracy)
+    2. Fallback to CLIP on OOM or ImportError
+    """
     global _visual_encoder
     
-    if _visual_encoder is None:
-        from config import settings
-        
-        encoder_type = getattr(settings, 'visual_encoder_type', 'clip')
-        model_name = getattr(settings, 'visual_encoder_model', None)
-        
-        _visual_encoder = get_visual_encoder(encoder_type, model_name)
+    if _visual_encoder is not None:
+        return _visual_encoder
     
-    return _visual_encoder
+    from config import settings
+    import torch
+    import logging
+    
+    log = logging.getLogger(__name__)
+    encoder_type = getattr(settings, 'visual_encoder_type', 'siglip')
+    enable_fallback = getattr(settings, 'visual_encoder_fallback', True)
+    
+    # Try primary encoder (SigLIP by default)
+    if encoder_type == "siglip":
+        try:
+            log.info("[VisualEncoder] Loading SigLIP (SOTA)...")
+            encoder = SigLIPEncoder("ViT-SO400M-14-SigLIP-384")
+            # Warm-up to trigger OOM early (optional, can be removed if slow)
+            _visual_encoder = encoder
+            log.info("[VisualEncoder] ✓ SigLIP loaded successfully")
+            return _visual_encoder
+        except (ImportError, RuntimeError, torch.cuda.OutOfMemoryError) as e:
+            if enable_fallback:
+                log.warning(f"[VisualEncoder] SigLIP failed ({e}), falling back to CLIP")
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            else:
+                raise
+    
+    # Fallback or explicit CLIP selection
+    try:
+        log.info("[VisualEncoder] Loading CLIP (fallback)...")
+        _visual_encoder = CLIPEncoder("ViT-L-14")
+        log.info("[VisualEncoder] ✓ CLIP loaded successfully")
+        return _visual_encoder
+    except Exception as e:
+        log.error(f"[VisualEncoder] Both SigLIP and CLIP failed: {e}")
+        raise RuntimeError("Failed to load any visual encoder") from e
+
+
+def reset_visual_encoder() -> None:
+    """Reset the singleton encoder (useful for testing or reloading with new config)."""
+    global _visual_encoder
+    if _visual_encoder is not None:
+        _visual_encoder.cleanup()
+        _visual_encoder = None

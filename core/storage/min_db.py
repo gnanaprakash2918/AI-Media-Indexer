@@ -1,6 +1,6 @@
 """Qdrant client handler and connection management."""
 import time
-from typing import Any, Callable
+from typing import Any
 from functools import wraps
 from qdrant_client import QdrantClient
 from qdrant_client.http import models

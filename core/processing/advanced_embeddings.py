@@ -12,7 +12,6 @@ Based on Research (Part 7 - Embedding Council):
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import numpy as np
 

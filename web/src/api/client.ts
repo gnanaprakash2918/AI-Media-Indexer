@@ -46,10 +46,17 @@ export const searchHybrid = async (
   query: string,
   videoPath?: string,
   limit = 20,
-  useReranking = true,
+  useReranking = false,
+  useReasoning = false,
 ) => {
   const res = await apiClient.get('/search/hybrid', {
-    params: { q: query, video_path: videoPath, limit, use_reranking: useReranking },
+    params: {
+      q: query,
+      video_path: videoPath,
+      limit,
+      use_reranking: useReranking,
+      use_reasoning: useReasoning
+    },
   });
   return res.data;
 };
@@ -60,12 +67,14 @@ export const ingestMedia = async (
   hint: string = 'unknown',
   startTime?: number,
   endTime?: number,
+  enableChunking = true,
 ) => {
   const res = await apiClient.post('/ingest', {
     path,
     media_type_hint: hint,
     start_time: startTime,
     end_time: endTime,
+    enable_chunking: enableChunking
   });
   return res.data;
 };

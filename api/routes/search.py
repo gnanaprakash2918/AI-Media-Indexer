@@ -67,7 +67,10 @@ async def hybrid_search(
     ] = None,
     use_reranking: Annotated[
         bool, Query(description="Use LLM re-ranking for higher accuracy")
-    ] = False,  # OFF by default to prevent timeouts
+    ] = False,  # OFF by default for speed
+    use_reasoning: Annotated[
+        bool, Query(description="Use LLM query decomposition for complex queries")
+    ] = False,  # OFF by default for speed
     face_cluster_id: Annotated[
         int | None, Query(description="Filter by specific face cluster ID")
     ] = None,
@@ -82,7 +85,8 @@ async def hybrid_search(
         limit: Maximum number of results to return.
         pipeline: The core ingestion pipeline instance.
         video_path: Optional path to filter results by a specific video.
-        use_reranking: Whether to enable the second-stage LLM verification.
+        use_reranking: Whether to enable LLM re-ranking (slower but more accurate).
+        use_reasoning: Whether to enable LLM query decomposition (slower but better for complex queries).
         face_cluster_id: Optional filter for a specific face cluster.
 
     Returns:
@@ -106,6 +110,7 @@ async def hybrid_search(
                 limit=limit,
                 video_path=video_path,
                 use_reranking=use_reranking,
+                use_expansion=use_reasoning,
             )
 
             # Transform results for frontend compatibility
@@ -236,25 +241,49 @@ async def advanced_search(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
     """Executes an advanced search with filtering and reranking."""
-    from core.retrieval.engine import get_search_engine
-
+    # REFACTOR: Use SearchAgent instead of missing core.retrieval.engine
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
-    engine = get_search_engine(db=pipeline.db)
-    results = await engine.search(
-        query=req.query,
-        use_rerank=req.use_rerank,
-        limit=req.limit,
-    )
-
-    filtered = [r for r in results if r.score >= req.min_confidence]
-
-    return {
-        "query": req.query,
-        "total": len(filtered),
-        "results": [r.model_dump() for r in filtered],
-    }
+    try:
+        if SearchAgent:
+            agent = SearchAgent(db=pipeline.db)
+            # Use sota_search for advanced capabilities (RRF + Rerank)
+            result = await agent.sota_search(
+                query=req.query,
+                limit=req.limit,
+                use_reranking=req.use_rerank,
+                video_path=req.video_path if hasattr(req, "video_path") else None
+            )
+            
+            # Extract results list from the agent response
+            raw_results = result.get("results", [])
+            
+            # Filter by confidence if applicable (sota_search handles scoring, but we can double check)
+            filtered = [
+                r for r in raw_results 
+                if r.get("score", 0) >= req.min_confidence
+            ]
+            
+            return {
+                "query": req.query,
+                "total": len(filtered),
+                "results": filtered,
+                "stats": result.get("stats", {})
+            }
+        else:
+             # Fallback if SearchAgent is somehow unavailable (unlikely)
+            fallback = await pipeline.db.search_frames_hybrid(req.query, limit=req.limit)
+            return {
+                "query": req.query,
+                "total": len(fallback),
+                "results": fallback,
+                "warning": "SearchAgent unavailable"
+            }
+            
+    except Exception as e:
+        logger.error(f"Advanced search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/search")

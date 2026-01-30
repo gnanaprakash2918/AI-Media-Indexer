@@ -40,16 +40,12 @@ from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
-from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
-from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
+from core.utils.resource_arbiter import RESOURCE_ARBITER
+from core.utils.resource_arbiter import RESOURCE_ARBITER
 from core.utils.retry import retry
 from core.errors import (
     MediaIndexerError,
-    IngestionError,
-    ExtractionError,
-    TranscriberError,
-    VisionError,
-    ResourceError
+    IngestionError
 )
 import traceback
 
@@ -246,6 +242,38 @@ class IngestionPipeline:
             progress_tracker.fail(job_id, error=f"Media probe failed: {e}")
             raise
 
+        # === CHUNKING DECISION (OOM Prevention) ===
+        # Prevent OOM by processing long videos in chunks
+        chunk_enabled = getattr(settings, 'enable_chunking', True)
+        chunk_duration = getattr(settings, 'chunk_duration_seconds', 600)  # 10 min default
+        min_length_for_chunk = getattr(settings, 'min_media_length_for_chunking', 1800)  # 30 min
+        auto_chunk_hw = getattr(settings, 'auto_chunk_by_hardware', True)
+        
+        # Auto-adjust chunk size based on hardware
+        if auto_chunk_hw and torch.cuda.is_available():
+            try:
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if vram_gb < 8:
+                    chunk_duration = min(chunk_duration, 300)  # 5 min for low VRAM
+                    min_length_for_chunk = 600  # Chunk anything > 10 min
+                    logger.info(f"[Chunking] Low VRAM ({vram_gb:.1f}GB) - using 5min chunks")
+            except Exception:
+                pass
+        
+        should_chunk = chunk_enabled and duration > min_length_for_chunk
+        
+        if should_chunk:
+            logger.info(
+                f"[Chunking] Video {duration/60:.1f}min > threshold {min_length_for_chunk/60:.0f}min. "
+                f"Will process in {chunk_duration/60:.0f}min chunks."
+            )
+            # Store chunk info for _process_frames to use
+            self._chunk_duration = chunk_duration
+            self._total_chunks = int(duration / chunk_duration) + 1
+        else:
+            self._chunk_duration = None
+            self._total_chunks = 1
+
         # RESUME LOGIC: Check checkpoint for crash recovery
         checkpoint = None
         skip_audio = False
@@ -268,10 +296,14 @@ class IngestionPipeline:
 
         try:
             if not skip_audio:
-                progress_tracker.update(
-                    job_id, 5.0, stage="audio", message="Processing audio"
-                )
-                await retry(lambda: self._process_audio(path))
+                async with progress_tracker.stage(job_id, "audio", "Processing audio"):
+                    progress_tracker.update(job_id, 10.0)
+                    await retry(
+                        lambda: self._process_audio(path),
+                        on_retry=lambda e: progress_tracker.increment_retry(job_id, "audio")
+                    )
+                    progress_tracker.update(job_id, 30.0)
+                
                 logger.info(
                     "[Pipeline] _process_audio completed, running cleanup..."
                 )
@@ -283,12 +315,13 @@ class IngestionPipeline:
                 progress_tracker.save_checkpoint(
                     job_id, {"audio_complete": True}
                 )
+            else:
+                progress_tracker.stage_start(job_id, "audio", "Skipped (Already done)")
+                progress_tracker.stage_complete(job_id, "audio", "Skipped")
             logger.info(
                 "[Pipeline] Audio phase complete, moving to voice processing..."
             )
-            progress_tracker.update(
-                job_id, 30.0, stage="audio", message="Audio complete"
-            )
+
 
             if progress_tracker.is_cancelled(job_id):
                 return job_id
@@ -296,18 +329,22 @@ class IngestionPipeline:
                 return job_id
 
             if not skip_voice:
-                progress_tracker.update(
-                    job_id, 35.0, stage="voice", message="Processing voice"
-                )
-                await retry(lambda: self._process_voice(path))
+                async with progress_tracker.stage(job_id, "voice", "Processing voice"):
+                    progress_tracker.update(job_id, 35.0)
+                    await retry(
+                        lambda: self._process_voice(path),
+                        on_retry=lambda e: progress_tracker.increment_retry(job_id, "voice")
+                    )
+                    progress_tracker.update(job_id, 50.0)
+                
                 self._cleanup_memory("voice_complete")  # Unload Pyannote
                 # Checkpoint voice completion
                 progress_tracker.save_checkpoint(
                     job_id, {"voice_complete": True}
                 )
-            progress_tracker.update(
-                job_id, 50.0, stage="voice", message="Voice complete"
-            )
+            else:
+                 progress_tracker.stage_start(job_id, "voice", "Skipped (Already done)")
+                 progress_tracker.stage_complete(job_id, "voice", "Skipped")
 
             logger.debug("Voice complete - checking job status")
 
@@ -320,20 +357,20 @@ class IngestionPipeline:
                 return job_id
 
             # Audio Events (CLAP)
-            progress_tracker.update(
-                job_id, 45.0, stage="audio_events", message="Detecting audio events"
-            )
-            await self._process_audio_events(path, job_id)
+            async with progress_tracker.stage(job_id, "audio_events", "Detecting audio events"):
+                await self._process_audio_events(path, job_id)
 
-            progress_tracker.update(
-                job_id, 55.0, stage="frames", message="Processing frames"
-            )
+
             logger.debug("Starting frame processing")
-            await retry(
-                lambda: self._process_frames(
-                    path, job_id, total_duration=duration
+            async with progress_tracker.stage(job_id, "frames", "Processing frames"):
+                progress_tracker.update(job_id, 55.0)
+                await retry(
+                    lambda: self._process_frames(
+                        path, job_id, total_duration=duration
+                    ),
+                    on_retry=lambda e: progress_tracker.increment_retry(job_id, "frames")
                 )
-            )
+                progress_tracker.update(job_id, 85.0)
 
             logger.debug("Frame processing complete - cleaning memory")
             self._cleanup_memory("frames_complete")
@@ -344,22 +381,14 @@ class IngestionPipeline:
                 return job_id
 
             # Dense Scene Captioning (VLM on detected scene boundaries)
-            progress_tracker.update(
-                job_id,
-                90.0,
-                stage="scene_captions",
-                message="Generating scene captions",
-            )
-            await self._process_scene_captions(path, job_id)
+            async with progress_tracker.stage(job_id, "scene_captions", "Generating scene captions"):
+                progress_tracker.update(job_id, 90.0)
+                await self._process_scene_captions(path, job_id)
 
             # Post-Processing Phase
-            progress_tracker.update(
-                job_id,
-                95.0,
-                stage="post_processing",
-                message="Enriching metadata",
-            )
-            await self._post_process_video(path, job_id)
+            async with progress_tracker.stage(job_id, "post_processing", "Enriching metadata"):
+                progress_tracker.update(job_id, 95.0)
+                await self._post_process_video(path, job_id)
 
             progress_tracker.complete(job_id, message=f"Completed: {path.name}")
 
@@ -831,7 +860,6 @@ class IngestionPipeline:
         # Uses pyloudnorm for ITU-R BS.1770-4 compliant loudness measurement
         # ============================================================
         try:
-            from core.processing.audio_levels import AudioLoudnessAnalyzer
 
             log("[Loudness] Starting audio level analysis (FFmpeg streaming)...")
             
@@ -1028,54 +1056,62 @@ class IngestionPipeline:
         """
         await resource_manager.throttle_if_needed("compute")
 
+        wav_path = None
         try:
+            # Slice audio asynchronously in the main event loop
+            from core.processing.transcriber import AudioTranscriber
+            
+            try:
+                # Instantiate usage because _slice_audio is an instance method
+                with AudioTranscriber() as transcriber:
+                    wav_path = await transcriber._slice_audio(
+                        path, start=start_offset, end=start_offset + duration
+                    )
+            except Exception as e:
+                from core.utils.logger import log
+                log(f"[Audio] Slicing failed: {e}, falling back to full file")
+                wav_path = path
+
+            # Run blocking detection in a thread
             return await asyncio.to_thread(
                 self._run_detection_with_confidence,
-                path,
-                start_offset,
-                duration,
+                wav_path, # Pass the sliced audio (or original path)
             )
+
         except Exception as e:
             from core.utils.logger import log
-
             log(f"[Audio] Language detection failed: {e}")
             return ("en", 0.0)
+            
+        finally:
+            # Cleanup temp file if created
+            if (
+                wav_path 
+                and isinstance(wav_path, Path) 
+                and wav_path != path 
+                and wav_path.exists()
+            ):
+                try:
+                    wav_path.unlink()
+                except Exception:
+                    pass
 
     def _run_detection_with_confidence(
         self,
-        path: Path,
-        start_offset: float,
-        duration: float,
+        wav_input: Path | bytes,
     ) -> tuple[str, float]:
         """Synchronous helper for language detection with confidence.
 
-        Slices a specific segment of audio for detection, useful for
-        multi-pass detection when initial confidence is low.
-
         Args:
-            path: Path to the media file.
-            start_offset: Start position in seconds.
-            duration: Duration to analyze in seconds.
+            wav_input: Path to audio file or raw WAV bytes.
 
         Returns:
             Tuple of (language_code, confidence_score).
         """
+        import io
         from core.utils.logger import log
 
         with AudioTranscriber() as transcriber:
-            # Slice the specific audio segment
-            try:
-                wav_path = transcriber._slice_audio(
-                    path, start=start_offset, end=start_offset + duration
-                )
-            except Exception as e:
-                log(
-                    f"[Audio] Slicing for detection failed at offset {start_offset}s: {e}"
-                )
-                # Fallback to original detection
-                lang = transcriber.detect_language(path)
-                return (lang, 0.5)  # Return medium confidence for fallback
-
             try:
                 # Load model if needed
                 model_id = "Systran/faster-whisper-base"
@@ -1085,9 +1121,15 @@ class IngestionPipeline:
                 if AudioTranscriber._SHARED_MODEL is None:
                     return ("en", 0.0)
 
+                # Prepare input source
+                if isinstance(wav_input, bytes):
+                    input_file = io.BytesIO(wav_input)
+                else:
+                    input_file = str(wav_input)
+
                 # Run detection on the sliced segment
                 _, info = AudioTranscriber._SHARED_MODEL.transcribe(
-                    str(wav_path),
+                    input_file,
                     task="transcribe",
                     beam_size=5,
                 )
@@ -1097,30 +1139,16 @@ class IngestionPipeline:
 
                 # Special handling for Indic languages with lower threshold
                 indic_langs = [
-                    "ta",
-                    "hi",
-                    "te",
-                    "ml",
-                    "kn",
-                    "bn",
-                    "gu",
-                    "mr",
-                    "or",
-                    "pa",
+                    "ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"
                 ]
                 if detected_lang in indic_langs and confidence > 0.2:
                     # Boost confidence for Indic languages (Whisper often underestimates)
                     confidence = min(confidence * 1.5, 0.95)
 
                 return (detected_lang, confidence)
-
-            finally:
-                # Cleanup temp wav
-                if wav_path and wav_path != path and wav_path.exists():
-                    try:
-                        wav_path.unlink()
-                    except Exception:
-                        pass
+            except Exception as e:
+                log(f"[Audio] Detection inner error: {e}")
+                return ("en", 0.0)
 
     @observe("voice_processing")
     async def _process_voice(self, path: Path) -> None:
@@ -1344,7 +1372,6 @@ class IngestionPipeline:
         try:
             from core.processing.audio_events import AudioEventDetector
             import subprocess
-            import numpy as np
             
             # Common audio events to detect
             target_classes = [
@@ -1638,20 +1665,40 @@ class IngestionPipeline:
                 self._get_audio_segments_for_video(str(path))
             )
 
-            # Batch Processing Helper
+            # Batch Processing Helper (Optimized for SPEED)
             async def _process_batch_items(frames_to_process: list):
                 if not frames_to_process:
                     return
 
                 paths = [f.path for f in frames_to_process]
+                
+                # === 1. BATCH FACE DETECTION ===
                 try:
-                    # 1. Batch Face Detection (Speedup)
                     batch_faces = await self.faces.detect_faces_batch(paths)
                 except Exception as e:
                     logger.warning(f"Batch face detection failed: {e}")
                     batch_faces = [None] * len(frames_to_process)
 
-                # 2. Process frames with pre-detected faces
+                # === 2. BATCH VISUAL ENCODING (NEW - Major Speedup) ===
+                batch_embeddings = [None] * len(frames_to_process)
+                try:
+                    if self.vision and hasattr(self.vision, 'encode_batch'):
+                        # Use batch encoding for 2-3x speedup
+                        embeddings = await self.vision.encode_batch(paths)
+                        batch_embeddings = embeddings
+                        logger.debug(f"[Vision] Batch encoded {len(paths)} frames")
+                    elif self.vision:
+                        # Fallback to sequential if no batch method
+                        for i, p in enumerate(paths):
+                            try:
+                                batch_embeddings[i] = await self.vision.encode_image(p)
+                            except Exception:
+                                batch_embeddings[i] = None
+                except Exception as e:
+                    logger.warning(f"Batch visual encoding failed: {e}")
+                    batch_embeddings = [None] * len(frames_to_process)
+
+                # === 3. PROCESS EACH FRAME WITH PRE-COMPUTED DATA ===
                 for idx, frame_item in enumerate(frames_to_process):
                     f_path = frame_item.path
                     f_ts = frame_item.timestamp
@@ -1668,7 +1715,8 @@ class IngestionPipeline:
                         index=f_idx,
                         context=narrative_context,
                         neighbor_timestamps=neighbor_timestamps,
-                        pre_detected_faces=batch_faces[idx] if idx < len(batch_faces) else None
+                        pre_detected_faces=batch_faces[idx] if idx < len(batch_faces) else None,
+                        pre_computed_embedding=batch_embeddings[idx] if idx < len(batch_embeddings) else None,
                     )
 
                     if new_desc:
@@ -2192,6 +2240,7 @@ class IngestionPipeline:
         context: str | None = None,
         neighbor_timestamps: list[float] | None = None,
         pre_detected_faces: list | None = None,
+        pre_computed_embedding: list[float] | None = None,
     ) -> str | None:
         """Processes a single frame for identities and visual description.
 
@@ -2207,6 +2256,7 @@ class IngestionPipeline:
             context: Narrative context from previous frames for VLM.
             neighbor_timestamps: Timestamps of neighboring frames for search.
             pre_detected_faces: Optional list of faces detected in batch mode.
+            pre_computed_embedding: Optional visual embedding from batch encoding.
 
         Returns:
             The generated frame description or None if processing failed.
@@ -2234,25 +2284,29 @@ class IngestionPipeline:
 
         # ------------------------------------------------------------
         # DEEP RESEARCH: SOTA Frame Analysis (Cinematography, Aesthetics)
+        # OPTIMIZATION: Skip per-frame if deep_research_per_scene is True
+        # (Will run on scene keyframes instead via _process_scene_captions)
         # ------------------------------------------------------------
         dr_result = None
-        try:
-            dr_processor = get_deep_research_processor()
-            # Run analysis (fire and forget features for now, use metadata)
-            dr_result = await dr_processor.analyze_frame(
-                frame=frame_path,
-                compute_aesthetics=True,
-                compute_saliency=False,  # Skip heavy saliency for speed
-                compute_fingerprint=True,
-            )
-            if dr_result:
-                logger.info(
-                    f"[DeepResearch] Frame {timestamp:.2f}s: "
-                    f"Shot='{dr_result.shot_type}', Mood='{dr_result.mood}', "
-                    f"Aesthetic={dr_result.aesthetic_score:.2f}"
+        skip_deep_research = getattr(settings, 'deep_research_per_scene', True)
+        if not skip_deep_research:
+            try:
+                dr_processor = get_deep_research_processor()
+                # Run analysis (fire and forget features for now, use metadata)
+                dr_result = await dr_processor.analyze_frame(
+                    frame=frame_path,
+                    compute_aesthetics=True,
+                    compute_saliency=False,  # Skip heavy saliency for speed
+                    compute_fingerprint=True,
                 )
-        except Exception as e:
-            logger.warning(f"[DeepResearch] Analysis failed: {e}")
+                if dr_result:
+                    logger.info(
+                        f"[DeepResearch] Frame {timestamp:.2f}s: "
+                        f"Shot='{dr_result.shot_type}', Mood='{dr_result.mood}', "
+                        f"Aesthetic={dr_result.aesthetic_score:.2f}"
+                    )
+            except Exception as e:
+                logger.warning(f"[DeepResearch] Analysis failed: {e}")
 
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"
@@ -2509,6 +2563,7 @@ class IngestionPipeline:
             # ============================================================
             # OCR WIRING FIX: Previously dead code - now actually called!
             # Uses text_gate to avoid running expensive OCR on frames without text
+            # OPTIMIZATION: Skip OCR on visually similar frames (perceptual hash)
             # ============================================================
             ocr_text = ""
             ocr_boxes = []
@@ -2521,14 +2576,44 @@ class IngestionPipeline:
                 frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
 
                 if frame_img is not None:
+                    # --- OCR Skip-Unchanged-Frames Optimization ---
+                    skip_ocr = False
+                    ocr_skip_enabled = getattr(settings, 'ocr_skip_unchanged_frames', True)
+                    
+                    if ocr_skip_enabled:
+                        try:
+                            # Compute perceptual hash (fast, 8x8 grayscale downsample)
+                            gray = cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY)
+                            resized = cv2.resize(gray, (8, 8), interpolation=cv2.INTER_AREA)
+                            mean_val = np.mean(resized)
+                            current_hash = (resized > mean_val).flatten().tobytes()
+                            
+                            # Compare with previous frame's hash
+                            if hasattr(self, '_last_ocr_hash') and self._last_ocr_hash is not None:
+                                # Hamming distance (count of differing bits)
+                                diff = sum(a != b for a, b in zip(current_hash, self._last_ocr_hash))
+                                if diff < 8:  # <12.5% difference = same frame
+                                    skip_ocr = True
+                                    if hasattr(self, '_last_ocr_text'):
+                                        ocr_text = self._last_ocr_text  # Reuse previous result
+                                        ocr_boxes = getattr(self, '_last_ocr_boxes', [])
+                                    logger.debug(f"[OCR] Skipped unchanged frame (hash diff: {diff})")
+                            
+                            self._last_ocr_hash = current_hash
+                        except Exception as e:
+                            logger.debug(f"[OCR] Hash comparison failed: {e}")
+                    
                     # Gate: Only run OCR if frame likely contains text (edge density check)
-                    if self.text_gate.has_text(frame_img):
+                    if not skip_ocr and self.text_gate.has_text(frame_img):
                         ocr_result = await self.ocr_engine.extract_text(
                             frame_img
                         )
                         if ocr_result and ocr_result.get("text"):
                             ocr_text = ocr_result["text"]
                             ocr_boxes = ocr_result.get("boxes", [])
+                            # Cache for skip-unchanged optimization
+                            self._last_ocr_text = ocr_text
+                            self._last_ocr_boxes = ocr_boxes
                             logger.info(f"[OCR] Extracted: {ocr_text[:100]}...")
                         else:
                             logger.debug("[OCR] No text found in gated frame")
@@ -2772,14 +2857,24 @@ class IngestionPipeline:
                 detected_faces, face_cluster_ids, strict=False
             ):
                 face_name = self.db.get_face_name_by_cluster(cluster_id)
+                bbox = face.bbox if isinstance(face.bbox, list) else list(face.bbox)
+                # Calculate bbox dimensions for analytics
+                top, right, bottom, left = bbox
+                bbox_width = right - left
+                bbox_height = bottom - top
+                bbox_area = bbox_width * bbox_height
+                
                 faces_metadata.append(
                     {
-                        "bbox": face.bbox
-                        if isinstance(face.bbox, list)
-                        else list(face.bbox),  # [top, right, bottom, left]
+                        "bbox": bbox,  # [top, right, bottom, left]
                         "cluster_id": cluster_id,
                         "name": face_name,
                         "confidence": face.confidence,
+                        # NEW: Detection timestamp and dimensions for enriched analytics
+                        "detected_at": timestamp,
+                        "bbox_width": bbox_width,
+                        "bbox_height": bbox_height,
+                        "bbox_area": bbox_area,
                     }
                 )
 
@@ -2805,6 +2900,10 @@ class IngestionPipeline:
                 payload["temporal_context"] = (
                     context[:500] if len(context) > 500 else context
                 )
+
+            # 3f. Add pre-computed visual embedding (from batch processing)
+            if pre_computed_embedding is not None:
+                payload["visual_embedding"] = pre_computed_embedding
 
             # 3f. Generate Vector (Include identity for searchability)
             # Avoid duplicating names if vision model already detected them
@@ -3022,6 +3121,7 @@ class IngestionPipeline:
             )
         return prepared
 
+    @observe("post_processing")
     async def _post_process_video(self, path: Path, job_id: str) -> None:
         """Executes global enrichment and cross-modal linking after ingestion.
 

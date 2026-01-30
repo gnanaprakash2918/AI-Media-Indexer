@@ -2,7 +2,6 @@
 import time
 import threading
 from qdrant_client import QdrantClient
-from core.utils.logger import log
 
 class ClusterManager:
     """Manages unique cluster IDs for Faces and Voices."""

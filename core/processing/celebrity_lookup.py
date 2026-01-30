@@ -268,7 +268,6 @@ class CelebrityIdentifier:
         import numpy as np
         from pathlib import Path
         import tempfile
-        import os
 
         if not cast:
             return None

@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from core.manipulation.pipeline import get_manipulation_pipeline, JobStatus
+from core.manipulation.pipeline import get_manipulation_pipeline
 
 router = APIRouter(prefix="/manipulation", tags=["manipulation"])
 

@@ -10,12 +10,10 @@ thousands of temporary files. This prevents pipeline stalls on long videos.
 
 import asyncio
 import json
-import re
 import shutil
 import subprocess
 import tempfile
 import traceback
-import os
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path

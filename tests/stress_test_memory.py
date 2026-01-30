@@ -133,30 +133,37 @@ async def test_speed_estimator() -> dict:
     return {"module": "RAFT", "before": before, "peak": peak, "after": after}
 
 
-async def test_clothing_detector() -> dict:
-    """Test CLIP-based clothing detector."""
-    print("\n👕 Testing ClothingAttributeDetector (CLIP)...")
+async def test_visual_encoder() -> dict:
+    """Test visual encoder (SigLIP/CLIP) model load/unload."""
+    print("\n🖼️ Testing VisualEncoder (SigLIP/CLIP)...")
 
-    from core.processing.clothing_attributes import ClothingAttributeDetector
+    from core.processing.visual_encoder import get_default_visual_encoder, reset_visual_encoder
 
     before = get_vram_info()[0]
-    detector = ClothingAttributeDetector()
+    encoder = get_default_visual_encoder()
 
-    frame = create_test_frames(1)[0]
-    result = await detector.match_description(frame, "clothing")
+    frames = create_test_frames(4)
+    # Encode a batch of frames
+    from PIL import Image
+    
+    images = []
+    for frame in frames:
+        img = Image.fromarray(frame)
+        images.append(img)
+    
+    # Get embeddings
+    embeddings = encoder.encode_images(images)
     peak = get_vram_info()[0]
 
-    if result:
-        print(
-            f"   Detected: {result.get('upper_body', {}).get('item', 'unknown')}"
-        )
+    if embeddings is not None:
+        print(f"   Encoded {len(embeddings)} images, dim={len(embeddings[0])}")
 
-    detector.cleanup()
+    reset_visual_encoder()
     cleanup_vram()
     after = get_vram_info()[0]
 
     return {
-        "module": "CLIP/Clothing",
+        "module": "VisualEncoder",
         "before": before,
         "peak": peak,
         "after": after,
@@ -213,7 +220,7 @@ async def run_stress_test(cycles: int = 2) -> None:
             test_temporal_analyzer,
             test_depth_estimator,
             test_speed_estimator,
-            test_clothing_detector,
+            test_visual_encoder,
             test_audio_events,
         ]
 

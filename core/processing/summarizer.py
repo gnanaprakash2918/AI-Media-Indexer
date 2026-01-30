@@ -459,6 +459,7 @@ class HierarchicalSummarizer:
             self.db.client.upsert(
                 collection_name=self.db.SUMMARIES_COLLECTION,
                 points=points,
+                wait=False,
             )
             log(f"Stored {len(points)} summaries for {video_path}")
 

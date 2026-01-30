@@ -1,7 +1,5 @@
 import asyncio
-import json
 import sys
-import os
 from pathlib import Path
 
 from qdrant_client.http import models
@@ -165,8 +163,6 @@ async def main():
 
     try:
         from llm.factory import LLMFactory
-        from core.knowledge.schemas import ParsedQuery
-        from core.utils.prompt_loader import load_prompt
         from core.retrieval.agentic_search import SearchAgent
 
         llm = LLMFactory.create_llm()

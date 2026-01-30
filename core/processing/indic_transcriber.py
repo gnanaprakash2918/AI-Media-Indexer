@@ -36,7 +36,6 @@ except ImportError:
 
 # Backend 2: NeMo (heavier but higher quality)
 # Windows compatibility: NeMo uses signal.SIGKILL which doesn't exist on Windows
-import os
 import signal
 import sys
 
@@ -261,10 +260,7 @@ class IndicASRPipeline:
         Uses pre-trained IndicConformer models from HuggingFace Hub.
         Patches tokenizer config for compatibility with NeMo 2.x.
         """
-        import tarfile
-        import tempfile
 
-        import yaml
 
         if self.NEMO_MODEL_MAP is None:
             raise ValueError("NEMO_MODEL_MAP is missing")

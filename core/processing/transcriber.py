@@ -11,6 +11,7 @@ Features:
 - Self-Healing: Automatically repairs corrupted model caches.
 """
 
+import io
 import asyncio
 import gc
 import os
@@ -23,7 +24,7 @@ from typing import Any
 
 import ctranslate2.converters
 import torch
-from faster_whisper import BatchedInferencePipeline, WhisperModel, download_model
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 from huggingface_hub import login, snapshot_download
 
 from config import settings
@@ -269,8 +270,11 @@ class AudioTranscriber:
     @observe("transcriber_slice_audio")
     async def _slice_audio(
         self, input_path: Path, start: float, end: float | None
-    ) -> Path:
-        """Slices a segment of audio from a source file into a temporary WAV.
+    ) -> Path | bytes:
+        """Slices a segment of audio from a source file.
+
+        Optimization: Uses BytesIO (in-memory) for small segments to avoid
+        disk I/O overhead. Falls back to temp file for large segments.
 
         Args:
             input_path: Original audio or video file path.
@@ -278,11 +282,15 @@ class AudioTranscriber:
             end: Optional end time in seconds.
 
         Returns:
-            Path to the temporary 16kHz mono WAV file.
+            Path to temp WAV file OR bytes (in-memory audio data).
         """
-        with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            output_slice = Path(tmp.name)
-
+        
+        # Calculate segment duration for memory decision
+        segment_duration = (end - start) if end else 60.0  # Assume 60s if no end
+        
+        # Use in-memory BytesIO for segments < 5 minutes (to avoid RAM issues)
+        use_memory = segment_duration < 300.0
+        
         cmd = [
             self._get_ffmpeg_cmd(),
             "-y",
@@ -296,13 +304,47 @@ class AudioTranscriber:
         if end:
             cmd.extend(["-to", str(end)])
 
-        cmd.extend(
-            ["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)]
-        )
+        if use_memory:
+            # Output to stdout as raw WAV bytes
+            cmd.extend(["-ar", "16000", "-ac", "1", "-f", "wav", "-"])
+            
+            log(f"[INFO] Slicing audio (memory): {start}s -> {end if end else 'END'}s")
+            
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                audio_bytes, _ = await proc.communicate()
+                
+                if proc.returncode == 0 and len(audio_bytes) > 44:  # WAV header is 44 bytes
+                    return audio_bytes  # Return bytes directly
+                else:
+                    log("[WARN] In-memory slice failed, falling back to file")
+            except Exception as e:
+                log(f"[WARN] BytesIO slice error: {e}, falling back to file")
+        
+        # Fallback: Write to temp file (for large segments or on error)
+        with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            output_slice = Path(tmp.name)
 
-        log(f"[INFO] Slicing audio: {start}s -> {end if end else 'END'}s")
-        # Run blocking subprocess in thread
-        await asyncio.to_thread(subprocess.run, cmd, check=True, stderr=subprocess.DEVNULL)
+        cmd_file = [
+            self._get_ffmpeg_cmd(),
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-ss",
+            str(start),
+        ]
+        if end:
+            cmd_file.extend(["-to", str(end)])
+        cmd_file.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
+
+        log(f"[INFO] Slicing audio (file): {start}s -> {end if end else 'END'}s")
+        await asyncio.to_thread(subprocess.run, cmd_file, check=True, stderr=subprocess.DEVNULL)
         return output_slice
 
     @observe("transcriber_convert_model")
@@ -682,7 +724,7 @@ class AudioTranscriber:
                 force_lyrics=force_lyrics,
             )
         finally:
-            if is_sliced and proc_path.exists():
+            if is_sliced and isinstance(proc_path, Path) and proc_path.exists():
                 try:
                     proc_path.unlink()
                 except Exception:
@@ -690,7 +732,7 @@ class AudioTranscriber:
 
     async def _inference(
         self,
-        audio_path: Path,
+        audio_path: Path | bytes,  # Updated type hint
         lang: str | None,
         out_srt: Path,
         offset: float,
@@ -712,6 +754,8 @@ class AudioTranscriber:
             # BLOCKING SECTION START: Model Loading & Inference
             # ------------------------------------------------------------------
             def _blocking_inference():
+                import io  # Import locally for thread safety if needed
+
                 # Check shared model state
                 if AudioTranscriber._SHARED_BATCHED is None or (
                     AudioTranscriber._SHARED_SIZE != model_to_use
@@ -721,8 +765,16 @@ class AudioTranscriber:
                 if AudioTranscriber._SHARED_BATCHED is None:
                     raise RuntimeError("Model failed to initialize")
 
+                # Prepare input source and display name
+                if isinstance(audio_path, bytes):
+                    audio_source = io.BytesIO(audio_path)
+                    display_name = "<In-Memory Audio Bytes>"
+                else:
+                    audio_source = str(audio_path)
+                    display_name = str(audio_path)
+
                 log(
-                    f"[INFO] Running Inference on {audio_path} with {model_to_use}."
+                    f"[INFO] Running Inference on {display_name} with {model_to_use}."
                     + (" (lyrics mode)" if force_lyrics else "")
                 )
 
@@ -739,9 +791,8 @@ class AudioTranscriber:
                 )  # More permissive for lyrics
 
                 # Run blocking inference in a separate thread
-                # Run blocking inference in a separate thread
                 segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
-                    str(audio_path),
+                    audio_source,
                     batch_size=settings.batch_size,
                     language=effective_lang,
                     task="transcribe",
@@ -889,8 +940,14 @@ class AudioTranscriber:
             # NOTE: 'detect_language' task is sometimes rejected by CTranslate2 models.
             # The robust way with faster-whisper is to run 'transcribe' on a short segment
             # and check info.language.
+            
+            if isinstance(wav_path, bytes):
+                input_file = io.BytesIO(wav_path)
+            else:
+                input_file = str(wav_path)
+                
             _, info = AudioTranscriber._SHARED_MODEL.transcribe(
-                str(wav_path),
+                input_file,
                 task="transcribe",  # Changed from 'detect_language'
                 beam_size=5,
             )
@@ -920,8 +977,13 @@ class AudioTranscriber:
             log(f"[WARN] Language detection failed: {e}. Defaulting to 'en'.")
             return "en"
         finally:
-            # Cleanup temp wav (only if we created it)
-            if wav_path and wav_path != audio_path and wav_path.exists():
+            # Cleanup temp wav (only if we created it as a file)
+            if (
+                wav_path 
+                and isinstance(wav_path, Path) 
+                and wav_path != audio_path 
+                and wav_path.exists()
+            ):
                 try:
                     wav_path.unlink()
                 except Exception:

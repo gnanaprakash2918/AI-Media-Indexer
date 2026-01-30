@@ -5,7 +5,6 @@ Prompts loaded from external files.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
