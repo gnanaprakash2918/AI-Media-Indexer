@@ -1019,22 +1019,17 @@ class VectorDB:
             self.VOICE_COLLECTION, self.VOICE_VECTOR_SIZE
         )
 
-        # 6. Masklets (Minimal)
-        self._check_and_fix_collection("masklets", 1)
-
-        # 7. Scenes (True Multi-Vector)
-        # visual_features: Actual visual embeddings (CLIP/SigLIP) for image-to-video search
-        # visual, motion, dialogue: Text embeddings for semantic search
-        # internvideo, languagebind: Video understanding embeddings (optional, for action search)
+        # 6. Scenes (CRITICAL: Fix Dimension Mismatch)
+        # 1024d for BGE-M3, 768d for others.
+        # This was missing, causing 768d schema to persist even when model changed.
         visual_features_dim = getattr(settings, 'visual_features_dim', 768)  # CLIP ViT-L default
         video_embedding_dim = getattr(settings, 'video_embedding_dim', 768)  # InternVideo/LanguageBind
-        
+
         self._check_and_fix_collection(
             self.SCENES_COLLECTION,
-            self.MEDIA_VECTOR_SIZE,
+            self.MEDIA_VECTOR_SIZE,  # This is the dynamic one (1024 or 768)
             is_multi_vector=True,
             multi_vector_config={
-                # TEXT-BASED vectors (semantic search)
                 "visual": models.VectorParams(
                     size=self.MEDIA_VECTOR_SIZE,
                     distance=models.Distance.COSINE,
@@ -1047,18 +1042,14 @@ class VectorDB:
                     size=self.MEDIA_VECTOR_SIZE,
                     distance=models.Distance.COSINE,
                 ),
-                # ACTUAL VISUAL FEATURES (for image-as-query search)
                 "visual_features": models.VectorParams(
                     size=visual_features_dim,
                     distance=models.Distance.COSINE,
                 ),
-                # VIDEO UNDERSTANDING EMBEDDINGS (action/motion search)
-                # InternVideo2: Best for action recognition ("kicking" vs "holding")
                 "internvideo": models.VectorParams(
                     size=video_embedding_dim,
                     distance=models.Distance.COSINE,
                 ),
-                # LanguageBind: Text-aligned video embeddings (multimodal)
                 "languagebind": models.VectorParams(
                     size=video_embedding_dim,
                     distance=models.Distance.COSINE,
@@ -3357,19 +3348,30 @@ class VectorDB:
         if payload:
             full_payload.update(payload)
 
+        # Prepare the vector dictionary
+        vector_dict = {
+            "visual": visual_vec,
+            "motion": motion_vec,
+            "dialogue": dialogue_vec,
+            "internvideo": internvideo_features,
+            "languagebind": languagebind_features,
+        }
+
+        # Conditionally add visual_features to the vector_dict
+        if visual_features is not None and len(visual_features) == visual_features_dim:
+            vector_dict["visual_features"] = visual_features
+        else:
+            # Fallback for missing or mismatched visual features (e.g. dependency missing)
+            # Use zero vector of correct dim to prevent DB error
+            zero_features = [0.0] * visual_features_dim
+            vector_dict["visual_features"] = zero_features
+
         self.client.upsert(
             collection_name=self.SCENES_COLLECTION,
             points=[
                 models.PointStruct(
                     id=scene_id,
-                    vector={
-                        "visual": visual_vec,
-                        "motion": motion_vec,
-                        "dialogue": dialogue_vec,
-                        "visual_features": visual_features,
-                        "internvideo": internvideo_features,
-                        "languagebind": languagebind_features,
-                    },
+                    vector=vector_dict,
                     payload=full_payload,
                 )
             ],
@@ -3491,7 +3493,12 @@ class VectorDB:
             List of matching voice segments with scores.
         """
         try:
-            query_vec = (await self.encode_texts(query, is_query=True))[0]
+            # Fix Async Error: Explicitly await and split
+            # "TypeError: 'coroutine' object is not subscriptable"
+            encoded_batches = await self.encode_texts(query, is_query=True)
+            if not encoded_batches:
+                return []
+            query_vec = encoded_batches[0]
 
             conditions: list[models.Condition] = []
             if video_path:

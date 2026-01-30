@@ -89,6 +89,7 @@ dependencies = [
     "triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.0.0-windows.post1/triton-3.0.0-cp312-cp312-win_amd64.whl ; sys_platform == 'win32'",
     "sam3 @ git+https://github.com/facebookresearch/sam3.git",
     "imagehash>=4.3.0",  # Perceptual hashing for content fingerprinting
+    "open-clip-torch>=3.2.0",
 ]
 
 [project.optional-dependencies]

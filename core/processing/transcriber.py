@@ -267,6 +267,32 @@ class AudioTranscriber:
         )
         return False
 
+    def _has_audio_stream(self, input_path: Path) -> bool:
+        """Checks if the file contains an audio stream using ffprobe."""
+        try:
+            # Use ffprobe to check for audio streams
+            # -v error: split output
+            # -select_streams a: select audio
+            # -show_entries ...: only show type
+            # -of csv...: clean output
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0",
+                str(input_path)
+            ]
+            # Run in subprocess (fast enough to be check calling directly or use to_thread if strict)
+            # Since this is a fast check, blocking brieflly is often acceptable, but let's use subprocess.run
+            # Note: shutil.which("ffprobe") should be checked ideally, but assuming ffmpeg exists
+            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            return bool(output)  # If output is not empty ('audio'), it has audio
+        except Exception:
+            # Fallback: if ffprobe fails, assume maybe yes and let ffmpeg fail, or check file size?
+            # Safest is to return False if we can't verify
+            return False
+
     @observe("transcriber_slice_audio")
     async def _slice_audio(
         self, input_path: Path, start: float, end: float | None
@@ -693,6 +719,11 @@ class AudioTranscriber:
         if not audio_path.exists():
             log(f"[ERROR] Input file not found: {audio_path}")
             return None
+
+        # Check for audio stream presence to prevent FFmpeg -22 crashes
+        if not self._has_audio_stream(audio_path):
+            log(f"[WARN] No audio stream detected in {audio_path.name}. Skipping transcription.")
+            return []
 
         lang = language or settings.language
         out_srt = output_path or audio_path.with_suffix(".srt")

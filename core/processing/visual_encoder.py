@@ -240,17 +240,25 @@ class SigLIPEncoder(VisualEncoderInterface):
 
             def _load():
                 log.info(f"[VisualEncoder] Initializing {self.name}...")
-                import open_clip
+                try:
+                    import open_clip
+                except ImportError:
+                    log.error("[VisualEncoder] open_clip not installed. Install with `pip install open_clip_torch`. Visual features will be disabled.")
+                    return None, None
 
-                model, _, preprocess = open_clip.create_model_and_transforms(
-                    self._model_name, pretrained="webli"
-                )
-                model.eval()
-                import torch
+                try:
+                    model, _, preprocess = open_clip.create_model_and_transforms(
+                        self._model_name, pretrained="webli"
+                    )
+                    model.eval()
+                    import torch
 
-                if torch.cuda.is_available():
-                    model = model.cuda()
-                return model, preprocess
+                    if torch.cuda.is_available():
+                        model = model.cuda()
+                    return model, preprocess
+                except Exception as e:
+                    log.error(f"[VisualEncoder] Failed to load SigLIP: {e}")
+                    return None, None
 
             self._model, self._preprocess = await asyncio.to_thread(_load)
 
@@ -258,6 +266,8 @@ class SigLIPEncoder(VisualEncoderInterface):
         self, image: np.ndarray | bytes | Path
     ) -> list[float]:
         await self._lazy_init()
+        if self._model is None:
+            return []  # Return empty if load failed
 
         def _process():
             if isinstance(image, Path):

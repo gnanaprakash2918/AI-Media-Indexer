@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 import asyncio
 from config import settings
 from core.utils.logger import get_logger
+from core.utils.resource_arbiter import RESOURCE_ARBITER
 
 if TYPE_CHECKING:
     import numpy as np
@@ -63,6 +64,12 @@ class VisualContentModerator:
         self.threshold = threshold
         self._model = None
 
+    def cleanup(self):
+        """Unload the model to free up resources."""
+        if self._model is not None:
+            log.info("[Moderation] Unloading NSFW model.")
+            self._model = None
+
     async def _lazy_load(self) -> bool:
         """Load moderation model lazily in a thread."""
         if self._model is not None:
@@ -80,6 +87,10 @@ class VisualContentModerator:
 
             # Move blocking download/load to thread
             self._model = await asyncio.to_thread(_load)
+            
+            # Register with Arbiter for OOM protection
+            RESOURCE_ARBITER.register_model("moderation", self.cleanup)
+            
             log.info("[Moderation] NSFW model loaded")
             return True
         except ImportError:
@@ -123,53 +134,58 @@ class VisualContentModerator:
                 details={"error": -1.0},
             )
 
-        try:
-            from PIL import Image
+        # Acquire VRAM budget (~1.0GB)
+        async with RESOURCE_ARBITER.acquire("moderation", vram_gb=1.0):
+            # Double check model exists (in case it was unloaded)
+            if self._model is None:
+                if not await self._lazy_load():
+                     return ModerationResult(is_safe=True, flags=[ContentFlag.SAFE], confidence=0.0, details={"error": -1.0})
 
-            def _inference(img_arr):
-                img = Image.fromarray(img_arr)
-                return self._model(img)
+            try:
+                from PIL import Image
 
-            # Run blocking inference in thread
-            raw_result = await asyncio.to_thread(_inference, frame)
-            
-            # Pylance considers pipeline output as Generator/Iterable, forcing list cast for subscripting
-            result = cast(list[dict[str, Any]], raw_result)
+                img = Image.fromarray(frame)
+                
+                # Run inference in thread to prevent blocking main loop
+                raw_result = await asyncio.to_thread(self._model, img)
+                
+                # Pylance considers pipeline output as Generator/Iterable, forcing list cast for subscripting
+                result = cast(list[dict[str, Any]], raw_result)
 
-            flags = []
-            details = {}
-            nsfw_score = 0.0
+                flags = []
+                details = {}
+                nsfw_score = 0.0
 
-            for item in result:
-                label = item["label"].lower()
-                score = item["score"]
-                details[label] = score
+                for item in result:
+                    label = item["label"].lower()
+                    score = item["score"]
+                    details[label] = score
 
-                if "nsfw" in label or "porn" in label:
-                    nsfw_score = max(nsfw_score, score)
-                if "safe" not in label and "normal" not in label:
-                    if score > self.threshold:
-                        flags.append(ContentFlag.NSFW)
+                    if "nsfw" in label or "porn" in label:
+                        nsfw_score = max(nsfw_score, score)
+                    if "safe" not in label and "normal" not in label:
+                        if score > self.threshold:
+                            flags.append(ContentFlag.NSFW)
 
-            is_safe = nsfw_score < self.threshold
-            if is_safe:
-                flags = [ContentFlag.SAFE]
+                is_safe = nsfw_score < self.threshold
+                if is_safe:
+                    flags = [ContentFlag.SAFE]
 
-            return ModerationResult(
-                is_safe=is_safe,
-                flags=flags,
-                confidence=nsfw_score,
-                details=details,
-            )
+                return ModerationResult(
+                    is_safe=is_safe,
+                    flags=flags,
+                    confidence=nsfw_score,
+                    details=details,
+                )
 
-        except Exception as e:
-            log.error(f"[Moderation] Check failed: {e}")
-            return ModerationResult(
-                is_safe=True,
-                flags=[ContentFlag.SAFE],
-                confidence=0.0,
-                details={"error": -1.0},
-            )
+            except Exception as e:
+                log.error(f"[Moderation] Check failed: {e}")
+                return ModerationResult(
+                    is_safe=True,
+                    flags=[ContentFlag.SAFE],
+                    confidence=0.0,
+                    details={"error": -1.0},
+                )
 
 
 class TextContentModerator:

@@ -1529,14 +1529,20 @@ class IngestionPipeline:
         duration = end - start
         
         try:
-            # Use FFmpeg to extract just this segment
+            # Check for audio stream first
+            probe_cmd = [
+                'ffprobe', '-v', 'error', '-select_streams', 'a:0',
+                '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', str(path)
+            ]
+            probe_res = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if not probe_res.stdout.strip():
+                return None
+
             cmd = [
-                'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-                '-ss', str(start),  # Seek to start (before input for speed)
+                'ffmpeg', '-y', '-v', 'error',
+                '-ss', str(start),
+                '-t', str(end - start),
                 '-i', str(path),
-                '-t', str(duration),  # Duration to extract
-                '-vn',  # No video
-                '-ac', '1',  # Mono
                 '-ar', str(sample_rate),  # Target sample rate
                 '-f', 'f32le',  # 32-bit float PCM
                 '-'  # Output to stdout
@@ -1609,6 +1615,10 @@ class IngestionPipeline:
 
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)
+        
+        # Initialize Visual Encoder for Search Embeddings (SigLIP/CLIP)
+        from core.processing.visual_encoder import get_default_visual_encoder
+        self.visual_encoder = get_default_visual_encoder()
 
         # GLOBAL IDENTITY: Load existing cluster centroids from DB
         # This enables cross-video identity matching (O(1) gallery-probe)
@@ -1673,7 +1683,10 @@ class IngestionPipeline:
                 
                 # === 1. BATCH FACE DETECTION ===
                 try:
-                    batch_faces = await self.faces.detect_faces_batch(paths)
+                    if getattr(settings, 'enable_face_recognition', True):
+                        batch_faces = await self.faces.detect_faces_batch(paths)
+                    else:
+                        batch_faces = [[] for _ in paths]
                 except Exception as e:
                     logger.warning(f"Batch face detection failed: {e}")
                     batch_faces = [None] * len(frames_to_process)
@@ -1681,18 +1694,15 @@ class IngestionPipeline:
                 # === 2. BATCH VISUAL ENCODING (NEW - Major Speedup) ===
                 batch_embeddings = [None] * len(frames_to_process)
                 try:
-                    if self.vision and hasattr(self.vision, 'encode_batch'):
-                        # Use batch encoding for 2-3x speedup
-                        embeddings = await self.vision.encode_batch(paths)
+                    if self.visual_encoder:
+                        # Use batch encoding (SigLIP/CLIP) for search inputs
+                        embeddings = await self.visual_encoder.encode_batch(paths)
                         batch_embeddings = embeddings
                         logger.debug(f"[Vision] Batch encoded {len(paths)} frames")
-                    elif self.vision:
-                        # Fallback to sequential if no batch method
-                        for i, p in enumerate(paths):
-                            try:
-                                batch_embeddings[i] = await self.vision.encode_image(p)
-                            except Exception:
-                                batch_embeddings[i] = None
+                    elif self.vision and hasattr(self.vision, 'encode_batch'):
+                         # Fallback to VLM if no dedicated encoder (rare)
+                         embeddings = await self.vision.encode_batch(paths)
+                         batch_embeddings = embeddings
                 except Exception as e:
                     logger.warning(f"Batch visual encoding failed: {e}")
                     batch_embeddings = [None] * len(frames_to_process)
@@ -2579,9 +2589,17 @@ class IngestionPipeline:
                 if frame_img is not None:
                     # --- OCR Skip-Unchanged-Frames Optimization ---
                     skip_ocr = False
+                    
+                    # 1. Time Throttling (Max every 2.0s)
+                    import time
+                    now_ts = time.time()
+                    if hasattr(self, '_last_ocr_time') and (now_ts - self._last_ocr_time) < 2.0:
+                        skip_ocr = True
+                        
+                    # 2. Perceptual Hash Check
                     ocr_skip_enabled = getattr(settings, 'ocr_skip_unchanged_frames', True)
                     
-                    if ocr_skip_enabled:
+                    if not skip_ocr and ocr_skip_enabled:
                         try:
                             # Compute perceptual hash (fast, 8x8 grayscale downsample)
                             gray = cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY)
@@ -2617,6 +2635,7 @@ class IngestionPipeline:
                                 # Cache for skip-unchanged optimization
                                 self._last_ocr_text = ocr_text
                                 self._last_ocr_boxes = ocr_boxes
+                                self._last_ocr_time = time.time()  # Update last run time
                                 logger.info(f"[OCR] Extracted: {ocr_text[:100]}...")
                             else:
                                 logger.debug("[OCR] No text found in gated frame")
@@ -2662,7 +2681,7 @@ class IngestionPipeline:
             # ============================================================
             detected_objects: list[str] = []
             try:
-                if self.enhanced_config and self.enhanced_config.object_detector:
+                if getattr(settings, 'enable_object_detection', True) and self.enhanced_config and self.enhanced_config.object_detector:
                     obj_detector = self.enhanced_config.object_detector
                     if frame_img is not None:
                         # Run YOLO-World detection on frame
@@ -3164,7 +3183,7 @@ class IngestionPipeline:
                 from core.processing.scene_detector import detect_scenes
 
                 # 1. Detect logical scenes (shots)
-                raw_scenes = detect_scenes(media_path)
+                raw_scenes = await detect_scenes(media_path)
                 if not raw_scenes:
                     # Fallback: Treat whole video as one scene if detection fails or single shot
                     raw_scenes = []  # Will be handled by global context or we can make 1 synthetic scene

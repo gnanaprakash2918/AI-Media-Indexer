@@ -145,12 +145,17 @@ class ObjectDetector:
                 # Set custom classes for zero-shot detection
                 model.set_classes(classes)
 
-                results = model.predict(
-                    frame,
-                    conf=confidence,
-                    verbose=False,
-                    device=self._device,
-                )
+                # Run YOLO inference in thread (Blocking ~50ms)
+                # We need a wrapper because model.predict is not async
+                def _predict():
+                    return model.predict(
+                        frame,
+                        conf=confidence,
+                        verbose=False,
+                        device=self._device,
+                    )
+
+                results = await asyncio.to_thread(_predict)
 
                 detections = []
                 for result in results:

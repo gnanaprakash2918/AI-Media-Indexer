@@ -398,10 +398,18 @@ class EasyOCRProcessor:
                 import easyocr
 
                 log.info(f"[EasyOCR] Loading langs={self.langs}")
-                self.reader = easyocr.Reader(
-                    self.langs,
-                    gpu=self.use_gpu,
-                )
+                
+                # Run initialization in thread (Fixes 12-min startup stall)
+                # This downloads models and compiles CUDA kernels
+                def _load():
+                    return easyocr.Reader(self.langs, gpu=self.use_gpu)
+
+                self.reader = await asyncio.to_thread(_load)
+                
+                # Register with Arbiter for OOM protection (auto-unload)
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                RESOURCE_ARBITER.register_model("easyocr", self.cleanup)
+                
                 log.info("[EasyOCR] Model loaded")
                 return True
 
@@ -424,39 +432,52 @@ class EasyOCRProcessor:
         if self.reader is None:
             return {"text": "", "boxes": [], "confidence": 0.0}
 
-        try:
-            # Run EasyOCR in a thread
-            result = await asyncio.to_thread(self.reader.readtext, frame)
+        # Acquire VRAM budget (EasyOCR ~1.5GB)
+        from core.utils.resource_arbiter import RESOURCE_ARBITER
+        
+        async with RESOURCE_ARBITER.acquire("easyocr", vram_gb=1.5):
+            # Double-check reader exists (Arbiter might have unloaded it in extreme cases, 
+            # but we just called lazy_load, and acquire locks it? 
+            # Actually Arbiter OFFloads OTHERS to make space for THIS.
+            # So self.reader should be safe *unless* we were the ones offloaded?
+            # But we are active now.
+            if self.reader is None:
+                 if not await self._lazy_load():
+                     return {"text": "", "boxes": [], "confidence": 0.0}
 
-            lines = []
-            boxes = []
-            confidences = []
+            try:
+                # Run EasyOCR in a thread
+                result = await asyncio.to_thread(self.reader.readtext, frame)
 
-            for bbox, text, conf in result:
-                # Cast confidence to float for comparison
-                try:
-                    conf_val = float(conf)
-                except (ValueError, TypeError):
-                    conf_val = 0.0
+                lines = []
+                boxes = []
+                confidences = []
 
-                if conf_val >= min_confidence:
-                    lines.append(text)
+                for bbox, text, conf in result:
+                    # Cast confidence to float for comparison
+                    try:
+                        conf_val = float(conf)
+                    except (ValueError, TypeError):
+                        conf_val = 0.0
+
+                    if conf_val >= min_confidence:
+                        lines.append(text)
                     boxes.append(bbox)
                     confidences.append(conf_val)
 
-            full_text = " ".join(lines)
-            avg_conf = sum(confidences) / len(confidences) if confidences else 0
+                full_text = " ".join(lines)
+                avg_conf = sum(confidences) / len(confidences) if confidences else 0
 
-            return {
-                "text": full_text,
-                "boxes": boxes,
-                "lines": lines,
-                "confidence": round(avg_conf, 3),
-            }
+                return {
+                    "text": full_text,
+                    "boxes": boxes,
+                    "lines": lines,
+                    "confidence": round(avg_conf, 3),
+                }
 
-        except Exception as e:
-            log.error(f"[EasyOCR] Extraction failed: {e}")
-            return {"text": "", "boxes": [], "confidence": 0.0}
+            except Exception as e:
+                log.error(f"[EasyOCR] Extraction failed: {e}")
+                return {"text": "", "boxes": [], "confidence": 0.0}
 
     def cleanup(self) -> None:
         """Release resources."""

@@ -761,7 +761,7 @@ class FaceManager:
         """Detect faces in an image with automatic model selection."""
         await self._lazy_init()
         path = Path(image_path)
-        image = await self._load_image(path)
+        image = await asyncio.to_thread(self._load_image, path)
 
         if image.size == 0:
             return []
@@ -780,36 +780,83 @@ class FaceManager:
         """Detect faces in a batch of images (optimized)."""
         await self._lazy_init()
         
-        # 1. Load images in parallel
+        # Parallel Async Image Loading (Fixes Blocking I/O)
         tasks = []
         for p in image_paths:
             if isinstance(p, (str, Path)):
-                tasks.append(self._load_image(Path(p)))
+                # Correctly load image synchronously in thread
+                tasks.append(asyncio.to_thread(self._load_image, Path(p)))
             else:
-                tasks.append(asyncio.sleep(0, result=p))
+                async def _noop(img): return img
+                tasks.append(_noop(p))
         
         images = await asyncio.gather(*tasks)
+                
         results = []
         
-        # 2. Process in chunks
+        # Resource Arbiter manages VRAM + Locking
+        from core.utils.resource_arbiter import RESOURCE_ARBITER
+
+        # Process in chunks
         for i in range(0, len(images), self.batch_size):
             chunk = images[i : i + self.batch_size]
             chunk_results = []
-            for img in chunk:
-                 if self._model_type == "insightface":
-                    chunk_results.append(await self._detect_insightface(img))
-                 elif self._model_type == "sface":
-                    chunk_results.append(await self._detect_sface(img))
-                 else:
-                    chunk_results.append(await self._detect_yunet_only(img))
+            
+            # Acquire GPU lock & Register VRAM usage
+            # InsightFace = ~1.5GB
+            async with RESOURCE_ARBITER.acquire("insightface", vram_gb=1.5):
+                for img in chunk:
+                     if self._model_type == "insightface":
+                        # Direct call to avoid double-locking deadlock
+                        # _detect_insightface acquires lock, so we copy logic here
+                        if img.size == 0:
+                            chunk_results.append([])
+                            continue
+                            
+                        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        # Inference in thread
+                        try:
+                            faces = await asyncio.to_thread(self._insightface_app.get, bgr)
+                            # Process results
+                            res = []
+                            for face in faces:
+                                bbox = face.bbox.astype(int)
+                                box = (int(bbox[1]), int(bbox[2]), int(bbox[3]), int(bbox[0]))
+                                det_score = float(face.det_score) if hasattr(face, "det_score") else 1.0
+                                bbox_size = min(int(bbox[2]-bbox[0]), int(bbox[3]-bbox[1]))
+                                emb = face.embedding.astype(np.float64)
+                                emb /= np.linalg.norm(emb) + 1e-9
+                                
+                                dface = DetectedFace(
+                                    bbox=box,
+                                    embedding=emb.tolist(),
+                                    confidence=det_score
+                                )
+                                dface._bbox_size = bbox_size
+                                res.append(dface)
+                            chunk_results.append(res)
+                        except Exception as e:
+                            print(f"[FaceManager] Batch inference failed: {e}")
+                            chunk_results.append([])
+
+                     elif self._model_type == "sface":
+                        chunk_results.append(await self._detect_sface(img))
+                     else:
+                        chunk_results.append(await self._detect_yunet_only(img))
+            
             results.extend(chunk_results)
+            
         return results
 
     async def _detect_insightface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
         if image.size == 0: return []
-        assert self._insightface_app is not None
+        assert self._insightface_app is not None, "InsightFace not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        async with GPU_SEMAPHORE:
+        
+        from core.utils.resource_arbiter import RESOURCE_ARBITER
+        # Use Arbiter to track VRAM
+        async with RESOURCE_ARBITER.acquire("insightface", vram_gb=1.5):
+            # Run InsightFace in a thread to avoid blocking the event loop
             faces = await asyncio.to_thread(self._insightface_app.get, bgr)
         results = []
         for face in faces:
