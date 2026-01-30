@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
+import asyncio
+from config import settings
 from core.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -62,18 +64,22 @@ class VisualContentModerator:
         self._model = None
 
     async def _lazy_load(self) -> bool:
-        """Load moderation model lazily."""
+        """Load moderation model lazily in a thread."""
         if self._model is not None:
             return True
 
         try:
             from transformers import pipeline
 
-            self._model = pipeline(
-                "image-classification",
-                model="Falconsai/nsfw_image_detection",
-                device=-1,
-            )
+            def _load():
+                return pipeline(
+                    "image-classification",
+                    model="Falconsai/nsfw_image_detection",
+                    device=-1,
+                )
+
+            # Move blocking download/load to thread
+            self._model = await asyncio.to_thread(_load)
             log.info("[Moderation] NSFW model loaded")
             return True
         except ImportError:
@@ -92,6 +98,15 @@ class VisualContentModerator:
         Returns:
             ModerationResult with flags and confidence.
         """
+        # Redundant check for safety
+        if not getattr(settings, 'enable_content_moderation', False):
+             return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={},
+            )
+
         if not await self._lazy_load():
             return ModerationResult(
                 is_safe=True,
@@ -111,8 +126,13 @@ class VisualContentModerator:
         try:
             from PIL import Image
 
-            img = Image.fromarray(frame)
-            raw_result = self._model(img)
+            def _inference(img_arr):
+                img = Image.fromarray(img_arr)
+                return self._model(img)
+
+            # Run blocking inference in thread
+            raw_result = await asyncio.to_thread(_inference, frame)
+            
             # Pylance considers pipeline output as Generator/Iterable, forcing list cast for subscripting
             result = cast(list[dict[str, Any]], raw_result)
 
@@ -190,14 +210,15 @@ class TextContentModerator:
             return False
 
     async def check_text(self, text: str) -> ModerationResult:
-        """Check text for inappropriate content.
+        """Check text for inappropriate content."""
+        if not getattr(settings, 'enable_content_moderation', False):
+             return ModerationResult(
+                is_safe=True,
+                flags=[ContentFlag.SAFE],
+                confidence=0.0,
+                details={},
+            )
 
-        Args:
-            text: Text to check.
-
-        Returns:
-            ModerationResult with flags.
-        """
         if not text or not await self._lazy_load():
             return ModerationResult(
                 is_safe=True,

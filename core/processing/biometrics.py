@@ -11,7 +11,9 @@ try:
 except ImportError:
     ort = None
 
+import asyncio
 from core.utils.logger import log
+from core.utils.resource_arbiter import GPU_SEMAPHORE
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -34,61 +36,65 @@ class BiometricArbitrator:
         self.session: Any | None = None
         self._initialized = False
 
-    def _lazy_load(self) -> bool:
+    async def _lazy_load(self) -> bool:
         """Loads the ArcFace ONNX session only when first required."""
         if self._initialized:
             return self.session is not None
-        self._initialized = True
+        
+        async with asyncio.Lock(): # Basic lock for init
+            if self._initialized: return self.session is not None
+            self._initialized = True
 
-        if ort is None:
-            log("[BIO] onnxruntime not installed")
-            return False
+            if ort is None:
+                log("[BIO] onnxruntime not installed")
+                return False
 
-        if not self.model_path.exists():
-            log(f"[BIO] ArcFace model not found: {self.model_path}")
-            return False
+            if not self.model_path.exists():
+                log(f"[BIO] ArcFace model not found: {self.model_path}")
+                return False
 
-        try:
-            self.session = ort.InferenceSession(
-                str(self.model_path),
-                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-            )
-            log(f"[BIO] ArcFace loaded: {self.model_path.name}")
-            return True
-        except Exception as e:
-            log(f"[BIO] Load failed: {e}")
-            return False
+            try:
+                def _load():
+                    return ort.InferenceSession(
+                        str(self.model_path),
+                        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                    )
+                self.session = await asyncio.to_thread(_load)
+                log(f"[BIO] ArcFace loaded: {self.model_path.name}")
+                return True
+            except Exception as e:
+                log(f"[BIO] Load failed: {e}")
+                return False
 
-    def get_embedding(
+    async def get_embedding(
         self, face_crop: "NDArray[np.uint8]"
     ) -> "NDArray[np.float32] | None":
-        """Extracts a 128/512D ArcFace embedding from a face crop.
-
-        Args:
-            face_crop: Normalized face image (BGR).
-
-        Returns:
-            The L2-normalized feature vector, or None if extraction fails.
-        """
-        if not self._lazy_load() or self.session is None:
+        """Extracts a 128/512D ArcFace embedding from a face crop."""
+        if not await self._lazy_load() or self.session is None:
             return None
 
         try:
-            img = cv2.resize(face_crop, (112, 112))
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = np.transpose(img, (2, 0, 1))
-            img = np.expand_dims(img, 0)
-            img = (img.astype(np.float32) - 127.5) / 128.0
+            def _prep():
+                img = cv2.resize(face_crop, (112, 112))
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = np.transpose(img, (2, 0, 1))
+                img = np.expand_dims(img, 0)
+                return (img.astype(np.float32) - 127.5) / 128.0
 
-            outputs = self.session.run(
-                None, {self.session.get_inputs()[0].name: img}
-            )
-            embedding = outputs[0][0]
+            img_input = await asyncio.to_thread(_prep)
 
-            norm = np.linalg.norm(embedding)
-            if norm > 0:
-                embedding = embedding / norm
-            return embedding.astype(np.float32)
+            async with GPU_SEMAPHORE:
+                def _infer():
+                    outputs = self.session.run(
+                        None, {self.session.get_inputs()[0].name: img_input}
+                    )
+                    embedding = outputs[0][0]
+                    norm = np.linalg.norm(embedding)
+                    if norm > 0:
+                        embedding = embedding / norm
+                    return embedding.astype(np.float32)
+
+                return await asyncio.to_thread(_infer)
         except Exception as e:
             log(f"[BIO] Embedding failed: {e}")
             return None

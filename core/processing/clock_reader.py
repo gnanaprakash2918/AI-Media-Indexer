@@ -50,7 +50,10 @@ class ClockReader:
             from PIL import Image
 
             if isinstance(image, Path):
-                img = np.array(Image.open(image))
+                def _load():
+                    with Image.open(image) as img:
+                        return np.array(img)
+                img = await asyncio.to_thread(_load)
             elif not isinstance(image, np.ndarray):
                 img = np.array(image)
             else:
@@ -92,7 +95,16 @@ class ClockReader:
     async def read_analog_clock(
         self, image: np.ndarray | Path
     ) -> dict[str, Any]:
-        """Detect and read analog clock time from image."""
+        """Detect and read analog clock time from image (Async Wrapper)."""
+        try:
+            # Wrap entire blocking CV2 logic in thread
+            return await asyncio.to_thread(self._read_analog_sync, image)
+        except Exception as e:
+            log.error(f"[ClockReader] Analog read failed: {e}")
+            return {"time": None, "error": str(e)}
+
+    def _read_analog_sync(self, image: np.ndarray | Path) -> dict[str, Any]:
+        """Synchronous implementation of analog clock reading."""
         try:
             import cv2
             from PIL import Image
@@ -196,7 +208,8 @@ class ClockReader:
             }
 
         except Exception as e:
-            log.error(f"[ClockReader] Analog read failed: {e}")
+            # We catch here to return dict, but also let calling async wrapper handle crashes
+            log.warning(f"[ClockReader] Analog sync calc error: {e}")
             return {"time": None, "error": str(e)}
 
     async def read_time(self, image: np.ndarray | Path) -> dict[str, Any]:

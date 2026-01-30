@@ -15,6 +15,7 @@ from typing import Any
 
 import numpy as np
 
+from core.utils.resource_arbiter import GPU_SEMAPHORE
 from core.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -72,44 +73,53 @@ class LanguageBindEncoder:
             try:
                 log.info("[LanguageBind] Loading model...")
 
-                # Try to load LanguageBind
-                from transformers import AutoModel, AutoTokenizer
+                def _load():
+                    from transformers import AutoModel, AutoTokenizer
 
-                model_id = "LanguageBind/LanguageBind_Video_V1.5_FT"
+                    model_id = "LanguageBind/LanguageBind_Video_V1.5_FT"
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model_id, trust_remote_code=True
+                    )
+                    model = AutoModel.from_pretrained(
+                        model_id, trust_remote_code=True
+                    )
 
-                self._tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-                self._model = AutoModel.from_pretrained(model_id, trust_remote_code=True)
+                    import torch
+                    device = self._device or (
+                        "cuda" if torch.cuda.is_available() else "cpu"
+                    )
+                    model.to(device)
+                    return tokenizer, model, device
 
-                device = self._get_device()
-                self._model.to(device)
-                self._device = device
-
-                log.info(f"[LanguageBind] Loaded on {device}")
+                self._tokenizer, self._model, self._device = await asyncio.to_thread(_load)
+                log.info(f"[LanguageBind] Loaded on {self._device}")
                 return True
 
-            except ImportError as e:
-                log.warning(f"[LanguageBind] Not available: {e}")
-                self._load_failed = True
-                return False
             except Exception as e:
                 log.warning(f"[LanguageBind] Load failed: {e}")
                 # Fall back to CLIP for basic functionality
                 try:
                     log.info("[LanguageBind] Falling back to CLIP...")
-                    from transformers import CLIPModel, CLIPProcessor
 
-                    self._model = CLIPModel.from_pretrained(
-                        "openai/clip-vit-base-patch32"
-                    )
-                    self._tokenizer = CLIPProcessor.from_pretrained(
-                        "openai/clip-vit-base-patch32"
-                    )
+                    def _fallback():
+                        from transformers import CLIPModel, CLIPProcessor
 
-                    device = self._get_device()
-                    self._model.to(device)
-                    self._device = device
+                        model = CLIPModel.from_pretrained(
+                            "openai/clip-vit-base-patch32"
+                        )
+                        tokenizer = CLIPProcessor.from_pretrained(
+                            "openai/clip-vit-base-patch32"
+                        )
 
-                    log.info(f"[LanguageBind] CLIP fallback loaded on {device}")
+                        import torch
+                        device = self._device or (
+                            "cuda" if torch.cuda.is_available() else "cpu"
+                        )
+                        model.to(device)
+                        return tokenizer, model, device
+
+                    self._tokenizer, self._model, self._device = await asyncio.to_thread(_fallback)
+                    log.info(f"[LanguageBind] CLIP fallback loaded on {self._device}")
                     return True
 
                 except Exception as e2:
@@ -122,23 +132,12 @@ class LanguageBindEncoder:
         frames: list[np.ndarray],
         sample_frames: int = 8,
     ) -> np.ndarray | None:
-        """Encode video frames to embedding.
-
-        Args:
-            frames: List of RGB frames.
-            sample_frames: Number of frames to sample.
-
-        Returns:
-            Video embedding as numpy array.
-        """
+        """Encode video frames to embedding."""
         if not await self._lazy_load():
             return None
 
         try:
-            import torch
-            from PIL import Image
-
-            # Sample frames evenly
+            # 1. Sample frames
             if len(frames) > sample_frames:
                 indices = np.linspace(
                     0, len(frames) - 1, sample_frames, dtype=int
@@ -147,176 +146,139 @@ class LanguageBindEncoder:
             else:
                 sampled = frames
 
-            # Average frame embeddings (simple approach)
-            embeddings = []
-            for frame in sampled:
-                if isinstance(frame, np.ndarray):
-                    image = Image.fromarray(frame)
-                else:
-                    image = frame
+            # 2. Preprocess frames in parallel
+            async def _prep(frame):
+                def __task():
+                    from PIL import Image
+                    if isinstance(frame, np.ndarray):
+                        return Image.fromarray(frame)
+                    return frame
+                return await asyncio.to_thread(__task)
 
-                # Process based on model type
-                if hasattr(self._tokenizer, "image_processor"):
-                    inputs = self._tokenizer(images=image, return_tensors="pt")
-                else:
-                    inputs = self._tokenizer(
-                        images=image,
-                        return_tensors="pt",
-                        padding=True,
-                    )
+            pil_images = await asyncio.gather(*[_prep(f) for f in sampled])
 
-                inputs = {
-                    k: v.to(self._device)
-                    for k, v in inputs.items()
-                    if isinstance(v, torch.Tensor)
-                }
+            # 3. Batch inference under GPU semaphore
+            async with GPU_SEMAPHORE:
+                def _infer():
+                    import torch
+                    embeddings = []
+                    for image in pil_images:
+                        if hasattr(self._tokenizer, "image_processor"):
+                            inputs = self._tokenizer(images=image, return_tensors="pt")
+                        else:
+                            inputs = self._tokenizer(
+                                images=image,
+                                return_tensors="pt",
+                                padding=True,
+                            )
 
-                with torch.no_grad():
-                    if hasattr(self._model, "get_image_features"):
-                        emb = self._model.get_image_features(**inputs)
-                    else:
-                        emb = self._model(**inputs).last_hidden_state.mean(
-                            dim=1
-                        )
+                        inputs = {
+                            k: v.to(self._device)
+                            for k, v in inputs.items()
+                            if hasattr(v, "to")
+                        }
 
-                embeddings.append(emb.cpu().numpy())
+                        with torch.no_grad():
+                            if hasattr(self._model, "get_image_features"):
+                                emb = self._model.get_image_features(**inputs)
+                            else:
+                                emb = self._model(**inputs).last_hidden_state.mean(dim=1)
+                        embeddings.append(emb.cpu().numpy().flatten())
 
-            # Average all frame embeddings
-            avg_embedding = np.mean(embeddings, axis=0)
+                    avg_emb = np.mean(embeddings, axis=0)
+                    norm = np.linalg.norm(avg_emb)
+                    if norm > 0:
+                        avg_emb = avg_emb / norm
 
-            # Normalize
-            norm = np.linalg.norm(avg_embedding)
-            if norm > 0:
-                avg_embedding = avg_embedding / norm
+                    if avg_emb.ndim > 1:
+                        avg_emb = avg_emb.flatten()
+                    if avg_emb.shape[0] < 768:
+                        padding = np.zeros((768 - avg_emb.shape[0],))
+                        avg_emb = np.concatenate([avg_emb, padding])
 
-            # CRITICAL FIX: Flatten to 1D before dimension check to avoid concatenation error
-            # np.mean can return 2D array if input embeddings are 2D, causing ValueError
-            avg_embedding = avg_embedding.flatten()
+                    return avg_emb
 
-            # Pad to 768 dimensions if needed (for CLIP fallback compatibility with LanguageBind DB)
-            if avg_embedding.shape[0] < 768:
-                padding = np.zeros((768 - avg_embedding.shape[0],))
-                avg_embedding = np.concatenate([avg_embedding, padding])
-
-            log.info(
-                f"[LanguageBind] Encoded Video: {len(sampled)} frames, "
-                f"Embedding dim={avg_embedding.shape[0]}, "
-                f"Norm={norm:.4f}"
-            )
-
-            return avg_embedding.flatten()
+                return await asyncio.to_thread(_infer)
 
         except Exception as e:
-            log.exception(f"[LanguageBind] Video encoding failed: {e}")
+            log.error(f"[LanguageBind] Video encoding failed: {e}")
             return None
 
     async def encode_text(self, text: str) -> np.ndarray | None:
-        """Encode text to embedding.
-
-        Args:
-            text: Text query.
-
-        Returns:
-            Text embedding as numpy array.
-        """
+        """Encode text to embedding."""
         if not await self._lazy_load():
             return None
 
-        try:
-            import torch
+        async with GPU_SEMAPHORE:
+            def _infer():
+                import torch
+                inputs = self._tokenizer(text=text, return_tensors="pt", padding=True)
+                inputs = {
+                    k: v.to(self._device)
+                    for k, v in inputs.items()
+                    if hasattr(v, "to")
+                }
 
-            if hasattr(self._tokenizer, "tokenizer"):
-                inputs = self._tokenizer(
-                    text=text, return_tensors="pt", padding=True
-                )
-            else:
-                inputs = self._tokenizer(
-                    text=text, return_tensors="pt", padding=True
-                )
+                with torch.no_grad():
+                    if hasattr(self._model, "get_text_features"):
+                        emb = self._model.get_text_features(**inputs)
+                    else:
+                        emb = self._model(**inputs).last_hidden_state.mean(dim=1)
 
-            inputs = {
-                k: v.to(self._device)
-                for k, v in inputs.items()
-                if isinstance(v, torch.Tensor)
-            }
+                embedding = emb.cpu().numpy().flatten()
+                norm = np.linalg.norm(embedding)
+                if norm > 0:
+                    embedding = embedding / norm
 
-            with torch.no_grad():
-                if hasattr(self._model, "get_text_features"):
-                    emb = self._model.get_text_features(**inputs)
-                else:
-                    emb = self._model(**inputs).last_hidden_state.mean(dim=1)
+                if embedding.shape[0] < 768:
+                    padding = np.zeros((768 - embedding.shape[0],))
+                    embedding = np.concatenate([embedding, padding])
 
-            embedding = emb.cpu().numpy().flatten()
+                return embedding
 
-            # Normalize
-            norm = np.linalg.norm(embedding)
-            if norm > 0:
-                embedding = embedding / norm
-
-            # CRITICAL FIX: Pad to 768 dimensions to match encode_video output
-            # This prevents dimension mismatch when computing similarity
-            if embedding.shape[0] < 768:
-                padding = np.zeros((768 - embedding.shape[0],))
-                embedding = np.concatenate([embedding, padding])
-
-            return embedding
-
-        except Exception as e:
-            log.error(f"[LanguageBind] Text encoding failed: {e}")
-            return None
+            return await asyncio.to_thread(_infer)
 
     async def encode_audio(
         self,
         audio_segment: np.ndarray,
         sample_rate: int = 16000,
     ) -> np.ndarray | None:
-        """Encode audio to embedding.
-
-        Uses CLAP for audio encoding (LanguageBind audio component).
-
-        Args:
-            audio_segment: Audio samples.
-            sample_rate: Sample rate.
-
-        Returns:
-            Audio embedding as numpy array.
-        """
+        """Encode audio to embedding."""
         try:
-            # Use CLAP for audio encoding
             from core.processing.audio_events import AudioEventDetector
-
             detector = AudioEventDetector()
-
-            # Get audio embedding via CLAP
             if not await detector._lazy_load():
                 return None
 
-            import torch
+            async with GPU_SEMAPHORE:
+                def _process():
+                    import torch
+                    import librosa
+                    if sample_rate != 48000:
+                        audio = librosa.resample(
+                            audio_segment.astype(np.float32),
+                            orig_sr=sample_rate,
+                            target_sr=48000,
+                        )
+                    else:
+                        audio = audio_segment
 
-            # Resample to 48kHz for CLAP
-            import librosa
+                    audio_inputs = detector.processor(
+                        audios=audio,
+                        sampling_rate=48000,
+                        return_tensors="pt",
+                    )
+                    audio_inputs = {
+                        k: v.to(detector._device) for k, v in audio_inputs.items()
+                    }
 
-            if sample_rate != 48000:
-                audio_segment = librosa.resample(
-                    audio_segment.astype(np.float32),
-                    orig_sr=sample_rate,
-                    target_sr=48000,
-                )
+                    with torch.no_grad():
+                        audio_emb = detector.model.get_audio_features(**audio_inputs)
+                        audio_emb = audio_emb / audio_emb.norm(dim=-1, keepdim=True)
 
-            audio_inputs = detector.processor(
-                audios=audio_segment,
-                sampling_rate=48000,
-                return_tensors="pt",
-            )
-            audio_inputs = {
-                k: v.to(detector._device) for k, v in audio_inputs.items()
-            }
+                    return audio_emb.cpu().numpy().flatten()
 
-            with torch.no_grad():
-                audio_emb = detector.model.get_audio_features(**audio_inputs)
-                audio_emb = audio_emb / audio_emb.norm(dim=-1, keepdim=True)
-
-            return audio_emb.cpu().numpy().flatten()
+                return await asyncio.to_thread(_process)
 
         except Exception as e:
             log.error(f"[LanguageBind] Audio encoding failed: {e}")
@@ -375,29 +337,24 @@ class InternVideoEncoder:
             try:
                 log.info("[InternVideo] Loading model...")
 
-                # InternVideo2 via HuggingFace
-                from transformers import AutoModel, AutoProcessor
+                def _load():
+                    from transformers import AutoModel, AutoProcessor
+                    model_id = "OpenGVLab/InternVideo2-Stage2_1B-224p-f4"
+                    processor = AutoProcessor.from_pretrained(model_id)
+                    model = AutoModel.from_pretrained(model_id)
+                    import torch
+                    device = self._device or (
+                        "cuda" if torch.cuda.is_available() else "cpu"
+                    )
+                    model.to(device)
+                    return processor, model, device
 
-                model_id = "OpenGVLab/InternVideo2-Stage2_1B-224p-f4"
-
-                self._processor = AutoProcessor.from_pretrained(model_id)
-                self._model = AutoModel.from_pretrained(model_id)
-
-                import torch
-
-                device = self._device or (
-                    "cuda" if torch.cuda.is_available() else "cpu"
-                )
-                self._model.to(device)
-                self._device = device
-
-                log.info(f"[InternVideo] Loaded on {device}")
+                self._processor, self._model, self._device = await asyncio.to_thread(_load)
+                log.info(f"[InternVideo] Loaded on {self._device}")
                 return True
 
             except Exception as e:
-                log.warning(
-                    f"[InternVideo] Load failed, using LanguageBind fallback: {e}"
-                )
+                log.warning(f"[InternVideo] Load failed, fallback: {e}")
                 self._load_failed = True
                 return False
 
@@ -406,60 +363,54 @@ class InternVideoEncoder:
         frames: list[np.ndarray],
         num_frames: int = 8,
     ) -> np.ndarray | None:
-        """Encode video for action understanding.
-
-        Args:
-            frames: List of video frames.
-            num_frames: Number of frames to use.
-
-        Returns:
-            Action-aware video embedding.
-        """
+        """Encode video for action understanding."""
         if not await self._lazy_load():
-            # Fallback to LanguageBind
-            encoder = LanguageBindEncoder(device=self._device)
-            return await encoder.encode_video(frames, sample_frames=num_frames)
+            if self._languagebind_encoder is None:
+                self._languagebind_encoder = LanguageBindEncoder(device=self._device)
+            return await self._languagebind_encoder.encode_video(
+                frames, sample_frames=num_frames
+            )
 
         try:
-            import torch
-            from PIL import Image
-
-            # Sample frames
+            # 1. Prepare frames
             if len(frames) > num_frames:
                 indices = np.linspace(0, len(frames) - 1, num_frames, dtype=int)
                 sampled = [frames[i] for i in indices]
             else:
                 sampled = frames
 
-            # Convert to PIL
-            images = []
-            for frame in sampled:
-                if isinstance(frame, np.ndarray):
-                    images.append(Image.fromarray(frame))
-                else:
-                    images.append(frame)
+            async def _prep(f):
+                def __task():
+                    from PIL import Image
+                    return Image.fromarray(f) if isinstance(f, np.ndarray) else f
+                return await asyncio.to_thread(__task)
 
-            # Process
-            inputs = self._processor(images=images, return_tensors="pt")
-            inputs = {k: v.to(self._device) for k, v in inputs.items()}
+            pil_images = await asyncio.gather(*[_prep(f) for f in sampled])
 
-            with torch.no_grad():
-                outputs = self._model(**inputs)
-                # Get CLS token or pooled output
-                if hasattr(outputs, "pooler_output"):
-                    embedding = outputs.pooler_output
-                else:
-                    embedding = outputs.last_hidden_state.mean(dim=1)
+            # 2. Inference under GPU semaphore
+            async with GPU_SEMAPHORE:
+                def _infer():
+                    import torch
+                    inputs = self._processor(images=pil_images, return_tensors="pt")
+                    inputs = {
+                        k: v.to(self._device)
+                        for k, v in inputs.items()
+                        if hasattr(v, "to")
+                    }
+                    with torch.no_grad():
+                        outputs = self._model(**inputs)
+                        if hasattr(outputs, "pooler_output"):
+                            emb = outputs.pooler_output
+                        else:
+                            emb = outputs.last_hidden_state.mean(dim=1)
 
-            emb = embedding.cpu().numpy().flatten()
+                    feats = emb.cpu().numpy().flatten()
+                    norm = np.linalg.norm(feats)
+                    if norm > 0:
+                        feats = feats / norm
+                    return feats
 
-            # Normalize
-            norm = np.linalg.norm(emb)
-            if norm > 0:
-                emb = emb / norm
-
-            return emb
-
+                return await asyncio.to_thread(_infer)
         except Exception as e:
             log.error(f"[InternVideo] Encoding failed: {e}")
             return None

@@ -15,7 +15,7 @@ import urllib.request
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, TypeVar
 
 import cv2
 import numpy as np
@@ -25,6 +25,7 @@ from sklearn.cluster import HDBSCAN  # type: ignore
 
 from config import settings
 from core.schemas import DetectedFace
+from core.utils.resource_arbiter import GPU_SEMAPHORE
 from core.utils.observe import observe
 
 # =========================================================================
@@ -405,7 +406,7 @@ SFACE_URL: Final = (
     "face_recognition_sface/face_recognition_sface_2021dec.onnx"
 )
 
-GPU_SEMAPHORE = asyncio.Semaphore(1)
+# GPU_SEMAPHORE moved to core.utils.concurrency
 
 # Model type for tracking which engine is in use
 ModelType = Literal["insightface", "sface", "yunet_only"]
@@ -758,12 +759,10 @@ class FaceManager:
     @observe("face_detect")
     async def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
         """Detect faces in an image with automatic model selection."""
-
         await self._lazy_init()
         path = Path(image_path)
-        image = self._load_image(path)
+        image = await self._load_image(path)
 
-        image = self._load_image(path)
         if image.size == 0:
             return []
 
@@ -776,48 +775,26 @@ class FaceManager:
 
     @observe("face_detect_batch")
     async def detect_faces_batch(
-        self, image_paths: list[Path | str]
+        self, image_paths: list[Path | str | NDArray[np.uint8]]
     ) -> list[list[DetectedFace]]:
-        """Detect faces in a batch of images (optimized).
-        
-        Reduces async overhead and locking contention by processing a batch
-        under a single semaphore acquisition (chunks of batch_size).
-        """
+        """Detect faces in a batch of images (optimized)."""
         await self._lazy_init()
         
-        # Load all images (IO bound)
-        images = []
+        # 1. Load images in parallel
+        tasks = []
         for p in image_paths:
             if isinstance(p, (str, Path)):
-                images.append(self._load_image(Path(p)))
+                tasks.append(self._load_image(Path(p)))
             else:
-                # Assume it's already a numpy array (frame bytes decoded)
-                images.append(p)
-                
+                tasks.append(asyncio.sleep(0, result=p))
+        
+        images = await asyncio.gather(*tasks)
         results = []
         
-        # Process in chunks
+        # 2. Process in chunks
         for i in range(0, len(images), self.batch_size):
             chunk = images[i : i + self.batch_size]
             chunk_results = []
-            
-            # Acquire GPU lock once per chunk for better throughput
-            async with GPU_SEMAPHORE:
-                for img in chunk:
-                    if self._model_type == "insightface":
-                        # We are already holding the lock, so call the inner logic directly?
-                        # _detect_insightface acquires the lock too!
-                        # We need __detect_insightface_locked to avoid deadlock?
-                        # Or checking if we can re-acquire since it's asyncio.Semaphore (not reentrant!)
-                        pass 
-                        
-            # Wait! asyncio.Semaphore is NOT re-entrant. 
-            # If I hold it here, _detect_insightface will block forever! deadlock!
-            
-            # CORRECT APPROACH: Just loop for now. True batching requires refactoring _detect methods
-            # to separate logic from locking.
-            # But we can still save the overhead of _lazy_init checks and argument parsing.
-            
             for img in chunk:
                  if self._model_type == "insightface":
                     chunk_results.append(await self._detect_insightface(img))
@@ -825,403 +802,167 @@ class FaceManager:
                     chunk_results.append(await self._detect_sface(img))
                  else:
                     chunk_results.append(await self._detect_yunet_only(img))
-            
             results.extend(chunk_results)
-            
         return results
 
-    async def _detect_insightface(
-        self, image: NDArray[np.uint8]
-    ) -> list[DetectedFace]:
-        """Detect faces using InsightFace with quality metrics."""
-        if image.size == 0:
-            return []
-            
-        assert self._insightface_app is not None, "InsightFace not initialized"
+    async def _detect_insightface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
+        if image.size == 0: return []
+        assert self._insightface_app is not None
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
-            # Run InsightFace in a thread to avoid blocking the event loop
             faces = await asyncio.to_thread(self._insightface_app.get, bgr)
-
         results = []
         for face in faces:
             bbox = face.bbox.astype(int)
-            # Convert to (top, right, bottom, left) format
             box = (int(bbox[1]), int(bbox[2]), int(bbox[3]), int(bbox[0]))
-
-            # Quality metrics for clustering
-            det_score = (
-                float(face.det_score) if hasattr(face, "det_score") else 1.0
-            )
-            bbox_width = int(bbox[2] - bbox[0])
-            bbox_height = int(bbox[3] - bbox[1])
-            bbox_size = min(bbox_width, bbox_height)
-
-            # Get embedding and normalize
+            det_score = float(face.det_score) if hasattr(face, "det_score") else 1.0
+            bbox_size = min(int(bbox[2] - bbox[0]), int(bbox[3] - bbox[1]))
             emb = face.embedding.astype(np.float64)
             emb /= np.linalg.norm(emb) + 1e-9
-
-            results.append(
-                DetectedFace(
-                    bbox=box,
-                    embedding=emb.tolist(),
-                    confidence=det_score,  # Store detection confidence
-                    # Note: bbox_size will be passed separately to insert_face
-                )
-            )
-            # Store bbox_size as an attribute for pipeline to access
+            results.append(DetectedFace(bbox=box, embedding=emb.tolist(), confidence=det_score))
             results[-1]._bbox_size = bbox_size
-
         return results
 
-    async def _detect_sface(
-        self, image: NDArray[np.uint8]
-    ) -> list[DetectedFace]:
-        """Detect faces using SFace with CLAHE normalization and quality metrics."""
-        if image.size == 0:
-            return []
-            
-        assert self._opencv_detector is not None, (
-            "OpenCV detector not initialized"
-        )
-        assert self._opencv_recognizer is not None, (
-            "OpenCV recognizer not initialized"
-        )
+    async def _detect_sface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
+        if image.size == 0: return []
+        assert self._opencv_detector is not None and self._opencv_recognizer is not None
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
         async with GPU_SEMAPHORE:
-            h, w = bgr.shape[:2]
-            self._opencv_detector.setInputSize((w, h))
-            _, dets = self._opencv_detector.detect(bgr)
+            return await asyncio.to_thread(self._detect_sface_sync, bgr)
 
-        if dets is None:
-            return []
-
+    def _detect_sface_sync(self, bgr: NDArray[np.uint8]) -> list[DetectedFace]:
+        h, w = bgr.shape[:2]
+        self._opencv_detector.setInputSize((w, h))
+        _, dets = self._opencv_detector.detect(bgr)
+        if dets is None: return []
         results = []
         for d in dets:
-            x, y, bw, bh = d[:4]  # type: ignore
-            box = (int(x), int(y), int(bw), int(bh))
-            # Fix order: y, x+bw, y+bh, x -> top, right, bottom, left
-            # Actually box = (int(y), int(x + bw), int(y + bh), int(x)) was existing logic.
-            # Wait, d[:4] unpacking failed Pylance? No, "index issue" on lines 815.
-            # d is likely numpy array. d[:4] works.
-            # The issue might be d[14] later.
-            # Re-reading error: "__getitem__ method not defined on type integer[Any]" at line 815... wait line 815 is `x, y, bw, bh = d[:4]`.
-            # If d is inferred as integer[Any] (some weird type), maybe we cast d to list or np.array explicitly?
-            # Or just ignore checking for that line.
-            # Better: ensure d is treated as indexable.
             d_arr = np.array(d)
             x, y, bw, bh = d_arr[:4]
             box = (int(y), int(x + bw), int(y + bh), int(x))
-
-            # Quality metrics for clustering
-            det_score = (
-                float(d[14]) if hasattr(d, "__len__") and len(d) > 14 else 0.9  # type: ignore
-            )  # YuNet confidence at index 14
-            bbox_size = int(min(bw, bh))
-
-            # Get face crop and apply CLAHE for lighting normalization
             face_box = np.array([[x, y, bw, bh]], dtype=np.int32)
             aligned = self._opencv_recognizer.alignCrop(bgr, face_box)
-
-            # CLAHE on L channel
             lab = cv2.cvtColor(aligned, cv2.COLOR_BGR2LAB)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            lab[:, :, 0] = clahe.apply(lab[:, :, 0])
+            lab[:, :, 0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(lab[:, :, 0])
             aligned = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-            # Get embedding and normalize
-            emb = (
-                self._opencv_recognizer.feature(aligned)
-                .reshape(-1)
-                .astype(np.float64)
-            )
+            emb = self._opencv_recognizer.feature(aligned).reshape(-1).astype(np.float64)
             emb /= np.linalg.norm(emb) + 1e-9
-
-            # Pad 128-dim to 512-dim for Qdrant compatibility
             emb_padded = np.zeros(512, dtype=np.float64)
             emb_padded[: len(emb)] = emb
-
-            results.append(
-                DetectedFace(
-                    bbox=box,
-                    embedding=emb_padded.tolist(),
-                    confidence=det_score,
-                )
-            )
-            # Store bbox_size as an attribute for pipeline to access
-            results[-1]._bbox_size = bbox_size
-
+            results.append(DetectedFace(bbox=box, embedding=emb_padded.tolist(), confidence=float(d[14]) if len(d)>14 else 0.9))
+            results[-1]._bbox_size = int(min(bw, bh))
         return results
 
-    async def _detect_yunet_only(
-        self, image: NDArray[np.uint8]
-    ) -> list[DetectedFace]:
-        """Detect faces with YuNet only (no embeddings)."""
-        if image.size == 0:
-            return []
-
-        assert self._opencv_detector is not None, (
-            "OpenCV detector not initialized"
-        )
+    async def _detect_yunet_only(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
+        if image.size == 0: return []
+        assert self._opencv_detector is not None
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
         async with GPU_SEMAPHORE:
-            h, w = bgr.shape[:2]
-            self._opencv_detector.setInputSize((w, h))
-            _, dets = self._opencv_detector.detect(bgr)
-
-        if dets is None:
-            return []
-
+            def _inf():
+                h, w = bgr.shape[:2]
+                self._opencv_detector.setInputSize((w, h))
+                return self._opencv_detector.detect(bgr)
+            _, dets = await asyncio.to_thread(_inf)
+        if dets is None: return []
         results = []
         for d in dets:
-            x, y, bw, bh = d[:4]  # type: ignore
-            box = (int(y), int(x + bw), int(y + bh), int(x))
-            results.append(DetectedFace(bbox=box, embedding=None))
-
+            x, y, bw, bh = d[:4]
+            results.append(DetectedFace(bbox=(int(y), int(x+bw), int(y+bh), int(x)), embedding=None))
+            results[-1]._bbox_size = int(min(bw, bh))
         return results
 
     @observe("face_cluster")
-    def cluster_faces(
-        self, all_encodings: Sequence[ArrayLike]
-    ) -> NDArray[np.int64]:
-        """Cluster face encodings using HDBSCAN (Hierarchical DBSCAN).
+    def cluster_faces(self, encodings: Sequence[ArrayLike]) -> NDArray[np.int64]:
+        if not encodings: return np.array([], dtype=np.int64)
+        return HDBSCAN(min_cluster_size=max(3, self.dbscan_min_samples), min_samples=self.dbscan_min_samples,
+                       cluster_selection_epsilon=self.dbscan_eps, metric=self.dbscan_metric,
+                       allow_single_cluster=True).fit_predict(self._to_2d_array(encodings))
 
-        HDBSCAN is more robust to variable densities and noise than DBSCAN.
-        User-defined `dbscan_eps` is mapped to `cluster_selection_epsilon`.
-        """
-        if not all_encodings:
-            return np.array([], dtype=np.int64)
-        data = self._to_2d_array(all_encodings)
-
-        # HDBSCAN(min_cluster_size=5, min_samples=None, cluster_selection_epsilon=0.0, ...)
-        # We map dbscan_min_samples -> min_samples (controls how conservative the clustering is)
-        # We use a fixed min_cluster_size (e.g. 3 or 5) to allow small groups
-
-        return HDBSCAN(
-            min_cluster_size=max(3, self.dbscan_min_samples),
-            min_samples=self.dbscan_min_samples,
-            cluster_selection_epsilon=self.dbscan_eps,
-            metric=self.dbscan_metric,
-            allow_single_cluster=True,  # Important for small datasets
-        ).fit_predict(data)
-
-    def match_or_create_cluster(
-        self,
-        embedding: list[float],
-        existing_clusters: dict[int, list[float]],
-        threshold: float = 0.4,
-    ) -> tuple[int, dict[int, list[float]]]:
-        """Match face to existing cluster or create new one (incremental clustering).
-
-        This solves the hash-based ID problem by using actual embedding similarity.
-        Each cluster is represented by its centroid embedding.
-
-        Args:
-            embedding: The 512-dim face embedding to match.
-            existing_clusters: Dict mapping cluster_id -> centroid embedding.
-            threshold: Cosine distance threshold (0.4 = 60% similarity required).
-
-        Returns:
-            Tuple of (cluster_id, updated_clusters_dict).
-        """
-        import numpy as np
-
+    def match_or_create_cluster(self, embedding: list[float], existing_clusters: dict[int, list[float]], threshold: float = 0.4) -> tuple[int, dict[int, list[float]]]:
         emb = np.array(embedding, dtype=np.float64)
         emb_norm = emb / (np.linalg.norm(emb) + 1e-9)
-
-        best_cluster_id = None
-        best_similarity = -1.0
-
-        for cluster_id, centroid in existing_clusters.items():
-            centroid_arr = np.array(centroid, dtype=np.float64)
-            centroid_norm = centroid_arr / (np.linalg.norm(centroid_arr) + 1e-9)
-
-            # Cosine similarity
-            similarity = float(np.dot(emb_norm, centroid_norm))
-
-            # Convert to distance: distance = 1 - similarity
-            # threshold of 0.4 means we need similarity >= 0.6
-            if similarity > (1.0 - threshold) and similarity > best_similarity:
-                best_similarity = similarity
-                best_cluster_id = cluster_id
-
-        if best_cluster_id is not None:
-            # INTEGRATION: Use BiometricArbitrator for marginal cases
-            # If similarity is high but not perfect, double-check
-            if best_similarity < 0.6:  # Marginal zone
+        best_id, best_sim = None, -1.0
+        for cid, centroid in existing_clusters.items():
+            cen_norm = np.array(centroid) / (np.linalg.norm(centroid) + 1e-9)
+            sim = float(np.dot(emb_norm, cen_norm))
+            if sim > (1.0 - threshold) and sim > best_sim:
+                best_id, best_sim = cid, sim
+        if best_id is not None and best_sim < 0.6:
+            try:
                 from core.processing.biometric_arbitrator import BIOMETRIC_ARBITRATOR
-                
-                # Check with arbitrator (uses L2 distance and stricter thresholds)
-                should_merge = BIOMETRIC_ARBITRATOR.should_merge_sync(
-                    emb_norm, 
-                    np.array(existing_clusters[best_cluster_id], dtype=np.float64),
-                    primary_sim=best_similarity
-                )
-                
-                if not should_merge:
-                    # Arbitrator rejected the merge -> Treat as new person
-                    print(f"[FaceManager] Arbitrator rejected marginal match ({best_similarity:.3f})")
-                    best_cluster_id = None
+                if not BIOMETRIC_ARBITRATOR.should_merge_sync(emb_norm, np.array(existing_clusters[best_id]), primary_sim=best_sim):
+                    best_id = None
+            except ImportError: pass
+        if best_id is not None:
+            new_cen = (np.array(existing_clusters[best_id]) + emb) / 2.0
+            existing_clusters[best_id] = (new_cen / (np.linalg.norm(new_cen) + 1e-9)).tolist()
+            return best_id, existing_clusters
+        nid = max(existing_clusters.keys(), default=0) + 1
+        existing_clusters[nid] = emb_norm.tolist()
+        return nid, existing_clusters
 
-        if best_cluster_id is not None:
-            # Update centroid with running average
-            old_centroid = np.array(
-                existing_clusters[best_cluster_id], dtype=np.float64
-            )
-            # Simple average (could weight by count for better accuracy)
-            new_centroid = (old_centroid + emb) / 2.0
-            new_centroid = new_centroid / (np.linalg.norm(new_centroid) + 1e-9)
-            existing_clusters[best_cluster_id] = new_centroid.tolist()
-            return best_cluster_id, existing_clusters
-
-        # Create new cluster
-        new_cluster_id = max(existing_clusters.keys(), default=0) + 1
-        existing_clusters[new_cluster_id] = emb_norm.tolist()
-        return new_cluster_id, existing_clusters
-
-    def resolve_identity_conflict(
-        self,
-        track_id: int,
-        current_crop: NDArray[np.uint8],
-        known_identities: dict[int, NDArray[np.float32]],
-    ) -> int:
-        """Verify track ID against biometric identity, correcting if needed.
-
-        Args:
-            track_id: ID suggested by visual tracker.
-            current_crop: BGR face crop from current frame.
-            known_identities: Dict mapping cluster_id -> ArcFace embedding.
-
-        Returns:
-            Verified cluster_id (may differ from track_id if biometrics disagree).
-        """
-        from core.processing.biometrics import get_biometric_arbitrator
-
-        arbitrator = get_biometric_arbitrator()
-        current_emb = arbitrator.get_embedding(current_crop)
-
-        if current_emb is None:
-            return track_id
-
-        # Check if claimed identity matches
-        if track_id in known_identities:
-            if arbitrator.verify_identity(
-                current_emb, known_identities[track_id]
-            ):
-                return track_id
-            print(
-                f"[FaceManager] Identity conflict: track {track_id} rejected by biometrics"
-            )
-
-        # Search for correct identity
-        match_id = arbitrator.find_matching_identity(
-            current_emb, known_identities
-        )
-        if match_id is not None:
-            print(f"[FaceManager] Identity corrected: {track_id} -> {match_id}")
-            return match_id
-
-        return track_id
+    def resolve_identity_conflict(self, track_id: int, crop: NDArray[np.uint8], known: dict[int, NDArray[np.float32]]) -> int:
+        try:
+            from core.processing.biometrics import get_biometric_arbitrator
+            arb = get_biometric_arbitrator()
+            emb = arb.get_embedding(crop)
+            if emb is None: return track_id
+            if track_id in known and arb.verify_identity(emb, known[track_id]): return track_id
+            mid = arb.find_matching_identity(emb, known)
+            return mid if mid is not None else track_id
+        except ImportError: return track_id
 
     @staticmethod
-    def _load_image(path: Path) -> NDArray[np.uint8]:
-        if not path.exists():
-            print(f"[FaceManager] Warning: Image file missing: {path}")
-            # Return empty array to signal failure safely
-            return np.array([], dtype=np.uint8)
-            
-        with Image.open(path) as img:
-            return np.asarray(img.convert("RGB"), dtype=np.uint8)
+    async def _load_image(path: Path) -> NDArray[np.uint8]:
+        if not path.exists(): return np.array([], dtype=np.uint8)
+        def _read():
+            try:
+                with Image.open(path) as img: return np.asarray(img.convert("RGB"), dtype=np.uint8)
+            except Exception: return np.array([], dtype=np.uint8)
+        return await asyncio.to_thread(_read)
 
-    def process_video_frames(
-        self, frames: Iterable[NDArray[np.uint8]]
-    ) -> list[list[DetectedFace]]:
-        """Process video frames to detect and encode faces."""
+    def process_video_frames(self, frames: Iterable[NDArray[np.uint8]]) -> list[list[DetectedFace]]:
         out = []
-        last = 0.0
-        interval = 1.0 / self.max_fps
         for batch in self._batch(frames, self.batch_size):
-            now = time.perf_counter()
-            if now - last < interval:
-                time.sleep(interval - (now - last))
-            last = time.perf_counter()
-            for frame in batch:
-                faces = asyncio.run(self._detect_frame(frame))
-                out.append(faces)
+            out.extend(asyncio.run(self.detect_faces_batch(batch)))
         return out
 
-    @observe("face_detect_frame")
-    async def _detect_frame(
-        self, frame: NDArray[np.uint8]
-    ) -> list[DetectedFace]:
-        """Detect faces in a single frame."""
-        await self._lazy_init()
-
-        if self._model_type == "insightface":
-            return await self._detect_insightface(frame)
-        elif self._model_type == "sface":
-            return await self._detect_sface(frame)
-        else:
-            return await self._detect_yunet_only(frame)
+    T = TypeVar("T")
 
     @staticmethod
-    def _batch(
-        iterable: Iterable[NDArray[np.uint8]],
-        size: int,
-    ) -> Iterable[list[NDArray[np.uint8]]]:
+    def _batch(it: Iterable[T], sz: int) -> Iterable[list[T]]:
         batch = []
-        for item in iterable:
-            batch.append(item)
-            if len(batch) == size:
-                yield batch
-                batch = []
-        if batch:
-            yield batch
+        for i in it:
+            batch.append(i)
+            if len(batch) == sz: yield batch; batch = []
+        if batch: yield batch
 
-    def _cache_key(
-        self, image: NDArray[Any], box: tuple[int, int, int, int]
-    ) -> str:
-        h = hashlib.sha1(image.data[:2048]).hexdigest()
-        return f"{h}_{box}_{self.embedding_version}"
+    def _cache_key(self, image: NDArray[Any], box: tuple[int, int, int, int]) -> str:
+        return f"{hashlib.sha1(image.data[:2048]).hexdigest()}_{box}_{self.embedding_version}"
 
     def _disk_cache_get(self, key: str) -> NDArray[np.float64] | None:
-        path = CACHE_DIR / f"{key}.npy"
-        if path.exists():
-            return np.load(path)
-        return None
+        p = CACHE_DIR / f"{key}.npy"
+        return np.load(p) if p.exists() else None
 
-    def _disk_cache_put(self, key: str, value: NDArray[np.float64]) -> None:
-        path = CACHE_DIR / f"{key}.npy"
-        if not path.exists():
-            np.save(path, value)
+    def _disk_cache_put(self, key: str, val: NDArray[np.float64]) -> None:
+        p = CACHE_DIR / f"{key}.npy"
+        if not p.exists(): np.save(p, val)
 
     @staticmethod
     def _to_2d_array(encodings: Sequence[ArrayLike]) -> NDArray[np.float64]:
         arrs = [np.asarray(e, dtype=np.float64) for e in encodings]
-        shapes = {a.shape for a in arrs}
-        if len(shapes) != 1:
-            raise ValueError(shapes)
+        if len({a.shape for a in arrs}) > 1: raise ValueError("Inconsistent shapes")
         return np.vstack(arrs)
-
 
 if __name__ == "__main__":
     import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("image_path")
-    parser.add_argument("--gpu", action="store_true")
-    args = parser.parse_args()
-
+    p = argparse.ArgumentParser()
+    p.add_argument("image_path")
+    p.add_argument("--gpu", action="store_true")
+    args = p.parse_args()
     fm = FaceManager(use_gpu=args.gpu)
     faces = asyncio.run(fm.detect_faces(args.image_path))
-    print(f"Model: {fm._model_type}, Embedding dim: {fm._embedding_dim}")
-    print(f"Detected {len(faces)} faces")
+    print(f"Model: {fm._model_type}, Found {len(faces)} faces")
     if faces:
-        valid_embeddings = [
-            f.embedding for f in faces if f.embedding is not None
-        ]
-        if valid_embeddings:
-            print(f"Clustering {len(valid_embeddings)} embeddings...")
-            print(fm.cluster_faces(valid_embeddings))
+        embs = [f.embedding for f in faces if f.embedding]
+        if embs: print(fm.cluster_faces(embs))

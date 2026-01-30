@@ -41,7 +41,6 @@ from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.resource_arbiter import RESOURCE_ARBITER
-from core.utils.resource_arbiter import RESOURCE_ARBITER
 from core.utils.retry import retry
 from core.errors import (
     MediaIndexerError,
@@ -2288,26 +2287,28 @@ class IngestionPipeline:
         # (Will run on scene keyframes instead via _process_scene_captions)
         # ------------------------------------------------------------
         dr_result = None
-        skip_deep_research = getattr(settings, 'deep_research_per_scene', True)
-        if not skip_deep_research:
-            try:
-                dr_processor = get_deep_research_processor()
-                # Run analysis (fire and forget features for now, use metadata)
-                dr_result = await dr_processor.analyze_frame(
-                    frame=frame_path,
-                    compute_aesthetics=True,
-                    compute_saliency=False,  # Skip heavy saliency for speed
-                    compute_fingerprint=True,
-                )
-                if dr_result:
-                    logger.info(
-                        f"[DeepResearch] Frame {timestamp:.2f}s: "
-                        f"Shot='{dr_result.shot_type}', Mood='{dr_result.mood}', "
-                        f"Aesthetic={dr_result.aesthetic_score:.2f}"
+        # Check global master switch first
+        if getattr(settings, 'enable_deep_research', True):
+            skip_deep_research = getattr(settings, 'deep_research_per_scene', True)
+            if not skip_deep_research:
+                try:
+                    dr_processor = get_deep_research_processor()
+                    # Run analysis (fire and forget features for now, use metadata)
+                    dr_result = await dr_processor.analyze_frame(
+                        frame=frame_path,
+                        compute_aesthetics=True,
+                        compute_saliency=False,  # Skip heavy saliency for speed
+                        compute_fingerprint=True,
                     )
-            except Exception as e:
-                logger.warning(f"[DeepResearch] Analysis failed: {e}")
-
+                    if dr_result:
+                        logger.info(
+                            f"[DeepResearch] Frame {timestamp:.2f}s: "
+                            f"Shot='{dr_result.shot_type}', Mood='{dr_result.mood}', "
+                            f"Aesthetic={dr_result.aesthetic_score:.2f}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[DeepResearch] Analysis failed: {e}")
+        
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"
         thumb_dir.mkdir(parents=True, exist_ok=True)
@@ -2604,48 +2605,52 @@ class IngestionPipeline:
                             logger.debug(f"[OCR] Hash comparison failed: {e}")
                     
                     # Gate: Only run OCR if frame likely contains text (edge density check)
-                    if not skip_ocr and self.text_gate.has_text(frame_img):
-                        ocr_result = await self.ocr_engine.extract_text(
-                            frame_img
-                        )
-                        if ocr_result and ocr_result.get("text"):
-                            ocr_text = ocr_result["text"]
-                            ocr_boxes = ocr_result.get("boxes", [])
-                            # Cache for skip-unchanged optimization
-                            self._last_ocr_text = ocr_text
-                            self._last_ocr_boxes = ocr_boxes
-                            logger.info(f"[OCR] Extracted: {ocr_text[:100]}...")
-                        else:
-                            logger.debug("[OCR] No text found in gated frame")
+                    # Check enable_ocr master switch
+                    if getattr(settings, 'enable_ocr', True):
+                        if not skip_ocr and self.text_gate.has_text(frame_img):
+                            ocr_result = await self.ocr_engine.extract_text(
+                                frame_img
+                            )
+                            if ocr_result and ocr_result.get("text"):
+                                ocr_text = ocr_result["text"]
+                                ocr_boxes = ocr_result.get("boxes", [])
+                                # Cache for skip-unchanged optimization
+                                self._last_ocr_text = ocr_text
+                                self._last_ocr_boxes = ocr_boxes
+                                logger.info(f"[OCR] Extracted: {ocr_text[:100]}...")
+                            else:
+                                logger.debug("[OCR] No text found in gated frame")
+                    else:
+                        logger.debug("[OCR] Disabled via config")
 
                     # Deep Research Enrichment (Safety & Time)
                     try:
                         # Content Moderation
-                        if not hasattr(self, "_moderator"):
-                            from core.processing.content_moderation import (
-                                VisualContentModerator,
-                            )
+                        if getattr(settings, 'enable_content_moderation', False):
+                            if not hasattr(self, "_moderator"):
+                                from core.processing.content_moderation import (
+                                    VisualContentModerator,
+                                )
+                                self._moderator = VisualContentModerator()
 
-                            self._moderator = VisualContentModerator()
-
-                        safe_res = await self._moderator.check_frame(frame_img)
-                        if not safe_res.is_safe:
-                            flags_str = ", ".join(
-                                [f.name for f in safe_res.flags]
-                            )
-                            video_context += f"\n[SAFETY-FLAG]: {flags_str}"
-
+                            safe_res = await self._moderator.check_frame(frame_img)
+                            if not safe_res.is_safe:
+                                flags_str = ", ".join(
+                                    [f.name for f in safe_res.flags]
+                                )
+                                video_context += f"\n[SAFETY-FLAG]: {flags_str}"
+                        
                         # Clock Reader
-                        if not hasattr(self, "_clock"):
-                            from core.processing.clock_reader import ClockReader
+                        if getattr(settings, 'enable_time_extraction', False):
+                            if not hasattr(self, "_clock"):
+                                from core.processing.clock_reader import ClockReader
+                                self._clock = ClockReader()
 
-                            self._clock = ClockReader()
-
-                        clock_res = await self._clock.read(frame_img)
-                        if clock_res:
-                            video_context += (
-                                f"\n[VISIBLE-TIME]: {clock_res.get('time_string')}"
-                            )
+                            clock_res = await self._clock.read(frame_img)
+                            if clock_res:
+                                video_context += (
+                                    f"\n[VISIBLE-TIME]: {clock_res.get('time_string')}"
+                                )
                     except Exception as e:
                         logger.warning(f"Deep Research enrichment error: {e}")
 

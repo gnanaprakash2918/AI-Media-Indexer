@@ -272,8 +272,9 @@ class SuryaOCR:
                 from surya.recognition import batch_recognition
 
                 log.info("[SuryaOCR] Loading models...")
-                self._detector = load_detector()
-                self._recognizer = load_recognizer()
+                # Load models in threads to avoid blocking the event loop
+                self._detector = await asyncio.to_thread(load_detector)
+                self._recognizer = await asyncio.to_thread(load_recognizer)
                 self._batch_detection = batch_detection
                 self._batch_recognition = batch_recognition
                 log.info("[SuryaOCR] Models loaded")
@@ -314,13 +315,18 @@ class SuryaOCR:
             else:
                 image = frame
 
-            # Detect text regions
-            det_results = self._batch_detection([image], self._detector)
+            # Use GPU_SEMAPHORE if available to manage VRAM
+            # (Checking for GPU_SEMAPHORE in globals)
+            sem = globals().get("GPU_SEMAPHORE", asyncio.Semaphore(1))
 
-            # Recognize text
-            rec_results = self._batch_recognition(
-                [image], det_results, self._recognizer
-            )
+            async with sem:
+                # Detect text regions off-thread
+                det_results = await asyncio.to_thread(self._batch_detection, [image], self._detector)
+
+                # Recognize text off-thread
+                rec_results = await asyncio.to_thread(self._batch_recognition, 
+                    [image], det_results, self._recognizer
+                )
 
             if not rec_results or not rec_results[0]:
                 return {"text": "", "boxes": [], "lines": [], "confidence": 0.0}

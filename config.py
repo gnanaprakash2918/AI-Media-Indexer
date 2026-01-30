@@ -637,6 +637,9 @@ class Settings(BaseSettings):
     )
 
     # --- Search Feature Flags (Master Switches) ---
+    enable_deep_research: bool = Field(
+        default=True, description="Master switch for deep research (cinematography, aesthetics)."
+    )
     enable_face_recognition: bool = Field(
         default=True, description="Master switch for face detection and clustering."
     )
