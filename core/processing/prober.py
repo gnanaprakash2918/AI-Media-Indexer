@@ -133,8 +133,10 @@ class MediaProber:
 
         try:
             # Use asyncio to run ffprobe asynchronously
-            args = args_to_ffprobe[1:]  # Remove 'ffprobe' as create_subprocess_exec takes program as first arg
-            
+            args = args_to_ffprobe[
+                1:
+            ]  # Remove 'ffprobe' as create_subprocess_exec takes program as first arg
+
             process = await asyncio.create_subprocess_exec(
                 "ffprobe",
                 *args,

@@ -1,4 +1,5 @@
 """Qdrant client handler and connection management."""
+
 import time
 from typing import Any
 from functools import wraps
@@ -7,6 +8,7 @@ from qdrant_client.http import models
 
 from config import settings
 from core.utils.logger import log
+
 
 def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
     """Decorator to retry Qdrant operations on connection errors (WinError 10053, etc.)."""
@@ -24,11 +26,12 @@ def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
                         time.sleep(delay * (attempt + 1))
             if last_error:
                 raise last_error
-            return None # Should not happen
+            return None  # Should not happen
 
         return wrapper
 
     return decorator
+
 
 def sanitize_numpy_types(obj: Any) -> Any:
     """Recursively convert numpy types to native Python types."""
@@ -53,6 +56,7 @@ def sanitize_numpy_types(obj: Any) -> Any:
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
     return obj
+
 
 def paginated_scroll(
     client,
@@ -89,9 +93,10 @@ def paginated_scroll(
 
     return all_points
 
+
 class QdrantHandler:
     """Basic Qdrant connection and collection management."""
-    
+
     def __init__(
         self,
         backend: str = settings.qdrant_backend,
@@ -113,13 +118,16 @@ class QdrantHandler:
                 self.client = QdrantClient(host=target_host, port=port)
                 # Verify connection immediately
                 self.client.get_collections()
-                log(f"Connected to Qdrant at {target_host}:{port}", backend=backend)
+                log(
+                    f"Connected to Qdrant at {target_host}:{port}",
+                    backend=backend,
+                )
             except Exception as exc:
                 log(
                     f"Could not connect to Qdrant at {target_host}:{port}.",
                     error=str(exc),
-                    host=host, 
-                    port=port
+                    host=host,
+                    port=port,
                 )
                 raise ConnectionError("Qdrant connection failed.") from exc
         else:
@@ -144,8 +152,11 @@ class QdrantHandler:
                 if is_multi_vector and isinstance(vectors_config, dict):
                     pass
                 elif not is_multi_vector and isinstance(vectors_config, dict):
-                     log(f"Collection {collection_name} is multi-vector but expected single. Recreating.", level="WARNING")
-                     self.client.delete_collection(collection_name)
+                    log(
+                        f"Collection {collection_name} is multi-vector but expected single. Recreating.",
+                        level="WARNING",
+                    )
+                    self.client.delete_collection(collection_name)
                 elif hasattr(vectors_config, "size"):
                     existing_size = vectors_config.size
                     if existing_size != expected_size:
@@ -155,7 +166,10 @@ class QdrantHandler:
                         )
                         self.client.delete_collection(collection_name)
             except Exception as e:
-                log(f"Failed to check {collection_name} dimension: {e}", level="ERROR")
+                log(
+                    f"Failed to check {collection_name} dimension: {e}",
+                    level="ERROR",
+                )
 
         if not self.client.collection_exists(collection_name):
             if is_multi_vector and multi_vector_config:
@@ -172,7 +186,9 @@ class QdrantHandler:
             )
             log(f"Created collection {collection_name} with valid config.")
 
-    def create_index(self, collection_name: str, field_name: str, schema_type: Any):
+    def create_index(
+        self, collection_name: str, field_name: str, schema_type: Any
+    ):
         """Wrapper for creating payload indexes."""
         self.client.create_payload_index(
             collection_name=collection_name,
@@ -180,7 +196,9 @@ class QdrantHandler:
             field_schema=schema_type,
         )
 
-    def _create_text_index(self, collection_name: str, field_name: str, **kwargs):
+    def _create_text_index(
+        self, collection_name: str, field_name: str, **kwargs
+    ):
         """Wrapper for text indexes."""
         self.client.create_payload_index(
             collection_name=collection_name,

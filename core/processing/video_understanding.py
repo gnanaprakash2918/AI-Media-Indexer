@@ -47,6 +47,7 @@ class LanguageBindEncoder:
         self._tokenizer = None
         self._init_lock = asyncio.Lock()
         self._load_failed = False
+        self._model_type = None
 
     def _get_device(self) -> str:
         """Get device to use."""
@@ -66,7 +67,7 @@ class LanguageBindEncoder:
 
     async def _lazy_load(self) -> bool:
         """Load video understanding model lazily.
-        
+
         Uses X-CLIP (from transformers) which is specifically designed for
         video-text understanding with temporal modeling, unlike basic CLIP
         which only understands individual images.
@@ -82,44 +83,50 @@ class LanguageBindEncoder:
                 return True
 
             try:
-                log.info("[VideoEncoder] Loading X-CLIP for video understanding...")
+                log.info(
+                    "[VideoEncoder] Loading X-CLIP for video understanding..."
+                )
 
                 def _load():
                     import torch
-                    
+
                     # Try X-CLIP first (SOTA video understanding)
                     try:
                         from transformers import XCLIPModel, XCLIPProcessor
-                        
+
                         # X-CLIP: trained on video-text pairs, understands temporal context
                         model_id = "microsoft/xclip-base-patch32"
-                        
+
                         processor = XCLIPProcessor.from_pretrained(model_id)
                         model = XCLIPModel.from_pretrained(model_id)
-                        
+
                         device = self._device or (
                             "cuda" if torch.cuda.is_available() else "cpu"
                         )
                         model.to(device)
                         log.info(f"[VideoEncoder] X-CLIP loaded on {device}")
                         return processor, model, device, "xclip"
-                        
+
                     except Exception as xclip_error:
-                        log.warning(f"[VideoEncoder] X-CLIP failed: {xclip_error}, falling back to CLIP")
-                        
+                        log.warning(
+                            f"[VideoEncoder] X-CLIP failed: {xclip_error}, falling back to CLIP"
+                        )
+
                         # Fallback to CLIP (less accurate for video)
                         from transformers import CLIPModel, CLIPProcessor
-                        
+
                         model_id = "openai/clip-vit-large-patch14"  # Use larger CLIP if no X-CLIP
-                        
+
                         processor = CLIPProcessor.from_pretrained(model_id)
                         model = CLIPModel.from_pretrained(model_id)
-                        
+
                         device = self._device or (
                             "cuda" if torch.cuda.is_available() else "cpu"
                         )
                         model.to(device)
-                        log.info(f"[VideoEncoder] CLIP fallback loaded on {device}")
+                        log.info(
+                            f"[VideoEncoder] CLIP fallback loaded on {device}"
+                        )
                         return processor, model, device, "clip"
 
                 result = await asyncio.to_thread(_load)
@@ -133,7 +140,6 @@ class LanguageBindEncoder:
                 log.error(f"[VideoEncoder] Load failed: {e}")
                 self._load_failed = True
                 return False
-
 
     async def encode_video(
         self,
@@ -158,22 +164,30 @@ class LanguageBindEncoder:
             async def _prep(frame):
                 def __task():
                     from PIL import Image
+
                     if isinstance(frame, np.ndarray):
                         return Image.fromarray(frame)
                     return frame
+
                 return await asyncio.to_thread(__task)
 
             pil_images = await asyncio.gather(*[_prep(f) for f in sampled])
 
             # 3. Batch inference under GPU semaphore
             async with GPU_SEMAPHORE:
+
                 def _infer():
                     import torch
 
-                    # Process each frame individually with CLIP and average embeddings
-                    embeddings = []
-                    for img in pil_images:
-                        inputs = self._tokenizer(images=img, return_tensors="pt")
+                    # X-CLIP (SOTA) Path
+                    if self._model_type == "xclip":
+                        # X-CLIP expects a list of images as video input
+                        # It handles the temporal modeling internally
+                        inputs = self._tokenizer(
+                            videos=list(pil_images),
+                            return_tensors="pt",
+                            padding=True,
+                        )
                         inputs = {
                             k: v.to(self._device)
                             for k, v in inputs.items()
@@ -181,23 +195,53 @@ class LanguageBindEncoder:
                         }
 
                         with torch.no_grad():
-                            if hasattr(self._model, "get_image_features"):
-                                emb = self._model.get_image_features(**inputs)
-                            else:
-                                emb = self._model(**inputs).last_hidden_state.mean(dim=1)
-                        embeddings.append(emb.cpu().numpy().flatten())
+                            # get_video_features returns (batch_size, embed_dim)
+                            # for a single video batch_size=1
+                            video_features = self._model.get_video_features(
+                                **inputs
+                            )
+                            # Normalize
+                            video_features = (
+                                video_features
+                                / video_features.norm(dim=-1, keepdim=True)
+                            )
+                            avg_emb = video_features[0].cpu().numpy()
 
-                    # Average all frame embeddings
-                    avg_emb = np.mean(embeddings, axis=0)
+                    # Fallback CLIP Path
+                    else:
+                        # Process each frame individually with CLIP and average embeddings
+                        embeddings = []
+                        for img in pil_images:
+                            inputs = self._tokenizer(
+                                images=img, return_tensors="pt"
+                            )
+                            inputs = {
+                                k: v.to(self._device)
+                                for k, v in inputs.items()
+                                if hasattr(v, "to")
+                            }
 
-                    # Normalize
-                    norm = np.linalg.norm(avg_emb)
-                    if norm > 0:
-                        avg_emb = avg_emb / norm
+                            with torch.no_grad():
+                                if hasattr(self._model, "get_image_features"):
+                                    emb = self._model.get_image_features(
+                                        **inputs
+                                    )
+                                else:
+                                    emb = self._model(
+                                        **inputs
+                                    ).last_hidden_state.mean(dim=1)
+                            embeddings.append(emb.cpu().numpy().flatten())
+
+                        # Average all frame embeddings
+                        avg_emb = np.mean(embeddings, axis=0)
+
+                        # Normalize
+                        norm = np.linalg.norm(avg_emb)
+                        if norm > 0:
+                            avg_emb = avg_emb / norm
 
                     # Pad to configured dimension (1024)
-                    # CLIP outputs 512, so padding is necessary
-                    target_dim = getattr(settings, 'video_embedding_dim', 1024)
+                    target_dim = getattr(settings, "video_embedding_dim", 1024)
                     if avg_emb.shape[0] < target_dim:
                         padding = np.zeros((target_dim - avg_emb.shape[0],))
                         avg_emb = np.concatenate([avg_emb, padding])
@@ -218,9 +262,13 @@ class LanguageBindEncoder:
             return None
 
         async with GPU_SEMAPHORE:
+
             def _infer():
                 import torch
-                inputs = self._tokenizer(text=text, return_tensors="pt", padding=True)
+
+                inputs = self._tokenizer(
+                    text=text, return_tensors="pt", padding=True
+                )
                 inputs = {
                     k: v.to(self._device)
                     for k, v in inputs.items()
@@ -231,7 +279,9 @@ class LanguageBindEncoder:
                     if hasattr(self._model, "get_text_features"):
                         emb = self._model.get_text_features(**inputs)
                     else:
-                        emb = self._model(**inputs).last_hidden_state.mean(dim=1)
+                        emb = self._model(**inputs).last_hidden_state.mean(
+                            dim=1
+                        )
 
                 embedding = emb.cpu().numpy().flatten()
                 norm = np.linalg.norm(embedding)
@@ -239,7 +289,7 @@ class LanguageBindEncoder:
                     embedding = embedding / norm
 
                 # Pad to configured dimension
-                target_dim = getattr(settings, 'video_embedding_dim', 1024)
+                target_dim = getattr(settings, "video_embedding_dim", 1024)
                 if embedding.shape[0] < target_dim:
                     padding = np.zeros((target_dim - embedding.shape[0],))
                     embedding = np.concatenate([embedding, padding])
@@ -258,14 +308,17 @@ class LanguageBindEncoder:
         """Encode audio to embedding."""
         try:
             from core.processing.audio_events import AudioEventDetector
+
             detector = AudioEventDetector()
             if not await detector._lazy_load():
                 return None
 
             async with GPU_SEMAPHORE:
+
                 def _process():
                     import librosa
                     import torch
+
                     if sample_rate != 48000:
                         audio = librosa.resample(
                             audio_segment.astype(np.float32),
@@ -281,12 +334,17 @@ class LanguageBindEncoder:
                         return_tensors="pt",
                     )
                     audio_inputs = {
-                        k: v.to(detector._device) for k, v in audio_inputs.items()
+                        k: v.to(detector._device)
+                        for k, v in audio_inputs.items()
                     }
 
                     with torch.no_grad():
-                        audio_emb = detector.model.get_audio_features(**audio_inputs)
-                        audio_emb = audio_emb / audio_emb.norm(dim=-1, keepdim=True)
+                        audio_emb = detector.model.get_audio_features(
+                            **audio_inputs
+                        )
+                        audio_emb = audio_emb / audio_emb.norm(
+                            dim=-1, keepdim=True
+                        )
 
                     return audio_emb.cpu().numpy().flatten()
 
@@ -355,7 +413,9 @@ class InternVideoEncoder:
             # from LanguageBindEncoder which provides SOTA action/video understanding.
             try:
                 if self._languagebind_encoder is None:
-                    self._languagebind_encoder = LanguageBindEncoder(device=self._device)
+                    self._languagebind_encoder = LanguageBindEncoder(
+                        device=self._device
+                    )
 
                 return await self._languagebind_encoder._lazy_load()
             except Exception as e:
@@ -363,25 +423,26 @@ class InternVideoEncoder:
                 self._load_failed = True
                 return False
 
-
     async def encode_action(
         self,
         frames: list[np.ndarray],
         num_frames: int = 8,
     ) -> np.ndarray | None:
         """Encode video for action understanding.
-        
+
         Uses LanguageBind CLIP backend for robust video-text embedding.
         """
         # Ensure LanguageBind encoder is initialized
         if self._languagebind_encoder is None:
-            self._languagebind_encoder = LanguageBindEncoder(device=self._device)
-        
+            self._languagebind_encoder = LanguageBindEncoder(
+                device=self._device
+            )
+
         # Load the backend (LanguageBind/CLIP)
         if not await self._lazy_load():
             log.warning("[InternVideo] Failed to load backend, returning None")
             return None
-        
+
         # ALWAYS use LanguageBind backend since _lazy_load() delegates to it
         # and leaves self._model/_processor as None
         try:
@@ -406,8 +467,16 @@ class InternVideoEncoder:
         """
         # Common kinetic actions to check for
         common_actions = [
-            "running", "walking", "eating", "drinking", "talking",
-            "driving", "dancing", "cooking", "fighting", "playing sports"
+            "running",
+            "walking",
+            "eating",
+            "drinking",
+            "talking",
+            "driving",
+            "dancing",
+            "cooking",
+            "fighting",
+            "playing sports",
         ]
 
         # Get features
@@ -419,8 +488,8 @@ class InternVideoEncoder:
         actions = await self.classify_action(frames, common_actions)
 
         return {
-            "actions": [a["action"] for a in actions[:3]], # Top 3
-            "features": features
+            "actions": [a["action"] for a in actions[:3]],  # Top 3
+            "features": features,
         }
 
     async def classify_action(
@@ -441,7 +510,9 @@ class InternVideoEncoder:
         """
         # Reuse cached encoder to avoid redundant model loading (critical perf fix)
         if self._languagebind_encoder is None:
-            self._languagebind_encoder = LanguageBindEncoder(device=self._device)
+            self._languagebind_encoder = LanguageBindEncoder(
+                device=self._device
+            )
         encoder = self._languagebind_encoder
 
         video_emb = await encoder.encode_video(frames)

@@ -420,15 +420,15 @@ class Settings(BaseSettings):
 
     # Advanced Overrides - SOTA Embeddings for 100% accuracy
     embedding_model_override: str = Field(
-        default="", # Empty = Auto-detect based on VRAM (SOTA preferred)
+        default="",  # Empty = Auto-detect based on VRAM (SOTA preferred)
         description="Text embedding model (NV-Embed-v2 = 4096d, SOTA)",
     )
     text_embedding_dim: int = Field(
-        default=4096, # Updated for NV-Embed-v2
+        default=4096,  # Updated for NV-Embed-v2
         description="Dimension of text embeddings (must match model)",
     )
     visual_embedding_dim: int = Field(
-        default=1152, # SigLIP SO400M is 1152 dim
+        default=1152,  # SigLIP SO400M is 1152 dim
         description="Dimension of visual embeddings ",
     )
 
@@ -453,18 +453,18 @@ class Settings(BaseSettings):
         default=True,
         description="Compute InternVideo/LanguageBind embeddings for action/motion search",
     )
-    
+
     # --- Hybrid VLM (best of both) ---
     enable_hybrid_vlm: bool = Field(
         default=True,
         description="Combine frame VLM + video VLM for complete understanding (recommended)",
     )
-    
+
     video_embedding_dim: int = Field(
         default=1024,
         description="Dimension of video embeddings (InternVideo/LanguageBind projected)",
     )
-    
+
     visual_features_dim: int = Field(
         default=1152,
         description="Dimension of visual features (SigLIP)",
@@ -497,7 +497,7 @@ class Settings(BaseSettings):
 
     # Hybrid Search Weights
     search_vector_weight: float = Field(
-        default=0.5, # Balanced for better identity matching
+        default=0.5,  # Balanced for better identity matching
         description="Weight for vector similarity in hybrid search (0.0-1.0)",
     )
     search_keyword_weight: float = Field(
@@ -507,17 +507,17 @@ class Settings(BaseSettings):
 
     # Retrieval Limits
     search_default_limit: int = Field(
-        default=50, # Higher recall
+        default=50,  # Higher recall
         description="Default number of search results",
     )
     search_rerank_multiplier: int = Field(
-        default=5, # Rerank top 250 for best precision
+        default=5,  # Rerank top 250 for best precision
         description="Multiply limit by this for reranking pool (get 3x candidates)",
     )
 
     # Reranking Thresholds
     search_min_score_threshold: float = Field(
-        default=0.2, # Lower threshold to let RRF/Reranker decide
+        default=0.2,  # Lower threshold to let RRF/Reranker decide
         description="Minimum score to include in results (0.0-1.0)",
     )
     search_vlm_confidence_threshold: int = Field(
@@ -638,10 +638,12 @@ class Settings(BaseSettings):
 
     # --- Search Feature Flags (Master Switches) ---
     enable_deep_research: bool = Field(
-        default=True, description="Master switch for deep research (cinematography, aesthetics)."
+        default=True,
+        description="Master switch for deep research (cinematography, aesthetics).",
     )
     enable_face_recognition: bool = Field(
-        default=True, description="Master switch for face detection and clustering."
+        default=True,
+        description="Master switch for face detection and clustering.",
     )
     enable_ocr: bool = Field(
         default=True, description="Master switch for text extraction (OCR)."
@@ -651,7 +653,8 @@ class Settings(BaseSettings):
         description="Master switch for NSFW/Safety checks (default OFF for speed).",
     )
     enable_time_extraction: bool = Field(
-        default=False, description="Master switch for clock/time extraction (default OFF)."
+        default=False,
+        description="Master switch for clock/time extraction (default OFF).",
     )
     enable_object_detection: bool = Field(
         default=True, description="Master switch for YOLO object detection."
@@ -753,7 +756,7 @@ class Settings(BaseSettings):
     def compute_type(self) -> str:
         """Determine the compute type (float16/int8) based on device."""
         if self.device == "cuda":
-            return "float16" # SOTA precision
+            return "float16"  # SOTA precision
         return "int8"
 
     @computed_field

@@ -18,21 +18,26 @@ router = APIRouter()
 
 def validate_path(path_str: str) -> Path:
     """Security check to prevent path traversal to sensitive system files.
-    
+
     Allowing arbitrary paths because this is a local desktop app, but blocking
     obviously dangerous OS files.
     """
     path = Path(path_str).resolve()
     path_str_lower = str(path).lower()
-    
+
     # Block Windows System files
-    if "windows\\system32" in path_str_lower or "windows/system32" in path_str_lower:
+    if (
+        "windows\\system32" in path_str_lower
+        or "windows/system32" in path_str_lower
+    ):
         raise HTTPException(status_code=403, detail="Access to System32 denied")
-        
+
     # Block sensitive Linux/Unix files
     if path_str_lower.startswith(("/etc", "/var/log", "/proc", "/sys")):
-        raise HTTPException(status_code=403, detail="Access to system files denied")
-        
+        raise HTTPException(
+            status_code=403, detail="Access to system files denied"
+        )
+
     return path
 
 
@@ -270,7 +275,9 @@ async def stream_media(
             with open(file_path, "rb") as f:
                 f.seek(range_start)
                 remaining = content_length
-                chunk_size = 1024 * 1024  # 1MB chunks for better seeking performance
+                chunk_size = (
+                    1024 * 1024
+                )  # 1MB chunks for better seeking performance
                 while remaining > 0:
                     read_size = min(chunk_size, remaining)
                     data = f.read(read_size)

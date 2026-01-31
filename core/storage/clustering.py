@@ -1,11 +1,13 @@
 """Cluster ID management for biometrics."""
+
 import time
 import threading
 from qdrant_client import QdrantClient
 
+
 class ClusterManager:
     """Manages unique cluster IDs for Faces and Voices."""
-    
+
     def __init__(self, client: QdrantClient):
         self.client = client
         self._cluster_id_lock = threading.Lock()
@@ -61,7 +63,7 @@ class ClusterManager:
             return max_id
         except Exception:
             return 0
-    
+
     def get_max_face_cluster_id(self, collection_name: str) -> int:
         """Get the maximum existing face cluster ID."""
         try:

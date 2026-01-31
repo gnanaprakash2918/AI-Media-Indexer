@@ -168,7 +168,9 @@ class AudioEventDetector:
 
                     # Store raw embedding before normalization if requested
                     if return_embedding:
-                        embedding_list = audio_embeds.squeeze(0).cpu().numpy().tolist()
+                        embedding_list = (
+                            audio_embeds.squeeze(0).cpu().numpy().tolist()
+                        )
 
                     text_embeds = text_embeds / text_embeds.norm(
                         dim=-1, keepdim=True
@@ -325,12 +327,14 @@ class AudioEventDetector:
                         audio_embeds = self.model.get_audio_features(
                             **audio_inputs
                         )
-                        
+
                         # Store embedding before normalization if requested
                         embedding_list = None
                         if return_embedding:
-                            embedding_list = audio_embeds.squeeze(0).cpu().numpy().tolist()
-                        
+                            embedding_list = (
+                                audio_embeds.squeeze(0).cpu().numpy().tolist()
+                            )
+
                         audio_embeds = audio_embeds / audio_embeds.norm(
                             dim=-1, keepdim=True
                         )
@@ -349,7 +353,7 @@ class AudioEventDetector:
                                     "confidence": round(conf, 3),
                                 }
                             )
-                    
+
                     if return_embedding:
                         all_results.append((results, embedding_list))
                     else:
@@ -430,46 +434,48 @@ class AudioEventDetector:
 
     async def encode_text(self, text: str) -> list[float] | None:
         """Encode text to CLAP text embedding for semantic audio search.
-        
+
         This produces a 512-dim text embedding that can be compared against
         CLAP audio embeddings stored in the audio_events collection.
-        
+
         Args:
             text: Query text to encode.
-            
+
         Returns:
             512-dim CLAP text embedding, or None on failure.
         """
         if not text:
             return None
-            
+
         if not await self._lazy_load():
             return None
-            
+
         if self.model is None or self.processor is None:
             return None
-            
+
         try:
             import torch
             from core.utils.resource_arbiter import RESOURCE_ARBITER
-            
+
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=0.5):
                 device = self._device or "cpu"
-                
+
                 text_inputs = self.processor(
                     text=[text],
                     return_tensors="pt",
                     padding=True,
                 )
                 text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
-                
+
                 with torch.no_grad():
                     text_embeds = self.model.get_text_features(**text_inputs)
                     # Normalize for cosine similarity
-                    text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
-                    
+                    text_embeds = text_embeds / text_embeds.norm(
+                        dim=-1, keepdim=True
+                    )
+
                 return text_embeds.squeeze(0).cpu().numpy().tolist()
-                
+
         except Exception as e:
             log.error(f"[CLAP] Text encoding failed: {e}")
             return None

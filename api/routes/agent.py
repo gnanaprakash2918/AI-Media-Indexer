@@ -115,25 +115,25 @@ async def agent_chat(
 
         # Real Orchestrator Logic
         from core.orchestration.orchestrator import get_orchestrator
-        
+
         start_time = time.time()
         orchestrator = get_orchestrator()
-        
+
         # Execute query through orchestrator
         # The orchestrator uses its own LLM for routing
         # The result includes the tool execution and result
         execution_result = await orchestrator.execute(request.message)
-        
+
         duration = time.time() - start_time
-        
+
         # Format response
         route = execution_result.get("route", {})
         results = execution_result.get("results")
-        
+
         # Generate a final answer based on the tool result
         tool_name = route.get("tool", "unknown")
         agent_type = route.get("agent", "unknown")
-        
+
         final_answer_prompt = f"""
         User Query: {request.message}
         Tool Used: {tool_name} ({agent_type})
@@ -141,22 +141,20 @@ async def agent_chat(
         
         Based on the tool result, answer the user's query gracefully.
         """
-        
+
         final_response = ollama.chat(
             model=request.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": final_answer_prompt},
-            ]
+            ],
         )
 
         return {
             "response": final_response["message"]["content"],
-            "tools_used": [{
-                "name": tool_name,
-                "agent": agent_type,
-                "result": results
-            }],
+            "tools_used": [
+                {"name": tool_name, "agent": agent_type, "result": results}
+            ],
             "duration": duration,
         }
 

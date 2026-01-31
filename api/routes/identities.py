@@ -414,5 +414,3 @@ async def mark_main_character(
         "cluster_id": cluster_id,
         "is_main_character": is_main,
     }
-
-

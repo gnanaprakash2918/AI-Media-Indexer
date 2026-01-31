@@ -50,9 +50,11 @@ class ClockReader:
             from PIL import Image
 
             if isinstance(image, Path):
+
                 def _load():
                     with Image.open(image) as img:
                         return np.array(img)
+
                 img = await asyncio.to_thread(_load)
             elif not isinstance(image, np.ndarray):
                 img = np.array(image)

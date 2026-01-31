@@ -44,10 +44,7 @@ from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.resource_arbiter import RESOURCE_ARBITER
 from core.utils.retry import retry
-from core.errors import (
-    MediaIndexerError,
-    IngestionError
-)
+from core.errors import MediaIndexerError, IngestionError
 import traceback
 
 # Global semaphore for VLM parallelism (limits concurrent VLM calls to 4)
@@ -55,27 +52,26 @@ import traceback
 VLM_SEMAPHORE = asyncio.Semaphore(4)
 
 
-
 class FrameBuffer:
     """Buffers frame data for batch database writes.
-    
+
     Accumulates processed frame data and flushes to DB in batches
     of `batch_size` for ~10x performance over individual writes.
     """
-    
+
     def __init__(self, db: VectorDB, batch_size: int = 50):
         self.db = db
         self.batch_size = batch_size
         self._buffer: list[dict] = []
         self._total_flushed = 0
-    
+
     def add(self, frame_data: dict) -> int:
         """Add a frame to the buffer. Returns frames flushed (0 or batch_size)."""
         self._buffer.append(frame_data)
         if len(self._buffer) >= self.batch_size:
             return self.flush()
         return 0
-    
+
     def flush(self) -> int:
         """Flush all buffered frames to database."""
         if not self._buffer:
@@ -84,12 +80,12 @@ class FrameBuffer:
         self._total_flushed += count
         self._buffer.clear()
         return count
-    
+
     @property
     def pending(self) -> int:
         """Number of frames waiting to be flushed."""
         return len(self._buffer)
-    
+
     @property
     def total_written(self) -> int:
         """Total frames written to database."""
@@ -156,7 +152,7 @@ class IngestionPipeline:
             Sam3Tracker() if settings.enable_sam3_tracking else None
         )
         self.frame_sampler = FrameSampler(every_n=5)
-        
+
         # Visual encoder for CLIP/SigLIP embeddings (lazy-loaded)
         self._visual_encoder = None
 
@@ -247,28 +243,38 @@ class IngestionPipeline:
 
         # === CHUNKING DECISION (OOM Prevention) ===
         # Prevent OOM by processing long videos in chunks
-        chunk_enabled = getattr(settings, 'enable_chunking', True)
-        chunk_duration = getattr(settings, 'chunk_duration_seconds', 600)  # 10 min default
-        min_length_for_chunk = getattr(settings, 'min_media_length_for_chunking', 1800)  # 30 min
-        auto_chunk_hw = getattr(settings, 'auto_chunk_by_hardware', True)
-        
+        chunk_enabled = getattr(settings, "enable_chunking", True)
+        chunk_duration = getattr(
+            settings, "chunk_duration_seconds", 600
+        )  # 10 min default
+        min_length_for_chunk = getattr(
+            settings, "min_media_length_for_chunking", 1800
+        )  # 30 min
+        auto_chunk_hw = getattr(settings, "auto_chunk_by_hardware", True)
+
         # Auto-adjust chunk size based on hardware
         if auto_chunk_hw and torch.cuda.is_available():
             try:
-                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (
+                    1024**3
+                )
                 if vram_gb < 8:
-                    chunk_duration = min(chunk_duration, 300)  # 5 min for low VRAM
+                    chunk_duration = min(
+                        chunk_duration, 300
+                    )  # 5 min for low VRAM
                     min_length_for_chunk = 600  # Chunk anything > 10 min
-                    logger.info(f"[Chunking] Low VRAM ({vram_gb:.1f}GB) - using 5min chunks")
+                    logger.info(
+                        f"[Chunking] Low VRAM ({vram_gb:.1f}GB) - using 5min chunks"
+                    )
             except Exception:
                 pass
-        
+
         should_chunk = chunk_enabled and duration > min_length_for_chunk
-        
+
         if should_chunk:
             logger.info(
-                f"[Chunking] Video {duration/60:.1f}min > threshold {min_length_for_chunk/60:.0f}min. "
-                f"Will process in {chunk_duration/60:.0f}min chunks."
+                f"[Chunking] Video {duration / 60:.1f}min > threshold {min_length_for_chunk / 60:.0f}min. "
+                f"Will process in {chunk_duration / 60:.0f}min chunks."
             )
             # Store chunk info for _process_frames to use
             self._chunk_duration = chunk_duration
@@ -299,14 +305,18 @@ class IngestionPipeline:
 
         try:
             if not skip_audio:
-                async with progress_tracker.stage(job_id, "audio", "Processing audio"):
+                async with progress_tracker.stage(
+                    job_id, "audio", "Processing audio"
+                ):
                     progress_tracker.update(job_id, 10.0)
                     await retry(
                         lambda: self._process_audio(path),
-                        on_retry=lambda e: progress_tracker.increment_retry(job_id, "audio")
+                        on_retry=lambda e: progress_tracker.increment_retry(
+                            job_id, "audio"
+                        ),
                     )
                     progress_tracker.update(job_id, 30.0)
-                
+
                 logger.info(
                     "[Pipeline] _process_audio completed, running cleanup..."
                 )
@@ -319,12 +329,13 @@ class IngestionPipeline:
                     job_id, {"audio_complete": True}
                 )
             else:
-                progress_tracker.stage_start(job_id, "audio", "Skipped (Already done)")
+                progress_tracker.stage_start(
+                    job_id, "audio", "Skipped (Already done)"
+                )
                 progress_tracker.stage_complete(job_id, "audio", "Skipped")
             logger.info(
                 "[Pipeline] Audio phase complete, moving to voice processing..."
             )
-
 
             if progress_tracker.is_cancelled(job_id):
                 return job_id
@@ -332,22 +343,28 @@ class IngestionPipeline:
                 return job_id
 
             if not skip_voice:
-                async with progress_tracker.stage(job_id, "voice", "Processing voice"):
+                async with progress_tracker.stage(
+                    job_id, "voice", "Processing voice"
+                ):
                     progress_tracker.update(job_id, 35.0)
                     await retry(
                         lambda: self._process_voice(path),
-                        on_retry=lambda e: progress_tracker.increment_retry(job_id, "voice")
+                        on_retry=lambda e: progress_tracker.increment_retry(
+                            job_id, "voice"
+                        ),
                     )
                     progress_tracker.update(job_id, 50.0)
-                
+
                 self._cleanup_memory("voice_complete")  # Unload Pyannote
                 # Checkpoint voice completion
                 progress_tracker.save_checkpoint(
                     job_id, {"voice_complete": True}
                 )
             else:
-                 progress_tracker.stage_start(job_id, "voice", "Skipped (Already done)")
-                 progress_tracker.stage_complete(job_id, "voice", "Skipped")
+                progress_tracker.stage_start(
+                    job_id, "voice", "Skipped (Already done)"
+                )
+                progress_tracker.stage_complete(job_id, "voice", "Skipped")
 
             logger.debug("Voice complete - checking job status")
 
@@ -360,72 +377,93 @@ class IngestionPipeline:
                 return job_id
 
             # Audio Events (CLAP)
-            async with progress_tracker.stage(job_id, "audio_events", "Detecting audio events"):
+            async with progress_tracker.stage(
+                job_id, "audio_events", "Detecting audio events"
+            ):
                 await self._process_audio_events(path, job_id)
-
 
             # Frames & Scenes processing with Chunking
             current_chunk = 0
-            
+
             while True:
                 # Calculate Chunk Context
                 chunk_start = 0.0
                 chunk_end = duration
-                
+
                 if should_chunk:
                     chunk_start = current_chunk * chunk_duration
-                    chunk_end = min((current_chunk + 1) * chunk_duration, duration)
-                    
+                    chunk_end = min(
+                        (current_chunk + 1) * chunk_duration, duration
+                    )
+
                     # Log chunk progress
                     logger.info(
                         f"[Chunking] Processing Chunk {current_chunk + 1}/{self._total_chunks}: "
-                        f"{chunk_start/60:.1f}m - {chunk_end/60:.1f}m"
+                        f"{chunk_start / 60:.1f}m - {chunk_end / 60:.1f}m"
                     )
-                    
+
                     # Update pipeline range context for components to see
                     self._start_time = chunk_start
                     self._end_time = chunk_end
-                
+
                 # Exit condition
                 if chunk_start >= duration:
                     break
 
                 # 1. Process Frames (Batch)
-                logger.debug(f"Starting frame processing for chunk {current_chunk}")
-                async with progress_tracker.stage(job_id, f"frames_chunk_{current_chunk}", "Processing frames"):
+                logger.debug(
+                    f"Starting frame processing for chunk {current_chunk}"
+                )
+                async with progress_tracker.stage(
+                    job_id, f"frames_chunk_{current_chunk}", "Processing frames"
+                ):
                     # Update scalar progress roughly
                     # We could make this precise but simple update is 55->85 range
-                    progress_base = 55.0 + (30.0 * (current_chunk / self._total_chunks))
+                    progress_base = 55.0 + (
+                        30.0 * (current_chunk / self._total_chunks)
+                    )
                     progress_tracker.update(job_id, progress_base)
-                    
+
                     await retry(
                         lambda: self._process_frames(
                             path, job_id, total_duration=duration
                         ),
-                        on_retry=lambda e: progress_tracker.increment_retry(job_id, "frames")
+                        on_retry=lambda e: progress_tracker.increment_retry(
+                            job_id, "frames"
+                        ),
                     )
 
-                logger.debug(f"Frame processing complete for chunk {current_chunk}")
-                
+                logger.debug(
+                    f"Frame processing complete for chunk {current_chunk}"
+                )
+
                 # 2. Dense Scene Captioning (Batch)
                 # We process scenes restricted to this chunk
-                async with progress_tracker.stage(job_id, f"scene_captions_chunk_{current_chunk}", "Generating scene captions"):
+                async with progress_tracker.stage(
+                    job_id,
+                    f"scene_captions_chunk_{current_chunk}",
+                    "Generating scene captions",
+                ):
                     await self._process_scene_captions(path, job_id)
-                
+
                 # MEMORY CLEANUP between chunks
                 self._cleanup_memory(f"chunk_{current_chunk}_complete")
-                
+
                 if not should_chunk:
                     break
-                    
+
                 current_chunk += 1
-                
+
                 # Check cancellation between chunks
-                if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
+                if progress_tracker.is_cancelled(
+                    job_id
+                ) or progress_tracker.is_paused(job_id):
                     return job_id
 
             # Post-Processing Phase
-            async with progress_tracker.stage(job_id, "post_processing", "Enriching metadata"):
+            async with progress_tracker.stage(
+                job_id, "post_processing", "Enriching metadata"
+            ):
                 progress_tracker.update(job_id, 95.0)
                 await self._post_process_video(path, job_id)
 
@@ -442,7 +480,9 @@ class IngestionPipeline:
             logger.critical(f"Ingestion failed with UNEXPECTED error: {e}")
             logger.critical(traceback.format_exc())
             progress_tracker.fail(job_id, error=f"Unexpected: {e}")
-            raise IngestionError(f"Unexpected pipeline failure: {e}", original_error=e)
+            raise IngestionError(
+                f"Unexpected pipeline failure: {e}", original_error=e
+            )
 
     @observe("audio_processing")
     async def _process_audio(self, path: Path) -> None:
@@ -663,31 +703,31 @@ class IngestionPipeline:
                 )
                 try:
                     with AudioTranscriber() as transcriber:
-                            async with RESOURCE_ARBITER.acquire(
-                                "whisper", vram_gb=1.5
-                            ):
-                                audio_segments = (
-                                    await transcriber.transcribe(
-                                        path,
-                                        language=detected_lang,
-                                        force_lyrics=use_lyrics_mode,
-                                    )
-                                    or []
+                        async with RESOURCE_ARBITER.acquire(
+                            "whisper", vram_gb=1.5
+                        ):
+                            audio_segments = (
+                                await transcriber.transcribe(
+                                    path,
+                                    language=detected_lang,
+                                    force_lyrics=use_lyrics_mode,
                                 )
+                                or []
+                            )
 
-                            # Auto-retry with lyrics mode if no segments and wasn't already lyrics mode
-                            if not audio_segments and not use_lyrics_mode:
-                                log(
-                                    "[Audio] No segments found, retrying with lyrics mode..."
+                        # Auto-retry with lyrics mode if no segments and wasn't already lyrics mode
+                        if not audio_segments and not use_lyrics_mode:
+                            log(
+                                "[Audio] No segments found, retrying with lyrics mode..."
+                            )
+                            audio_segments = (
+                                await transcriber.transcribe(
+                                    path,
+                                    language=detected_lang,
+                                    force_lyrics=True,
                                 )
-                                audio_segments = (
-                                    await transcriber.transcribe(
-                                        path,
-                                        language=detected_lang,
-                                        force_lyrics=True,
-                                    )
-                                    or []
-                                )
+                                or []
+                            )
                 except Exception as e:
                     log(f"[Audio] Whisper failed: {e}")
 
@@ -770,53 +810,75 @@ class IngestionPipeline:
                 try:
                     # Get duration via FFprobe (doesn't load file into memory)
                     import subprocess
+
                     probe_cmd = [
-                        'ffprobe', '-v', 'quiet', '-show_entries',
-                        'format=duration', '-of', 'csv=p=0', str(path)
+                        "ffprobe",
+                        "-v",
+                        "quiet",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "csv=p=0",
+                        str(path),
                     ]
                     duration_str = await asyncio.to_thread(
-                        lambda: subprocess.check_output(probe_cmd).decode().strip()
+                        lambda: subprocess.check_output(probe_cmd)
+                        .decode()
+                        .strip()
                     )
                     total_duration = float(duration_str)
-                    log(f"[CLAP] Video duration: {total_duration:.1f}s (streaming mode)")
-                    
+                    log(
+                        f"[CLAP] Video duration: {total_duration:.1f}s (streaming mode)"
+                    )
+
                     # Streaming parameters
                     sr = 16000  # CLAP expected sample rate
                     chunk_duration = 30.0  # 30s chunks (~1MB RAM each)
                     stride = 25.0  # 5s overlap to catch boundary events
-                    
+
                     # Prepare 2-second CLAP windows within each chunk
                     clap_window_duration = 2.0
                     clap_samples_per_window = int(clap_window_duration * sr)
-                    
+
                     # Build list of (chunk, start_time) tuples for batch processing
                     audio_chunks: list[tuple] = []
-                    
+
                     # Stream each chunk using FFmpeg (NOT librosa)
-                    for chunk_start in range(0, int(total_duration), int(stride)):
-                        chunk_end = min(chunk_start + chunk_duration, total_duration)
-                        
+                    for chunk_start in range(
+                        0, int(total_duration), int(stride)
+                    ):
+                        chunk_end = min(
+                            chunk_start + chunk_duration, total_duration
+                        )
+
                         # Use FFmpeg to extract just this chunk
                         chunk_array = await self._extract_audio_segment(
                             path, float(chunk_start), float(chunk_end), sr
                         )
-                        
+
                         if chunk_array is None or len(chunk_array) < sr:
                             continue
-                        
-                        # Split chunk into 2-second CLAP windows  
-                        for i in range(0, len(chunk_array) - clap_samples_per_window + 1, clap_samples_per_window):
-                            window = chunk_array[i : i + clap_samples_per_window]
+
+                        # Split chunk into 2-second CLAP windows
+                        for i in range(
+                            0,
+                            len(chunk_array) - clap_samples_per_window + 1,
+                            clap_samples_per_window,
+                        ):
+                            window = chunk_array[
+                                i : i + clap_samples_per_window
+                            ]
                             if len(window) < sr:  # Skip windows < 1 second
                                 continue
                             window_start = chunk_start + (i / sr)
                             audio_chunks.append((window, window_start))
-                        
+
                         # Aggressive cleanup after each chunk
                         del chunk_array
                         import gc
+
                         gc.collect()
-                    
+
                     log(
                         f"[CLAP] Prepared {len(audio_chunks)} windows for batch processing (streaming mode)"
                     )
@@ -888,7 +950,9 @@ class IngestionPipeline:
                                 start_time=event["start"],
                                 end_time=event["end"],
                                 confidence=event["confidence"],
-                                clap_embedding=event.get("embedding"),  # Store CLAP vector
+                                clap_embedding=event.get(
+                                    "embedding"
+                                ),  # Store CLAP vector
                             )
                     else:
                         log("[CLAP] No non-speech audio events detected")
@@ -903,46 +967,56 @@ class IngestionPipeline:
         # Uses pyloudnorm for ITU-R BS.1770-4 compliant loudness measurement
         # ============================================================
         try:
+            log(
+                "[Loudness] Starting audio level analysis (FFmpeg streaming)..."
+            )
 
-            log("[Loudness] Starting audio level analysis (FFmpeg streaming)...")
-            
             # === FFmpeg EBUR128 LOUDNESS ANALYSIS (OOM-SAFE) ===
             # Uses FFmpeg's ebur128 filter which streams the audio (~50MB RAM max)
             # instead of loading entire file into RAM (3-4GB for long videos)
             import subprocess
             import re
-            
+
             try:
                 # Run FFmpeg with ebur128 loudness filter
                 cmd = [
-                    "ffmpeg", "-i", str(path),
-                    "-af", "ebur128=framelog=verbose:peak=true",
-                    "-f", "null", "-"
+                    "ffmpeg",
+                    "-i",
+                    str(path),
+                    "-af",
+                    "ebur128=framelog=verbose:peak=true",
+                    "-f",
+                    "null",
+                    "-",
                 ]
                 result = await asyncio.to_thread(
-                    lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    lambda: subprocess.run(
+                        cmd, capture_output=True, text=True, timeout=300
+                    )
                 )
-                
+
                 # Parse the summary line from stderr
                 # Format: "Summary: Integrated loudness: -23.0 LUFS, Loudness range: 5.0 LU"
                 stderr = result.stderr
-                
+
                 lufs = -23.0  # Default
                 peak_db = 0.0
-                
+
                 # Extract integrated loudness
                 lufs_match = re.search(r"I:\s*(-?\d+\.?\d*)\s*LUFS", stderr)
                 if lufs_match:
                     lufs = float(lufs_match.group(1))
-                
+
                 # Extract true peak
                 peak_match = re.search(r"Peak:\s*(-?\d+\.?\d*)\s*dBFS", stderr)
                 if peak_match:
                     peak_db = float(peak_match.group(1))
-                
+
                 # Estimate SPL from LUFS (rough conversion)
-                estimated_spl = max(0, 85 + lufs + 23)  # 85dB baseline at -23 LUFS
-                
+                estimated_spl = max(
+                    0, 85 + lufs + 23
+                )  # 85dB baseline at -23 LUFS
+
                 # Categorize
                 if estimated_spl < 60:
                     category = "quiet"
@@ -952,9 +1026,11 @@ class IngestionPipeline:
                     category = "loud"
                 else:
                     category = "very_loud"
-                
-                log(f"[Loudness] Overall: {estimated_spl:.0f} dB SPL ({category}) [LUFS: {lufs:.1f}]")
-                
+
+                log(
+                    f"[Loudness] Overall: {estimated_spl:.0f} dB SPL ({category}) [LUFS: {lufs:.1f}]"
+                )
+
                 # Store overall loudness in media metadata
                 self.db.update_media_metadata(
                     media_path=str(path),
@@ -990,7 +1066,9 @@ class IngestionPipeline:
                 audio_array, sr = librosa.load(
                     str(path), sr=22050, mono=True, duration=max_duration
                 )
-                log(f"[MusicStructure] Loaded {len(audio_array)/sr:.1f}s audio (limited to {max_duration}s)")
+                log(
+                    f"[MusicStructure] Loaded {len(audio_array) / sr:.1f}s audio (limited to {max_duration}s)"
+                )
             else:
                 # Resample to 22050 for librosa if needed
                 if "sr" in locals() and sr != 22050:
@@ -1103,7 +1181,7 @@ class IngestionPipeline:
         try:
             # Slice audio asynchronously in the main event loop
             from core.processing.transcriber import AudioTranscriber
-            
+
             try:
                 # Instantiate usage because _slice_audio is an instance method
                 with AudioTranscriber() as transcriber:
@@ -1112,26 +1190,28 @@ class IngestionPipeline:
                     )
             except Exception as e:
                 from core.utils.logger import log
+
                 log(f"[Audio] Slicing failed: {e}, falling back to full file")
                 wav_path = path
 
             # Run blocking detection in a thread
             return await asyncio.to_thread(
                 self._run_detection_with_confidence,
-                wav_path, # Pass the sliced audio (or original path)
+                wav_path,  # Pass the sliced audio (or original path)
             )
 
         except Exception as e:
             from core.utils.logger import log
+
             log(f"[Audio] Language detection failed: {e}")
             return ("en", 0.0)
-            
+
         finally:
             # Cleanup temp file if created
             if (
-                wav_path 
-                and isinstance(wav_path, Path) 
-                and wav_path != path 
+                wav_path
+                and isinstance(wav_path, Path)
+                and wav_path != path
                 and wav_path.exists()
             ):
                 try:
@@ -1182,7 +1262,16 @@ class IngestionPipeline:
 
                 # Special handling for Indic languages with lower threshold
                 indic_langs = [
-                    "ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"
+                    "ta",
+                    "hi",
+                    "te",
+                    "ml",
+                    "kn",
+                    "bn",
+                    "gu",
+                    "mr",
+                    "or",
+                    "pa",
                 ]
                 if detected_lang in indic_langs and confidence > 0.2:
                     # Boost confidence for Indic languages (Whisper often underestimates)
@@ -1314,7 +1403,7 @@ class IngestionPipeline:
 
                 if global_speaker_id == "SILENCE":
                     continue
-                
+
                 # Speech Emotion Recognition (SER)
                 emotion_meta = {}
                 try:
@@ -1352,7 +1441,9 @@ class IngestionPipeline:
                         start=seg.start_time,
                         end=seg.end_time,
                         speaker_label=global_speaker_id,
-                        embedding=seg.embedding.tolist() if hasattr(seg.embedding, "tolist") else seg.embedding,
+                        embedding=seg.embedding.tolist()
+                        if hasattr(seg.embedding, "tolist")
+                        else seg.embedding,
                         audio_path=audio_path,
                         voice_cluster_id=voice_cluster_id,
                         **emotion_meta,
@@ -1400,10 +1491,10 @@ class IngestionPipeline:
         self, path: Path, job_id: str | None = None
     ) -> None:
         """Detects and indexes discrete audio events (CLAP) using streaming chunks.
-        
+
         Uses FFmpeg to stream audio in chunks instead of loading the entire file
         into memory, preventing OOM on long videos (the 55% stall fix).
-        
+
         Design decisions:
         - 30s chunks: Fits ~3MB RAM at 48kHz stereo
         - 5s overlap: Catches events spanning chunk boundaries
@@ -1411,225 +1502,294 @@ class IngestionPipeline:
         - Immediate cleanup: gc.collect() after each chunk
         """
         logger.info(f"Starting audio event detection for {path.name}")
-        
+
         try:
             from core.processing.audio_events import AudioEventDetector
             import subprocess
-            
+
             # Common audio events to detect
             target_classes = [
-                "applause", "laughter", "crying", "screaming", "music", 
-                "singing", "speech", "shout", "whisper", "doorbell", 
-                "knock", "glass breaking", "car horn", "siren", "gunshot", 
-                "explosion", "dog barking", "cat meow", "bird chirp", 
-                "rain", "thunder", "wind", "water flowing", "footsteps",
-                "silence", "typing", "phone ringing", "alarm"
+                "applause",
+                "laughter",
+                "crying",
+                "screaming",
+                "music",
+                "singing",
+                "speech",
+                "shout",
+                "whisper",
+                "doorbell",
+                "knock",
+                "glass breaking",
+                "car horn",
+                "siren",
+                "gunshot",
+                "explosion",
+                "dog barking",
+                "cat meow",
+                "bird chirp",
+                "rain",
+                "thunder",
+                "wind",
+                "water flowing",
+                "footsteps",
+                "silence",
+                "typing",
+                "phone ringing",
+                "alarm",
             ]
-            
+
             detector = AudioEventDetector()
-            
+
             # Get duration via FFprobe (doesn't load file into memory)
             try:
                 probe_cmd = [
-                    'ffprobe', '-v', 'quiet', '-show_entries', 
-                    'format=duration', '-of', 'csv=p=0', str(path)
+                    "ffprobe",
+                    "-v",
+                    "quiet",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
+                    str(path),
                 ]
-                duration = float(subprocess.check_output(probe_cmd).decode().strip())
+                duration = float(
+                    subprocess.check_output(probe_cmd).decode().strip()
+                )
             except Exception as e:
-                logger.warning(f"FFprobe failed, falling back to librosa for duration: {e}")
+                logger.warning(
+                    f"FFprobe failed, falling back to librosa for duration: {e}"
+                )
                 import librosa
+
                 duration = librosa.get_duration(path=str(path))
-            
+
             # Streaming parameters
             chunk_seconds = 30  # Process 30s at a time
             overlap_seconds = 5  # 5s overlap to catch events at boundaries
             stride_seconds = chunk_seconds - overlap_seconds  # 25s stride
             sample_rate = 48000  # CLAP expected sample rate
-            
+
             total_chunks = max(1, int(duration / stride_seconds) + 1)
             events_stored = 0
             previous_events = []  # For deduplication
-            
+
             # CLAP processing parameters (within each chunk)
             clap_window = 5.0  # 5s windows for CLAP
             clap_stride = 2.5  # 2.5s stride
-            
+
             for chunk_idx in range(total_chunks):
                 chunk_start = chunk_idx * stride_seconds
                 chunk_end = min(chunk_start + chunk_seconds, duration)
-                
+
                 # Skip if we've gone past the end
                 if chunk_start >= duration:
                     break
-                
+
                 # === PROGRESS UPDATE ===
                 if job_id:
                     progress = 45 + (chunk_idx / total_chunks) * 10  # 45% → 55%
                     progress_tracker.update(
-                        job_id, 
-                        progress, 
+                        job_id,
+                        progress,
                         stage="audio_events",
-                        message=f"Detecting audio events: chunk {chunk_idx+1}/{total_chunks} ({chunk_start:.0f}s-{chunk_end:.0f}s)"
+                        message=f"Detecting audio events: chunk {chunk_idx + 1}/{total_chunks} ({chunk_start:.0f}s-{chunk_end:.0f}s)",
                     )
-                
+
                 # Stream only this chunk using FFmpeg (doesn't load full file)
                 try:
                     audio_chunk = await self._extract_audio_segment(
                         path, chunk_start, chunk_end, sample_rate
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to extract audio chunk {chunk_idx}: {e}")
+                    logger.warning(
+                        f"Failed to extract audio chunk {chunk_idx}: {e}"
+                    )
                     continue
-                
+
                 if audio_chunk is None or len(audio_chunk) == 0:
                     continue
-                
+
                 # Split chunk into CLAP windows
                 samples_per_window = int(clap_window * sample_rate)
                 stride_samples = int(clap_stride * sample_rate)
-                
+
                 clap_chunks = []
-                for i in range(0, len(audio_chunk) - samples_per_window + 1, stride_samples):
+                for i in range(
+                    0, len(audio_chunk) - samples_per_window + 1, stride_samples
+                ):
                     window = audio_chunk[i : i + samples_per_window]
                     window_start = chunk_start + (i / sample_rate)
                     clap_chunks.append((window, window_start))
-                
+
                 if not clap_chunks:
                     continue
-                
+
                 # Batch process this chunk's windows
                 try:
+                    # Request embeddings for vector storage
                     chunk_events = await detector.detect_events_batch(
-                        clap_chunks, target_classes, sample_rate=sample_rate, 
-                        top_k=2, threshold=0.15
+                        clap_chunks,
+                        target_classes,
+                        sample_rate=sample_rate,
+                        top_k=2,
+                        threshold=0.15,
+                        return_embedding=True,
                     )
                 except Exception as e:
-                    logger.warning(f"CLAP detection failed for chunk {chunk_idx}: {e}")
+                    logger.warning(
+                        f"CLAP detection failed for chunk {chunk_idx}: {e}"
+                    )
                     continue
-                
+
                 # Store events with deduplication
-                for (window_audio, window_start), events in zip(clap_chunks, chunk_events):
+                for (window_audio, window_start), (events, embedding) in zip(
+                    clap_chunks, chunk_events
+                ):
                     if not events:
                         continue
-                        
+
                     window_end = window_start + clap_window
-                    
+
                     for event in events:
                         # Deduplicate events in overlap region
-                        if self._is_duplicate_event(event, window_start, previous_events, overlap_seconds):
+                        if self._is_duplicate_event(
+                            event,
+                            window_start,
+                            previous_events,
+                            overlap_seconds,
+                        ):
                             continue
-                        
-                        self.db.client.upsert(
-                            collection_name=self.db.AUDIO_EVENTS_COLLECTION,
-                            points=[
-                                models.PointStruct(
-                                    id=str(uuid.uuid4()),
-                                    vector=[0.0],  # Dummy vector, payload search only
-                                    payload={
-                                        "media_path": str(path),
-                                        "start_time": window_start,
-                                        "end_time": window_end,
-                                        "event_class": event["event"],
-                                        "confidence": event["confidence"],
-                                    },
-                                )
-                            ],
+
+                        # Use insert_audio_event which handles the schema correctly
+                        self.db.insert_audio_event(
+                            media_path=str(path),
+                            event_type=event["event"],
+                            start_time=window_start,
+                            end_time=window_end,
+                            confidence=event["confidence"],
+                            clap_embedding=embedding,  # Store genuine 512-dim CLAP vector
                         )
                         events_stored += 1
-                        previous_events.append({
-                            "event": event["event"],
-                            "start_time": window_start,
-                        })
-                
+                        previous_events.append(
+                            {
+                                "event": event["event"],
+                                "start_time": window_start,
+                            }
+                        )
+
                 # Cleanup chunk memory immediately
                 del audio_chunk
                 gc.collect()
-            
+
             logger.info(f"Indexed {events_stored} audio events for {path.name}")
             detector.cleanup()
-            
+
         except Exception as e:
             logger.error(f"Audio event detection failed: {e}")
-    
+
     async def _extract_audio_segment(
         self, path: Path, start: float, end: float, sample_rate: int = 48000
     ) -> np.ndarray | None:
         """Extract a specific audio segment using FFmpeg streaming.
-        
+
         This avoids loading the entire file into memory.
-        
+
         Args:
             path: Path to the media file.
             start: Start time in seconds.
             end: End time in seconds.
             sample_rate: Target sample rate (default 48000 for CLAP).
-            
+
         Returns:
             NumPy array of audio samples, or None on failure.
         """
         import subprocess
         import numpy as np
-        
+
         duration = end - start
-        
+
         try:
             # Check for audio stream first
             probe_cmd = [
-                'ffprobe', '-v', 'error', '-select_streams', 'a:0',
-                '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', str(path)
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(path),
             ]
-            probe_res = subprocess.run(probe_cmd, capture_output=True, text=True)
+            probe_res = subprocess.run(
+                probe_cmd, capture_output=True, text=True
+            )
             if not probe_res.stdout.strip():
                 return None
 
             cmd = [
-                'ffmpeg', '-y', '-v', 'error',
-                '-ss', str(start),
-                '-t', str(end - start),
-                '-i', str(path),
-                '-ar', str(sample_rate),  # Target sample rate
-                '-f', 'f32le',  # 32-bit float PCM
-                '-'  # Output to stdout
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-ss",
+                str(start),
+                "-t",
+                str(end - start),
+                "-i",
+                str(path),
+                "-ar",
+                str(sample_rate),  # Target sample rate
+                "-f",
+                "f32le",  # 32-bit float PCM
+                "-",  # Output to stdout
             ]
-            
-            result = subprocess.run(
-                cmd, capture_output=True, timeout=60
-            )
-            
+
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
+
             if result.returncode != 0:
-                logger.warning(f"FFmpeg extraction failed: {result.stderr.decode()[:200]}")
+                logger.warning(
+                    f"FFmpeg extraction failed: {result.stderr.decode()[:200]}"
+                )
                 return None
-            
+
             # Convert bytes to numpy array
             audio = np.frombuffer(result.stdout, dtype=np.float32)
             return audio
-            
+
         except subprocess.TimeoutExpired:
             logger.warning(f"Audio extraction timed out for {start}-{end}s")
             return None
         except Exception as e:
             logger.warning(f"Audio extraction failed: {e}")
             return None
-    
+
     def _is_duplicate_event(
-        self, event: dict, event_time: float, 
-        previous_events: list, overlap_window: float
+        self,
+        event: dict,
+        event_time: float,
+        previous_events: list,
+        overlap_window: float,
     ) -> bool:
         """Check if an event is a duplicate from the overlap region.
-        
+
         Args:
             event: The event dict with 'event' key.
             event_time: Start time of the event.
             previous_events: List of previously stored events.
             overlap_window: Size of overlap region in seconds.
-            
+
         Returns:
             True if this is a duplicate, False otherwise.
         """
         for prev in previous_events:
             # Same event class within overlap window
-            if (prev["event"] == event["event"] and 
-                abs(prev["start_time"] - event_time) < overlap_window):
+            if (
+                prev["event"] == event["event"]
+                and abs(prev["start_time"] - event_time) < overlap_window
+            ):
                 return True
         return False
 
@@ -1659,9 +1819,10 @@ class IngestionPipeline:
 
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)
-        
+
         # Initialize Visual Encoder for Search Embeddings (SigLIP/CLIP)
         from core.processing.visual_encoder import get_default_visual_encoder
+
         self.visual_encoder = get_default_visual_encoder()
 
         # GLOBAL IDENTITY: Load existing cluster centroids from DB
@@ -1724,10 +1885,10 @@ class IngestionPipeline:
                     return
 
                 paths = [f.path for f in frames_to_process]
-                
+
                 # === 1. BATCH FACE DETECTION ===
                 try:
-                    if getattr(settings, 'enable_face_recognition', True):
+                    if getattr(settings, "enable_face_recognition", True):
                         batch_faces = await self.faces.detect_faces_batch(paths)
                     else:
                         batch_faces = [[] for _ in paths]
@@ -1740,13 +1901,17 @@ class IngestionPipeline:
                 try:
                     if self.visual_encoder:
                         # Use batch encoding (SigLIP/CLIP) for search inputs
-                        embeddings = await self.visual_encoder.encode_batch(paths)
+                        embeddings = await self.visual_encoder.encode_batch(
+                            paths
+                        )
                         batch_embeddings = embeddings
-                        logger.debug(f"[Vision] Batch encoded {len(paths)} frames")
-                    elif self.vision and hasattr(self.vision, 'encode_batch'):
-                         # Fallback to VLM if no dedicated encoder (rare)
-                         embeddings = await self.vision.encode_batch(paths)
-                         batch_embeddings = embeddings
+                        logger.debug(
+                            f"[Vision] Batch encoded {len(paths)} frames"
+                        )
+                    elif self.vision and hasattr(self.vision, "encode_batch"):
+                        # Fallback to VLM if no dedicated encoder (rare)
+                        embeddings = await self.vision.encode_batch(paths)
+                        batch_embeddings = embeddings
                 except Exception as e:
                     logger.warning(f"Batch visual encoding failed: {e}")
                     batch_embeddings = [None] * len(frames_to_process)
@@ -1756,10 +1921,12 @@ class IngestionPipeline:
                     f_path = frame_item.path
                     f_ts = frame_item.timestamp
                     f_idx = frame_item.frame_index
-                    
+
                     # Update context
                     narrative_context = temporal_ctx.get_context_for_vlm()
-                    neighbor_timestamps = [c.timestamp for c in temporal_ctx.sensory]
+                    neighbor_timestamps = [
+                        c.timestamp for c in temporal_ctx.sensory
+                    ]
 
                     new_desc = await self._process_single_frame(
                         video_path=path,
@@ -1768,8 +1935,12 @@ class IngestionPipeline:
                         index=f_idx,
                         context=narrative_context,
                         neighbor_timestamps=neighbor_timestamps,
-                        pre_detected_faces=batch_faces[idx] if idx < len(batch_faces) else None,
-                        pre_computed_embedding=batch_embeddings[idx] if idx < len(batch_embeddings) else None,
+                        pre_detected_faces=batch_faces[idx]
+                        if idx < len(batch_faces)
+                        else None,
+                        pre_computed_embedding=batch_embeddings[idx]
+                        if idx < len(batch_embeddings)
+                        else None,
                     )
 
                     if new_desc:
@@ -1792,16 +1963,15 @@ class IngestionPipeline:
                             else [],
                         )
                         scenelet_builder.add_frame(s_ctx)
-                    
+
                     # Cleanup processed frame immediately
                     if f_path.exists():
-                         try:
-                             f_path.unlink()
-                         except Exception:
-                             pass
+                        try:
+                            f_path.unlink()
+                        except Exception:
+                            pass
 
             pending_frames = []
-
 
             async for extracted_frame in frame_generator:
                 if job_id:
@@ -1813,7 +1983,7 @@ class IngestionPipeline:
                 # ExtractedFrame contains: path, timestamp (actual PTS), frame_index
                 frame_path = extracted_frame.path
                 frame_count = extracted_frame.frame_index
-                
+
                 # RESUME: Skip already processed frames
                 if frame_count < resume_from_frame:
                     if frame_path.exists():
@@ -1823,7 +1993,7 @@ class IngestionPipeline:
                 # USE ACTUAL PTS TIMESTAMP (from FFprobe, not calculated)
                 # This fixes timestamp drift on VFR videos
                 timestamp = extracted_frame.timestamp
-                
+
                 if self.frame_sampler.should_sample(frame_count):
                     pending_frames.append(extracted_frame)
                     if len(pending_frames) >= 16:
@@ -1832,7 +2002,9 @@ class IngestionPipeline:
 
                 if job_id:
                     if progress_tracker.is_paused(job_id):
-                        logger.info(f"Job {job_id} paused. Stopping frame loop.")
+                        logger.info(
+                            f"Job {job_id} paused. Stopping frame loop."
+                        )
                         break
 
                     if progress_tracker.is_cancelled(job_id):
@@ -1848,7 +2020,9 @@ class IngestionPipeline:
                         try:
                             probe_data = await self.prober.probe(path)
                             video_duration = float(
-                                probe_data.get("format", {}).get("duration", 0.0)
+                                probe_data.get("format", {}).get(
+                                    "duration", 0.0
+                                )
                             )
                         except Exception:
                             video_duration = 0.0
@@ -1860,7 +2034,9 @@ class IngestionPipeline:
                     )
                     current_ts = timestamp
                     current_frame_index = (
-                        int(current_ts / interval) if interval > 0 else frame_count
+                        int(current_ts / interval)
+                        if interval > 0
+                        else frame_count
                     )
 
                     status_msg = f"Processing frame {current_frame_index}/{total_est_frames} at {current_ts:.1f}s"
@@ -1943,7 +2119,10 @@ class IngestionPipeline:
 
             # Finalize face tracks and store in Identity Graph
             # This is the key step: convert frame-by-frame detections into stable tracks
-            if hasattr(self, "_face_track_builder") and self._face_track_builder:
+            if (
+                hasattr(self, "_face_track_builder")
+                and self._face_track_builder
+            ):
                 try:
                     finalized_tracks = self._face_track_builder.finalize_all()
                     logger.info(
@@ -1965,7 +2144,9 @@ class IngestionPipeline:
                                 start_time=metadata["start_time"],
                                 end_time=metadata["end_time"],
                                 avg_embedding=avg_embedding,
-                                avg_confidence=metadata.get("avg_confidence", 0.0),
+                                avg_confidence=metadata.get(
+                                    "avg_confidence", 0.0
+                                ),
                                 frame_count=metadata.get("frame_count", 1),
                             )
                         except Exception as track_err:
@@ -2011,22 +2192,25 @@ class IngestionPipeline:
         self, video_path: Path, start: float, end: float
     ) -> str:
         """Generate dynamic action summary using VideoVLM (Qwen2-VL).
-        
+
         Extracts frames and asks VLM to describe motion.
         """
         try:
             import cv2
+
             cap = cv2.VideoCapture(str(video_path))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            
+
             start_frame = int(start * fps)
             end_frame = int(end * fps)
             duration_frames = end_frame - start_frame
-            
+
             # Sample 16 frames uniformly
             num_samples = 16
-            indices = np.linspace(start_frame, end_frame - 1, num_samples, dtype=int)
-            
+            indices = np.linspace(
+                start_frame, end_frame - 1, num_samples, dtype=int
+            )
+
             frames = []
             for idx in indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -2034,18 +2218,20 @@ class IngestionPipeline:
                 if ret:
                     frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             cap.release()
-            
+
             if not frames:
                 return ""
-                
+
             # Call VideoVLM
-            result = await self.video_vlm.generate_action_summary(frames, fps=fps)
-            
+            result = await self.video_vlm.generate_action_summary(
+                frames, fps=fps
+            )
+
             # Format output
             action = result.get("action", "")
             mood = result.get("mood", "")
             return f"{action} {mood}".strip()
-            
+
         except Exception as e:
             logger.error(f"Action summary failed: {e}")
             return ""
@@ -2068,34 +2254,39 @@ class IngestionPipeline:
         try:
             # TransNet returns (start_frame, end_frame). We need to convert to seconds.
             frame_scenes = self.transnet.predict_video(str(path))
-            
+
             import cv2
+
             cap = cv2.VideoCapture(str(path))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             cap.release()
-            
+
             scenes = []
             from core.processing.scene_detector import SceneInfo
-            
+
             for start_frame, end_frame in frame_scenes:
                 start_t = start_frame / fps
                 end_t = end_frame / fps
                 # Filter very short scenes (glitches)
                 if end_t - start_t >= 1.0:
-                    scenes.append(SceneInfo(
-                        start_time=start_t,
-                        end_time=end_t,
-                        start_frame=int(start_frame),
-                        end_frame=int(end_frame),
-                        mid_frame=int((start_frame + end_frame) / 2),
-                        mid_time=(start_t + end_t) / 2
-                    ))
-            
+                    scenes.append(
+                        SceneInfo(
+                            start_time=start_t,
+                            end_time=end_t,
+                            start_frame=int(start_frame),
+                            end_frame=int(end_frame),
+                            mid_frame=int((start_frame + end_frame) / 2),
+                            mid_time=(start_t + end_t) / 2,
+                        )
+                    )
+
             if not scenes:
                 # Fallback to detector if TransNet returns nothing
-                logger.warning("TransNet returned no scenes, fallback to scenedetect")
+                logger.warning(
+                    "TransNet returned no scenes, fallback to scenedetect"
+                )
                 scenes = await detect_scenes(path)
-                
+
         except Exception as e:
             logger.error(f"TransNet detection failed: {e}")
             scenes = await detect_scenes(path)
@@ -2196,7 +2387,7 @@ class IngestionPipeline:
             dr_meta = {}
             internvideo_features = None
             languagebind_features = None
-            
+
             if frame_bytes:
                 try:
                     import cv2
@@ -2213,39 +2404,53 @@ class IngestionPipeline:
                     # Run deep research on the representative frame
                     dr_result = await processor.analyze_frame(
                         img_np,
-                        compute_embeddings=False, # VectorDB does this
+                        compute_embeddings=False,  # VectorDB does this
                         compute_saliency=False,
-                        compute_fingerprint=True
+                        compute_fingerprint=True,
                     )
-                    
+
                     dr_meta = {
                         "shot_type": dr_result.shot_type,
                         "mood": dr_result.mood,
                         "aesthetic_score": dr_result.aesthetic_score,
                         "is_black_frame": dr_result.is_black_frame,
                     }
-                    
+
                     # Video understanding embeddings (InternVideo, LanguageBind)
                     # Only compute if enabled in settings (saves VRAM on low-end systems)
                     if settings.enable_video_embeddings:
                         try:
-                            video_result = await processor.analyze_video_segment(
-                                video_path=path,
-                                start_time=scene.start_time,
-                                end_time=scene.end_time,
-                                sample_frames=8,
+                            video_result = (
+                                await processor.analyze_video_segment(
+                                    video_path=path,
+                                    start_time=scene.start_time,
+                                    end_time=scene.end_time,
+                                    sample_frames=8,
+                                )
                             )
-                            
+
                             # Extract video embeddings for action search
                             if "internvideo" in video_result.video_features:
-                                internvideo_features = video_result.video_features["internvideo"].tolist()
+                                internvideo_features = (
+                                    video_result.video_features[
+                                        "internvideo"
+                                    ].tolist()
+                                )
                             if "languagebind" in video_result.video_features:
-                                languagebind_features = video_result.video_features["languagebind"].tolist()
-                                
-                            logger.debug(f"Scene {idx}: InternVideo={internvideo_features is not None}, LanguageBind={languagebind_features is not None}")
+                                languagebind_features = (
+                                    video_result.video_features[
+                                        "languagebind"
+                                    ].tolist()
+                                )
+
+                            logger.debug(
+                                f"Scene {idx}: InternVideo={internvideo_features is not None}, LanguageBind={languagebind_features is not None}"
+                            )
                         except Exception as e:
-                            logger.debug(f"Video understanding failed for scene {idx}: {e}")
-                            
+                            logger.debug(
+                                f"Video understanding failed for scene {idx}: {e}"
+                            )
+
                 except Exception as e:
                     logger.warning(f"Deep Research failed for scene {idx}: {e}")
 
@@ -2255,23 +2460,39 @@ class IngestionPipeline:
                 try:
                     # Lazy load the encoder to save VRAM until needed
                     if self._visual_encoder is None:
-                        from core.processing.visual_encoder import get_default_visual_encoder
-                        logger.info("Initializing Visual Encoder (CLIP/SigLIP) for ingestion...")
+                        from core.processing.visual_encoder import (
+                            get_default_visual_encoder,
+                        )
+
+                        logger.info(
+                            "Initializing Visual Encoder (CLIP/SigLIP) for ingestion..."
+                        )
                         self._visual_encoder = get_default_visual_encoder()
-                    
+
                     # Convert frame bytes to numpy array
                     import io
                     from PIL import Image
+
                     img = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
                     img_np = np.array(img)
-                    
+
                     # Encode the frame to get visual embeddings
-                    visual_features_arr = await self._visual_encoder.encode_image(img_np)
+                    visual_features_arr = (
+                        await self._visual_encoder.encode_image(img_np)
+                    )
                     if visual_features_arr is not None:
-                        visual_features = visual_features_arr.tolist() if hasattr(visual_features_arr, 'tolist') else list(visual_features_arr)
-                        logger.debug(f"Scene {idx}: Visual features generated (dim={len(visual_features)})")
+                        visual_features = (
+                            visual_features_arr.tolist()
+                            if hasattr(visual_features_arr, "tolist")
+                            else list(visual_features_arr)
+                        )
+                        logger.debug(
+                            f"Scene {idx}: Visual features generated (dim={len(visual_features)})"
+                        )
                 except Exception as e:
-                    logger.warning(f"Failed to generate visual features for scene {idx}: {e}")
+                    logger.warning(
+                        f"Failed to generate visual features for scene {idx}: {e}"
+                    )
                     visual_features = None
 
             # 8. Store scene with multi-vector
@@ -2333,11 +2554,11 @@ class IngestionPipeline:
 
                 # Enhance visual text with Deep Research insights
                 if dr_meta:
-                     visual_text += (
-                         f" {dr_meta.get('shot_type', '')} "
-                         f"{dr_meta.get('mood', '')} "
-                         f"aesthetic_score: {dr_meta.get('aesthetic_score', 0):.2f}"
-                     )
+                    visual_text += (
+                        f" {dr_meta.get('shot_type', '')} "
+                        f"{dr_meta.get('mood', '')} "
+                        f"aesthetic_score: {dr_meta.get('aesthetic_score', 0):.2f}"
+                    )
 
                 await self.db.store_scene(
                     media_path=str(path),
@@ -2420,8 +2641,10 @@ class IngestionPipeline:
         # ------------------------------------------------------------
         dr_result = None
         # Check global master switch first
-        if getattr(settings, 'enable_deep_research', True):
-            skip_deep_research = getattr(settings, 'deep_research_per_scene', True)
+        if getattr(settings, "enable_deep_research", True):
+            skip_deep_research = getattr(
+                settings, "deep_research_per_scene", True
+            )
             if not skip_deep_research:
                 try:
                     dr_processor = get_deep_research_processor()
@@ -2440,7 +2663,7 @@ class IngestionPipeline:
                         )
                 except Exception as e:
                     logger.warning(f"[DeepResearch] Analysis failed: {e}")
-        
+
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"
         thumb_dir.mkdir(parents=True, exist_ok=True)
@@ -2711,42 +2934,66 @@ class IngestionPipeline:
                 if frame_img is not None:
                     # --- OCR Skip-Unchanged-Frames Optimization ---
                     skip_ocr = False
-                    
+
                     # 1. Time Throttling (Max every 2.0s)
                     import time
+
                     now_ts = time.time()
-                    if hasattr(self, '_last_ocr_time') and (now_ts - self._last_ocr_time) < 2.0:
+                    if (
+                        hasattr(self, "_last_ocr_time")
+                        and (now_ts - self._last_ocr_time) < 2.0
+                    ):
                         skip_ocr = True
-                        
+
                     # 2. Perceptual Hash Check
-                    ocr_skip_enabled = getattr(settings, 'ocr_skip_unchanged_frames', True)
-                    
+                    ocr_skip_enabled = getattr(
+                        settings, "ocr_skip_unchanged_frames", True
+                    )
+
                     if not skip_ocr and ocr_skip_enabled:
                         try:
                             # Compute perceptual hash (fast, 8x8 grayscale downsample)
                             gray = cv2.cvtColor(frame_img, cv2.COLOR_BGR2GRAY)
-                            resized = cv2.resize(gray, (8, 8), interpolation=cv2.INTER_AREA)
+                            resized = cv2.resize(
+                                gray, (8, 8), interpolation=cv2.INTER_AREA
+                            )
                             mean_val = np.mean(resized)
-                            current_hash = (resized > mean_val).flatten().tobytes()
-                            
+                            current_hash = (
+                                (resized > mean_val).flatten().tobytes()
+                            )
+
                             # Compare with previous frame's hash
-                            if hasattr(self, '_last_ocr_hash') and self._last_ocr_hash is not None:
+                            if (
+                                hasattr(self, "_last_ocr_hash")
+                                and self._last_ocr_hash is not None
+                            ):
                                 # Hamming distance (count of differing bits)
-                                diff = sum(a != b for a, b in zip(current_hash, self._last_ocr_hash))
+                                diff = sum(
+                                    a != b
+                                    for a, b in zip(
+                                        current_hash, self._last_ocr_hash
+                                    )
+                                )
                                 if diff < 8:  # <12.5% difference = same frame
                                     skip_ocr = True
-                                    if hasattr(self, '_last_ocr_text'):
-                                        ocr_text = self._last_ocr_text  # Reuse previous result
-                                        ocr_boxes = getattr(self, '_last_ocr_boxes', [])
-                                    logger.debug(f"[OCR] Skipped unchanged frame (hash diff: {diff})")
-                            
+                                    if hasattr(self, "_last_ocr_text"):
+                                        ocr_text = (
+                                            self._last_ocr_text
+                                        )  # Reuse previous result
+                                        ocr_boxes = getattr(
+                                            self, "_last_ocr_boxes", []
+                                        )
+                                    logger.debug(
+                                        f"[OCR] Skipped unchanged frame (hash diff: {diff})"
+                                    )
+
                             self._last_ocr_hash = current_hash
                         except Exception as e:
                             logger.debug(f"[OCR] Hash comparison failed: {e}")
-                    
+
                     # Gate: Only run OCR if frame likely contains text (edge density check)
                     # Check enable_ocr master switch
-                    if getattr(settings, 'enable_ocr', True):
+                    if getattr(settings, "enable_ocr", True):
                         if not skip_ocr and self.text_gate.has_text(frame_img):
                             ocr_result = await self.ocr_engine.extract_text(
                                 frame_img
@@ -2757,41 +3004,53 @@ class IngestionPipeline:
                                 # Cache for skip-unchanged optimization
                                 self._last_ocr_text = ocr_text
                                 self._last_ocr_boxes = ocr_boxes
-                                self._last_ocr_time = time.time()  # Update last run time
-                                logger.info(f"[OCR] Extracted: {ocr_text[:100]}...")
+                                self._last_ocr_time = (
+                                    time.time()
+                                )  # Update last run time
+                                logger.info(
+                                    f"[OCR] Extracted: {ocr_text[:100]}..."
+                                )
                             else:
-                                logger.debug("[OCR] No text found in gated frame")
+                                logger.debug(
+                                    "[OCR] No text found in gated frame"
+                                )
                     else:
                         logger.debug("[OCR] Disabled via config")
 
                     # Deep Research Enrichment (Safety & Time)
                     try:
                         # Content Moderation
-                        if getattr(settings, 'enable_content_moderation', False):
+                        if getattr(
+                            settings, "enable_content_moderation", False
+                        ):
                             if not hasattr(self, "_moderator"):
                                 from core.processing.content_moderation import (
                                     VisualContentModerator,
                                 )
+
                                 self._moderator = VisualContentModerator()
 
-                            safe_res = await self._moderator.check_frame(frame_img)
+                            safe_res = await self._moderator.check_frame(
+                                frame_img
+                            )
                             if not safe_res.is_safe:
                                 flags_str = ", ".join(
                                     [f.name for f in safe_res.flags]
                                 )
                                 video_context += f"\n[SAFETY-FLAG]: {flags_str}"
-                        
+
                         # Clock Reader
-                        if getattr(settings, 'enable_time_extraction', False):
+                        if getattr(settings, "enable_time_extraction", False):
                             if not hasattr(self, "_clock"):
-                                from core.processing.clock_reader import ClockReader
+                                from core.processing.clock_reader import (
+                                    ClockReader,
+                                )
+
                                 self._clock = ClockReader()
 
                             clock_res = await self._clock.read(frame_img)
                             if clock_res:
-                                video_context += (
-                                    f"\n[VISIBLE-TIME]: {clock_res.get('time_string')}"
-                                )
+                                video_context += f"\n[VISIBLE-TIME]: {clock_res.get('time_string')}"
                     except Exception as e:
                         logger.warning(f"Deep Research enrichment error: {e}")
 
@@ -2803,17 +3062,27 @@ class IngestionPipeline:
             # ============================================================
             detected_objects: list[str] = []
             try:
-                if getattr(settings, 'enable_object_detection', True) and self.enhanced_config and self.enhanced_config.object_detector:
+                if (
+                    getattr(settings, "enable_object_detection", True)
+                    and self.enhanced_config
+                    and self.enhanced_config.object_detector
+                ):
                     obj_detector = self.enhanced_config.object_detector
                     if frame_img is not None:
                         # Run YOLO-World detection on frame
                         detections = obj_detector.detect(frame_img)
                         if detections:
-                            detected_objects = [d.get("label", d.get("class", "")) for d in detections if d.get("confidence", 0) > 0.3]
+                            detected_objects = [
+                                d.get("label", d.get("class", ""))
+                                for d in detections
+                                if d.get("confidence", 0) > 0.3
+                            ]
                             if detected_objects:
                                 unique_objects = list(set(detected_objects))
                                 video_context += f"\n[DETECTED-OBJECTS]: {', '.join(unique_objects)}"
-                                logger.debug(f"[ObjectDetection] Found: {unique_objects}")
+                                logger.debug(
+                                    f"[ObjectDetection] Found: {unique_objects}"
+                                )
             except Exception as e:
                 logger.debug(f"[ObjectDetection] Skipped: {e}")
 
@@ -2952,26 +3221,26 @@ class IngestionPipeline:
                 )
                 payload["action"] = analysis.action or ""
                 payload["description"] = description
-                
+
                 # DYNAMIC: Extract ALL visual attributes from entities for searchability
                 # NO HARDCODING - works for any entity type (clothing, vehicles, objects, etc.)
                 # This enables queries like "light green shirt", "red ferrari", "blue bag"
                 visual_attributes = []
                 entity_details = []
-                
+
                 # Extract from ALL entities - let VLM determine what's important
                 for entity in analysis.entities:
                     # Collect ALL visual details (colors, patterns, textures, states)
                     if entity.visual_details:
                         visual_attributes.append(entity.visual_details.lower())
-                    
+
                     # Collect entity names for keyword search
                     entity_details.append(entity.name.lower())
-                    
+
                     # Also collect category for filtering
                     if entity.category:
                         entity_details.append(entity.category.lower())
-                
+
                 # Store as searchable fields - hybrid search will match these
                 if visual_attributes:
                     payload["visual_attributes"] = visual_attributes
@@ -3003,13 +3272,17 @@ class IngestionPipeline:
                 detected_faces, face_cluster_ids, strict=False
             ):
                 face_name = self.db.get_face_name_by_cluster(cluster_id)
-                bbox = face.bbox if isinstance(face.bbox, list) else list(face.bbox)
+                bbox = (
+                    face.bbox
+                    if isinstance(face.bbox, list)
+                    else list(face.bbox)
+                )
                 # Calculate bbox dimensions for analytics
                 top, right, bottom, left = bbox
                 bbox_width = right - left
                 bbox_height = bottom - top
                 bbox_area = bbox_width * bbox_height
-                
+
                 faces_metadata.append(
                     {
                         "bbox": bbox,  # [top, right, bottom, left]
@@ -3359,11 +3632,17 @@ class IngestionPipeline:
                     # For now, using the main encoder for all text representations is standard for dense retrieval
                     vectors = {}
                     if visual_text:
-                        vectors["visual"] = await self.db.encode_text(visual_text)
+                        vectors["visual"] = await self.db.encode_text(
+                            visual_text
+                        )
                     if motion_text:
-                        vectors["motion"] = await self.db.encode_text(motion_text)
+                        vectors["motion"] = await self.db.encode_text(
+                            motion_text
+                        )
                     if dialogue_text:
-                        vectors["dialogue"] = await self.db.encode_text(dialogue_text)
+                        vectors["dialogue"] = await self.db.encode_text(
+                            dialogue_text
+                        )
 
                     # Generate deterministic ID
                     import uuid
@@ -3430,17 +3709,20 @@ class IngestionPipeline:
                     "dialogue_summary": dialogue_summary,
                 }
                 global_ctx.add_scene(scene_data_global)
-                
+
                 # Wire to Knowledge Graph / GraphRAG for social network and timeline queries
                 try:
                     from core.storage.identity_graph import identity_graph
-                    
+
                     # Get face_cluster_ids from all frames
-                    all_face_cluster_ids = list({
-                        cid for f in frames
-                        for cid in f.get("face_cluster_ids", [])
-                    })
-                    
+                    all_face_cluster_ids = list(
+                        {
+                            cid
+                            for f in frames
+                            for cid in f.get("face_cluster_ids", [])
+                        }
+                    )
+
                     # Create scene in SQLite graph database
                     identity_graph.create_scene(
                         media_id=media_path,
@@ -3450,9 +3732,15 @@ class IngestionPipeline:
                         description=scene_data_global.get("visual_summary"),
                         face_cluster_ids=all_face_cluster_ids,
                         entities=scene_data_global.get("entities", []),
-                        actions=[f.get("action", "") for f in frames[:10] if f.get("action")],
+                        actions=[
+                            f.get("action", "")
+                            for f in frames[:10]
+                            if f.get("action")
+                        ],
                     )
-                    logger.debug(f"[GraphRAG] Created scene with {len(all_face_cluster_ids)} faces")
+                    logger.debug(
+                        f"[GraphRAG] Created scene with {len(all_face_cluster_ids)} faces"
+                    )
                 except Exception as e:
                     logger.debug(f"[GraphRAG] Scene creation skipped: {e}")
 

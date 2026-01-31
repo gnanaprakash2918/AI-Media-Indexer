@@ -40,9 +40,10 @@ class BiometricArbitrator:
         """Loads the ArcFace ONNX session only when first required."""
         if self._initialized:
             return self.session is not None
-        
-        async with asyncio.Lock(): # Basic lock for init
-            if self._initialized: return self.session is not None
+
+        async with asyncio.Lock():  # Basic lock for init
+            if self._initialized:
+                return self.session is not None
             self._initialized = True
 
             if ort is None:
@@ -54,11 +55,16 @@ class BiometricArbitrator:
                 return False
 
             try:
+
                 def _load():
                     return ort.InferenceSession(
                         str(self.model_path),
-                        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                        providers=[
+                            "CUDAExecutionProvider",
+                            "CPUExecutionProvider",
+                        ],
                     )
+
                 self.session = await asyncio.to_thread(_load)
                 log(f"[BIO] ArcFace loaded: {self.model_path.name}")
                 return True
@@ -74,6 +80,7 @@ class BiometricArbitrator:
             return None
 
         try:
+
             def _prep():
                 img = cv2.resize(face_crop, (112, 112))
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -84,6 +91,7 @@ class BiometricArbitrator:
             img_input = await asyncio.to_thread(_prep)
 
             async with GPU_SEMAPHORE:
+
                 def _infer():
                     outputs = self.session.run(
                         None, {self.session.get_inputs()[0].name: img_input}

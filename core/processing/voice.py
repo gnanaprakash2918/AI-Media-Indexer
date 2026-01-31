@@ -94,7 +94,9 @@ class VoiceProcessor:
         self._init_lock = asyncio.Lock()
 
         # Audio cache for load-once optimization (avoids repeated I/O)
-        self._cached_audio: tuple[str, np.ndarray, int] | None = None  # (path, data, sample_rate)
+        self._cached_audio: tuple[str, np.ndarray, int] | None = (
+            None  # (path, data, sample_rate)
+        )
 
         if not self.enabled:
             log.info("Voice analysis disabled by config.")
@@ -107,15 +109,24 @@ class VoiceProcessor:
         """Checks if the file contains an audio stream using ffprobe."""
         try:
             import subprocess
+
             cmd = [
                 "ffprobe",
-                "-v", "error",
-                "-select_streams", "a",
-                "-show_entries", "stream=codec_type",
-                "-of", "csv=p=0",
-                str(input_path)
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(input_path),
             ]
-            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            output = (
+                subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+                .decode()
+                .strip()
+            )
             return bool(output)
         except Exception:
             return False
@@ -139,14 +150,17 @@ class VoiceProcessor:
 
         try:
             import soundfile as sf
-            audio_data, sample_rate = sf.read(path_str, dtype='float32')
+
+            audio_data, sample_rate = sf.read(path_str, dtype="float32")
 
             # Convert stereo to mono if needed
             if len(audio_data.shape) > 1:
                 audio_data = np.mean(audio_data, axis=1)
 
             self._cached_audio = (path_str, audio_data, sample_rate)
-            log.debug(f"[Voice] Cached audio: {path.name} ({len(audio_data)/sample_rate:.1f}s)")
+            log.debug(
+                f"[Voice] Cached audio: {path.name} ({len(audio_data) / sample_rate:.1f}s)"
+            )
             return (audio_data, sample_rate)
         except Exception as e:
             log.warning(f"[Voice] Failed to cache audio {path.name}: {e}")
@@ -321,7 +335,9 @@ class VoiceProcessor:
             # Always convert to WAV to ensure compatibility with all video/audio formats
             # CRITICAL: Check for audio stream first to avoid FFmpeg crashes
             if not self._has_audio_stream(audio_path):
-                log.warning(f"[Voice] SKIPPED - No audio stream detected in {audio_path.name}")
+                log.warning(
+                    f"[Voice] SKIPPED - No audio stream detected in {audio_path.name}"
+                )
                 return []
 
             log.info(f"[Voice] Processing: {audio_path.name}")
@@ -354,7 +370,6 @@ class VoiceProcessor:
                 if duration > MAX_SEGMENT_DURATION:
                     end = start + MAX_SEGMENT_DURATION
 
-
                 # Check for silence/garbage audio using cached audio (OPTIMIZED)
                 # Pyannote is good but can hallucinate speech on noise or breaths
                 is_silence_segment = False
@@ -363,16 +378,19 @@ class VoiceProcessor:
                     cached = self._get_cached_audio(processing_path)
                     if cached:
                         audio_data, sr = cached
-                        audio_chunk = self._slice_audio_memory(audio_data, sr, start, end)
+                        audio_chunk = self._slice_audio_memory(
+                            audio_data, sr, start, end
+                        )
                         if is_audio_silent(audio_chunk):
                             is_silence_segment = True
                     else:
                         # Fallback: read from file if caching failed
                         import soundfile as sf
+
                         audio_chunk, _ = sf.read(
                             str(processing_path),
                             start=int(start * 16000),
-                            frames=int((end - start) * 16000)
+                            frames=int((end - start) * 16000),
                         )
                         if is_audio_silent(audio_chunk):
                             is_silence_segment = True
@@ -403,7 +421,9 @@ class VoiceProcessor:
                         start_time=start,
                         end_time=end,
                         speaker_label=speaker,
-                        confidence=1.0 if is_silence_segment else (1.0 if segments_with_placeholder == 0 else 0.5),
+                        confidence=1.0
+                        if is_silence_segment
+                        else (1.0 if segments_with_placeholder == 0 else 0.5),
                         embedding=embedding,
                     )
                 )
@@ -536,13 +556,16 @@ class VoiceProcessor:
                 # If still too short (e.g. at start/end of file), extend the other side
                 if (end - start) < MIN_EMBEDDING_DURATION:
                     if start == 0.0:
-                        end = min(max_duration - safety_margin, start + MIN_EMBEDDING_DURATION)
+                        end = min(
+                            max_duration - safety_margin,
+                            start + MIN_EMBEDDING_DURATION,
+                        )
                     elif end >= max_duration - safety_margin:
                         start = max(0.0, end - MIN_EMBEDDING_DURATION)
             else:
-                 # Just clamp standard margin
-                 start = max(0.0, start)
-                 end = min(max_duration - safety_margin, end)
+                # Just clamp standard margin
+                start = max(0.0, start)
+                end = min(max_duration - safety_margin, end)
 
             # Ensure minimum segment duration (100ms) -- fallback
             if end - start < 0.1:

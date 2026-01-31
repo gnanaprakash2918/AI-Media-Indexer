@@ -370,7 +370,9 @@ class DeepResearchProcessor:
             try:
                 # TechnicalCueDetector uses separate async methods
                 result.is_black_frame = await detector.detect_black_frame(frame)
-                result.blur_score = 0.0  # Blur detection requires additional implementation
+                result.blur_score = (
+                    0.0  # Blur detection requires additional implementation
+                )
             except Exception as e:
                 log.warning(f"[DeepResearch] Technical detection failed: {e}")
 
@@ -392,7 +394,9 @@ class DeepResearchProcessor:
             if hasher:
                 try:
                     # hash_frame is async - must await
-                    result.perceptual_hash = await hasher.hash_frame(frame) or ""
+                    result.perceptual_hash = (
+                        await hasher.hash_frame(frame) or ""
+                    )
                 except Exception as e:
                     log.warning(
                         f"[DeepResearch] Perceptual hashing failed: {e}"

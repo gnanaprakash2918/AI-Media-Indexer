@@ -137,7 +137,10 @@ async def test_visual_encoder() -> dict:
     """Test visual encoder (SigLIP/CLIP) model load/unload."""
     print("\n🖼️ Testing VisualEncoder (SigLIP/CLIP)...")
 
-    from core.processing.visual_encoder import get_default_visual_encoder, reset_visual_encoder
+    from core.processing.visual_encoder import (
+        get_default_visual_encoder,
+        reset_visual_encoder,
+    )
 
     before = get_vram_info()[0]
     encoder = get_default_visual_encoder()
@@ -145,12 +148,12 @@ async def test_visual_encoder() -> dict:
     frames = create_test_frames(4)
     # Encode a batch of frames
     from PIL import Image
-    
+
     images = []
     for frame in frames:
         img = Image.fromarray(frame)
         images.append(img)
-    
+
     # Get embeddings
     embeddings = encoder.encode_images(images)
     peak = get_vram_info()[0]

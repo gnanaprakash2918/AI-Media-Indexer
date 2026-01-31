@@ -51,15 +51,16 @@ class VisionAnalyzer:
         self._llm_loaded = llm is not None
         self.prompt_filename = prompt_filename
         self.prompt: str | None = None
-        
+
         # Register with Resource Arbiter
         try:
             from core.utils.resource_arbiter import RESOURCE_ARBITER
+
             # Register with a default VRAM estimate (e.g. 6GB for a 7B model)
             RESOURCE_ARBITER.register_model("vision_llm", self.unload_model)
         except ImportError:
             pass
-            
+
         log(
             "[Vision] Initialized (lazy mode). LLM will load on first analyze call."
         )
@@ -67,16 +68,17 @@ class VisionAnalyzer:
     def unload_model(self) -> None:
         """Unload the LLM to free VRAM resources."""
         if self._llm is not None:
-             self._llm = None
-             self._llm_loaded = False
-             
-             import gc
-             import torch
-             gc.collect()
-             if torch.cuda.is_available():
-                 torch.cuda.empty_cache()
-                 
-             log("[Vision] LLM unloaded to free VRAM.")
+            self._llm = None
+            self._llm_loaded = False
+
+            import gc
+            import torch
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            log("[Vision] LLM unloaded to free VRAM.")
 
     def _ensure_llm_loaded(self) -> None:
         """Loads the LLM and prompt template if they are not already cached."""
@@ -179,9 +181,9 @@ IMPORTANT RULES:
 
         # Retry logic for robustness against Ollama timeouts/transient errors
         max_retries = 3
-        
+
         from core.utils.resource_arbiter import RESOURCE_ARBITER
-        
+
         for attempt in range(max_retries):
             try:
                 # Acquire VRAM -> this may trigger unloading of Whisper/other models

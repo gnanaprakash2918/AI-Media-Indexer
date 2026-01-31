@@ -75,8 +75,9 @@ async def hybrid_search(
         bool, Query(description="Use LLM re-ranking for higher accuracy")
     ] = False,  # OFF by default for speed
     use_reasoning: Annotated[
-        bool, Query(description="Use LLM query decomposition for complex queries")
-    ] = False,  # OFF by default for speed
+        bool,
+        Query(description="Use LLM query decomposition for complex queries"),
+    ] = True,  # ON by default for maximum accuracy (Parses "red shirt" -> clothing_color: red)
     face_cluster_id: Annotated[
         int | None, Query(description="Filter by specific face cluster ID")
     ] = None,
@@ -156,9 +157,13 @@ async def hybrid_search(
                     )
                     # Add padded timestamps for VideoPlayer context window
                     end_ts = r.get("end_time") or r.get("end") or ts + 5
-                    transformed["display_start"] = max(0, ts - 3)  # 3s before match
+                    transformed["display_start"] = max(
+                        0, ts - 3
+                    )  # 3s before match
                     transformed["display_end"] = end_ts + 3  # 3s after match
-                    transformed["match_start"] = ts  # Original match point for highlighting
+                    transformed["match_start"] = (
+                        ts  # Original match point for highlighting
+                    )
                     transformed["match_end"] = end_ts  # Original match end
                 transformed_results.append(transformed)
 
@@ -265,34 +270,39 @@ async def advanced_search(
                 query=req.query,
                 limit=req.limit,
                 use_reranking=req.use_rerank,
-                video_path=req.video_path if hasattr(req, "video_path") else None
+                video_path=req.video_path
+                if hasattr(req, "video_path")
+                else None,
             )
-            
+
             # Extract results list from the agent response
             raw_results = result.get("results", [])
-            
+
             # Filter by confidence if applicable (sota_search handles scoring, but we can double check)
             filtered = [
-                r for r in raw_results 
+                r
+                for r in raw_results
                 if r.get("score", 0) >= req.min_confidence
             ]
-            
+
             return {
                 "query": req.query,
                 "total": len(filtered),
                 "results": filtered,
-                "stats": result.get("stats", {})
+                "stats": result.get("stats", {}),
             }
         else:
-             # Fallback if SearchAgent is somehow unavailable (unlikely)
-            fallback = await pipeline.db.search_frames_hybrid(req.query, limit=req.limit)
+            # Fallback if SearchAgent is somehow unavailable (unlikely)
+            fallback = await pipeline.db.search_frames_hybrid(
+                req.query, limit=req.limit
+            )
             return {
                 "query": req.query,
                 "total": len(fallback),
                 "results": fallback,
-                "warning": "SearchAgent unavailable"
+                "warning": "SearchAgent unavailable",
             }
-            
+
     except Exception as e:
         logger.error(f"Advanced search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -523,7 +533,9 @@ async def agentic_search(
     except Exception as e:
         logger.error(f"Agentic search failed: {e}")
         # Fallback to hybrid search
-        regular_results = await pipeline.db.search_frames_hybrid(query=q, limit=limit)
+        regular_results = await pipeline.db.search_frames_hybrid(
+            query=q, limit=limit
+        )
         return {
             "query": q,
             "parsed": None,
@@ -590,7 +602,9 @@ async def scene_search(
             "query": q,
             "error": str(e),
             "fallback": True,
-            "results": await pipeline.db.search_frames_hybrid(query=q, limit=limit),
+            "results": await pipeline.db.search_frames_hybrid(
+                query=q, limit=limit
+            ),
         }
 
 

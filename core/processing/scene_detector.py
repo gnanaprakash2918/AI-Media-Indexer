@@ -23,39 +23,44 @@ class SceneInfo:
 
 def _get_video_fps(video_path: Path) -> float:
     """Get actual video FPS using FFprobe.
-    
+
     Args:
         video_path: Path to the video file.
-        
+
     Returns:
         Frames per second (defaults to 30.0 if probe fails).
     """
     import subprocess
-    
+
     try:
         cmd = [
-            'ffprobe', '-v', 'quiet',
-            '-select_streams', 'v:0',
-            '-show_entries', 'stream=r_frame_rate',
-            '-of', 'csv=p=0',
-            str(video_path)
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate",
+            "-of",
+            "csv=p=0",
+            str(video_path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        
+
         if result.returncode == 0 and result.stdout.strip():
             # FFprobe returns FPS as fraction like "30000/1001" or "30/1"
             fps_str = result.stdout.strip()
-            if '/' in fps_str:
-                num, den = fps_str.split('/')
+            if "/" in fps_str:
+                num, den = fps_str.split("/")
                 fps = float(num) / float(den)
             else:
                 fps = float(fps_str)
-            
+
             log(f"Detected video FPS: {fps:.2f}")
             return fps
     except Exception as e:
         log(f"FPS detection failed, using 30fps fallback: {e}")
-    
+
     return 30.0  # Fallback
 
 
@@ -92,9 +97,7 @@ async def detect_scenes(video_path: Path | str) -> list[SceneInfo]:
             str(path),
             adaptive_detector_cls(
                 adaptive_threshold=settings.scene_detect_threshold,
-                min_scene_len=int(
-                    settings.scene_detect_min_length * fps
-                ),
+                min_scene_len=int(settings.scene_detect_min_length * fps),
             ),
             show_progress=False,
         )

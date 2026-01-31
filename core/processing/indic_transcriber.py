@@ -261,7 +261,6 @@ class IndicASRPipeline:
         Patches tokenizer config for compatibility with NeMo 2.x.
         """
 
-
         if self.NEMO_MODEL_MAP is None:
             raise ValueError("NEMO_MODEL_MAP is missing")
         model_info = self.NEMO_MODEL_MAP.get(
@@ -346,12 +345,15 @@ class IndicASRPipeline:
             # Clean up incomplete extraction
             if extract_dir.exists():
                 import shutil
+
                 shutil.rmtree(extract_dir, ignore_errors=True)
 
             extract_dir.mkdir(parents=True, exist_ok=True)
 
             # Extract .nemo (it's a tar archive)
-            log(f"[IndicASR] Extracting .nemo archive for patching: {nemo_file.name}")
+            log(
+                f"[IndicASR] Extracting .nemo archive for patching: {nemo_file.name}"
+            )
             with tarfile.open(nemo_path, "r") as tar:
                 # Use safer extraction without filter for compatibility
                 tar.extractall(extract_dir)
@@ -375,8 +377,9 @@ class IndicASRPipeline:
                     if item.is_dir():
                         try:
                             if any(
-                                f.suffix in (".model", ".vocab") 
-                                for f in item.iterdir() if f.is_file()
+                                f.suffix in (".model", ".vocab")
+                                for f in item.iterdir()
+                                if f.is_file()
                             ):
                                 tokenizer_dir = item.name
                                 break
@@ -405,7 +408,9 @@ class IndicASRPipeline:
                     log("[IndicASR] tokenizer.dir already present")
                     return str(extract_dir)
                 else:
-                    log("[IndicASR] Could not find tokenizer directory to patch")
+                    log(
+                        "[IndicASR] Could not find tokenizer directory to patch"
+                    )
                     # Return the directory anyway - let NeMo try to load it
                     return str(extract_dir)
             else:
@@ -416,8 +421,10 @@ class IndicASRPipeline:
         except Exception as e:
             log(f"[IndicASR] Failed to patch .nemo archive: {e}")
             import traceback
+
             traceback.print_exc()
             return None
+
     async def _extract_audio(self, media_path: Path) -> Path:
         """Extracts audio from a video file into a mono 16kHz WAV format (Async).
 
@@ -468,12 +475,17 @@ class IndicASRPipeline:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=300
+            )
 
             if process.returncode != 0:
-                 raise subprocess.CalledProcessError(
-                     process.returncode or 1, ffmpeg_cmd, output=stdout, stderr=stderr
-                 )
+                raise subprocess.CalledProcessError(
+                    process.returncode or 1,
+                    ffmpeg_cmd,
+                    output=stdout,
+                    stderr=stderr,
+                )
 
             if wav_path.exists() and wav_path.stat().st_size > 0:
                 log(
@@ -485,8 +497,8 @@ class IndicASRPipeline:
         except Exception as e:
             # Handle subprocess and asyncio errors
             err_msg = str(e)
-            if hasattr(e, 'stderr') and e.stderr: # type: ignore
-                 err_msg = e.stderr.decode(errors='replace') # type: ignore
+            if hasattr(e, "stderr") and e.stderr:  # type: ignore
+                err_msg = e.stderr.decode(errors="replace")  # type: ignore
             log(f"[IndicASR] FFmpeg failed: {err_msg}")
             raise
 
@@ -540,18 +552,18 @@ class IndicASRPipeline:
                 # Keeping synchronous HTTP logic for now as 'requests' isn't used, 'httpx' is used but synchronously?
                 # Ah, httpx.post is sync here. Ideally should be async client.
                 # BUT this task is about FFmpeg blocking. Let's fix FFmpeg first.
-                
+
                 # To be fully non-blocking, we should use async context manager for httpx
                 # But to minimize changes, let's wrap this block in to_thread if it was blocking
                 # Actually, blocking here inside 'async def transcribe' is bad.
                 # However, the priority detected was FFmpeg.
-                
+
                 # Original code:
                 # with open(audio_path, "rb") as f:
                 #    response = httpx.post(...)
-                
+
                 # We'll leave the HTTP part for now as it wasn't the flagged issue, focus on FFmpeg.
-                
+
                 with open(audio_path, "rb") as f:
                     response = httpx.post(
                         url,
@@ -605,7 +617,10 @@ class IndicASRPipeline:
             if self._backend == "hf":
                 # HF pipeline call is blocking CPU, wrap it
                 import asyncio
-                raw_text = await asyncio.to_thread(self._transcribe_hf, wav_path)
+
+                raw_text = await asyncio.to_thread(
+                    self._transcribe_hf, wav_path
+                )
             else:
                 raw_text = await self._transcribe_nemo(wav_path)
 
@@ -698,14 +713,14 @@ class IndicASRPipeline:
         if duration <= chunk_duration_sec:
             # Run blocking NeMo inference in thread
             def _infer_single():
-                 with torch.no_grad():
+                with torch.no_grad():
                     self.model.cur_decoder = "ctc"  # type: ignore
                     return self.model.transcribe(  # type: ignore
                         [str(audio_path)],
                         batch_size=1,
                         language_id=self.lang,
                     )
-            
+
             transcriptions = await asyncio.to_thread(_infer_single)
             return self._extract_text(transcriptions)
 
@@ -724,17 +739,18 @@ class IndicASRPipeline:
                 continue
 
             try:
+
                 def _infer_chunk():
                     with torch.no_grad():
-                        self.model.cur_decoder = "ctc" # type: ignore
-                        return self.model.transcribe( # type: ignore
+                        self.model.cur_decoder = "ctc"  # type: ignore
+                        return self.model.transcribe(  # type: ignore
                             [str(chunk_path)],
                             batch_size=1,
                             language_id=self.lang,
                         )
 
                 transcriptions = await asyncio.to_thread(_infer_chunk)
-                
+
                 chunk_text = self._extract_text(transcriptions)
                 if chunk_text:
                     texts.append(chunk_text)
@@ -796,19 +812,23 @@ class IndicASRPipeline:
         ]
 
         try:
-             process = await asyncio.create_subprocess_exec(
+            process = await asyncio.create_subprocess_exec(
                 ffmpeg_cmd,
                 *cmd_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-             )
-             _, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
-             
-             if process.returncode != 0:
-                 raise Exception(f"FFmpeg failed with code {process.returncode}: {stderr.decode() if stderr else ''}")
+            )
+            _, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=60
+            )
 
-             if chunk_path.exists() and chunk_path.stat().st_size > 0:
-                 return chunk_path
+            if process.returncode != 0:
+                raise Exception(
+                    f"FFmpeg failed with code {process.returncode}: {stderr.decode() if stderr else ''}"
+                )
+
+            if chunk_path.exists() and chunk_path.stat().st_size > 0:
+                return chunk_path
         except Exception as e:
             log(f"[IndicASR] Audio slice failed: {e}")
 

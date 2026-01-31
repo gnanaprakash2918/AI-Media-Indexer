@@ -16,6 +16,7 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class IdentityProcessor:
     """Handles voice diarization, speaker identification, and identity graph updates."""
 
@@ -61,7 +62,9 @@ class IdentityProcessor:
                         global_speaker_id, existing_cluster_id, _score = match
                         voice_cluster_id = existing_cluster_id
                         if voice_cluster_id == -1:
-                            voice_cluster_id = self.db.get_next_voice_cluster_id()
+                            voice_cluster_id = (
+                                self.db.get_next_voice_cluster_id()
+                            )
                     else:
                         global_speaker_id = f"SPK_{uuid.uuid4().hex[:12]}"
                         voice_cluster_id = self.db.get_next_voice_cluster_id()
@@ -83,15 +86,29 @@ class IdentityProcessor:
 
                     if not clip_file.exists():
                         cmd = [
-                            "ffmpeg", "-y", "-i", str(path),
-                            "-ss", str(seg.start_time),
-                            "-t", str(seg.end_time - seg.start_time),
-                            "-q:a", "2", "-map", "a",
-                            "-loglevel", "error", str(clip_file),
+                            "ffmpeg",
+                            "-y",
+                            "-i",
+                            str(path),
+                            "-ss",
+                            str(seg.start_time),
+                            "-t",
+                            str(seg.end_time - seg.start_time),
+                            "-q:a",
+                            "2",
+                            "-map",
+                            "a",
+                            "-loglevel",
+                            "error",
+                            str(clip_file),
                         ]
-                        result = subprocess.run(cmd, capture_output=True, text=True)
+                        result = subprocess.run(
+                            cmd, capture_output=True, text=True
+                        )
                         if result.returncode != 0:
-                            logger.warning(f"[Voice] FFmpeg failed: {result.stderr[:100]}")
+                            logger.warning(
+                                f"[Voice] FFmpeg failed: {result.stderr[:100]}"
+                            )
 
                     if clip_file.exists() and clip_file.stat().st_size > 0:
                         audio_path = f"/thumbnails/voices/{clip_name}"
@@ -104,14 +121,15 @@ class IdentityProcessor:
 
                 if global_speaker_id == "SILENCE":
                     continue
-                
+
                 # SER Analysis
                 emotion_meta = {}
                 try:
                     if not self._ser_analyzer:
                         self._ser_analyzer = SpeechEmotionAnalyzer()
-                    
+
                     import librosa
+
                     if clip_file.exists():
                         y, sr = librosa.load(str(clip_file), sr=16000)
                         emotion_res = await self._ser_analyzer.analyze(y, sr)
@@ -125,11 +143,15 @@ class IdentityProcessor:
 
                 # Store Segment
                 if seg.embedding is not None:
-                     if voice_cluster_id <= 0:
+                    if voice_cluster_id <= 0:
                         voice_cluster_id = self.db.get_next_voice_cluster_id()
-                     
-                     embedding_list = seg.embedding.tolist() if hasattr(seg.embedding, "tolist") else seg.embedding
-                     self.db.insert_voice_segment(
+
+                    embedding_list = (
+                        seg.embedding.tolist()
+                        if hasattr(seg.embedding, "tolist")
+                        else seg.embedding
+                    )
+                    self.db.insert_voice_segment(
                         media_path=str(path),
                         start=seg.start_time,
                         end=seg.end_time,
@@ -138,11 +160,11 @@ class IdentityProcessor:
                         audio_path=audio_path,
                         voice_cluster_id=voice_cluster_id,
                         **emotion_meta,
-                     )
+                    )
                 elif audio_extraction_success:
                     # Placeholder embedding
                     if voice_cluster_id <= 0:
-                         voice_cluster_id = self.db.get_next_voice_cluster_id()
+                        voice_cluster_id = self.db.get_next_voice_cluster_id()
                     placeholder = [1e-6] * 256
                     self.db.insert_voice_segment(
                         media_path=str(path),
@@ -159,6 +181,7 @@ class IdentityProcessor:
                 self.voice_processor.cleanup()
             self.voice_processor = None
             import gc
+
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

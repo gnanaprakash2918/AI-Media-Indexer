@@ -116,10 +116,16 @@ async def get_system_config():
             "high_performance_mode": settings.high_performance_mode,
             # VLM / Video Understanding options
             "enable_frame_vlm": getattr(settings, "enable_frame_vlm", True),
-            "enable_video_embeddings": getattr(settings, "enable_video_embeddings", True),
+            "enable_video_embeddings": getattr(
+                settings, "enable_video_embeddings", True
+            ),
             "enable_hybrid_vlm": getattr(settings, "enable_hybrid_vlm", True),
-            "enable_visual_embeddings": getattr(settings, "enable_visual_embeddings", True),
-            "enable_voice_analysis": getattr(settings, "enable_voice_analysis", True),
+            "enable_visual_embeddings": getattr(
+                settings, "enable_visual_embeddings", True
+            ),
+            "enable_voice_analysis": getattr(
+                settings, "enable_voice_analysis", True
+            ),
         },
     }
 

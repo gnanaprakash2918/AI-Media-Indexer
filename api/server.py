@@ -1,6 +1,7 @@
 """FastAPI server composition root."""
 
 from __future__ import annotations
+
 print("DEBUG: Starting detailed server imports...")
 
 import logging
@@ -120,7 +121,7 @@ from api.routes import (
     search,
     system,
     voices,
-    manipulation, # NEW: Manipulation Routes
+    manipulation,  # NEW: Manipulation Routes
 )
 
 print("DEBUG: Checking overlays...")
@@ -149,7 +150,7 @@ async def lifespan(app: FastAPI):
 
     global pipeline
     try:
-        print("DEBUG: Lifespan: Initializing pipeline...") # Added debug
+        print("DEBUG: Lifespan: Initializing pipeline...")  # Added debug
         pipeline = IngestionPipeline()
         app.state.pipeline = pipeline
         logger.info("Pipeline initialized")
@@ -234,7 +235,7 @@ def create_app() -> FastAPI:
     app.include_router(graph.router, tags=["Graph"])  # New
     if overlays:
         app.include_router(overlays.router, tags=["Overlays"])
-    
+
     # Manipulation Routes
     app.include_router(manipulation.router, tags=["Manipulation"])
 
@@ -257,6 +258,7 @@ print("DEBUG: App created!")
 
 if __name__ == "__main__":
     import uvicorn
+
     print("DEBUG: Starting Uvicorn run...")
     uvicorn.run(
         app,
@@ -265,4 +267,3 @@ if __name__ == "__main__":
         reload=False,
     )
     print("DEBUG: Uvicorn run exited.")
-

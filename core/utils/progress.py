@@ -92,11 +92,11 @@ class ProgressTracker:
                     return
 
             job = self._cache[job_id]
-            
+
             # Simple 0-100 updates
             if percent >= 0:
                 job.progress = min(100.0, max(0.0, percent))
-            
+
             if stage:
                 job.current_stage = stage
                 # Also update pipeline_stage so frontend displays correct stage
@@ -119,72 +119,86 @@ class ProgressTracker:
             # Persist to DB (throttled)
             self._persist_throttled(job)
 
-    def stage_start(self, job_id: str, stage_name: str, message: str = "") -> None:
+    def stage_start(
+        self, job_id: str, stage_name: str, message: str = ""
+    ) -> None:
         """Mark the start of a processing stage."""
         with self._lock:
             if job_id not in self._cache:
                 return
             job = self._cache[job_id]
-            
+
             job.current_stage = stage_name
             job.pipeline_stage = stage_name
             if message:
                 job.message = message
-            
+
             # Initialize or update stage stats
             current_stats = job.stage_stats.get(stage_name, {})
-            current_stats.update({
-                "status": "running",
-                "start": time.time(),
-                "end": None,
-                "duration": None,
-            })
+            current_stats.update(
+                {
+                    "status": "running",
+                    "start": time.time(),
+                    "end": None,
+                    "duration": None,
+                }
+            )
             job.stage_stats[stage_name] = current_stats
 
             # Broadcast start
-            self._broadcast({
-                "event": "stage_start",
-                "job_id": job_id,
-                "stage": stage_name,
-                "message": message,
-                "timestamp": time.time()
-            })
-            
+            self._broadcast(
+                {
+                    "event": "stage_start",
+                    "job_id": job_id,
+                    "stage": stage_name,
+                    "message": message,
+                    "timestamp": time.time(),
+                }
+            )
+
             # Persist stage update immediately
             self._persist_throttled(job, force=True)
 
-    def stage_complete(self, job_id: str, stage_name: str, message: str = "Complete") -> None:
+    def stage_complete(
+        self, job_id: str, stage_name: str, message: str = "Complete"
+    ) -> None:
         """Mark a stage as completed."""
         with self._lock:
             if job_id not in self._cache:
                 return
             job = self._cache[job_id]
-            
+
             end_time = time.time()
-            
+
             if stage_name in job.stage_stats:
                 stats = job.stage_stats[stage_name]
                 start_time = stats.get("start", end_time)
                 duration = end_time - start_time
-                
-                stats.update({
-                    "status": "completed",
-                    "end": end_time,
-                    "duration": duration
-                })
+
+                stats.update(
+                    {
+                        "status": "completed",
+                        "end": end_time,
+                        "duration": duration,
+                    }
+                )
                 job.stage_stats[stage_name] = stats
-            
+
             if message:
                 job.message = message
 
             # Broadcast completion
-            self._broadcast({
-                "event": "stage_complete",
-                "job_id": job_id,
-                "stage": stage_name,
-                "duration": job.stage_stats.get(stage_name, {}).get("duration"),
-                "message": message
-            })
+            self._broadcast(
+                {
+                    "event": "stage_complete",
+                    "job_id": job_id,
+                    "stage": stage_name,
+                    "duration": job.stage_stats.get(stage_name, {}).get(
+                        "duration"
+                    ),
+                    "message": message,
+                }
+            )
 
             # Persist immediately
             self._persist_throttled(job, force=True)
@@ -195,14 +209,12 @@ class ProgressTracker:
             if job_id not in self._cache:
                 return
             job = self._cache[job_id]
-            
+
             if stage_name in job.stage_stats:
-                job.stage_stats[stage_name].update({
-                    "status": "failed",
-                    "end": time.time(),
-                    "error": error
-                })
-            
+                job.stage_stats[stage_name].update(
+                    {"status": "failed", "end": time.time(), "error": error}
+                )
+
             # Also fail the job overall
             self.fail(job_id, error=error)
 
@@ -212,12 +224,12 @@ class ProgressTracker:
             if job_id not in self._cache:
                 return
             job = self._cache[job_id]
-            
+
             if stage_name in job.stage_stats:
                 stats = job.stage_stats[stage_name]
                 stats["retries"] = stats.get("retries", 0) + 1
                 job.stage_stats[stage_name] = stats
-                
+
             # Persist (throttled)
             self._persist_throttled(job)
 
@@ -229,7 +241,9 @@ class ProgressTracker:
         self.stage_start(job_id, stage_name, message)
         try:
             yield
-            self.stage_complete(job_id, stage_name, message=f"{stage_name} complete")
+            self.stage_complete(
+                job_id, stage_name, message=f"{stage_name} complete"
+            )
         except Exception as e:
             self.stage_fail(job_id, stage_name, error=str(e))
             raise

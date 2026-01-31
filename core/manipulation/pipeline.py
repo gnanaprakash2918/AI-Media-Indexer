@@ -78,7 +78,7 @@ class ManipulationPipeline:
             created_at=time.time(),
         )
         self._jobs[job_id] = job
-        
+
         # We need to pass the mask data separately as it's not pickle-safe or just large
         # Ideally, we should persist it, but for now we keep it in memory queue
         self._queue.put_nowait((job_id, mask_frames))
@@ -112,14 +112,16 @@ class ManipulationPipeline:
                     continue
 
                 job.status = JobStatus.RUNNING
-                logger.info(f"Starting manipulation job {job_id} ({job.job_type})")
+                logger.info(
+                    f"Starting manipulation job {job_id} ({job.job_type})"
+                )
 
                 try:
                     if job.job_type == "inpaint":
                         await self._process_inpaint(job, mask_data)
                     elif job.job_type == "redact":
                         await self._process_redact(job, mask_data)
-                    
+
                     job.status = JobStatus.COMPLETED
                     job.progress = 100.0
                     logger.info(f"Job {job_id} completed successfully")
@@ -137,73 +139,82 @@ class ManipulationPipeline:
                 logger.error(f"Worker crashed: {e}")
                 await asyncio.sleep(1)
 
-    async def _process_inpaint(self, job: ManipulationJob, mask_frames: Dict[int, "np.ndarray"]):
+    async def _process_inpaint(
+        self, job: ManipulationJob, mask_frames: Dict[int, "np.ndarray"]
+    ):
         """Run inpainting logic (CPU blocking, run in executor)."""
         import asyncio
         from core.manipulation.inpainting import get_inpainter, InpaintRequest
 
         loop = asyncio.get_running_loop()
-        
+
         # Offload to thread to not block FastAPI
         def _run_sync():
             inpainter = get_inpainter()
             req = InpaintRequest(
-                video_path=job.video_path,
-                mask_frames=mask_frames
+                video_path=job.video_path, mask_frames=mask_frames
             )
             return inpainter.inpaint_video(req)
 
         result = await loop.run_in_executor(None, _run_sync)
-        
+
         if result.success and result.output_path:
             job.result_path = result.output_path
         else:
-            raise RuntimeError(result.error or "Inpainting returned failed status")
+            raise RuntimeError(
+                result.error or "Inpainting returned failed status"
+            )
 
-    async def _process_redact(self, job: ManipulationJob, mask_frames: Dict[int, "np.ndarray"]):
+    async def _process_redact(
+        self, job: ManipulationJob, mask_frames: Dict[int, "np.ndarray"]
+    ):
         """Run redaction logic."""
         import cv2
-        
+
         video_path = str(job.video_path)
-        output_path = job.video_path.parent / f"{job.video_path.stem}_redacted{job.video_path.suffix}"
-        
+        output_path = (
+            job.video_path.parent
+            / f"{job.video_path.stem}_redacted{job.video_path.suffix}"
+        )
+
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
+
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-        
+
         frame_idx = 0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
+
         try:
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                
+
                 mask = mask_frames.get(frame_idx)
                 if mask is not None and mask.any():
                     frame = self._privacy_blur.apply(frame, mask)
-                
+
                 writer.write(frame)
                 frame_idx += 1
-                
+
                 # Update progress occasionally
                 if frame_idx % 30 == 0 and total_frames > 0:
                     job.progress = (frame_idx / total_frames) * 100
-                    
+
         finally:
             cap.release()
             writer.release()
-            
+
         job.result_path = output_path
 
 
 # Global singleton
 _pipeline: Optional[ManipulationPipeline] = None
+
 
 def get_manipulation_pipeline() -> ManipulationPipeline:
     global _pipeline

@@ -308,7 +308,6 @@ class JobManager:
             last_heartbeat=row["last_heartbeat"]
             if "last_heartbeat" in row.keys()
             else 0.0,
-
             checkpoint_data=checkpoint,
             stage_stats=stage_stats,
         )

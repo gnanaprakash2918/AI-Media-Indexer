@@ -321,11 +321,16 @@ class SuryaOCR:
 
             async with sem:
                 # Detect text regions off-thread
-                det_results = await asyncio.to_thread(self._batch_detection, [image], self._detector)
+                det_results = await asyncio.to_thread(
+                    self._batch_detection, [image], self._detector
+                )
 
                 # Recognize text off-thread
-                rec_results = await asyncio.to_thread(self._batch_recognition, 
-                    [image], det_results, self._recognizer
+                rec_results = await asyncio.to_thread(
+                    self._batch_recognition,
+                    [image],
+                    det_results,
+                    self._recognizer,
                 )
 
             if not rec_results or not rec_results[0]:
@@ -398,18 +403,19 @@ class EasyOCRProcessor:
                 import easyocr
 
                 log.info(f"[EasyOCR] Loading langs={self.langs}")
-                
+
                 # Run initialization in thread (Fixes 12-min startup stall)
                 # This downloads models and compiles CUDA kernels
                 def _load():
                     return easyocr.Reader(self.langs, gpu=self.use_gpu)
 
                 self.reader = await asyncio.to_thread(_load)
-                
+
                 # Register with Arbiter for OOM protection (auto-unload)
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
+
                 RESOURCE_ARBITER.register_model("easyocr", self.cleanup)
-                
+
                 log.info("[EasyOCR] Model loaded")
                 return True
 
@@ -434,16 +440,16 @@ class EasyOCRProcessor:
 
         # Acquire VRAM budget (EasyOCR ~1.5GB)
         from core.utils.resource_arbiter import RESOURCE_ARBITER
-        
+
         async with RESOURCE_ARBITER.acquire("easyocr", vram_gb=1.5):
-            # Double-check reader exists (Arbiter might have unloaded it in extreme cases, 
-            # but we just called lazy_load, and acquire locks it? 
+            # Double-check reader exists (Arbiter might have unloaded it in extreme cases,
+            # but we just called lazy_load, and acquire locks it?
             # Actually Arbiter OFFloads OTHERS to make space for THIS.
             # So self.reader should be safe *unless* we were the ones offloaded?
             # But we are active now.
             if self.reader is None:
-                 if not await self._lazy_load():
-                     return {"text": "", "boxes": [], "confidence": 0.0}
+                if not await self._lazy_load():
+                    return {"text": "", "boxes": [], "confidence": 0.0}
 
             try:
                 # Run EasyOCR in a thread
@@ -466,7 +472,9 @@ class EasyOCRProcessor:
                     confidences.append(conf_val)
 
                 full_text = " ".join(lines)
-                avg_conf = sum(confidences) / len(confidences) if confidences else 0
+                avg_conf = (
+                    sum(confidences) / len(confidences) if confidences else 0
+                )
 
                 return {
                     "text": full_text,

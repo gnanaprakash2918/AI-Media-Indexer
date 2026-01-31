@@ -87,10 +87,10 @@ class VisualContentModerator:
 
             # Move blocking download/load to thread
             self._model = await asyncio.to_thread(_load)
-            
+
             # Register with Arbiter for OOM protection
             RESOURCE_ARBITER.register_model("moderation", self.cleanup)
-            
+
             log.info("[Moderation] NSFW model loaded")
             return True
         except ImportError:
@@ -110,8 +110,8 @@ class VisualContentModerator:
             ModerationResult with flags and confidence.
         """
         # Redundant check for safety
-        if not getattr(settings, 'enable_content_moderation', False):
-             return ModerationResult(
+        if not getattr(settings, "enable_content_moderation", False):
+            return ModerationResult(
                 is_safe=True,
                 flags=[ContentFlag.SAFE],
                 confidence=0.0,
@@ -139,16 +139,21 @@ class VisualContentModerator:
             # Double check model exists (in case it was unloaded)
             if self._model is None:
                 if not await self._lazy_load():
-                     return ModerationResult(is_safe=True, flags=[ContentFlag.SAFE], confidence=0.0, details={"error": -1.0})
+                    return ModerationResult(
+                        is_safe=True,
+                        flags=[ContentFlag.SAFE],
+                        confidence=0.0,
+                        details={"error": -1.0},
+                    )
 
             try:
                 from PIL import Image
 
                 img = Image.fromarray(frame)
-                
+
                 # Run inference in thread to prevent blocking main loop
                 raw_result = await asyncio.to_thread(self._model, img)
-                
+
                 # Pylance considers pipeline output as Generator/Iterable, forcing list cast for subscripting
                 result = cast(list[dict[str, Any]], raw_result)
 
@@ -227,8 +232,8 @@ class TextContentModerator:
 
     async def check_text(self, text: str) -> ModerationResult:
         """Check text for inappropriate content."""
-        if not getattr(settings, 'enable_content_moderation', False):
-             return ModerationResult(
+        if not getattr(settings, "enable_content_moderation", False):
+            return ModerationResult(
                 is_safe=True,
                 flags=[ContentFlag.SAFE],
                 confidence=0.0,

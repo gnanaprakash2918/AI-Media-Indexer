@@ -14,23 +14,23 @@ async def run_search(
     """Executes the search and prints results."""
     # REFACTOR: Use SearchAgent instead of missing core.retrieval.engine
     from core.retrieval.agentic_search import SearchAgent
-    
+
     # Initialize DB (using environment settings logic if possible, or default to docker/host)
     # NOTE: VectorDB backend 'docker' might need to be 'qdrant' or None depending on DB impl.
-    db = VectorDB() 
-    
+    db = VectorDB()
+
     # Initialize Agent
     agent = SearchAgent(db=db)
 
     try:
         # returns dict with 'results': [dict, ...]
         result_pkg = await agent.sota_search(
-            query=query, 
-            use_reranking=use_rerank, 
+            query=query,
+            use_reranking=use_rerank,
             limit=limit,
-            use_expansion=True
+            use_expansion=True,
         )
-        
+
         results = result_pkg.get("results", [])
 
         if as_json:
@@ -48,16 +48,16 @@ async def run_search(
             start = r.get("start_time") or r.get("timestamp", 0.0)
             end = r.get("end_time") or r.get("end", 0.0)
             score = r.get("score", 0.0)
-            
+
             # Reasons/Explanation
             reasons = r.get("match_reasons", [])
             if not reasons and r.get("reasoning"):
                 reasons = [r.get("reasoning")]
             elif not reasons and r.get("llm_reasoning"):
                 reasons = [r.get("llm_reasoning")]
-                
+
             explanation = r.get("explanation", "")
-            
+
             # Identity
             # 'face_names' or 'person_names' might be lists
             identities = r.get("person_names") or r.get("face_names", [])
@@ -69,17 +69,17 @@ async def run_search(
                 print(f"    Reasons: {', '.join(reasons)}")
             if identities:
                 print(f"    Identities: {', '.join(identities)}")
-            
+
             # Context/Content
-            ctx = r.get("visual_summary") or r.get("content_text") or r.get("action", "")
+            ctx = (
+                r.get("visual_summary")
+                or r.get("content_text")
+                or r.get("action", "")
+            )
             if ctx:
-                ctx_preview = (
-                    ctx[:100] + "..."
-                    if len(ctx) > 100
-                    else ctx
-                )
+                ctx_preview = ctx[:100] + "..." if len(ctx) > 100 else ctx
                 print(f"    Context: {ctx_preview}")
-            
+
             if explanation:
                 print(f"    Explanation: {explanation}")
             print()
@@ -89,7 +89,6 @@ async def run_search(
         # VectorDB might not have close method if it's just a client wrapper, but checking
         if hasattr(db, "client") and hasattr(db.client, "close"):
             db.client.close()
-
 
 
 def main():

@@ -779,7 +779,7 @@ class FaceManager:
     ) -> list[list[DetectedFace]]:
         """Detect faces in a batch of images (optimized)."""
         await self._lazy_init()
-        
+
         # Parallel Async Image Loading (Fixes Blocking I/O)
         tasks = []
         for p in image_paths:
@@ -787,13 +787,16 @@ class FaceManager:
                 # _load_image is already async and handles threading
                 tasks.append(self._load_image(Path(p)))
             else:
-                async def _noop(img): return img
+
+                async def _noop(img):
+                    return img
+
                 tasks.append(_noop(p))
-        
+
         images = await asyncio.gather(*tasks)
-                
+
         results = []
-        
+
         # Resource Arbiter manages VRAM + Locking
         from core.utils.resource_arbiter import RESOURCE_ARBITER
 
@@ -801,36 +804,50 @@ class FaceManager:
         for i in range(0, len(images), self.batch_size):
             chunk = images[i : i + self.batch_size]
             chunk_results = []
-            
+
             # Acquire GPU lock & Register VRAM usage
             # InsightFace = ~1.5GB
             async with RESOURCE_ARBITER.acquire("insightface", vram_gb=1.5):
                 for img in chunk:
-                     if self._model_type == "insightface":
+                    if self._model_type == "insightface":
                         # Direct call to avoid double-locking deadlock
                         # _detect_insightface acquires lock, so we copy logic here
                         if img.size == 0:
                             chunk_results.append([])
                             continue
-                            
+
                         bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                         # Inference in thread
                         try:
-                            faces = await asyncio.to_thread(self._insightface_app.get, bgr)
+                            faces = await asyncio.to_thread(
+                                self._insightface_app.get, bgr
+                            )
                             # Process results
                             res = []
                             for face in faces:
                                 bbox = face.bbox.astype(int)
-                                box = (int(bbox[1]), int(bbox[2]), int(bbox[3]), int(bbox[0]))
-                                det_score = float(face.det_score) if hasattr(face, "det_score") else 1.0
-                                bbox_size = min(int(bbox[2]-bbox[0]), int(bbox[3]-bbox[1]))
+                                box = (
+                                    int(bbox[1]),
+                                    int(bbox[2]),
+                                    int(bbox[3]),
+                                    int(bbox[0]),
+                                )
+                                det_score = (
+                                    float(face.det_score)
+                                    if hasattr(face, "det_score")
+                                    else 1.0
+                                )
+                                bbox_size = min(
+                                    int(bbox[2] - bbox[0]),
+                                    int(bbox[3] - bbox[1]),
+                                )
                                 emb = face.embedding.astype(np.float64)
                                 emb /= np.linalg.norm(emb) + 1e-9
-                                
+
                                 dface = DetectedFace(
                                     bbox=box,
                                     embedding=emb.tolist(),
-                                    confidence=det_score
+                                    confidence=det_score,
                                 )
                                 dface._bbox_size = bbox_size
                                 res.append(dface)
@@ -839,21 +856,25 @@ class FaceManager:
                             print(f"[FaceManager] Batch inference failed: {e}")
                             chunk_results.append([])
 
-                     elif self._model_type == "sface":
+                    elif self._model_type == "sface":
                         chunk_results.append(await self._detect_sface(img))
-                     else:
+                    else:
                         chunk_results.append(await self._detect_yunet_only(img))
-            
+
             results.extend(chunk_results)
-            
+
         return results
 
-    async def _detect_insightface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
-        if image.size == 0: return []
+    async def _detect_insightface(
+        self, image: NDArray[np.uint8]
+    ) -> list[DetectedFace]:
+        if image.size == 0:
+            return []
         assert self._insightface_app is not None, "InsightFace not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        
+
         from core.utils.resource_arbiter import RESOURCE_ARBITER
+
         # Use Arbiter to track VRAM
         async with RESOURCE_ARBITER.acquire("insightface", vram_gb=1.5):
             # Run InsightFace in a thread to avoid blocking the event loop
@@ -862,17 +883,29 @@ class FaceManager:
         for face in faces:
             bbox = face.bbox.astype(int)
             box = (int(bbox[1]), int(bbox[2]), int(bbox[3]), int(bbox[0]))
-            det_score = float(face.det_score) if hasattr(face, "det_score") else 1.0
+            det_score = (
+                float(face.det_score) if hasattr(face, "det_score") else 1.0
+            )
             bbox_size = min(int(bbox[2] - bbox[0]), int(bbox[3] - bbox[1]))
             emb = face.embedding.astype(np.float64)
             emb /= np.linalg.norm(emb) + 1e-9
-            results.append(DetectedFace(bbox=box, embedding=emb.tolist(), confidence=det_score))
+            results.append(
+                DetectedFace(
+                    bbox=box, embedding=emb.tolist(), confidence=det_score
+                )
+            )
             results[-1]._bbox_size = bbox_size
         return results
 
-    async def _detect_sface(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
-        if image.size == 0: return []
-        assert self._opencv_detector is not None and self._opencv_recognizer is not None
+    async def _detect_sface(
+        self, image: NDArray[np.uint8]
+    ) -> list[DetectedFace]:
+        if image.size == 0:
+            return []
+        assert (
+            self._opencv_detector is not None
+            and self._opencv_recognizer is not None
+        )
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
             return await asyncio.to_thread(self._detect_sface_sync, bgr)
@@ -881,7 +914,8 @@ class FaceManager:
         h, w = bgr.shape[:2]
         self._opencv_detector.setInputSize((w, h))
         _, dets = self._opencv_detector.detect(bgr)
-        if dets is None: return []
+        if dets is None:
+            return []
         results = []
         for d in dets:
             d_arr = np.array(d)
@@ -890,42 +924,77 @@ class FaceManager:
             face_box = np.array([[x, y, bw, bh]], dtype=np.int32)
             aligned = self._opencv_recognizer.alignCrop(bgr, face_box)
             lab = cv2.cvtColor(aligned, cv2.COLOR_BGR2LAB)
-            lab[:, :, 0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(lab[:, :, 0])
+            lab[:, :, 0] = cv2.createCLAHE(
+                clipLimit=2.0, tileGridSize=(8, 8)
+            ).apply(lab[:, :, 0])
             aligned = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-            emb = self._opencv_recognizer.feature(aligned).reshape(-1).astype(np.float64)
+            emb = (
+                self._opencv_recognizer.feature(aligned)
+                .reshape(-1)
+                .astype(np.float64)
+            )
             emb /= np.linalg.norm(emb) + 1e-9
             emb_padded = np.zeros(512, dtype=np.float64)
             emb_padded[: len(emb)] = emb
-            results.append(DetectedFace(bbox=box, embedding=emb_padded.tolist(), confidence=float(d[14]) if len(d)>14 else 0.9))
+            results.append(
+                DetectedFace(
+                    bbox=box,
+                    embedding=emb_padded.tolist(),
+                    confidence=float(d[14]) if len(d) > 14 else 0.9,
+                )
+            )
             results[-1]._bbox_size = int(min(bw, bh))
         return results
 
-    async def _detect_yunet_only(self, image: NDArray[np.uint8]) -> list[DetectedFace]:
-        if image.size == 0: return []
+    async def _detect_yunet_only(
+        self, image: NDArray[np.uint8]
+    ) -> list[DetectedFace]:
+        if image.size == 0:
+            return []
         assert self._opencv_detector is not None
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         async with GPU_SEMAPHORE:
+
             def _inf():
                 h, w = bgr.shape[:2]
                 self._opencv_detector.setInputSize((w, h))
                 return self._opencv_detector.detect(bgr)
+
             _, dets = await asyncio.to_thread(_inf)
-        if dets is None: return []
+        if dets is None:
+            return []
         results = []
         for d in dets:
             x, y, bw, bh = d[:4]
-            results.append(DetectedFace(bbox=(int(y), int(x+bw), int(y+bh), int(x)), embedding=None))
+            results.append(
+                DetectedFace(
+                    bbox=(int(y), int(x + bw), int(y + bh), int(x)),
+                    embedding=None,
+                )
+            )
             results[-1]._bbox_size = int(min(bw, bh))
         return results
 
     @observe("face_cluster")
-    def cluster_faces(self, encodings: Sequence[ArrayLike]) -> NDArray[np.int64]:
-        if not encodings: return np.array([], dtype=np.int64)
-        return HDBSCAN(min_cluster_size=max(3, self.dbscan_min_samples), min_samples=self.dbscan_min_samples,
-                       cluster_selection_epsilon=self.dbscan_eps, metric=self.dbscan_metric,
-                       allow_single_cluster=True).fit_predict(self._to_2d_array(encodings))
+    def cluster_faces(
+        self, encodings: Sequence[ArrayLike]
+    ) -> NDArray[np.int64]:
+        if not encodings:
+            return np.array([], dtype=np.int64)
+        return HDBSCAN(
+            min_cluster_size=max(3, self.dbscan_min_samples),
+            min_samples=self.dbscan_min_samples,
+            cluster_selection_epsilon=self.dbscan_eps,
+            metric=self.dbscan_metric,
+            allow_single_cluster=True,
+        ).fit_predict(self._to_2d_array(encodings))
 
-    def match_or_create_cluster(self, embedding: list[float], existing_clusters: dict[int, list[float]], threshold: float = 0.4) -> tuple[int, dict[int, list[float]]]:
+    def match_or_create_cluster(
+        self,
+        embedding: list[float],
+        existing_clusters: dict[int, list[float]],
+        threshold: float = 0.4,
+    ) -> tuple[int, dict[int, list[float]]]:
         emb = np.array(embedding, dtype=np.float64)
         emb_norm = emb / (np.linalg.norm(emb) + 1e-9)
         best_id, best_sim = None, -1.0
@@ -936,39 +1005,65 @@ class FaceManager:
                 best_id, best_sim = cid, sim
         if best_id is not None and best_sim < 0.6:
             try:
-                from core.processing.biometric_arbitrator import BIOMETRIC_ARBITRATOR
-                if not BIOMETRIC_ARBITRATOR.should_merge_sync(emb_norm, np.array(existing_clusters[best_id]), primary_sim=best_sim):
+                from core.processing.biometric_arbitrator import (
+                    BIOMETRIC_ARBITRATOR,
+                )
+
+                if not BIOMETRIC_ARBITRATOR.should_merge_sync(
+                    emb_norm,
+                    np.array(existing_clusters[best_id]),
+                    primary_sim=best_sim,
+                ):
                     best_id = None
-            except ImportError: pass
+            except ImportError:
+                pass
         if best_id is not None:
             new_cen = (np.array(existing_clusters[best_id]) + emb) / 2.0
-            existing_clusters[best_id] = (new_cen / (np.linalg.norm(new_cen) + 1e-9)).tolist()
+            existing_clusters[best_id] = (
+                new_cen / (np.linalg.norm(new_cen) + 1e-9)
+            ).tolist()
             return best_id, existing_clusters
         nid = max(existing_clusters.keys(), default=0) + 1
         existing_clusters[nid] = emb_norm.tolist()
         return nid, existing_clusters
 
-    def resolve_identity_conflict(self, track_id: int, crop: NDArray[np.uint8], known: dict[int, NDArray[np.float32]]) -> int:
+    def resolve_identity_conflict(
+        self,
+        track_id: int,
+        crop: NDArray[np.uint8],
+        known: dict[int, NDArray[np.float32]],
+    ) -> int:
         try:
             from core.processing.biometrics import get_biometric_arbitrator
+
             arb = get_biometric_arbitrator()
             emb = arb.get_embedding(crop)
-            if emb is None: return track_id
-            if track_id in known and arb.verify_identity(emb, known[track_id]): return track_id
+            if emb is None:
+                return track_id
+            if track_id in known and arb.verify_identity(emb, known[track_id]):
+                return track_id
             mid = arb.find_matching_identity(emb, known)
             return mid if mid is not None else track_id
-        except ImportError: return track_id
+        except ImportError:
+            return track_id
 
     @staticmethod
     async def _load_image(path: Path) -> NDArray[np.uint8]:
-        if not path.exists(): return np.array([], dtype=np.uint8)
+        if not path.exists():
+            return np.array([], dtype=np.uint8)
+
         def _read():
             try:
-                with Image.open(path) as img: return np.asarray(img.convert("RGB"), dtype=np.uint8)
-            except Exception: return np.array([], dtype=np.uint8)
+                with Image.open(path) as img:
+                    return np.asarray(img.convert("RGB"), dtype=np.uint8)
+            except Exception:
+                return np.array([], dtype=np.uint8)
+
         return await asyncio.to_thread(_read)
 
-    def process_video_frames(self, frames: Iterable[NDArray[np.uint8]]) -> list[list[DetectedFace]]:
+    def process_video_frames(
+        self, frames: Iterable[NDArray[np.uint8]]
+    ) -> list[list[DetectedFace]]:
         out = []
         for batch in self._batch(frames, self.batch_size):
             out.extend(asyncio.run(self.detect_faces_batch(batch)))
@@ -981,10 +1076,15 @@ class FaceManager:
         batch = []
         for i in it:
             batch.append(i)
-            if len(batch) == sz: yield batch; batch = []
-        if batch: yield batch
+            if len(batch) == sz:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
-    def _cache_key(self, image: NDArray[Any], box: tuple[int, int, int, int]) -> str:
+    def _cache_key(
+        self, image: NDArray[Any], box: tuple[int, int, int, int]
+    ) -> str:
         return f"{hashlib.sha1(image.data[:2048]).hexdigest()}_{box}_{self.embedding_version}"
 
     def _disk_cache_get(self, key: str) -> NDArray[np.float64] | None:
@@ -993,16 +1093,20 @@ class FaceManager:
 
     def _disk_cache_put(self, key: str, val: NDArray[np.float64]) -> None:
         p = CACHE_DIR / f"{key}.npy"
-        if not p.exists(): np.save(p, val)
+        if not p.exists():
+            np.save(p, val)
 
     @staticmethod
     def _to_2d_array(encodings: Sequence[ArrayLike]) -> NDArray[np.float64]:
         arrs = [np.asarray(e, dtype=np.float64) for e in encodings]
-        if len({a.shape for a in arrs}) > 1: raise ValueError("Inconsistent shapes")
+        if len({a.shape for a in arrs}) > 1:
+            raise ValueError("Inconsistent shapes")
         return np.vstack(arrs)
+
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser()
     p.add_argument("image_path")
     p.add_argument("--gpu", action="store_true")
@@ -1012,4 +1116,5 @@ if __name__ == "__main__":
     print(f"Model: {fm._model_type}, Found {len(faces)} faces")
     if faces:
         embs = [f.embedding for f in faces if f.embedding]
-        if embs: print(fm.cluster_faces(embs))
+        if embs:
+            print(fm.cluster_faces(embs))

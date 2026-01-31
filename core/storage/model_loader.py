@@ -1,4 +1,5 @@
 """Model loading logic for VectorDB."""
+
 import time
 import torch
 import shutil
@@ -8,6 +9,7 @@ from sentence_transformers import SentenceTransformer
 from config import settings
 from core.utils.logger import log
 
+
 class ModelLoader:
     """Handles loading and managing the SentenceTransformer model."""
 
@@ -15,22 +17,28 @@ class ModelLoader:
         self._model = None
         self._last_used = 0
         self._model_lock = False
-        
+
         # Auto-select embedding model logic (moved from db.py global)
-        self.selected_model = settings.embedding_model_override or "all-MiniLM-L6-v2"
+        self.selected_model = (
+            settings.embedding_model_override or "all-MiniLM-L6-v2"
+        )
         # Ideally we use select_embedding_model() but for now simplified or imported
         if not settings.embedding_model_override:
             from core.utils.hardware import select_embedding_model
+
             self.selected_model, _ = select_embedding_model()
 
-    def _create_model(self, path_or_name: str, device: str) -> SentenceTransformer:
+    def _create_model(
+        self, path_or_name: str, device: str
+    ) -> SentenceTransformer:
         """Helper to instantiate the model."""
         return SentenceTransformer(
             path_or_name,
             device=device,
             trust_remote_code=True,
-            model_kwargs={"torch_dtype": torch.float16} 
-            if device == "cuda" else {},
+            model_kwargs={"torch_dtype": torch.float16}
+            if device == "cuda"
+            else {},
         )
 
     def load(self, force_reload: bool = False) -> SentenceTransformer:
@@ -47,7 +55,7 @@ class ModelLoader:
 
         cache_dir = settings.cache_dir / "models" / "embeddings"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Determine local path
         model_name_safe = self.selected_model.replace("/", "_")
         local_model_path = cache_dir / model_name_safe
@@ -56,21 +64,27 @@ class ModelLoader:
             # Try loading from local path first
             if local_model_path.exists():
                 try:
-                    log(f"Loading embedding model from local cache: {local_model_path}")
-                    self._model = self._create_model(str(local_model_path), device)
+                    log(
+                        f"Loading embedding model from local cache: {local_model_path}"
+                    )
+                    self._model = self._create_model(
+                        str(local_model_path), device
+                    )
                     self._last_used = time.time()
                     return self._model
                 except Exception as e:
                     log(f"Local model corrupt, re-downloading: {e}")
                     shutil.rmtree(local_model_path)
-            
+
             # Download if missing/corrupt
-            log(f"Downloading valid model snapshot for {self.selected_model}...")
+            log(
+                f"Downloading valid model snapshot for {self.selected_model}..."
+            )
             snapshot_path = snapshot_download(
                 repo_id=self.selected_model,
                 local_dir=local_model_path,
                 local_dir_use_symlinks=False,
-                resume_download=True  # Helpful for bad connections
+                resume_download=True,  # Helpful for bad connections
             )
             self._model = self._create_model(snapshot_path, device)
             log(f"Model loaded successfully on {device}")
@@ -101,22 +115,26 @@ class ModelLoader:
 
     def to_gpu(self):
         """Moves model to GPU."""
-        if self._model and hasattr(self._model, "to") and settings.device == "cuda":
-             try:
+        if (
+            self._model
+            and hasattr(self._model, "to")
+            and settings.device == "cuda"
+        ):
+            try:
                 self._model.to("cuda")
-             except Exception as e:
-                 log(f"Failed to move encoder to GPU: {e}")
-                 self._model.to("cpu")
+            except Exception as e:
+                log(f"Failed to move encoder to GPU: {e}")
+                self._model.to("cpu")
 
     def unload_if_idle(self, timeout: int = 300) -> bool:
         """Unsets the model if idle."""
         if not self._model:
             return False
-            
+
         if time.time() - self._last_used > timeout:
             log("Unloading idle encoder model to free RAM")
-            self.to_cpu() # Move to CPU at least, or delete?
-            # Original code might have kept it on CPU or deleted it. 
+            self.to_cpu()  # Move to CPU at least, or delete?
+            # Original code might have kept it on CPU or deleted it.
             # Let's delete it to be safe for mixed VRAM usage.
             del self._model
             self._model = None

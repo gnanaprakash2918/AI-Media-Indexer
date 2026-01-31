@@ -40,7 +40,9 @@ class VisualEncoderInterface(ABC):
 class CLIPEncoder(VisualEncoderInterface):
     """OpenAI CLIP visual encoder with async support."""
 
-    def __init__(self, model_name: str = "ViT-L-14", pretrained: str = "openai"):
+    def __init__(
+        self, model_name: str = "ViT-L-14", pretrained: str = "openai"
+    ):
         self._model_name = model_name
         self._pretrained = pretrained
         self._model = None
@@ -68,8 +70,10 @@ class CLIPEncoder(VisualEncoderInterface):
                 try:
                     import open_clip
 
-                    model, _, preprocess = open_clip.create_model_and_transforms(
-                        self._model_name, pretrained=self._pretrained
+                    model, _, preprocess = (
+                        open_clip.create_model_and_transforms(
+                            self._model_name, pretrained=self._pretrained
+                        )
                     )
                     model.eval()
                     import torch
@@ -106,10 +110,9 @@ class CLIPEncoder(VisualEncoderInterface):
             else:
                 pil_img = Image.fromarray(image).convert("RGB")
 
-
-            if hasattr(
-                self._preprocess, "feature_extractor"
-            ) or hasattr(self._preprocess, "image_processor"):
+            if hasattr(self._preprocess, "feature_extractor") or hasattr(
+                self._preprocess, "image_processor"
+            ):
                 inputs = self._preprocess(images=pil_img, return_tensors="pt")
             else:
                 inputs = self._preprocess(pil_img).unsqueeze(0)
@@ -118,6 +121,7 @@ class CLIPEncoder(VisualEncoderInterface):
         inputs = await asyncio.to_thread(_process)
 
         async with GPU_SEMAPHORE:
+
             def _infer():
                 import torch
 
@@ -156,9 +160,9 @@ class CLIPEncoder(VisualEncoderInterface):
                 else:
                     pil = Image.fromarray(img).convert("RGB")
 
-                if hasattr(
-                    self._preprocess, "feature_extractor"
-                ) or hasattr(self._preprocess, "image_processor"):
+                if hasattr(self._preprocess, "feature_extractor") or hasattr(
+                    self._preprocess, "image_processor"
+                ):
                     return pil  # Keep as PIL for transformers batch processing
                 else:
                     return self._preprocess(pil)  # Tensor for OpenCLIP
@@ -171,13 +175,14 @@ class CLIPEncoder(VisualEncoderInterface):
         )
 
         async with GPU_SEMAPHORE:
+
             def _infer_batch():
                 import torch
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                if hasattr(
-                    self._preprocess, "feature_extractor"
-                ) or hasattr(self._preprocess, "image_processor"):
+                if hasattr(self._preprocess, "feature_extractor") or hasattr(
+                    self._preprocess, "image_processor"
+                ):
                     # Transformers
                     inputs = self._preprocess(
                         images=preprocessed_items, return_tensors="pt"
@@ -242,31 +247,41 @@ class SigLIPEncoder(VisualEncoderInterface):
                 try:
                     import open_clip
                 except ImportError:
-                    log.error("[VisualEncoder] open_clip not installed. Install with `pip install open_clip_torch`. Visual features will be disabled.")
+                    log.error(
+                        "[VisualEncoder] open_clip not installed. Install with `pip install open_clip_torch`. Visual features will be disabled."
+                    )
                     return None, None
 
                 # Try OpenCLIP first
                 try:
                     import open_clip
-                    model, _, preprocess = open_clip.create_model_and_transforms(
-                        self._model_name, pretrained="webli"
+
+                    model, _, preprocess = (
+                        open_clip.create_model_and_transforms(
+                            self._model_name, pretrained="webli"
+                        )
                     )
                     model.eval()
                     import torch
+
                     if torch.cuda.is_available():
                         model = model.cuda()
                     return model, preprocess
                 except Exception as e:
-                    log.warning(f"[VisualEncoder] OpenCLIP load failed ({e}). Trying Transformers fallback...")
+                    log.warning(
+                        f"[VisualEncoder] OpenCLIP load failed ({e}). Trying Transformers fallback..."
+                    )
 
                 # Transformers fallback for SigLIP
                 try:
                     from transformers import AutoModel, AutoProcessor
+
                     hf_model = "google/siglip-so400m-patch14-384"
                     model = AutoModel.from_pretrained(hf_model)
                     preprocess = AutoProcessor.from_pretrained(hf_model)
                     model.eval()
                     import torch
+
                     if torch.cuda.is_available():
                         model = model.cuda()
                     return model, preprocess
@@ -295,6 +310,7 @@ class SigLIPEncoder(VisualEncoderInterface):
         inputs = await asyncio.to_thread(_process)
 
         async with GPU_SEMAPHORE:
+
             def _infer():
                 import torch
 
@@ -327,6 +343,7 @@ class SigLIPEncoder(VisualEncoderInterface):
         tensors = await asyncio.gather(*[_prep(img) for img in images])
 
         async with GPU_SEMAPHORE:
+
             def _infer_batch():
                 import torch
 
@@ -366,17 +383,23 @@ class VLMVisionTowerEncoder(VisualEncoderInterface):
     def name(self) -> str:
         return "VLM-VisionTower"
 
-    async def encode_image(self, image: np.ndarray | bytes | Path) -> list[float]:
+    async def encode_image(
+        self, image: np.ndarray | bytes | Path
+    ) -> list[float]:
         # Implementation depends on VLM client
         if hasattr(self._vlm, "encode_image"):
             return await self._vlm.encode_image(image)
         elif hasattr(self._vlm, "get_visual_features"):
             features = await self._vlm.get_visual_features(image)
             return (
-                features.tolist() if hasattr(features, "tolist") else list(features)
+                features.tolist()
+                if hasattr(features, "tolist")
+                else list(features)
             )
         else:
-            raise NotImplementedError("VLM client doesn't support vision features")
+            raise NotImplementedError(
+                "VLM client doesn't support vision features"
+            )
 
     async def encode_batch(
         self, images: list[np.ndarray | bytes | Path]

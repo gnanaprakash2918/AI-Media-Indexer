@@ -54,10 +54,6 @@ async def _run(video_path: Path, media_type: str) -> None:
             pipeline. Should align with values in :class:`MediaType`, such
             as ``"movie"``, ``"tv"``, ``"personal"``, or ``"unknown"``.
     """
-    pipeline = IngestionPipeline(
-        qdrant_backend="docker",
-        qdrant_host="localhost",
-        qdrant_port=6333,
     # Configured frame interval
     # frame_interval_seconds uses config.frame_interval (default 0.5s = 2fps)
     

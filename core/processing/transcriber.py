@@ -277,34 +277,50 @@ class AudioTranscriber:
             # -of csv...: clean output
             cmd = [
                 "ffprobe",
-                "-v", "error",
-                "-select_streams", "a",
-                "-show_entries", "stream=codec_type",
-                "-of", "csv=p=0",
-                str(input_path)
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(input_path),
             ]
             # Run in subprocess (fast enough to be check calling directly or use to_thread if strict)
             # Since this is a fast check, blocking brieflly is often acceptable, but let's use subprocess.run
             # Note: shutil.which("ffprobe") should be checked ideally, but assuming ffmpeg exists
-            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
-            return bool(output)  # If output is not empty ('audio'), it has audio
+            output = (
+                subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+                .decode()
+                .strip()
+            )
+            return bool(
+                output
+            )  # If output is not empty ('audio'), it has audio
         except Exception:
             # Fallback: if ffprobe fails, assume maybe yes and let ffmpeg fail, or check file size?
             # Safest is to return False if we can't verify
             return False
-
 
     def _get_duration(self, input_path: Path) -> float:
         """Get the duration of the media file in seconds."""
         try:
             cmd = [
                 "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                str(input_path)
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(input_path),
             ]
-            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            output = (
+                subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+                .decode()
+                .strip()
+            )
             return float(output)
         except Exception:
             return 0.0
@@ -329,15 +345,21 @@ class AudioTranscriber:
         # Validate duration to prevent FFmpeg from crashing if start > duration
         duration = await asyncio.to_thread(self._get_duration, input_path)
         if duration > 0 and start >= duration:
-             log(f"[WARN] Slice start {start}s is past EOF {duration}s. Returning empty slice.")
-             return b"" # Empty audio
+            log(
+                f"[WARN] Slice start {start}s is past EOF {duration}s. Returning empty slice."
+            )
+            return b""  # Empty audio
 
         # Clamp end to duration
         if end and duration > 0 and end > duration:
             end = duration
 
         # Calculate segment duration for memory decision
-        segment_duration = (end - start) if end else (duration - start if duration > 0 else 60.0)
+        segment_duration = (
+            (end - start)
+            if end
+            else (duration - start if duration > 0 else 60.0)
+        )
 
         # Use in-memory BytesIO for segments < 5 minutes (to avoid RAM issues)
         use_memory = segment_duration < 300.0
@@ -359,7 +381,9 @@ class AudioTranscriber:
             # Output to stdout as raw WAV bytes
             cmd.extend(["-ar", "16000", "-ac", "1", "-f", "wav", "-"])
 
-            log(f"[INFO] Slicing audio (memory): {start}s -> {end if end else 'END'}s (File duration: {duration}s)")
+            log(
+                f"[INFO] Slicing audio (memory): {start}s -> {end if end else 'END'}s (File duration: {duration}s)"
+            )
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -369,10 +393,14 @@ class AudioTranscriber:
                 )
                 audio_bytes, _ = await proc.communicate()
 
-                if proc.returncode == 0 and len(audio_bytes) > 44:  # WAV header is 44 bytes
+                if (
+                    proc.returncode == 0 and len(audio_bytes) > 44
+                ):  # WAV header is 44 bytes
                     return audio_bytes  # Return bytes directly
                 else:
-                    log("[WARN] In-memory slice failed (likely empty or internal error), falling back to file")
+                    log(
+                        "[WARN] In-memory slice failed (likely empty or internal error), falling back to file"
+                    )
             except Exception as e:
                 log(f"[WARN] BytesIO slice error: {e}, falling back to file")
 
@@ -392,20 +420,28 @@ class AudioTranscriber:
         ]
         if end:
             cmd_file.extend(["-to", str(end)])
-        cmd_file.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
+        cmd_file.extend(
+            ["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)]
+        )
 
-        log(f"[INFO] Slicing audio (file): {start}s -> {end if end else 'END'}s")
+        log(
+            f"[INFO] Slicing audio (file): {start}s -> {end if end else 'END'}s"
+        )
         try:
-            await asyncio.to_thread(subprocess.run, cmd_file, check=True, stderr=subprocess.DEVNULL)
+            await asyncio.to_thread(
+                subprocess.run, cmd_file, check=True, stderr=subprocess.DEVNULL
+            )
             return output_slice
         except subprocess.CalledProcessError as e:
-             log(f"[WARN] FFmpeg slice failed (exit {e.returncode}): Start={start}, End={end}, Duration={duration}. Returning empty.")
-             if output_slice.exists():
-                 try:
+            log(
+                f"[WARN] FFmpeg slice failed (exit {e.returncode}): Start={start}, End={end}, Duration={duration}. Returning empty."
+            )
+            if output_slice.exists():
+                try:
                     output_slice.unlink()
-                 except Exception:
-                     pass
-             return b""
+                except Exception:
+                    pass
+            return b""
 
     @observe("transcriber_convert_model")
     def _convert_to_ct2(self, model_id: str) -> Path:
@@ -488,7 +524,9 @@ class AudioTranscriber:
 
         except Exception as e:
             log(f"[ERROR] Model download/conversion failed: {e}")
-            raise ModelLoadError(f"Could not prepare {model_id}: {e}", original_error=e) from e
+            raise ModelLoadError(
+                f"Could not prepare {model_id}: {e}", original_error=e
+            ) from e
 
     def _convert_and_cache_model(self, model_id: str) -> Path:
         """Alias for _convert_to_ct2 for backwards compatibility."""
@@ -552,7 +590,10 @@ class AudioTranscriber:
         except Exception as e:
             # Check for corruption/consistency errors
             error_msg = str(e).lower()
-            if "consistency check failed" in error_msg or "invalid load" in error_msg:
+            if (
+                "consistency check failed" in error_msg
+                or "invalid load" in error_msg
+            ):
                 log(f"[WARN] Model corruption detected for {model_key}: {e}")
                 log("[INFO] Attempting self-healing: Forcing fresh download...")
 
@@ -560,7 +601,9 @@ class AudioTranscriber:
                     # Force re-download using huggingface_hub directly (faster_whisper wrapper lacks force_download)
                     from huggingface_hub import snapshot_download
 
-                    log(f"[INFO] Downloading fresh copy of {model_key} using huggingface_hub...")
+                    log(
+                        f"[INFO] Downloading fresh copy of {model_key} using huggingface_hub..."
+                    )
                     match_path = snapshot_download(
                         repo_id=model_key,
                         cache_dir=str(settings.model_cache_dir),
@@ -581,12 +624,17 @@ class AudioTranscriber:
                         model=AudioTranscriber._SHARED_MODEL
                     )
                     AudioTranscriber._SHARED_SIZE = model_key
-                    log(f"[SUCCESS] Self-healing successful. Loaded {model_key}")
+                    log(
+                        f"[SUCCESS] Self-healing successful. Loaded {model_key}"
+                    )
                     return
 
                 except Exception as retry_err:
                     log(f"[ERROR] Self-healing failed: {retry_err}")
-                    raise ModelLoadError(f"Could not load {model_key} even after re-download", original_error=retry_err) from retry_err
+                    raise ModelLoadError(
+                        f"Could not load {model_key} even after re-download",
+                        original_error=retry_err,
+                    ) from retry_err
 
             # Re-raise if it's not a corruption error or recovery failed.
             # We now check for memory errors before raising.
@@ -641,7 +689,10 @@ class AudioTranscriber:
                             continue
 
             # If not corruption and not memory error (or fallback failed), re-raise
-            raise ModelLoadError(f"Failed to load Faster-Whisper model {model_key}: {e}", original_error=e) from e
+            raise ModelLoadError(
+                f"Failed to load Faster-Whisper model {model_key}: {e}",
+                original_error=e,
+            ) from e
 
     def _format_timestamp(self, seconds: float) -> str:
         hours, remainder = divmod(seconds, 3600)
@@ -758,7 +809,9 @@ class AudioTranscriber:
 
         # Check for audio stream presence to prevent FFmpeg -22 crashes
         if not self._has_audio_stream(audio_path):
-            log(f"[WARN] No audio stream detected in {audio_path.name}. Skipping transcription.")
+            log(
+                f"[WARN] No audio stream detected in {audio_path.name}. Skipping transcription."
+            )
             return []
 
         lang = language or settings.language
@@ -871,11 +924,11 @@ class AudioTranscriber:
                     vad_filter=True,
                     vad_parameters={
                         "min_speech_duration_ms": 10 if force_lyrics else 100,
-                        "min_silence_duration_ms": 1000 if force_lyrics else 500,
-                        "speech_pad_ms": 2000 if force_lyrics else 800,
-                        "threshold": 0.1
+                        "min_silence_duration_ms": 1000
                         if force_lyrics
-                        else 0.3,
+                        else 500,
+                        "speech_pad_ms": 2000 if force_lyrics else 800,
+                        "threshold": 0.1 if force_lyrics else 0.3,
                     },
                     no_speech_threshold=no_speech_thresh,
                     log_prob_threshold=-1.0,
@@ -900,8 +953,9 @@ class AudioTranscriber:
                 self._locked_language = info.language
                 log(f"[INFO] Language locked to: {self._locked_language}")
 
-            for segment in segments_list: # Iterator exhausted to list in thread
-
+            for (
+                segment
+            ) in segments_list:  # Iterator exhausted to list in thread
                 if (segment.end - segment.start) < 0.2:
                     continue
                 if segment.words:
@@ -954,7 +1008,10 @@ class AudioTranscriber:
 
         except Exception as e:
             log(f"[ERROR] Inference failed: {e}")
-            raise TranscriberError(f"Whisper inference failed for {audio_path}: {e}", original_error=e) from e
+            raise TranscriberError(
+                f"Whisper inference failed for {audio_path}: {e}",
+                original_error=e,
+            ) from e
 
     def _run_whisper_inference(
         self,
@@ -996,7 +1053,9 @@ class AudioTranscriber:
             # Extract first 30s as WAV to avoid container/codec issues (Opus, etc)
             try:
                 # Use _slice_audio which uses ffmpeg to generate a clean 16kHz WAV
-                wav_path = await self._slice_audio(audio_path, start=0.0, end=30.0)
+                wav_path = await self._slice_audio(
+                    audio_path, start=0.0, end=30.0
+                )
             except Exception as e:
                 log(
                     f"[WARN] Slicing for detection failed: {e}. Trying raw file."

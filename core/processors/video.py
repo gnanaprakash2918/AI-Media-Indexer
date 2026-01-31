@@ -11,7 +11,10 @@ from core.utils.resource import resource_manager
 from core.utils.observe import observe
 from core.ingestion.vision import VisionAnalyzer
 from core.ingestion.faces import FaceManager, FaceTrackBuilder
-from core.processing.temporal_context import TemporalContext, TemporalContextManager
+from core.processing.temporal_context import (
+    TemporalContext,
+    TemporalContextManager,
+)
 from core.processing.scenelets import SceneletBuilder
 from core.utils.progress import progress_tracker
 from core.storage.identity_graph import identity_graph
@@ -20,12 +23,13 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class VideoProcessor:
     """Handles video visual analysis, including frame extraction, face detection, and VLM analysis."""
 
     def __init__(self, db, pipeline):
         self.db = db
-        # We need access to the pipeline for some helpers (extractor, etc.) 
+        # We need access to the pipeline for some helpers (extractor, etc.)
         # or we should pass them in. Ideally we decouple, but for refactor speed
         # we'll take dependencies.
         # However, looking at usage, we need:
@@ -144,16 +148,16 @@ class VideoProcessor:
                     # We need to pass the faces manager and vision analyzer locally or attached to pipeline?
                     # Original code used self.faces and self.vision attached to pipeline instance.
                     # Since we are moving this to VideoProcessor, we should probably attach them here.
-                    # BUT _process_single_frame is still on pipeline? 
+                    # BUT _process_single_frame is still on pipeline?
                     # We should probably MOVE _process_single_frame here too.
                     # For now, let's assume we will move it or call it via a bound method if we attach this class to pipeline.
                     # Wait, we can't call pipeline._process_single_frame if it relies on self.vision which is now here.
                     # So we MUST move _process_single_frame here.
                 )
-                
-                # RECURSIVE dependency: _process_single_frame. 
+
+                # RECURSIVE dependency: _process_single_frame.
                 # I will assume I am moving `_process_single_frame` to this class as well.
-                
+
                 if new_desc:
                     # Add to temporal context memory
                     t_ctx = TemporalContext(
@@ -442,10 +446,12 @@ class VideoProcessor:
                                     import hashlib
 
                                     thumb_dir = (
-                                        settings.cache_dir / "thumbnails" / "faces"
+                                        settings.cache_dir
+                                        / "thumbnails"
+                                        / "faces"
                                     )
                                     thumb_dir.mkdir(parents=True, exist_ok=True)
-                                    
+
                                     # Unique name: video_hash + timestamp + face_idx
                                     safe_stem = hashlib.md5(
                                         video_path.stem.encode()
@@ -461,15 +467,14 @@ class VideoProcessor:
                                         if success:
                                             with open(thumb_file, "wb") as f:
                                                 f.write(buffer)
-                                                
+
                                             # Validate write
                                             if (
                                                 thumb_file.exists()
-                                                and thumb_file.stat().st_size > 0
+                                                and thumb_file.stat().st_size
+                                                > 0
                                             ):
-                                                thumb_path = (
-                                                    f"/thumbnails/faces/{thumb_name}"
-                                                )
+                                                thumb_path = f"/thumbnails/faces/{thumb_name}"
                                     except Exception:
                                         pass
 
@@ -490,7 +495,7 @@ class VideoProcessor:
 
                     except Exception as e:
                         logger.error(f"Face processing failed: {e}")
-            
+
             # Store detected faces for temporal context (simplified map)
             self._face_clusters = {cid: 1.0 for cid in face_cluster_ids}
 
@@ -523,11 +528,14 @@ class VideoProcessor:
             except Exception:
                 pass
 
-            identity_context = "\n".join(identity_parts) if identity_parts else None
+            identity_context = (
+                "\n".join(identity_parts) if identity_parts else None
+            )
 
             try:
                 # GPU-first: Unload GPU models before Ollama vision call
                 from core.utils.hardware import cleanup_vram
+
                 if self.faces:
                     self.faces.unload_gpu()
                 cleanup_vram()
@@ -536,8 +544,12 @@ class VideoProcessor:
                 video_context_parts = [f"Filename: {video_path.stem}"]
 
                 # Access pipeline attributes for HITL/Audio classification
-                hitl_content_type = getattr(self.pipeline, "_hitl_content_type", None)
-                audio_classification = getattr(self.pipeline, "_audio_classification", None)
+                hitl_content_type = getattr(
+                    self.pipeline, "_hitl_content_type", None
+                )
+                audio_classification = getattr(
+                    self.pipeline, "_audio_classification", None
+                )
 
                 if hitl_content_type:
                     video_context_parts.append(
@@ -545,7 +557,9 @@ class VideoProcessor:
                     )
                 elif audio_classification:
                     music_pct = audio_classification.get("music_percentage", 0)
-                    video_context_parts.append(f"Audio Analysis: Music {music_pct:.0f}%")
+                    video_context_parts.append(
+                        f"Audio Analysis: Music {music_pct:.0f}%"
+                    )
 
                 video_context = "\n".join(video_context_parts)
 
@@ -561,9 +575,15 @@ class VideoProcessor:
 
                     if frame_img is not None:
                         # Gate: Check pipeline's text_gate
-                        if hasattr(self.pipeline, "text_gate") and self.pipeline.text_gate.has_text(frame_img):
+                        if hasattr(
+                            self.pipeline, "text_gate"
+                        ) and self.pipeline.text_gate.has_text(frame_img):
                             if hasattr(self.pipeline, "ocr_engine"):
-                                ocr_result = await self.pipeline.ocr_engine.extract_text(frame_img)
+                                ocr_result = (
+                                    await self.pipeline.ocr_engine.extract_text(
+                                        frame_img
+                                    )
+                                )
                                 if ocr_result and ocr_result.get("text"):
                                     ocr_text = ocr_result["text"]
                                     ocr_boxes = ocr_result.get("boxes", [])
@@ -571,7 +591,7 @@ class VideoProcessor:
                         # Content Moderation (via Pipeline or local if needed)
                         # We'll skip complex moderation wiring for this refactor to save space,
                         # or assume pipeline has it instantiated.
-                        
+
                 except Exception as e:
                     logger.warning(f"OCR failed: {e}")
 
@@ -614,7 +634,12 @@ class VideoProcessor:
                     # Use upsert_media_frame instead of missing insert_video_frame
                     # Generate a reproducible point ID
                     import uuid
-                    frame_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{video_path}_{timestamp}"))
+
+                    frame_id = str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_DNS, f"{video_path}_{timestamp}"
+                        )
+                    )
 
                     self.db.upsert_media_frame(
                         point_id=frame_id,

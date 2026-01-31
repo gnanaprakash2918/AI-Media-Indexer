@@ -343,14 +343,14 @@ async def name_voice_cluster(
                     models.FieldCondition(
                         key="name",
                         match=models.MatchValue(value=request.name),
-                    )
+                    ),
                 ],
                 must_not=[
                     models.FieldCondition(
                         key="voice_cluster_id",
                         match=models.MatchValue(value=cluster_id),
                     )
-                ]
+                ],
             ),
             limit=1,
             with_payload=["voice_cluster_id"],
@@ -358,23 +358,30 @@ async def name_voice_cluster(
 
         points = existing_resp[0]
         if points:
-             target_cluster_id = points[0].payload.get("voice_cluster_id")
-             if target_cluster_id is not None:
-                 logger.info(f"Auto-merging voice cluster {cluster_id} into {target_cluster_id} (Name: {request.name})")
-                 count = pipeline.db.merge_voice_clusters(cluster_id, target_cluster_id)
-                 return {
-                     "status": "merged",
-                     "source_cluster_id": cluster_id,
-                     "target_cluster_id": target_cluster_id,
-                     "name": request.name,
-                     "segments_moved": count
-                 }
+            target_cluster_id = points[0].payload.get("voice_cluster_id")
+            if target_cluster_id is not None:
+                logger.info(
+                    f"Auto-merging voice cluster {cluster_id} into {target_cluster_id} (Name: {request.name})"
+                )
+                count = pipeline.db.merge_voice_clusters(
+                    cluster_id, target_cluster_id
+                )
+                return {
+                    "status": "merged",
+                    "source_cluster_id": cluster_id,
+                    "target_cluster_id": target_cluster_id,
+                    "name": request.name,
+                    "segments_moved": count,
+                }
 
         # 1. Update Voice Segments Payload
         # Set both 'speaker_name' and 'name' for consistency
         pipeline.db.client.set_payload(
             collection_name=pipeline.db.VOICE_COLLECTION,
-            payload={"speaker_name": request.name, "name": request.name}, # Fix for get_unresolved_voices using 'name'
+            payload={
+                "speaker_name": request.name,
+                "name": request.name,
+            },  # Fix for get_unresolved_voices using 'name'
             points=models.Filter(
                 must=[
                     models.FieldCondition(

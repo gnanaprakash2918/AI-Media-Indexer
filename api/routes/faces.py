@@ -387,7 +387,7 @@ async def name_face_cluster(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
     """Name a face cluster and propagate to search.
-    
+
     If the name already exists for another cluster, efficiently merges this cluster
     into the existing one.
     """
@@ -404,20 +404,22 @@ async def name_face_cluster(
                 must=[
                     models.FieldCondition(
                         key="name",
-                        match=models.MatchBase(value=request.name), # Use MatchBase or MatchValue/Text depending on version
+                        match=models.MatchBase(
+                            value=request.name
+                        ),  # Use MatchBase or MatchValue/Text depending on version
                         # Safer to use MatchValue for exact string
                     ),
                     models.FieldCondition(
-                         key="cluster_id",
-                         match=models.MatchExcept(**{"except": [cluster_id]})
-                    )
+                        key="cluster_id",
+                        match=models.MatchExcept(**{"except": [cluster_id]}),
+                    ),
                 ]
             ),
             limit=1,
             with_payload=["cluster_id"],
         )
-        
-        # Need to handle MatchValue properly. 
+
+        # Need to handle MatchValue properly.
         # Using a simpler query to find ANY face with this name but different cluster_id
         existing_resp = pipeline.db.client.scroll(
             collection_name=pipeline.db.FACES_COLLECTION,
@@ -433,25 +435,29 @@ async def name_face_cluster(
                         key="cluster_id",
                         match=models.MatchValue(value=cluster_id),
                     )
-                ]
+                ],
             ),
             limit=1,
             with_payload=["cluster_id"],
         )
-        
+
         points = existing_resp[0]
         if points:
-             target_cluster_id = points[0].payload.get("cluster_id")
-             if target_cluster_id is not None:
-                 logger.info(f"Auto-merging cluster {cluster_id} into {target_cluster_id} (Name: {request.name})")
-                 count = pipeline.db.merge_face_clusters(cluster_id, target_cluster_id)
-                 return {
-                     "status": "merged",
-                     "source_cluster_id": cluster_id,
-                     "target_cluster_id": target_cluster_id,
-                     "name": request.name,
-                     "faces_moved": count
-                 }
+            target_cluster_id = points[0].payload.get("cluster_id")
+            if target_cluster_id is not None:
+                logger.info(
+                    f"Auto-merging cluster {cluster_id} into {target_cluster_id} (Name: {request.name})"
+                )
+                count = pipeline.db.merge_face_clusters(
+                    cluster_id, target_cluster_id
+                )
+                return {
+                    "status": "merged",
+                    "source_cluster_id": cluster_id,
+                    "target_cluster_id": target_cluster_id,
+                    "name": request.name,
+                    "faces_moved": count,
+                }
 
         # 1. Update Face Payloads (set "name")
         pipeline.db.client.set_payload(
@@ -489,7 +495,7 @@ async def identify_face_cluster(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
     """Attempt to auto-identify a face cluster using TMDB cast lists.
-    
+
     1. Finds a video associated with this cluster.
     2. Looks up the movie/show metadata.
     3. Downloads cast photos and compares embeddings.
@@ -502,11 +508,13 @@ async def identify_face_cluster(
         # 1. Get cluster representative embedding and a sample video path
         faces = pipeline.db.get_faces_in_cluster(cluster_id, limit=1)
         if not faces:
-             raise HTTPException(status_code=404, detail="Cluster empty or not found")
-        
+            raise HTTPException(
+                status_code=404, detail="Cluster empty or not found"
+            )
+
         sample_face = faces[0]
         media_path = sample_face.get("media_path")
-        
+
         # Get centroid embedding for the cluster (better than single face)
         # We need to fetch it from the graph or average the points
         # For now, we'll retrieve 5 faces and average
@@ -514,72 +522,82 @@ async def identify_face_cluster(
         embeddings = []
         # We need vectors, get_faces_in_cluster might not return vectors by default depending on impl
         # pipeline.db.client.retrieve...
-        
-        # Fast path: Use the sample face's vector. 
+
+        # Fast path: Use the sample face's vector.
         # Ideally we want the cluster centroid.
         # Let's assume pipeline.db.get_face_embedding exists or we fetch it
         points = pipeline.db.client.retrieve(
             collection_name=pipeline.db.FACES_COLLECTION,
             ids=[sample_face["id"]],
-            with_vectors=True
+            with_vectors=True,
         )
         if not points:
-             raise HTTPException(status_code=404, detail="Face point not found")
-        
+            raise HTTPException(status_code=404, detail="Face point not found")
+
         target_embedding = points[0].vector
         if not target_embedding:
-             raise HTTPException(status_code=500, detail="Face has no embedding")
+            raise HTTPException(status_code=500, detail="Face has no embedding")
 
         # 2. Lookup Metadata
         from core.processing.metadata import get_metadata_engine
+
         metadata_engine = get_metadata_engine()
-        
+
         # We need to re-enrich to ensure we have the TMDB ID/Cast
         # In a real app, we should store TMDB ID in the media table.
         # Here we re-run heuristic
         metadata = await metadata_engine.enrich_video(None, media_path)
         if not metadata or not metadata.cast:
-             return {"status": "failed", "reason": "No metadata/cast found for video"}
+            return {
+                "status": "failed",
+                "reason": "No metadata/cast found for video",
+            }
 
         # 3. Match against cast
-        from core.processing.celebrity_lookup import CelebrityIdentifier, CelebrityMatch
-        
+        from core.processing.celebrity_lookup import (
+            CelebrityIdentifier,
+            CelebrityMatch,
+        )
+
         identifier = CelebrityIdentifier()
         # Convert metadata cast to CelebrityMatch objects
         cast_matches = []
         for member in metadata.cast:
-             cast_matches.append(CelebrityMatch(
-                 name=member.name, 
-                 confidence=0.8, 
-                 source="tmdb", 
-                 image_url=f"https://image.tmdb.org/t/p/w185{member.profile_path}" if member.profile_path else None,
-                 metadata={"id": member.tmdb_id}
-             ))
-             
+            cast_matches.append(
+                CelebrityMatch(
+                    name=member.name,
+                    confidence=0.8,
+                    source="tmdb",
+                    image_url=f"https://image.tmdb.org/t/p/w185{member.profile_path}"
+                    if member.profile_path
+                    else None,
+                    metadata={"id": member.tmdb_id},
+                )
+            )
+
         # Initialize FaceManager if needed (borrow from pipeline)
         if not pipeline.faces:
-             # Should be initialized by now usually
-             from core.processing.identity import FaceManager
-             pipeline.faces = FaceManager(db_client=pipeline.db.client)
-        
+            # Should be initialized by now usually
+            from core.processing.identity import FaceManager
+
+            pipeline.faces = FaceManager(db_client=pipeline.db.client)
+
         match = await identifier.match_face_to_cast(
-            target_embedding, 
-            cast_matches,
-            pipeline.faces
+            target_embedding, cast_matches, pipeline.faces
         )
         await identifier.close()
-        
+
         if match:
-             return {
-                 "status": "success",
-                 "match": {
-                     "name": match.name,
-                     "confidence": match.confidence,
-                     "image": match.image_url
-                 }
-             }
+            return {
+                "status": "success",
+                "match": {
+                    "name": match.name,
+                    "confidence": match.confidence,
+                    "image": match.image_url,
+                },
+            }
         else:
-             return {"status": "failed", "reason": "No match found in cast"}
+            return {"status": "failed", "reason": "No match found in cast"}
 
     except Exception as e:
         logger.error(f"[Faces] Identification failed: {e}")
