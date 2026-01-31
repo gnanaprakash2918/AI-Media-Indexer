@@ -106,7 +106,6 @@ class CLIPEncoder(VisualEncoderInterface):
             else:
                 pil_img = Image.fromarray(image).convert("RGB")
 
-            import torch
 
             if hasattr(
                 self._preprocess, "feature_extractor"
@@ -246,18 +245,33 @@ class SigLIPEncoder(VisualEncoderInterface):
                     log.error("[VisualEncoder] open_clip not installed. Install with `pip install open_clip_torch`. Visual features will be disabled.")
                     return None, None
 
+                # Try OpenCLIP first
                 try:
+                    import open_clip
                     model, _, preprocess = open_clip.create_model_and_transforms(
                         self._model_name, pretrained="webli"
                     )
                     model.eval()
                     import torch
-
                     if torch.cuda.is_available():
                         model = model.cuda()
                     return model, preprocess
                 except Exception as e:
-                    log.error(f"[VisualEncoder] Failed to load SigLIP: {e}")
+                    log.warning(f"[VisualEncoder] OpenCLIP load failed ({e}). Trying Transformers fallback...")
+
+                # Transformers fallback for SigLIP
+                try:
+                    from transformers import AutoModel, AutoProcessor
+                    hf_model = "google/siglip-so400m-patch14-384"
+                    model = AutoModel.from_pretrained(hf_model)
+                    preprocess = AutoProcessor.from_pretrained(hf_model)
+                    model.eval()
+                    import torch
+                    if torch.cuda.is_available():
+                        model = model.cuda()
+                    return model, preprocess
+                except Exception as e2:
+                    log.error(f"[VisualEncoder] SigLIP Fallback failed: {e2}")
                     return None, None
 
             self._model, self._preprocess = await asyncio.to_thread(_load)

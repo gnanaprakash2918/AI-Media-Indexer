@@ -11,9 +11,9 @@ Features:
 - Self-Healing: Automatically repairs corrupted model caches.
 """
 
-import io
 import asyncio
 import gc
+import io
 import os
 import shutil
 import subprocess
@@ -28,10 +28,10 @@ from faster_whisper import BatchedInferencePipeline, WhisperModel
 from huggingface_hub import login, snapshot_download
 
 from config import settings
+from core.errors import ModelLoadError, TranscriberError
 from core.processing.text_utils import parse_srt
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.errors import TranscriberError, ModelLoadError
 
 warnings.filterwarnings("ignore")
 
@@ -293,6 +293,22 @@ class AudioTranscriber:
             # Safest is to return False if we can't verify
             return False
 
+
+    def _get_duration(self, input_path: Path) -> float:
+        """Get the duration of the media file in seconds."""
+        try:
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(input_path)
+            ]
+            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            return float(output)
+        except Exception:
+            return 0.0
+
     @observe("transcriber_slice_audio")
     async def _slice_audio(
         self, input_path: Path, start: float, end: float | None
@@ -310,13 +326,22 @@ class AudioTranscriber:
         Returns:
             Path to temp WAV file OR bytes (in-memory audio data).
         """
-        
+        # Validate duration to prevent FFmpeg from crashing if start > duration
+        duration = await asyncio.to_thread(self._get_duration, input_path)
+        if duration > 0 and start >= duration:
+             log(f"[WARN] Slice start {start}s is past EOF {duration}s. Returning empty slice.")
+             return b"" # Empty audio
+
+        # Clamp end to duration
+        if end and duration > 0 and end > duration:
+            end = duration
+
         # Calculate segment duration for memory decision
-        segment_duration = (end - start) if end else 60.0  # Assume 60s if no end
-        
+        segment_duration = (end - start) if end else (duration - start if duration > 0 else 60.0)
+
         # Use in-memory BytesIO for segments < 5 minutes (to avoid RAM issues)
         use_memory = segment_duration < 300.0
-        
+
         cmd = [
             self._get_ffmpeg_cmd(),
             "-y",
@@ -333,9 +358,9 @@ class AudioTranscriber:
         if use_memory:
             # Output to stdout as raw WAV bytes
             cmd.extend(["-ar", "16000", "-ac", "1", "-f", "wav", "-"])
-            
-            log(f"[INFO] Slicing audio (memory): {start}s -> {end if end else 'END'}s")
-            
+
+            log(f"[INFO] Slicing audio (memory): {start}s -> {end if end else 'END'}s (File duration: {duration}s)")
+
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -343,14 +368,14 @@ class AudioTranscriber:
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 audio_bytes, _ = await proc.communicate()
-                
+
                 if proc.returncode == 0 and len(audio_bytes) > 44:  # WAV header is 44 bytes
                     return audio_bytes  # Return bytes directly
                 else:
-                    log("[WARN] In-memory slice failed, falling back to file")
+                    log("[WARN] In-memory slice failed (likely empty or internal error), falling back to file")
             except Exception as e:
                 log(f"[WARN] BytesIO slice error: {e}, falling back to file")
-        
+
         # Fallback: Write to temp file (for large segments or on error)
         with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             output_slice = Path(tmp.name)
@@ -370,8 +395,17 @@ class AudioTranscriber:
         cmd_file.extend(["-ar", "16000", "-ac", "1", "-map", "0:a:0", str(output_slice)])
 
         log(f"[INFO] Slicing audio (file): {start}s -> {end if end else 'END'}s")
-        await asyncio.to_thread(subprocess.run, cmd_file, check=True, stderr=subprocess.DEVNULL)
-        return output_slice
+        try:
+            await asyncio.to_thread(subprocess.run, cmd_file, check=True, stderr=subprocess.DEVNULL)
+            return output_slice
+        except subprocess.CalledProcessError as e:
+             log(f"[WARN] FFmpeg slice failed (exit {e.returncode}): Start={start}, End={end}, Duration={duration}. Returning empty.")
+             if output_slice.exists():
+                 try:
+                    output_slice.unlink()
+                 except Exception:
+                     pass
+             return b""
 
     @observe("transcriber_convert_model")
     def _convert_to_ct2(self, model_id: str) -> Path:
@@ -454,7 +488,7 @@ class AudioTranscriber:
 
         except Exception as e:
             log(f"[ERROR] Model download/conversion failed: {e}")
-            raise ModelLoadError(f"Could not prepare {model_id}: {e}", original_error=e)
+            raise ModelLoadError(f"Could not prepare {model_id}: {e}", original_error=e) from e
 
     def _convert_and_cache_model(self, model_id: str) -> Path:
         """Alias for _convert_to_ct2 for backwards compatibility."""
@@ -521,19 +555,19 @@ class AudioTranscriber:
             if "consistency check failed" in error_msg or "invalid load" in error_msg:
                 log(f"[WARN] Model corruption detected for {model_key}: {e}")
                 log("[INFO] Attempting self-healing: Forcing fresh download...")
-                
+
                 try:
                     # Force re-download using huggingface_hub directly (faster_whisper wrapper lacks force_download)
                     from huggingface_hub import snapshot_download
-                    
+
                     log(f"[INFO] Downloading fresh copy of {model_key} using huggingface_hub...")
                     match_path = snapshot_download(
                         repo_id=model_key,
                         cache_dir=str(settings.model_cache_dir),
                         force_download=True,
-                        allow_patterns=["*.json", "*.bin", "vocabulary.*"], 
+                        allow_patterns=["*.json", "*.bin", "vocabulary.*"],
                     )
-                    
+
                     # Retry initialization with explicit path
                     AudioTranscriber._SHARED_MODEL = WhisperModel(
                         match_path,
@@ -552,12 +586,12 @@ class AudioTranscriber:
 
                 except Exception as retry_err:
                     log(f"[ERROR] Self-healing failed: {retry_err}")
-                    raise ModelLoadError(f"Could not load {model_key} even after re-download", original_error=retry_err)
-            
-            # Re-raise if it's not a corruption error or recovery failed
-            raise e
-        except (RuntimeError, MemoryError, Exception) as e:
+                    raise ModelLoadError(f"Could not load {model_key} even after re-download", original_error=retry_err) from retry_err
+
+            # Re-raise if it's not a corruption error or recovery failed.
+            # We now check for memory errors before raising.
             error_msg = str(e).lower()
+
             # Check for memory-related errors
             if any(
                 x in error_msg
@@ -605,7 +639,9 @@ class AudioTranscriber:
                                 f"[WARN] Fallback {fallback_model} also failed: {fallback_err}"
                             )
                             continue
-            raise ModelLoadError(f"Failed to load Faster-Whisper model {model_key}: {e}", original_error=e)
+
+            # If not corruption and not memory error (or fallback failed), re-raise
+            raise ModelLoadError(f"Failed to load Faster-Whisper model {model_key}: {e}", original_error=e) from e
 
     def _format_timestamp(self, seconds: float) -> str:
         hours, remainder = divmod(seconds, 3600)
@@ -844,13 +880,13 @@ class AudioTranscriber:
                     no_speech_threshold=no_speech_thresh,
                     log_prob_threshold=-1.0,
                 )
-                
+
                 # Consume generator here in thread to avoid blocking later
                 return list(segments), info
 
             # Run the heavy blocking part in a thread
             segments_list, info = await asyncio.to_thread(_blocking_inference)
-            
+
             # ------------------------------------------------------------------
             # BLOCKING SECTION END
             # ------------------------------------------------------------------
@@ -918,7 +954,7 @@ class AudioTranscriber:
 
         except Exception as e:
             log(f"[ERROR] Inference failed: {e}")
-            raise TranscriberError(f"Whisper inference failed for {audio_path}: {e}", original_error=e)
+            raise TranscriberError(f"Whisper inference failed for {audio_path}: {e}", original_error=e) from e
 
     def _run_whisper_inference(
         self,
@@ -971,12 +1007,12 @@ class AudioTranscriber:
             # NOTE: 'detect_language' task is sometimes rejected by CTranslate2 models.
             # The robust way with faster-whisper is to run 'transcribe' on a short segment
             # and check info.language.
-            
+
             if isinstance(wav_path, bytes):
                 input_file = io.BytesIO(wav_path)
             else:
                 input_file = str(wav_path)
-                
+
             _, info = AudioTranscriber._SHARED_MODEL.transcribe(
                 input_file,
                 task="transcribe",  # Changed from 'detect_language'
@@ -1010,9 +1046,9 @@ class AudioTranscriber:
         finally:
             # Cleanup temp wav (only if we created it as a file)
             if (
-                wav_path 
-                and isinstance(wav_path, Path) 
-                and wav_path != audio_path 
+                wav_path
+                and isinstance(wav_path, Path)
+                and wav_path != audio_path
                 and wav_path.exists()
             ):
                 try:

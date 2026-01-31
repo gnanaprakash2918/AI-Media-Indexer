@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import time
 import urllib.request
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -761,7 +760,8 @@ class FaceManager:
         """Detect faces in an image with automatic model selection."""
         await self._lazy_init()
         path = Path(image_path)
-        image = await asyncio.to_thread(self._load_image, path)
+        path = Path(image_path)
+        image = await self._load_image(path)
 
         if image.size == 0:
             return []
@@ -784,8 +784,8 @@ class FaceManager:
         tasks = []
         for p in image_paths:
             if isinstance(p, (str, Path)):
-                # Correctly load image synchronously in thread
-                tasks.append(asyncio.to_thread(self._load_image, Path(p)))
+                # _load_image is already async and handles threading
+                tasks.append(self._load_image(Path(p)))
             else:
                 async def _noop(img): return img
                 tasks.append(_noop(p))

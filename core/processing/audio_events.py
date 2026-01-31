@@ -83,7 +83,8 @@ class AudioEventDetector:
         sample_rate: int = 16000,
         top_k: int = 3,
         threshold: float = 0.3,
-    ) -> list[dict]:
+        return_embedding: bool = False,
+    ) -> list[dict] | tuple[list[dict], list[float] | None]:
         """Detect all audible events in the given segment.
 
         Args:
@@ -92,27 +93,29 @@ class AudioEventDetector:
             sample_rate: The sampling rate of the audio.
             top_k: The number of top events to return.
             threshold: The confidence threshold for an event to be considered detected.
+            return_embedding: If True, also returns the 512-dim CLAP audio embedding.
 
         Returns:
             List of detected events with their labels and confidence scores.
+            If return_embedding=True, returns (events, embedding) tuple.
         """
         if not target_classes:
             log.warning(
                 "[CLAP] No target classes provided - open-vocabulary requires query-defined labels"
             )
-            return []
+            return ([], None) if return_embedding else []
 
         log.debug("[CLAP] detect_events: calling _lazy_load")
         if not await self._lazy_load():
             log.debug("[CLAP] detect_events: _lazy_load returned False")
-            return []
+            return ([], None) if return_embedding else []
         log.debug("[CLAP] detect_events: _lazy_load completed successfully")
 
         if self.model is None or self.processor is None:
-            return []
+            return ([], None) if return_embedding else []
 
         if audio_segment.size == 0:
-            return []
+            return ([], None) if return_embedding else []
 
         try:
             import torch
@@ -137,6 +140,7 @@ class AudioEventDetector:
                 log.debug("[CLAP] Resampling complete")
 
             log.debug("[CLAP] Acquiring GPU for CLAP detection...")
+            embedding_list = None
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
                 log.debug("[CLAP] GPU acquired, processing...")
                 device = self._device or "cpu"
@@ -161,6 +165,10 @@ class AudioEventDetector:
                 with torch.no_grad():
                     text_embeds = self.model.get_text_features(**text_inputs)
                     audio_embeds = self.model.get_audio_features(**audio_inputs)
+
+                    # Store raw embedding before normalization if requested
+                    if return_embedding:
+                        embedding_list = audio_embeds.squeeze(0).cpu().numpy().tolist()
 
                     text_embeds = text_embeds / text_embeds.norm(
                         dim=-1, keepdim=True
@@ -188,11 +196,13 @@ class AudioEventDetector:
             if results:
                 log.debug(f"[CLAP] Detected: {results}")
 
+            if return_embedding:
+                return results, embedding_list
             return results
 
         except Exception as e:
             log.error(f"[CLAP] Detection failed: {e}")
-            return []
+            return ([], None) if return_embedding else []
 
     async def detect_events_batch(
         self,
@@ -201,7 +211,8 @@ class AudioEventDetector:
         sample_rate: int = 16000,
         top_k: int = 3,
         threshold: float = 0.3,
-    ) -> list[list[dict]]:
+        return_embedding: bool = False,
+    ) -> list[list[dict]] | list[tuple[list[dict], list[float] | None]]:
         """Detect audio events in multiple chunks with a single GPU acquisition.
 
         This is significantly more efficient than calling detect_events() in a loop,
@@ -213,21 +224,29 @@ class AudioEventDetector:
             sample_rate: The sampling rate of the audio.
             top_k: The number of top events to return per chunk.
             threshold: The confidence threshold for detection.
+            return_embedding: If True, returns (events, embedding) tuple for each chunk.
 
         Returns:
             List of detected events per chunk, each with labels and confidence scores.
+            If return_embedding=True, returns list of (events, embedding) tuples.
         """
         if not target_classes:
             log.warning("[CLAP] No target classes provided")
+            if return_embedding:
+                return [([], None) for _ in audio_chunks]
             return [[] for _ in audio_chunks]
 
         if not audio_chunks:
             return []
 
         if not await self._lazy_load():
+            if return_embedding:
+                return [([], None) for _ in audio_chunks]
             return [[] for _ in audio_chunks]
 
         if self.model is None or self.processor is None:
+            if return_embedding:
+                return [([], None) for _ in audio_chunks]
             return [[] for _ in audio_chunks]
 
         try:
@@ -283,11 +302,14 @@ class AudioEventDetector:
                         dim=-1, keepdim=True
                     )
 
-                all_results: list[list[dict]] = []
+                all_results: list = []
 
                 for audio_segment, _start_time in resampled_chunks:
                     if audio_segment.size == 0:
-                        all_results.append([])
+                        if return_embedding:
+                            all_results.append(([], None))
+                        else:
+                            all_results.append([])
                         continue
 
                     audio_inputs = self.processor(  # type: ignore
@@ -303,6 +325,12 @@ class AudioEventDetector:
                         audio_embeds = self.model.get_audio_features(
                             **audio_inputs
                         )
+                        
+                        # Store embedding before normalization if requested
+                        embedding_list = None
+                        if return_embedding:
+                            embedding_list = audio_embeds.squeeze(0).cpu().numpy().tolist()
+                        
                         audio_embeds = audio_embeds / audio_embeds.norm(
                             dim=-1, keepdim=True
                         )
@@ -321,7 +349,11 @@ class AudioEventDetector:
                                     "confidence": round(conf, 3),
                                 }
                             )
-                    all_results.append(results)
+                    
+                    if return_embedding:
+                        all_results.append((results, embedding_list))
+                    else:
+                        all_results.append(results)
 
                 log.info(f"[CLAP] Batch: Processed {len(all_results)} chunks")
                 return all_results
@@ -395,6 +427,52 @@ class AudioEventDetector:
 
         sorted_results.sort(key=lambda x: x["score"], reverse=True)
         return sorted_results
+
+    async def encode_text(self, text: str) -> list[float] | None:
+        """Encode text to CLAP text embedding for semantic audio search.
+        
+        This produces a 512-dim text embedding that can be compared against
+        CLAP audio embeddings stored in the audio_events collection.
+        
+        Args:
+            text: Query text to encode.
+            
+        Returns:
+            512-dim CLAP text embedding, or None on failure.
+        """
+        if not text:
+            return None
+            
+        if not await self._lazy_load():
+            return None
+            
+        if self.model is None or self.processor is None:
+            return None
+            
+        try:
+            import torch
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            
+            async with RESOURCE_ARBITER.acquire("clap", vram_gb=0.5):
+                device = self._device or "cpu"
+                
+                text_inputs = self.processor(
+                    text=[text],
+                    return_tensors="pt",
+                    padding=True,
+                )
+                text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
+                
+                with torch.no_grad():
+                    text_embeds = self.model.get_text_features(**text_inputs)
+                    # Normalize for cosine similarity
+                    text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
+                    
+                return text_embeds.squeeze(0).cpu().numpy().tolist()
+                
+        except Exception as e:
+            log.error(f"[CLAP] Text encoding failed: {e}")
+            return None
 
     def should_run_clap(self, vad_result: dict) -> bool:
         """Check if clap detection should run based on VAD."""

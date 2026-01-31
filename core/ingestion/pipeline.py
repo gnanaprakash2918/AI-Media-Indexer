@@ -23,6 +23,8 @@ from core.processing.metadata import MetadataEngine
 from core.processing.ocr import EasyOCRProcessor
 from core.processing.prober import MediaProbeError, MediaProber
 from core.processing.scene_detector import detect_scenes, extract_scene_frame
+from core.processing.transnet_detector import TransNetV2
+from core.llm.video_vlm import VideoVLM
 from core.processing.segmentation import Sam3Tracker
 from core.processing.temporal_context import (
     SceneletBuilder,
@@ -137,6 +139,8 @@ class IngestionPipeline:
             dbscan_eps=settings.hdbscan_cluster_selection_epsilon,
             dbscan_min_samples=settings.hdbscan_min_samples,
         )
+        self.transnet = TransNetV2()
+        self.video_vlm = VideoVLM(model_id="Qwen/Qwen2-VL-2B-Instruct")
         self.voice_processor = VoiceProcessor(db=self.db)
         self.frame_interval_seconds = frame_interval_seconds
         self.vision: VisionAnalyzer | None = None
@@ -360,29 +364,65 @@ class IngestionPipeline:
                 await self._process_audio_events(path, job_id)
 
 
-            logger.debug("Starting frame processing")
-            async with progress_tracker.stage(job_id, "frames", "Processing frames"):
-                progress_tracker.update(job_id, 55.0)
-                await retry(
-                    lambda: self._process_frames(
-                        path, job_id, total_duration=duration
-                    ),
-                    on_retry=lambda e: progress_tracker.increment_retry(job_id, "frames")
-                )
-                progress_tracker.update(job_id, 85.0)
+            # Frames & Scenes processing with Chunking
+            current_chunk = 0
+            
+            while True:
+                # Calculate Chunk Context
+                chunk_start = 0.0
+                chunk_end = duration
+                
+                if should_chunk:
+                    chunk_start = current_chunk * chunk_duration
+                    chunk_end = min((current_chunk + 1) * chunk_duration, duration)
+                    
+                    # Log chunk progress
+                    logger.info(
+                        f"[Chunking] Processing Chunk {current_chunk + 1}/{self._total_chunks}: "
+                        f"{chunk_start/60:.1f}m - {chunk_end/60:.1f}m"
+                    )
+                    
+                    # Update pipeline range context for components to see
+                    self._start_time = chunk_start
+                    self._end_time = chunk_end
+                
+                # Exit condition
+                if chunk_start >= duration:
+                    break
 
-            logger.debug("Frame processing complete - cleaning memory")
-            self._cleanup_memory("frames_complete")
+                # 1. Process Frames (Batch)
+                logger.debug(f"Starting frame processing for chunk {current_chunk}")
+                async with progress_tracker.stage(job_id, f"frames_chunk_{current_chunk}", "Processing frames"):
+                    # Update scalar progress roughly
+                    # We could make this precise but simple update is 55->85 range
+                    progress_base = 55.0 + (30.0 * (current_chunk / self._total_chunks))
+                    progress_tracker.update(job_id, progress_base)
+                    
+                    await retry(
+                        lambda: self._process_frames(
+                            path, job_id, total_duration=duration
+                        ),
+                        on_retry=lambda e: progress_tracker.increment_retry(job_id, "frames")
+                    )
 
-            if progress_tracker.is_cancelled(
-                job_id
-            ) or progress_tracker.is_paused(job_id):
-                return job_id
-
-            # Dense Scene Captioning (VLM on detected scene boundaries)
-            async with progress_tracker.stage(job_id, "scene_captions", "Generating scene captions"):
-                progress_tracker.update(job_id, 90.0)
-                await self._process_scene_captions(path, job_id)
+                logger.debug(f"Frame processing complete for chunk {current_chunk}")
+                
+                # 2. Dense Scene Captioning (Batch)
+                # We process scenes restricted to this chunk
+                async with progress_tracker.stage(job_id, f"scene_captions_chunk_{current_chunk}", "Generating scene captions"):
+                    await self._process_scene_captions(path, job_id)
+                
+                # MEMORY CLEANUP between chunks
+                self._cleanup_memory(f"chunk_{current_chunk}_complete")
+                
+                if not should_chunk:
+                    break
+                    
+                current_chunk += 1
+                
+                # Check cancellation between chunks
+                if progress_tracker.is_cancelled(job_id) or progress_tracker.is_paused(job_id):
+                    return job_id
 
             # Post-Processing Phase
             async with progress_tracker.stage(job_id, "post_processing", "Enriching metadata"):
@@ -809,17 +849,19 @@ class IngestionPipeline:
 
                     # BATCH PROCESSING: Single GPU acquisition for all chunks
                     # Run CLAP directly (it handles GPU locking internally)
+                    # Request embeddings for storage in vector DB
                     batch_results = await audio_detector.detect_events_batch(
                         audio_chunks=audio_chunks,
                         target_classes=target_classes,
                         sample_rate=int(sr),
                         top_k=3,
                         threshold=0.25,
+                        return_embedding=True,  # Get CLAP embeddings for vector search
                     )
 
-                    # Collect results with timestamps
+                    # Collect results with timestamps and embeddings
                     audio_events = []
-                    for (_, start_time), events in zip(
+                    for (_, start_time), (events, embedding) in zip(
                         audio_chunks, batch_results
                     ):
                         for event in events:
@@ -830,6 +872,7 @@ class IngestionPipeline:
                                         "confidence": event["confidence"],
                                         "start": start_time,
                                         "end": start_time + chunk_duration,
+                                        "embedding": embedding,  # 512-dim CLAP embedding
                                     }
                                 )
 
@@ -837,7 +880,7 @@ class IngestionPipeline:
                         log(
                             f"[CLAP] Detected {len(audio_events)} audio events: {[e['event'] for e in audio_events[:5]]}"
                         )
-                        # Store audio events in database
+                        # Store audio events in database with CLAP embeddings
                         for event in audio_events:
                             self.db.insert_audio_event(
                                 media_path=str(path),
@@ -845,6 +888,7 @@ class IngestionPipeline:
                                 start_time=event["start"],
                                 end_time=event["end"],
                                 confidence=event["confidence"],
+                                clap_embedding=event.get("embedding"),  # Store CLAP vector
                             )
                     else:
                         log("[CLAP] No non-speech audio events detected")
@@ -1963,6 +2007,49 @@ class IngestionPipeline:
             del self._face_track_builder
         self._cleanup_memory()
 
+    async def _process_scene_action(
+        self, video_path: Path, start: float, end: float
+    ) -> str:
+        """Generate dynamic action summary using VideoVLM (Qwen2-VL).
+        
+        Extracts frames and asks VLM to describe motion.
+        """
+        try:
+            import cv2
+            cap = cv2.VideoCapture(str(video_path))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            
+            start_frame = int(start * fps)
+            end_frame = int(end * fps)
+            duration_frames = end_frame - start_frame
+            
+            # Sample 16 frames uniformly
+            num_samples = 16
+            indices = np.linspace(start_frame, end_frame - 1, num_samples, dtype=int)
+            
+            frames = []
+            for idx in indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if ret:
+                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            cap.release()
+            
+            if not frames:
+                return ""
+                
+            # Call VideoVLM
+            result = await self.video_vlm.generate_action_summary(frames, fps=fps)
+            
+            # Format output
+            action = result.get("action", "")
+            mood = result.get("mood", "")
+            return f"{action} {mood}".strip()
+            
+        except Exception as e:
+            logger.error(f"Action summary failed: {e}")
+            return ""
+
     @observe("scene_captioning")
     async def _process_scene_captions(
         self, path: Path, job_id: str | None = None
@@ -1977,7 +2064,42 @@ class IngestionPipeline:
             path: Path to the media file.
             job_id: Optional ID for progress tracking.
         """
-        scenes = await detect_scenes(path)
+        # Use TransNet V2 for scene detection
+        try:
+            # TransNet returns (start_frame, end_frame). We need to convert to seconds.
+            frame_scenes = self.transnet.predict_video(str(path))
+            
+            import cv2
+            cap = cv2.VideoCapture(str(path))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            cap.release()
+            
+            scenes = []
+            from core.processing.scene_detector import SceneInfo
+            
+            for start_frame, end_frame in frame_scenes:
+                start_t = start_frame / fps
+                end_t = end_frame / fps
+                # Filter very short scenes (glitches)
+                if end_t - start_t >= 1.0:
+                    scenes.append(SceneInfo(
+                        start_time=start_t,
+                        end_time=end_t,
+                        start_frame=int(start_frame),
+                        end_frame=int(end_frame),
+                        mid_frame=int((start_frame + end_frame) / 2),
+                        mid_time=(start_t + end_t) / 2
+                    ))
+            
+            if not scenes:
+                # Fallback to detector if TransNet returns nothing
+                logger.warning("TransNet returned no scenes, fallback to scenedetect")
+                scenes = await detect_scenes(path)
+                
+        except Exception as e:
+            logger.error(f"TransNet detection failed: {e}")
+            scenes = await detect_scenes(path)
+
         if not scenes:
             logger.info(f"No scene boundaries detected in {path.name}")
             return

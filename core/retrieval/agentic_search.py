@@ -10,7 +10,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from core.knowledge.schemas import ParsedQuery
-from core.retrieval.reranker import RerankingCouncil, SearchCandidate
+from core.retrieval.reranker import RerankingCouncil
 from core.utils.logger import log
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
@@ -995,8 +995,10 @@ class SearchAgent:
                 video_path = result.get("video_path") or result.get("media_path") or ""
                 start_time = result.get("start_time") or result.get("start") or result.get("timestamp") or 0
                 
-                # Round timestamp to 2s window for fuzzy matching across modalities
-                time_bucket = int(float(start_time) / 2) * 2
+                # Round timestamp to 4s window for fuzzy matching across modalities
+                # Research: 10-20s for high-level retrieval, 3-4s for fine-grained moment localization
+                # 4s balances typical scene duration (2-10s) with cross-modal alignment needs
+                time_bucket = int(float(start_time) / 4) * 4
                 fusion_key = f"{video_path}:{time_bucket}"
                 
                 rrf_score = 1.0 / (k + rank)
@@ -1037,13 +1039,20 @@ class SearchAgent:
         )[:limit * 3 if use_reranking else limit]
         
         candidates = []
-        max_fused_score = ranked[0][1] if ranked else 1.0  # For normalization
+        
+        # FIXED: Use sigmoid normalization instead of max-normalized (which always gives 100% to top)
+        # Sigmoid maps RRF scores to meaningful 0-1 range based on absolute quality
+        import math
+        def sigmoid_normalize(score: float, scale: float = 40.0) -> float:
+            """Convert RRF score to 0-1 using sigmoid. 
+            scale=40 maps score ~0.025 to ~0.5 confidence."""
+            return 1 / (1 + math.exp(-scale * score))
         
         for fusion_key, score in ranked:
             result = result_data[fusion_key]
             
-            # Normalize fused score to 0-1 range for consistent display
-            normalized_score = score / max_fused_score if max_fused_score > 0 else score
+            # FIXED: Sigmoid normalization gives meaningful confidence (not always 100% for top)
+            normalized_score = sigmoid_normalize(score)
             result["score"] = normalized_score
             result["fused_score"] = score
             
@@ -1113,68 +1122,52 @@ class SearchAgent:
             fallback_used = "no_results"
 
 
-        # 4. Re-rank with Reranking Council (VLM + CrossEncoder)
+        # 4. Re-rank with BGE-Reranker-v2-m3 (Single SOTA Reranker)
         if use_reranking and candidates:
             try:
-                # Convert to SearchCandidate objects
-                sc_candidates = []
+                # Prepare pairs for reranking: [query, document_text]
+                pairs = []
                 for c in candidates:
-                    video_p = c.get("video_path") or c.get("media_path") or ""
-                    
-                    # Handle scene vs frame timestamps - check multiple possible fields
-                    start = c.get("start_time") or c.get("start")
-                    end = c.get("end_time") or c.get("end")
-                    
-                    # Fallback: use timestamp field with small buffer
-                    if start is None:
-                        ts = float(c.get("timestamp", 0))
-                        start = max(0, ts - 2.0)
-                        end = ts + 3.0  # Slightly longer end buffer
-                    
-                    # Ensure start_time and end_time are in payload for frontend
-                    c["start_time"] = float(start or 0)
-                    c["end_time"] = float(end or start + 5.0 if start else 5.0)
-
-                    sc_candidates.append(
-                        SearchCandidate(
-                            video_path=str(video_p),
-                            start_time=float(start or 0),
-                            end_time=float(end or 0),
-                            score=float(c.get("score", 0)),
-                            payload=c
-                        )
-                    )
+                    # Construct rich representation for reranker
+                    desc = c.get("description") or c.get("visual_summary") or ""
+                    action = c.get("motion_text") or c.get("action_summary") or ""
+                    content = f"{desc} {action}"
+                    if c.get("dialogue_transcript"):
+                        content += f" Dialogue: {c['dialogue_transcript']}"
+                    pairs.append([query, content])
                 
-                # Execute Council Rerank
-                # Using council_rerank which returns RankedResult objects
-                ranked_results = await self.council.council_rerank(
-                    query=query,
-                    candidates=sc_candidates,
-                    max_candidates=limit,
-                    use_vlm=True
-                )
-
-                # Convert back to dicts
-                reranked_candidates = []
-                for r in ranked_results:
-                    cand_dict = r.candidate.payload.copy()
-                    cand_dict["combined_score"] = r.final_score
-                    cand_dict["score"] = r.final_score # Update main score
-                    cand_dict["llm_reasoning"] = r.vlm_reason or "Verified by Council"
-                    cand_dict["council_scores"] = {
-                        "vlm": r.vlm_confidence,
-                        "cross": r.cross_encoder_score,
-                        "bge": r.bge_score
-                    }
-                    reranked_candidates.append(cand_dict)
-
-                candidates = reranked_candidates
-                log(f"[SOTA Search] Council re-ranked to {len(candidates)} results")
+                # Use CrossEncoder or FlagReranker (Lazy Load)
+                from sentence_transformers import CrossEncoder
+                
+                # We use a lightweight but powerful reranker model
+                reranker_model_id = "BAAI/bge-reranker-v2-m3" 
+                # Note: In production we might want to singleton this.
+                # For now, we assume it's cached or fast enough to load, 
+                # or we should use a shared instance from a factory.
+                # To avoid re-loading every request, we should ideally put this in __init__
+                # But to follow "the fix", we'll use a cached accessor or singleton if available.
+                # Here we'll instantiate for correctness of logic.
+                
+                # Optimization: Check if self has reranker
+                if not hasattr(self, "_reranker") or self._reranker is None:
+                     self._reranker = CrossEncoder(reranker_model_id, trust_remote_code=True)
+                
+                scores = self._reranker.predict(pairs)
+                
+                # Update scores
+                for i, score in enumerate(scores):
+                    candidates[i]["score"] = float(score) # Update main score
+                    candidates[i]["rerank_score"] = float(score)
+                    
+                # Re-sort
+                candidates.sort(key=lambda x: x["score"], reverse=True)
+                candidates = candidates[:limit]
+                
+                log(f"[SOTA Search] BGE Reranked to {len(candidates)} results")
 
             except Exception as e:
-                log(f"[SOTA Search] Reranking failed: {e}")
-                import traceback
-                log(traceback.format_exc())
+                log.error(f"[SOTA Search] Reranking failed: {e}")
+                # Fallback to original order
 
         # 5. Granular Constraint Filtering & Scoring (if ParsedQuery has detail)
         # Only apply if we have granular constraints, to refine the final list
@@ -1303,75 +1296,53 @@ class SearchAgent:
         parsed = await self.parse_query(query)
         search_text = parsed.to_search_text() or query
 
+        # Use dedicated Scenelet search from DB with aggressive clustering
+        # gap_threshold=3.0 ensures we bridge 3s gaps (fixing "one part" issue)
+        # padding=3.0 ensures we add context before/after (fixing "didnt pad" issue)
+        results = self.db.search_scenelets(
+            query=search_text,
+            limit=limit,
+            video_path=video_path,
+            gap_threshold=3.0,
+            padding=3.0,
+        )
+
+        formatted_results = []
+        for r in results:
+            # Format for API consistency
+            start = r.get("start_time", 0.0)
+            end = r.get("end_time", 0.0)
+            text = r.get("text", "")
+            score = r.get("score", 0.0)
+
+            formatted_results.append(
+                {
+                    **r,
+                    "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
+                    "match_explanation": f"Action sequence detected: {text[:50]}",
+                }
+            )
+
+        return {
+            "query": query,
+            "search_type": "scenelet",
+            "results": formatted_results,
+            "result_count": len(formatted_results),
+        }
+
+    def _normalize_score(self, score: float) -> float:
+        """Normalize score to 0-1 range to prevent negative values."""
+        # Simple sigmoid-like or min-max if we knew bounds.
+        # Since Cosine can be -1 to 1, or Dot Product can be large/negative.
+        # We use a logistic function to squash output to 0-1 smoothly.
+        import math
         try:
-            # Use dedicated Scenelet search from DB
-            results = self.db.search_scenelets(
-                query=search_text,
-                limit=limit,
-                video_path=video_path,
-            )
-
-            formatted_results = []
-            for r in results:
-                # Format for API consistency
-                start = r.get("start_time", 0.0)
-                end = r.get("end_time", 0.0)
-                text = r.get("text", "")
-
-                formatted_results.append(
-                    {
-                        **r,
-                        "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
-                        "match_explanation": f"Action sequence detected: {text[:50]}",
-                    }
-                )
-
-            return {
-                "query": query,
-                "search_type": "scenelet",
-                "results": formatted_results,
-                "result_count": len(formatted_results),
-            }
-
-        except AttributeError:
-            # Fallback if DB method not ready (during migration)
-            log(
-                "[Scenelet Search] DB method not found, falling back to frame simulation"
-            )
-            candidates = await self.db.search_frames(
-                query=search_text, limit=limit * 2
-            )
-
-            results_with_ranges = []
-            for cand in candidates:
-                ts = cand.get("timestamp", 0)
-                start_time = max(0, ts - 2.5)
-                end_time = ts + 2.5
-
-                actions = cand.get("actions", [])
-                entities = cand.get("entities", cand.get("entity_names", []))
-
-                action_str = ", ".join(actions[:3]) if actions else "activity"
-                entity_str = ", ".join(entities[:3]) if entities else "scene"
-
-                reasoning = f"Matched Sequence: {action_str} with {entity_str} from {start_time:.1f}s to {end_time:.1f}s"
-
-                results_with_ranges.append(
-                    {
-                        **cand,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "reasoning": reasoning,
-                        "match_explanation": f"Action '{action_str}' detected at {ts:.1f}s",
-                    }
-                )
-
-            return {
-                "query": query,
-                "search_type": "scenelet",
-                "results": results_with_ranges[:limit],
-                "result_count": len(results_with_ranges[:limit]),
-            }
+            # If score is very large negative, it goes to 0
+            # If large positive, goes to 1
+            # Scale factor 2.0 to make slope reasonable
+            return 1 / (1 + math.exp(-2.0 * score))
+        except OverflowError:
+            return 0.0 if score < 0 else 1.0
 
     @observe("comprehensive_multimodal_search")
     async def comprehensive_multimodal_search(

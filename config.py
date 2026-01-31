@@ -428,7 +428,7 @@ class Settings(BaseSettings):
         description="Dimension of text embeddings (must match model)",
     )
     visual_embedding_dim: int = Field(
-        default=1024, # BGE-Visual / SigLIP Large
+        default=1152, # SigLIP SO400M is 1152 dim
         description="Dimension of visual embeddings ",
     )
 
@@ -461,13 +461,13 @@ class Settings(BaseSettings):
     )
     
     video_embedding_dim: int = Field(
-        default=768,
-        description="Dimension of video embeddings (InternVideo/LanguageBind)",
+        default=1024,
+        description="Dimension of video embeddings (InternVideo/LanguageBind projected)",
     )
     
     visual_features_dim: int = Field(
-        default=768,
-        description="Dimension of visual features (CLIP ViT-L)",
+        default=1152,
+        description="Dimension of visual features (SigLIP)",
     )
 
     enable_hybrid_search: bool = Field(

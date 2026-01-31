@@ -52,6 +52,12 @@ def _normalize_results(results: list[dict]) -> list[dict]:
             result["playback_url"] = (
                 f"/media?path={safe_path}#t={max(0, ts - 3)}"
             )
+            # Add padded timestamps for VideoPlayer context window
+            end_ts = r.get("end_time") or r.get("end") or ts + 5
+            result["display_start"] = max(0, ts - 3)
+            result["display_end"] = end_ts + 3
+            result["match_start"] = ts
+            result["match_end"] = end_ts
 
         normalized.append(result)
     return normalized
@@ -148,6 +154,12 @@ async def hybrid_search(
                     transformed["playback_url"] = (
                         f"/media?path={safe_path}#t={max(0, ts - 3)}"
                     )
+                    # Add padded timestamps for VideoPlayer context window
+                    end_ts = r.get("end_time") or r.get("end") or ts + 5
+                    transformed["display_start"] = max(0, ts - 3)  # 3s before match
+                    transformed["display_end"] = end_ts + 3  # 3s after match
+                    transformed["match_start"] = ts  # Original match point for highlighting
+                    transformed["match_end"] = end_ts  # Original match end
                 transformed_results.append(transformed)
 
             duration = time.perf_counter() - start_time
