@@ -553,10 +553,16 @@ if ($NukeQdrant) {
     Get-Process ffprobe -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     
     # Kill Python processes related to this project (api/server.py, worker.py, ingestion, etc)
-    Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*api/server.py*" -or $_.CommandLine -like "*worker*" -or $_.CommandLine -like "*ingest*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-    
-    # Kill Node/Vite
-    Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*vite*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    # NOTE: Get-Process does not have CommandLine property. Using Get-CimInstance.
+    Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'node.exe'" | Where-Object { 
+        $_.CommandLine -like "*api/server.py*" -or 
+        $_.CommandLine -like "*worker*" -or 
+        $_.CommandLine -like "*ingest*" -or
+        $_.CommandLine -like "*vite*" 
+    } | ForEach-Object {
+        Write-Host "  Killing process: $($_.ProcessId) ($($_.CommandLine))" -ForegroundColor DarkGray
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
 
     # 2. Stop Docker and remove named volumes (Critical for MinIO/ClickHouse)
     Write-Host "  Stopping Docker containers and removing volumes..." -ForegroundColor Gray
@@ -588,7 +594,10 @@ if ($NukeQdrant) {
     # 3. Wipe local bind-mount directories and persistence files
     $wipeItems = @(
         "qdrant_data", 
-        "qdrant_data_embedded", 
+        "qdrant_data_embedded",
+        "qdrant_storage",   # Legacy/User reported
+        "temp",             # Legacy/User reported
+        "data",             # App data volume
         "thumbnails", 
         ".cache", 
         ".face_cache",
@@ -600,18 +609,26 @@ if ($NukeQdrant) {
         "agent_err.json",
         "output.txt",
         "debug_output.txt",
-        "test_output.txt"
+        "test_output.txt",
+        "ruff_report.txt",
+        "eslint_report.txt",
+        "test_results.log"
     )
     
-    # Optional: Wipe Postgres (Langfuse)
-    Write-Host ""
-    $wipeLangfuse = Read-Host "  [?] Also wipe Langfuse/Postgres data (Resets API keys)? (y/N)"
-    if ($wipeLangfuse -match "^[yY]") {
+    # Nuclear means NUCLEAR. Wipe Postgres/Langfuse too.
+    if ($Nuclear -or $Full) {
         $wipeItems += "postgres_data"
-        Write-Host "  >> Including Postgres/Langfuse in wipe list." -ForegroundColor Yellow
+         Write-Host "  >> Including Postgres/Langfuse in cleanup (Nuclear Mode matches)." -ForegroundColor Red
     } else {
-        Write-Host "  >> Preserving Postgres/Langfuse data (Keys kept safe)." -ForegroundColor Green
+        # Only ask if not fully Nuclear (e.g. just Fresh) - wait, this block is inside if ($NukeQdrant)...
+        # Actually, let's just make it clear.
+        if (Test-Path "$ProjectRoot/postgres_data") {
+             Write-Host "  >> Removing postgres_data..." -ForegroundColor Red
+             $wipeItems += "postgres_data"
+        }
     }
+    
+
 
     foreach ($item in $wipeItems) {
         $path = Join-Path $ProjectRoot $item
