@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Optional
+
 import numpy as np
 
 from core.manipulation.painters import PrivacyBlur
@@ -144,7 +145,8 @@ class ManipulationPipeline:
     ):
         """Run inpainting logic (CPU blocking, run in executor)."""
         import asyncio
-        from core.manipulation.inpainting import get_inpainter, InpaintRequest
+
+        from core.manipulation.inpainting import InpaintRequest, get_inpainter
 
         loop = asyncio.get_running_loop()
 

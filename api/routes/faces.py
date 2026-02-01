@@ -398,26 +398,8 @@ async def name_face_cluster(
         from qdrant_client import models
 
         # 0. Check if name already exists (Auto-Merge)
-        existing = pipeline.db.client.scroll(
-            collection_name=pipeline.db.FACES_COLLECTION,
-            scroll_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="name",
-                        match=models.MatchBase(
-                            value=request.name
-                        ),  # Use MatchBase or MatchValue/Text depending on version
-                        # Safer to use MatchValue for exact string
-                    ),
-                    models.FieldCondition(
-                        key="cluster_id",
-                        match=models.MatchExcept(**{"except": [cluster_id]}),
-                    ),
-                ]
-            ),
-            limit=1,
-            with_payload=["cluster_id"],
-        )
+        # Check both 'name' and 'cluster_id'
+        # duplicates are handled by auto-merge below
 
         # Need to handle MatchValue properly.
         # Using a simpler query to find ANY face with this name but different cluster_id
@@ -517,11 +499,6 @@ async def identify_face_cluster(
 
         # Get centroid embedding for the cluster (better than single face)
         # We need to fetch it from the graph or average the points
-        # For now, we'll retrieve 5 faces and average
-        faces_for_avg = pipeline.db.get_faces_in_cluster(cluster_id, limit=5)
-        embeddings = []
-        # We need vectors, get_faces_in_cluster might not return vectors by default depending on impl
-        # pipeline.db.client.retrieve...
 
         # Fast path: Use the sample face's vector.
         # Ideally we want the cluster centroid.

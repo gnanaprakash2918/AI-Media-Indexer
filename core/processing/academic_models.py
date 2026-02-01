@@ -294,7 +294,7 @@ class DINOv2Encoder:
 
                 try:
                     # Fallback to HuggingFace
-                    from transformers import AutoModel, AutoImageProcessor
+                    from transformers import AutoImageProcessor, AutoModel
 
                     model_id = f"facebook/dinov2-{self.model_size}"
                     self._processor = AutoImageProcessor.from_pretrained(
@@ -495,7 +495,7 @@ class VideoMAEEncoder:
             try:
                 log.info("[VideoMAE] Loading model...")
 
-                from transformers import VideoMAEModel, VideoMAEImageProcessor
+                from transformers import VideoMAEImageProcessor, VideoMAEModel
 
                 model_id = "MCG-NJU/videomae-base-finetuned-kinetics"
                 self._processor = VideoMAEImageProcessor.from_pretrained(

@@ -401,9 +401,7 @@ async def name_voice_cluster(
         try:
             from core.storage.identity_graph import identity_graph
 
-            identity = identity_graph.get_or_create_identity_by_name(
-                request.name
-            )
+            identity_graph.get_or_create_identity_by_name(request.name)
             # Use db method if it exists, but we successfully did it above manually
             # pipeline.db.set_speaker_name(cluster_id, request.name)
         except Exception as e:

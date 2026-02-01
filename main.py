@@ -56,11 +56,12 @@ async def _run(video_path: Path, media_type: str) -> None:
     """
     # Configured frame interval
     # frame_interval_seconds uses config.frame_interval (default 0.5s = 2fps)
-    
+
     # === STARTUP: Warmup Models ===
     from core.utils.model_warmer import warmup_models
+
     await warmup_models()
-    
+
     pipeline = IngestionPipeline(
         qdrant_backend="docker",
         qdrant_host="localhost",

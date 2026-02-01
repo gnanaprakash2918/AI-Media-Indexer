@@ -106,8 +106,8 @@ class AudioTempoAnalyzer:
                 )
                 return "unknown", 0.0
 
-            import torch
             import librosa
+            import torch
 
             # Resample for CLAP (48kHz)
             if sample_rate != 48000:

@@ -265,9 +265,10 @@ class CelebrityIdentifier:
         Returns:
             Best matching celebrity or None.
         """
-        import numpy as np
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        import numpy as np
 
         if not cast:
             return None

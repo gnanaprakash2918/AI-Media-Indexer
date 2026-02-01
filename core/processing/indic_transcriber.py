@@ -703,8 +703,9 @@ class IndicASRPipeline:
         Returns:
             The full combined transcription text.
         """
-        import torch
         import asyncio
+
+        import torch
 
         duration = self._get_audio_duration(audio_path)
         chunk_duration_sec = 30  # Process in 30s chunks to prevent OOM

@@ -1,10 +1,11 @@
 from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
 
-from core.utils.resource import resource_manager
 from core.processing.transcriber import AudioTranscriber
+from core.utils.resource import resource_manager
 
 logger = logging.getLogger(__name__)
 

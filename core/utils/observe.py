@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import functools
 import time
+import traceback
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from core.utils.observability import end_span, start_span
-from core.utils.logger import log
-import traceback
 from core.errors import MediaIndexerError
+from core.utils.logger import log
+from core.utils.observability import end_span, start_span
 
 F = TypeVar("F", bound=Callable[..., Any])
 

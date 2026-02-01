@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+
 import numpy as np
-from core.utils.logger import get_logger
 import torch
+
+from core.utils.logger import get_logger
 
 log = get_logger(__name__)
 

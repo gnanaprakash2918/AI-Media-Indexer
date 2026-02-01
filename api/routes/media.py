@@ -423,8 +423,9 @@ async def get_media_thumbnail(
     Raises:
         HTTPException: If frame extraction via OpenCV fails.
     """
-    import cv2
     import asyncio
+
+    import cv2
 
     file_path = Path(path)
     if not file_path.exists():

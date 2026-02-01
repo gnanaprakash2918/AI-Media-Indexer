@@ -72,6 +72,7 @@ class VisionAnalyzer:
             self._llm_loaded = False
 
             import gc
+
             import torch
 
             gc.collect()

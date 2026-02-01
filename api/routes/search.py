@@ -305,7 +305,7 @@ async def advanced_search(
 
     except Exception as e:
         logger.error(f"Advanced search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/search")

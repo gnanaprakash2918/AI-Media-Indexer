@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-print("DEBUG: Starting detailed server imports...")
-
+import asyncio
 import logging
 import os
+import sys
 import warnings
+from contextlib import asynccontextmanager
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # Configure TensorFlow BEFORE any imports that trigger TF loading
+print("DEBUG: Starting detailed server imports...")
 print("DEBUG: Importing os/warnings/logging...")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault(
@@ -31,17 +38,8 @@ print("DEBUG: Configuring loggers...")
 for logger_name in ["tensorflow", "tf_keras", "absl"]:
     logging.getLogger(logger_name).setLevel(logging.ERROR)
 
-import asyncio
-import sys
-from contextlib import asynccontextmanager
-from uuid import uuid4
-
 # Windows-specific asyncio fix for "WinError 10054" noise
 if sys.platform == "win32":
-    import asyncio
-    import logging
-    import warnings
-
     # Suppress pynvml unrelated warnings from torch/fastapi
     warnings.filterwarnings(
         "ignore", category=FutureWarning, module="torch.cuda"
@@ -102,39 +100,41 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(SilenceEventLoopPolicy())
 
 print("DEBUG: Importing FastAPI...")
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+# Imports already at top
 
 # Import routers
 print("DEBUG: Importing API routers...")
-from api.routes import (
+from api.routes import (  # noqa: E402
     agent,
     councils,
     events,
     faces,
-    graph,  # New
+    graph,
     identities,
     ingest,
     library,
+    manipulation,
     media,
     search,
     system,
     voices,
-    manipulation,  # NEW: Manipulation Routes
 )
 
 print("DEBUG: Checking overlays...")
 try:
-    from api.routes import overlays
+    from api.routes import overlays  # noqa: E402
 except ImportError:
     overlays = None
 print("DEBUG: Importing config & pipeline...")
-from config import settings
-from core.ingestion.jobs import job_manager
-from core.ingestion.pipeline import IngestionPipeline
-from core.utils.logger import bind_context, clear_context, logger
-from core.utils.observability import end_trace, init_langfuse, start_trace
+from config import settings  # noqa: E402
+from core.ingestion.jobs import job_manager  # noqa: E402
+from core.ingestion.pipeline import IngestionPipeline  # noqa: E402
+from core.utils.logger import bind_context, clear_context, logger  # noqa: E402
+from core.utils.observability import (  # noqa: E402
+    end_trace,
+    init_langfuse,
+    start_trace,
+)
 
 pipeline: IngestionPipeline | None = None
 

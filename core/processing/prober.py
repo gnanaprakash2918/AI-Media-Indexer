@@ -1,9 +1,9 @@
 """Tools for probing media files with ffprobe."""
 
+import asyncio
 import functools
 import json
 import shutil
-import asyncio
 from pathlib import Path
 from typing import Any
 

@@ -18,8 +18,9 @@ async def warmup_models():
 
     # 1. TransNet V2 (Shot Detection) - CPU/GPU
     try:
-        from core.processing.transnet_detector import TransNetV2
         from huggingface_hub import hf_hub_download
+
+        from core.processing.transnet_detector import TransNetV2
 
         log.info("[Warmer] Checking TransNet V2 model file...")
         hf_hub_download(

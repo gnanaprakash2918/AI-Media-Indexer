@@ -153,7 +153,7 @@ class MultiAgentOrchestrator:
         elif agent_type == "vision":
             from core.processing.vision import VisionAnalyzer
 
-            analyzer = VisionAnalyzer()
+            # analyzer = VisionAnalyzer()
             # If "describe_image" or similar tool is requested, we might need a file path
             # However, the vision agent serves mostly for VQA on frames or scene analysis
             # For now, we'll map "analyze_frame" to VLM description if a frame path is provided

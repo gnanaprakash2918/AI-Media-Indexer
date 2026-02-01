@@ -1,8 +1,6 @@
 """Configuration settings for the ASR and LLM pipeline."""
 
 # Windows compatibility patches (must be imported before third-party libs)
-import core.utils.platform_compat  # noqa: F401, E402
-
 import logging
 import sys
 from enum import Enum
@@ -12,6 +10,8 @@ from typing import Literal
 import torch
 from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+import core.utils.platform_compat  # noqa: F401, E402
 
 
 class HardwareProfile(str, Enum):

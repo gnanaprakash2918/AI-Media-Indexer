@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoProcessor
 import torch
+from transformers import AutoModelForCausalLM, AutoProcessor
 
 from core.utils.logger import get_logger
 from core.utils.resource_arbiter import GPU_SEMAPHORE
@@ -146,7 +146,9 @@ class VideoVLM:
                 )
                 generated_ids_trimmed = [
                     out_ids[len(in_ids) :]
-                    for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+                    for in_ids, out_ids in zip(
+                        inputs.input_ids, generated_ids, strict=True
+                    )
                 ]
                 output_text = self.processor.batch_decode(
                     generated_ids_trimmed,

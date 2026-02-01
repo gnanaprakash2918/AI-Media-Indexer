@@ -1,7 +1,8 @@
 """Cluster ID management for biometrics."""
 
-import time
 import threading
+import time
+
 from qdrant_client import QdrantClient
 
 

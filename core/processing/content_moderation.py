@@ -9,11 +9,11 @@ Provides detection of:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
-import asyncio
 from config import settings
 from core.utils.logger import get_logger
 from core.utils.resource_arbiter import RESOURCE_ARBITER

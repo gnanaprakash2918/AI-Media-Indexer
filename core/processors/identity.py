@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import logging
-import uuid
 import subprocess
+import uuid
+from pathlib import Path
+
 import torch
 
-from core.utils.resource import resource_manager
-from core.utils.observe import observe
+from config import settings
 from core.ingestion.diarization import VoiceProcessor
 from core.processing.speech_emotion import SpeechEmotionAnalyzer
-from config import settings
+from core.utils.observe import observe
+from core.utils.resource import resource_manager
 
 logger = logging.getLogger(__name__)
 

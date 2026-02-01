@@ -16,7 +16,6 @@ from core.processing.scene_detector import extract_scene_frame
 from core.utils.logger import get_logger
 from core.utils.prompt_loader import load_prompt
 
-
 log = get_logger(__name__)
 
 

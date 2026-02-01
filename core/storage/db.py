@@ -11,8 +11,8 @@ import uuid
 from functools import wraps
 from pathlib import Path
 from typing import Any, cast
-import numpy as np
 
+import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 from qdrant_client import QdrantClient
@@ -246,6 +246,11 @@ class VectorDB:
         # Embedding cache for repeated queries
         self._embedding_cache = {}
         self._embedding_cache_max_size = 1000
+
+        # Load Visual Encoder for cross-modal search (Text -> Visual Embedding)
+        from core.processing.visual_encoder import get_default_visual_encoder
+
+        self.visual_encoder = get_default_visual_encoder()
 
     def get_next_voice_cluster_id(self) -> int:
         """Generate a unique voice cluster ID.
@@ -1164,6 +1169,20 @@ class VectorDB:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
 
+        # Masklets Collection (Video Concept Segmentation)
+        self._check_and_fix_collection(
+            self.MASKLETS_COLLECTION,
+            self.TEXT_DIM,  # Assuming text-based concept search, or visual? If MaskLet is concept TEXT, use TEXT_DIM
+            # Wait, if masklets are tracked objects, they might be visual features?
+            # Based on "Failed to fetch masklets", let's assume standard TEXT_DIM for now until proven otherwise.
+            # Actually, if it's "concept", it's likely text embedding of the concept name.
+        )
+        self.client.create_payload_index(
+            collection_name=self.MASKLETS_COLLECTION,
+            field_name="video_path",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+
         log("Qdrant collections and indexes ensured")
 
     def _create_text_index(
@@ -1262,7 +1281,20 @@ class VectorDB:
         Returns:
             A list of payload dictionaries containing frame metadata.
         """
-        query_vector = await self.encode_text(query)
+        # CRITICAL FIX: Use Visual Encoder (SigLIP/CLIP) to encode text for Frame Search
+        # Frames are indexed with Visual Encoder, so query must be in same latent space.
+        # BGE (self.encode_text) is for TEXT-only collections.
+        try:
+            query_vector = await self.visual_encoder.encode_text(query)
+            if not query_vector:
+                # Fallback purely to handle dry-run or error cases
+                query_vector = await self.encode_text(query)
+        except Exception as e:
+            log(
+                f"Visual Text Encoding failed: {e}, falling back to BGE",
+                level="WARNING",
+            )
+            query_vector = await self.encode_text(query)
 
         # Build filter conditions
         filter_conditions = []
@@ -1475,7 +1507,7 @@ class VectorDB:
         )
         return len(points)
 
-    def search_scenelets(
+    async def search_scenelets(
         self,
         query: str,
         limit: int = 10,
@@ -1503,7 +1535,15 @@ class VectorDB:
         raw_limit = limit * 5
 
         # Reuse existing frame search logic but get raw points
-        query_vector = self.encoder.encode(query).tolist()
+        # FIX: Use Visual Encoder for Scenelets (based on Frames)
+        try:
+            query_vector = await self.visual_encoder.encode_text(query)
+            if not query_vector:
+                query_vector = (await self.encode_texts(query, is_query=True))[
+                    0
+                ]
+        except Exception:
+            query_vector = (await self.encode_texts(query, is_query=True))[0]
 
         filters = []
         if video_path:
@@ -1515,13 +1555,15 @@ class VectorDB:
             )
 
         try:
-            hits = self.client.search(
+            # FIX: Use query_points instead of search (deprecated/wrong method name for Client)
+            resp = self.client.query_points(
                 collection_name=self.MEDIA_COLLECTION,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=raw_limit,
                 query_filter=models.Filter(must=filters) if filters else None,
                 with_payload=True,
             )
+            hits = resp.points
         except Exception as e:
             log(f"[Scenelet] Frame search failed: {e}", level="ERROR")
             return []

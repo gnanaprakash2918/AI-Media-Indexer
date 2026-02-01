@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import logging
+from pathlib import Path
 
 import torch
-from core.utils.resource import resource_manager
-from core.utils.observe import observe
-from core.ingestion.vision import VisionAnalyzer
+
+from config import settings
 from core.ingestion.faces import FaceManager, FaceTrackBuilder
+from core.ingestion.vision import VisionAnalyzer
+from core.processing.scenelets import SceneletBuilder
 from core.processing.temporal_context import (
     TemporalContext,
     TemporalContextManager,
 )
-from core.processing.scenelets import SceneletBuilder
-from core.utils.progress import progress_tracker
 from core.storage.identity_graph import identity_graph
+from core.utils.observe import observe
+from core.utils.progress import progress_tracker
+from core.utils.resource import resource_manager
 from llm.factory import LLMFactory
-from config import settings
 
 logger = logging.getLogger(__name__)
 

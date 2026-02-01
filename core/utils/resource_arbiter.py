@@ -91,14 +91,13 @@ class ResourceArbiter:
             vram_gb: Approximate VRAM required in GB.
             job_id: Optional job ID for cancellation support.
         """
+        import logging
         import time
 
         from core.utils.cancellation import (
             CancellationError,
             get_or_create_token,
         )
-
-        import logging
 
         logger = logging.getLogger(__name__)
 

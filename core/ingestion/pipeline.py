@@ -155,7 +155,7 @@ class IngestionPipeline:
 
         # Visual encoder for CLIP/SigLIP embeddings (lazy-loaded)
         self._visual_encoder = None
-        
+
         # Caching for Scene Detection (avoid re-running TransNet per chunk)
         self._cached_scenes = None
         self._cached_scenes_path = None
@@ -233,50 +233,56 @@ class IngestionPipeline:
         # === SOURCE TRIMMING (User Request: "trim and pass only that") ===
         if start_time is not None or end_time is not None:
             import subprocess
-            
-            logger.info(f"[Pipeline] Trimming requested: {start_time}-{end_time}")
-            
+
+            logger.info(
+                f"[Pipeline] Trimming requested: {start_time}-{end_time}"
+            )
+
             start_val = start_time or 0.0
             end_suffix = f"{end_time}" if end_time else "end"
-            trimmed_filename = f"{path.stem}_trim_{start_val}_{end_suffix}{path.suffix}"
+            trimmed_filename = (
+                f"{path.stem}_trim_{start_val}_{end_suffix}{path.suffix}"
+            )
             trimmed_path = path.parent / trimmed_filename
-            
+
             # Construct FFmpeg command (Input Seeking for speed)
             cmd = ["ffmpeg", "-y"]
             if start_time is not None:
                 cmd.extend(["-ss", str(float(start_time))])
-            
+
             cmd.extend(["-i", str(path)])
-            
+
             if end_time is not None:
                 duration_trim = float(end_time) - start_val
                 if duration_trim > 0:
                     cmd.extend(["-t", str(duration_trim)])
-            
+
             # Re-encode video for frame accuracy (ultrafast), copy audio
-            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy"])
+            cmd.extend(
+                ["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy"]
+            )
             cmd.extend([str(trimmed_path)])
-            
+
             logger.info(f"[Pipeline] Trimming command: {' '.join(cmd)}")
-            
+
             try:
                 # Run async to avoid blocking event loop
                 process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
+                    *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
                 stdout, stderr = await process.communicate()
-                
+
                 if process.returncode != 0:
                     error_msg = stderr.decode()
                     logger.error(f"[Pipeline] Trim failed: {error_msg}")
                     # Fallback or Raise? Raise, as user explicitly requested trim.
                     raise RuntimeError(f"FFmpeg trim failed: {error_msg}")
-                    
-                logger.info(f"[Pipeline] Trimming successful. New source: {trimmed_path}")
-                path = trimmed_path # Switch context to trimmed file
-                
+
+                logger.info(
+                    f"[Pipeline] Trimming successful. New source: {trimmed_path}"
+                )
+                path = trimmed_path  # Switch context to trimmed file
+
             except Exception as e:
                 progress_tracker.fail(job_id, error=f"Trimming failed: {e}")
                 raise
@@ -1674,7 +1680,7 @@ class IngestionPipeline:
 
                 # Store events with deduplication
                 for (window_audio, window_start), events, embedding in zip(
-                    clap_chunks, chunk_events, chunk_embeddings
+                    clap_chunks, chunk_events, chunk_embeddings, strict=True
                 ):
                     if not events:
                         continue
@@ -1737,8 +1743,6 @@ class IngestionPipeline:
         import subprocess
 
         import numpy as np
-
-        duration = end - start
 
         try:
             # Check for audio stream first
@@ -2234,7 +2238,6 @@ class IngestionPipeline:
 
             start_frame = int(start * fps)
             end_frame = int(end * fps)
-            duration_frames = end_frame - start_frame
 
             # Sample 16 frames uniformly
             num_samples = 16
@@ -2314,11 +2317,13 @@ class IngestionPipeline:
                                 mid_time=(start_t + end_t) / 2,
                             )
                         )
-                
+
                 if not raw_scenes:
-                     logger.warning("TransNet returned no scenes, fallback to scenedetect")
-                     raw_scenes = await detect_scenes(path)
-                     
+                    logger.warning(
+                        "TransNet returned no scenes, fallback to scenedetect"
+                    )
+                    raw_scenes = await detect_scenes(path)
+
                 scenes = raw_scenes
                 self._cached_scenes = scenes
                 self._cached_scenes_path = str(path)
@@ -2327,18 +2332,21 @@ class IngestionPipeline:
             # Only process scenes that overlap with the current pipeline chunk context
             start_ctx = getattr(self, "_start_time", None) or 0.0
             end_ctx = getattr(self, "_end_time", None) or float("inf")
-            
+
             # Filter scenes: [Scene Start < Chunk End] AND [Scene End > Chunk Start]
             filtered_scenes = [
-                s for s in scenes 
+                s
+                for s in scenes
                 if s.end_time > start_ctx and s.start_time < end_ctx
             ]
-            
+
             if not filtered_scenes:
-                logger.debug(f"[Scenes] No scenes in chunk ({start_ctx}-{end_ctx})")
+                logger.debug(
+                    f"[Scenes] No scenes in chunk ({start_ctx}-{end_ctx})"
+                )
                 return
 
-            scenes = filtered_scenes # Proceed with filtered list
+            scenes = filtered_scenes  # Proceed with filtered list
 
         except Exception as e:
             logger.error(f"TransNet detection failed: {e}")
@@ -3025,7 +3033,9 @@ class IngestionPipeline:
                                 diff = sum(
                                     a != b
                                     for a, b in zip(
-                                        current_hash, self._last_ocr_hash
+                                        current_hash,
+                                        self._last_ocr_hash,
+                                        strict=True,
                                     )
                                 )
                                 if diff < 8:  # <12.5% difference = same frame

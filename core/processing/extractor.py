@@ -18,9 +18,9 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.errors import ExtractionError
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.errors import ExtractionError
 
 
 @dataclass

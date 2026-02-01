@@ -402,16 +402,15 @@ class DeepResearchProcessor:
                         f"[DeepResearch] Perceptual hashing failed: {e}"
                     )
 
-        # 6. DINOv2 features (for zero-shot object discovery)
-        dinov2 = await self._get_dinov2()
-        if dinov2:
-            try:
-                # DINOv2Encoder uses extract_features, not encode_frame
-                features = await dinov2.extract_features(frame)
-                if features is not None:
-                    result.video_features["dinov2"] = features
-            except Exception as e:
-                log.warning(f"[DeepResearch] DINOv2 encoding failed: {e}")
+        # 6. DINOv2 features (DISABLED)
+        # dinov2 = await self._get_dinov2()
+        # if dinov2:
+        #     try:
+        #         features = await dinov2.extract_features(frame)
+        #         if features is not None:
+        #             result.video_features["dinov2"] = features
+        #     except Exception as e:
+        #         log.warning(f"[DeepResearch] DINOv2 encoding failed: {e}")
 
         return result
 
@@ -535,16 +534,6 @@ class DeepResearchProcessor:
             except Exception as e:
                 log.warning(f"[DeepResearch] LanguageBind encoding failed: {e}")
 
-        # VideoMAE for self-supervised features
-        videomae = await self._get_videomae()
-        if videomae:
-            try:
-                mae_features = await videomae.extract_action_features(frames)
-                if mae_features is not None:
-                    result.video_features["videomae"] = mae_features
-            except Exception as e:
-                log.warning(f"[DeepResearch] VideoMAE encoding failed: {e}")
-
         # Shot boundary detection between frames
         detector = await self._get_technical_detector()
         if detector and len(frames) >= 2:
@@ -556,6 +545,9 @@ class DeepResearchProcessor:
                 log.debug(
                     f"[DeepResearch] Shot boundary detection skipped: {e}"
                 )
+
+        # DISABLED: DINOv2 and VideoMAE as per user request to reduce bloat.
+        # Only InternVideo/LanguageBind are active for SOTA video-text search.
 
         return result
 

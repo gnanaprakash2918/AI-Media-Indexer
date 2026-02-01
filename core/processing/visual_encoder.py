@@ -34,6 +34,9 @@ class VisualEncoderInterface(ABC):
         self, images: list[np.ndarray | bytes | Path]
     ) -> list[list[float]]: ...
 
+    @abstractmethod
+    async def encode_text(self, text: str) -> list[float]: ...
+
     def cleanup(self) -> None: ...
 
 
@@ -205,9 +208,48 @@ class CLIPEncoder(VisualEncoderInterface):
 
             return await asyncio.to_thread(_infer_batch)
 
+    async def encode_text(self, text: str) -> list[float]:
+        await self._lazy_init()
+
+        async with GPU_SEMAPHORE:
+
+            def _infer():
+                import torch
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+
+                if hasattr(self._preprocess, "feature_extractor") or hasattr(
+                    self._preprocess, "image_processor"
+                ):
+                    # Transformers
+                    inputs = self._preprocess(
+                        text=[text], return_tensors="pt", padding=True
+                    )
+                    inputs = {
+                        k: v.to(device)
+                        for k, v in inputs.items()
+                        if hasattr(v, "to")
+                    }
+                    with torch.no_grad():
+                        feats = self._model.get_text_features(**inputs)
+                else:
+                    # OpenCLIP
+                    import open_clip
+
+                    tokenizer = open_clip.get_tokenizer(self._model_name)
+                    inputs = tokenizer([text]).to(device)
+                    with torch.no_grad():
+                        feats = self._model.encode_text(inputs)
+
+                feats = feats / feats.norm(dim=-1, keepdim=True)
+                return feats.cpu().numpy().flatten().tolist()
+
+            return await asyncio.to_thread(_infer)
+
     def cleanup(self) -> None:
         if self._model is not None:
             import gc
+
             import torch
 
             del self._model
@@ -356,9 +398,58 @@ class SigLIPEncoder(VisualEncoderInterface):
 
             return await asyncio.to_thread(_infer_batch)
 
+    async def encode_text(self, text: str) -> list[float]:
+        await self._lazy_init()
+        if self._model is None:
+            return []
+
+        async with GPU_SEMAPHORE:
+
+            def _infer():
+                import torch
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+
+                # SigLIP uses the processor for text too (it wraps tokenizer)
+                # Check if it's OpenCLIP or Transformers
+                if hasattr(self._model, "encode_text"):  # OpenCLIP
+                    import open_clip
+
+                    # OpenCLIP tokenizer might need to be created if not in preprocess
+                    # Usually open_clip provides a tokenizer factory
+                    try:
+                        tokenizer = open_clip.get_tokenizer(self._model_name)
+                        inputs = tokenizer([text]).to(device)
+                        with torch.no_grad():
+                            feats = self._model.encode_text(inputs)
+                    except Exception as e:
+                        # Fallback if tokenizer fails or model is different
+                        log.error(f"SigLIP Text Encode Error: {e}")
+                        return []
+                else:  # Transformers
+                    inputs = self._preprocess(
+                        text=[text],
+                        return_tensors="pt",
+                        padding="max_length",
+                        truncation=True,
+                    )
+                    inputs = {
+                        k: v.to(device)
+                        for k, v in inputs.items()
+                        if hasattr(v, "to")
+                    }
+                    with torch.no_grad():
+                        feats = self._model.get_text_features(**inputs)
+
+                feats = feats / feats.norm(dim=-1, keepdim=True)
+                return feats.cpu().numpy().flatten().tolist()
+
+            return await asyncio.to_thread(_infer)
+
     def cleanup(self) -> None:
         if self._model is not None:
             import gc
+
             import torch
 
             del self._model
@@ -405,6 +496,14 @@ class VLMVisionTowerEncoder(VisualEncoderInterface):
         self, images: list[np.ndarray | bytes | Path]
     ) -> list[list[float]]:
         return await asyncio.gather(*[self.encode_image(img) for img in images])
+
+    async def encode_text(self, text: str) -> list[float]:
+        # VLM usually doesn't serve as a text encoder for retrieval in the same way
+        # Assuming we don't use VLM for text queries against visual index usually.
+        # But if needed, we'd need a VLM that supports it.
+        # For now, return empty or raise.
+        log.warning("VLMVisionTowerEncoder does not support text encoding.")
+        return []
 
 
 def get_default_visual_encoder() -> VisualEncoderInterface:

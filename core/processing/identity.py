@@ -24,8 +24,8 @@ from sklearn.cluster import HDBSCAN  # type: ignore
 
 from config import settings
 from core.schemas import DetectedFace
-from core.utils.resource_arbiter import GPU_SEMAPHORE
 from core.utils.observe import observe
+from core.utils.resource_arbiter import GPU_SEMAPHORE
 
 # =========================================================================
 # SYSTEM CAPABILITY DETECTION

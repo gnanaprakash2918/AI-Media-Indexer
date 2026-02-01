@@ -162,8 +162,8 @@ async def main():
     print(f"  Query: {test_query[:80]}...")
 
     try:
-        from llm.factory import LLMFactory
         from core.retrieval.agentic_search import SearchAgent
+        from llm.factory import LLMFactory
 
         llm = LLMFactory.create_llm()
         agent = SearchAgent(db=db, llm=llm)

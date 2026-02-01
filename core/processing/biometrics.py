@@ -12,6 +12,7 @@ except ImportError:
     ort = None
 
 import asyncio
+
 from core.utils.logger import log
 from core.utils.resource_arbiter import GPU_SEMAPHORE
 

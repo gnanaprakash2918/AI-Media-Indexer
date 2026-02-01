@@ -1,8 +1,9 @@
 """Model loading logic for VectorDB."""
 
-import time
-import torch
 import shutil
+import time
+
+import torch
 from huggingface_hub import snapshot_download
 from sentence_transformers import SentenceTransformer
 

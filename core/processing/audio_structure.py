@@ -277,14 +277,8 @@ class MusicStructureAnalyzer:
         spectral_contrast = librosa.feature.spectral_contrast(
             y=y, sr=sr, hop_length=self.hop_length
         )
-        mfcc = librosa.feature.mfcc(
-            y=y, sr=sr, n_mfcc=13, hop_length=self.hop_length
-        )
 
         # Compute self-similarity matrix for structure detection
-        chroma = librosa.feature.chroma_cqt(
-            y=y, sr=sr, hop_length=self.hop_length
-        )
 
         # Detect segment boundaries using spectral clustering
         try:

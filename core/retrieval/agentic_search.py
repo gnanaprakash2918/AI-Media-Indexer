@@ -1218,20 +1218,16 @@ class SearchAgent:
 
         candidates = []
 
-        # FIXED: Use sigmoid normalization instead of max-normalized (which always gives 100% to top)
-        # Sigmoid maps RRF scores to meaningful 0-1 range based on absolute quality
-        import math
-
-        def sigmoid_normalize(score: float, scale: float = 40.0) -> float:
-            """Convert RRF score to 0-1 using sigmoid.
-            scale=40 maps score ~0.025 to ~0.5 confidence."""
-            return 1 / (1 + math.exp(-scale * score))
+        # FIXED: Use Linear Max-Scaling instead of Sigmoid
+        # Sigmoid compresses RRF scores (which are small, ~0.01) into a narrow 0.5-0.6 range.
+        # Linear scaling ensures the top result is 1.0 and preserves relative differences.
+        max_rrf_score = max(ranked[0][1], 1e-9) if ranked else 1.0
 
         for fusion_key, score in ranked:
             result = result_data[fusion_key]
 
-            # FIXED: Sigmoid normalization gives meaningful confidence (not always 100% for top)
-            normalized_score = sigmoid_normalize(score)
+            # Linear Normalization: Top result = 1.0
+            normalized_score = score / max_rrf_score
             result["score"] = normalized_score
             result["fused_score"] = score
 

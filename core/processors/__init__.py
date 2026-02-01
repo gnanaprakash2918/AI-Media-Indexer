@@ -1,7 +1,7 @@
 """Processor modules."""
 
 from .audio import AudioProcessor
-from .video import VideoProcessor
 from .identity import IdentityProcessor
+from .video import VideoProcessor
 
 __all__ = ["AudioProcessor", "VideoProcessor", "IdentityProcessor"]

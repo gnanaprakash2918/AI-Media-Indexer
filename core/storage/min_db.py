@@ -1,8 +1,9 @@
 """Qdrant client handler and connection management."""
 
 import time
-from typing import Any
 from functools import wraps
+from typing import Any
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
@@ -37,6 +38,7 @@ def sanitize_numpy_types(obj: Any) -> Any:
     """Recursively convert numpy types to native Python types."""
     import asyncio
     import inspect
+
     import numpy as np
 
     if asyncio.iscoroutine(obj) or inspect.iscoroutine(obj):
