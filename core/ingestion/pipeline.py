@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import traceback
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-import torch
 import numpy as np
+import torch
 from qdrant_client.http import models
 
 from config import settings
+from core.errors import IngestionError, MediaIndexerError
+from core.llm.video_vlm import VideoVLM
 from core.llm.vlm_factory import get_vlm_client
 from core.processing.deep_research import get_deep_research_processor
 from core.processing.extractor import FrameExtractor
@@ -23,8 +26,6 @@ from core.processing.metadata import MetadataEngine
 from core.processing.ocr import EasyOCRProcessor
 from core.processing.prober import MediaProbeError, MediaProber
 from core.processing.scene_detector import detect_scenes, extract_scene_frame
-from core.processing.transnet_detector import TransNetV2
-from core.llm.video_vlm import VideoVLM
 from core.processing.segmentation import Sam3Tracker
 from core.processing.temporal_context import (
     SceneletBuilder,
@@ -32,6 +33,7 @@ from core.processing.temporal_context import (
 )
 from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
+from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
 from core.schemas import MediaType
@@ -44,8 +46,6 @@ from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
 from core.utils.resource_arbiter import RESOURCE_ARBITER
 from core.utils.retry import retry
-from core.errors import MediaIndexerError, IngestionError
-import traceback
 
 # Global semaphore for VLM parallelism (limits concurrent VLM calls to 4)
 # This prevents OOM when using Ollama/Gemini with large contexts
@@ -155,6 +155,10 @@ class IngestionPipeline:
 
         # Visual encoder for CLIP/SigLIP embeddings (lazy-loaded)
         self._visual_encoder = None
+        
+        # Caching for Scene Detection (avoid re-running TransNet per chunk)
+        self._cached_scenes = None
+        self._cached_scenes_path = None
 
     @property
     def enhanced_config(self):
@@ -225,6 +229,57 @@ class IngestionPipeline:
         if not path.exists() or not path.is_file():
             progress_tracker.fail(job_id, error=f"Invalid media path: {path}")
             raise FileNotFoundError(f"Invalid media path: {path}")
+
+        # === SOURCE TRIMMING (User Request: "trim and pass only that") ===
+        if start_time is not None or end_time is not None:
+            import subprocess
+            
+            logger.info(f"[Pipeline] Trimming requested: {start_time}-{end_time}")
+            
+            start_val = start_time or 0.0
+            end_suffix = f"{end_time}" if end_time else "end"
+            trimmed_filename = f"{path.stem}_trim_{start_val}_{end_suffix}{path.suffix}"
+            trimmed_path = path.parent / trimmed_filename
+            
+            # Construct FFmpeg command (Input Seeking for speed)
+            cmd = ["ffmpeg", "-y"]
+            if start_time is not None:
+                cmd.extend(["-ss", str(float(start_time))])
+            
+            cmd.extend(["-i", str(path)])
+            
+            if end_time is not None:
+                duration_trim = float(end_time) - start_val
+                if duration_trim > 0:
+                    cmd.extend(["-t", str(duration_trim)])
+            
+            # Re-encode video for frame accuracy (ultrafast), copy audio
+            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy"])
+            cmd.extend([str(trimmed_path)])
+            
+            logger.info(f"[Pipeline] Trimming command: {' '.join(cmd)}")
+            
+            try:
+                # Run async to avoid blocking event loop
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
+                
+                if process.returncode != 0:
+                    error_msg = stderr.decode()
+                    logger.error(f"[Pipeline] Trim failed: {error_msg}")
+                    # Fallback or Raise? Raise, as user explicitly requested trim.
+                    raise RuntimeError(f"FFmpeg trim failed: {error_msg}")
+                    
+                logger.info(f"[Pipeline] Trimming successful. New source: {trimmed_path}")
+                path = trimmed_path # Switch context to trimmed file
+                
+            except Exception as e:
+                progress_tracker.fail(job_id, error=f"Trimming failed: {e}")
+                raise
 
         hint_enum = (
             MediaType(media_type_hint)
@@ -796,9 +851,8 @@ class IngestionPipeline:
         # ============================================================
         try:
             # CLAP defaults to True in EnhancedPipelineConfig, so use True as fallback
-            if self.enhanced_config and getattr(
-                self.enhanced_config, "enable_clap", True
-            ):
+            # DUPLICATE LOGIC DISABLED: Use _process_audio_events instead
+            if False:  # self.enhanced_config and getattr(self.enhanced_config, "enable_clap", True):
                 from core.processing.audio_events import AudioEventDetector
 
                 log("[CLAP] Starting audio event detection...")
@@ -974,8 +1028,8 @@ class IngestionPipeline:
             # === FFmpeg EBUR128 LOUDNESS ANALYSIS (OOM-SAFE) ===
             # Uses FFmpeg's ebur128 filter which streams the audio (~50MB RAM max)
             # instead of loading entire file into RAM (3-4GB for long videos)
-            import subprocess
             import re
+            import subprocess
 
             try:
                 # Run FFmpeg with ebur128 loudness filter
@@ -1232,6 +1286,7 @@ class IngestionPipeline:
             Tuple of (language_code, confidence_score).
         """
         import io
+
         from core.utils.logger import log
 
         with AudioTranscriber() as transcriber:
@@ -1504,40 +1559,11 @@ class IngestionPipeline:
         logger.info(f"Starting audio event detection for {path.name}")
 
         try:
-            from core.processing.audio_events import AudioEventDetector
             import subprocess
 
-            # Common audio events to detect
-            target_classes = [
-                "applause",
-                "laughter",
-                "crying",
-                "screaming",
-                "music",
-                "singing",
-                "speech",
-                "shout",
-                "whisper",
-                "doorbell",
-                "knock",
-                "glass breaking",
-                "car horn",
-                "siren",
-                "gunshot",
-                "explosion",
-                "dog barking",
-                "cat meow",
-                "bird chirp",
-                "rain",
-                "thunder",
-                "wind",
-                "water flowing",
-                "footsteps",
-                "silence",
-                "typing",
-                "phone ringing",
-                "alarm",
-            ]
+            from core.processing.audio_events import AudioEventDetector
+
+            # Model-based AST Prediction enabled. No hardcoded lists.
 
             detector = AudioEventDetector()
 
@@ -1628,23 +1654,27 @@ class IngestionPipeline:
                 # Batch process this chunk's windows
                 try:
                     # Request embeddings for vector storage
-                    chunk_events = await detector.detect_events_batch(
+                    # 1. Predict Events (AST) - Dynamic
+                    chunk_events = await detector.predict_events_dynamic(
                         clap_chunks,
-                        target_classes,
                         sample_rate=sample_rate,
                         top_k=2,
                         threshold=0.15,
-                        return_embedding=True,
+                    )
+                    # 2. Compute Embeddings (CLAP) - Vector Search
+                    chunk_embeddings = await detector.get_embeddings_batch(
+                        clap_chunks,
+                        sample_rate=sample_rate,
                     )
                 except Exception as e:
                     logger.warning(
-                        f"CLAP detection failed for chunk {chunk_idx}: {e}"
+                        f"Audio detection failed for chunk {chunk_idx}: {e}"
                     )
                     continue
 
                 # Store events with deduplication
-                for (window_audio, window_start), (events, embedding) in zip(
-                    clap_chunks, chunk_events
+                for (window_audio, window_start), events, embedding in zip(
+                    clap_chunks, chunk_events, chunk_embeddings
                 ):
                     if not events:
                         continue
@@ -1705,6 +1735,7 @@ class IngestionPipeline:
             NumPy array of audio samples, or None on failure.
         """
         import subprocess
+
         import numpy as np
 
         duration = end - start
@@ -1814,8 +1845,8 @@ class IngestionPipeline:
         await resource_manager.throttle_if_needed(vision_task_type)
 
         # Use the configured LLM provider from settings
-        from llm.factory import LLMFactory
         from core.processing.extractor import FrameExtractor
+        from llm.factory import LLMFactory
 
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)
@@ -2251,41 +2282,63 @@ class IngestionPipeline:
             job_id: Optional ID for progress tracking.
         """
         # Use TransNet V2 for scene detection
+        scenes = []
         try:
-            # TransNet returns (start_frame, end_frame). We need to convert to seconds.
-            frame_scenes = self.transnet.predict_video(str(path))
+            # 1. OPTIMIZATION: Check Cache (Avoids running TransNet per chunk)
+            if self._cached_scenes and self._cached_scenes_path == str(path):
+                scenes = self._cached_scenes
+            else:
+                # Run TransNet Logic (Once per file/trim)
+                frame_scenes = self.transnet.predict_video(str(path))
 
-            import cv2
+                import cv2
 
-            cap = cv2.VideoCapture(str(path))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            cap.release()
+                cap = cv2.VideoCapture(str(path))
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                cap.release()
 
-            scenes = []
-            from core.processing.scene_detector import SceneInfo
+                raw_scenes = []
+                from core.processing.scene_detector import SceneInfo
 
-            for start_frame, end_frame in frame_scenes:
-                start_t = start_frame / fps
-                end_t = end_frame / fps
-                # Filter very short scenes (glitches)
-                if end_t - start_t >= 1.0:
-                    scenes.append(
-                        SceneInfo(
-                            start_time=start_t,
-                            end_time=end_t,
-                            start_frame=int(start_frame),
-                            end_frame=int(end_frame),
-                            mid_frame=int((start_frame + end_frame) / 2),
-                            mid_time=(start_t + end_t) / 2,
+                for start_frame, end_frame in frame_scenes:
+                    start_t = start_frame / fps
+                    end_t = end_frame / fps
+                    if end_t - start_t >= 1.0:
+                        raw_scenes.append(
+                            SceneInfo(
+                                start_time=start_t,
+                                end_time=end_t,
+                                start_frame=int(start_frame),
+                                end_frame=int(end_frame),
+                                mid_frame=int((start_frame + end_frame) / 2),
+                                mid_time=(start_t + end_t) / 2,
+                            )
                         )
-                    )
+                
+                if not raw_scenes:
+                     logger.warning("TransNet returned no scenes, fallback to scenedetect")
+                     raw_scenes = await detect_scenes(path)
+                     
+                scenes = raw_scenes
+                self._cached_scenes = scenes
+                self._cached_scenes_path = str(path)
 
-            if not scenes:
-                # Fallback to detector if TransNet returns nothing
-                logger.warning(
-                    "TransNet returned no scenes, fallback to scenedetect"
-                )
-                scenes = await detect_scenes(path)
+            # 2. CHUNK FILTERING (Critical for Memory/Efficiency)
+            # Only process scenes that overlap with the current pipeline chunk context
+            start_ctx = getattr(self, "_start_time", None) or 0.0
+            end_ctx = getattr(self, "_end_time", None) or float("inf")
+            
+            # Filter scenes: [Scene Start < Chunk End] AND [Scene End > Chunk Start]
+            filtered_scenes = [
+                s for s in scenes 
+                if s.end_time > start_ctx and s.start_time < end_ctx
+            ]
+            
+            if not filtered_scenes:
+                logger.debug(f"[Scenes] No scenes in chunk ({start_ctx}-{end_ctx})")
+                return
+
+            scenes = filtered_scenes # Proceed with filtered list
 
         except Exception as e:
             logger.error(f"TransNet detection failed: {e}")
@@ -2471,6 +2524,7 @@ class IngestionPipeline:
 
                     # Convert frame bytes to numpy array
                     import io
+
                     from PIL import Image
 
                     img = Image.open(io.BytesIO(frame_bytes)).convert("RGB")

@@ -103,8 +103,8 @@ flowchart TD
 
 - **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration (Semaphores in `processing/identity.py`).
 - **Multimodal Intelligence**:
-    - **Audio**: Multi-pass language detection, **ROVER word-level voting** between Whisper v3, IndicConformer, and SeamlessM4T.
-    - **Vision**: **InternVideo2.5** for dense captioning, **SAM 2** for temporal visual tracking, and **PP-OCRv5** for Indic text extraction.
+    - **Audio**: **AST (Audio Spectrogram Transformer)** for 527-class event tagging, **CLAP** for text-audio retrieval, and **Whisper v3** for ASR.
+    - **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 2** for tracking.
     - **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
 - **Advanced Temporal Fusion**:
     - **3-Tier Memory**: XMem-inspired sensory (sliding window), working, and long-term memory tiers.
@@ -199,7 +199,7 @@ Settings are managed via `.env` (overrides `config.py` defaults).
 | Query | Modalities Used |
 |-------|-----------------|
 | "Person in red shirt running fast" | Visual (SigLIP) + Action (InternVideo) |
-| "Crowd cheering in background" | Audio Events (CLAP) |
+| "Crowd cheering in background" | Audio Events (AST + CLAP) |
 | "Prakash speaking near the door" | Face ID + Voice ID + VLM |
 | "Text 'EXIT' visible on sign" | OCR (PP-OCRv5) |
 

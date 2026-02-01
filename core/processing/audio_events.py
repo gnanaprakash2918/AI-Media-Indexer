@@ -19,6 +19,8 @@ class AudioEventDetector:
         """Initialize audio event detector."""
         self.model = None
         self.processor = None
+        self.ast_model = None
+        self.ast_processor = None
         self._device: str | None = device
         self._init_lock = asyncio.Lock()
         self._load_failed = False  # Prevents retry spam on permanent failures
@@ -51,7 +53,12 @@ class AudioEventDetector:
             try:
                 log.info("[CLAP] Loading model...")
 
-                from transformers import ClapModel, ClapProcessor
+                from transformers import (
+                    ASTForAudioClassification,
+                    AutoFeatureExtractor,
+                    ClapModel,
+                    ClapProcessor,
+                )
 
                 self.processor = ClapProcessor.from_pretrained(
                     "laion/clap-htsat-unfused"
@@ -59,6 +66,15 @@ class AudioEventDetector:
                 self.model = ClapModel.from_pretrained(
                     "laion/clap-htsat-unfused"
                 )
+
+                # Load AST for predictive tagging (Dynamic Ontology)
+                self.ast_processor = AutoFeatureExtractor.from_pretrained(
+                    "mit/ast-finetuned-audioset-10-10-0.4593"
+                )
+                self.ast_model = ASTForAudioClassification.from_pretrained(
+                    "mit/ast-finetuned-audioset-10-10-0.4593"
+                )
+                self.ast_model.to(self._get_device())
 
                 device = self._get_device()
                 self.model.to(device)  # type: ignore
@@ -455,6 +471,7 @@ class AudioEventDetector:
 
         try:
             import torch
+
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=0.5):
@@ -487,6 +504,169 @@ class AudioEventDetector:
         if is_speech and speech_conf > 0.9:
             return False
         return True
+
+    async def predict_events_dynamic(
+        self,
+        audio_chunks: list[tuple[np.ndarray, float]],
+        sample_rate: int = 16000,
+        top_k: int = 3,
+        threshold: float = 0.1,
+    ) -> list[list[dict]]:
+        """Dynamically predict audio events using AST (Audio Spectrogram Transformer).
+
+        This method does NOT require a hardcoded list of classes. It uses the
+        model's pre-trained knowledge of 527 AudioSet classes.
+        """
+        if not audio_chunks:
+            return []
+
+        if not await self._lazy_load():
+            return [[] for _ in audio_chunks]
+
+        try:
+            import librosa
+            import torch
+
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+
+            # AST High-Res Audio (16kHz)
+            target_sr = 16000
+            resampled_audios = []
+
+            # Resample for AST
+            for audio, _ in audio_chunks:
+                if len(audio) == 0:
+                    resampled_audios.append(np.array([]))
+                    continue
+                if sample_rate != target_sr:
+                    resampled_audios.append(
+                        librosa.resample(
+                            audio.astype(np.float32),
+                            orig_sr=sample_rate,
+                            target_sr=target_sr,
+                        )
+                    )
+                else:
+                    resampled_audios.append(audio.astype(np.float32))
+
+            async with RESOURCE_ARBITER.acquire("clap", vram_gb=0.8):
+                device = self._get_device()
+
+                all_predictions = []
+                mini_batch_size = 4
+
+                for i in range(0, len(resampled_audios), mini_batch_size):
+                    batch = resampled_audios[i : i + mini_batch_size]
+
+                    valid_batch = [b for b in batch if b.size > 0]
+                    if not valid_batch:
+                        all_predictions.extend([[] for _ in batch])
+                        continue
+
+                    inputs = self.ast_processor(
+                        valid_batch,
+                        sampling_rate=target_sr,
+                        return_tensors="pt",
+                        padding=True,
+                    )
+                    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                    with torch.no_grad():
+                        outputs = self.ast_model(**inputs)
+                        probs = outputs.logits.softmax(dim=-1)
+
+                    for prob in probs:
+                        top_vals, top_idxs = torch.topk(prob, top_k)
+                        events = []
+                        for val, idx in zip(top_vals, top_idxs):
+                            score = float(val)
+                            if score >= threshold:
+                                label = self.ast_model.config.id2label[int(idx)]
+                                events.append(
+                                    {
+                                        "event": label,
+                                        "confidence": round(score, 3),
+                                    }
+                                )
+                        all_predictions.append(events)
+
+                return all_predictions
+
+        except Exception as e:
+            log.error(f"[AST] Prediction failed: {e}")
+            return [[] for _ in audio_chunks]
+
+    async def get_embeddings_batch(
+        self,
+        audio_chunks: list[tuple[np.ndarray, float]],
+        sample_rate: int = 16000,
+    ) -> list[list[float] | None]:
+        """Compute CLAP embeddings for audio chunks (Audio-Only)."""
+        if not audio_chunks:
+            return []
+
+        if not await self._lazy_load():
+            return [None for _ in audio_chunks]
+
+        try:
+            import librosa
+            import torch
+
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+
+            target_sr = 48000
+            resampled_list = []
+
+            for audio, _ in audio_chunks:
+                if len(audio) == 0:
+                    resampled_list.append(np.array([]))
+                    continue
+                if sample_rate != target_sr:
+                    resampled_list.append(
+                        librosa.resample(
+                            audio.astype(np.float32),
+                            orig_sr=sample_rate,
+                            target_sr=target_sr,
+                        )
+                    )
+                else:
+                    resampled_list.append(audio.astype(np.float32))
+
+            async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
+                device = self._get_device()
+
+                embeddings_out = []
+                mini_batch_size = 8
+
+                for i in range(0, len(resampled_list), mini_batch_size):
+                    batch = resampled_list[i : i + mini_batch_size]
+                    valid = [b for b in batch if b.size > 0]
+
+                    if not valid:
+                        embeddings_out.extend([None] * len(batch))
+                        continue
+
+                    inputs = self.processor(
+                        audios=valid,
+                        sampling_rate=target_sr,
+                        return_tensors="pt",
+                        padding=True,
+                    )
+                    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                    with torch.no_grad():
+                        audio_embeds = self.model.get_audio_features(**inputs)
+                        audio_embeds = audio_embeds / audio_embeds.norm(
+                            dim=-1, keepdim=True
+                        )
+                        for emb in audio_embeds:
+                            embeddings_out.append(emb.cpu().numpy().tolist())
+
+                return embeddings_out
+
+        except Exception as e:
+            log.error(f"[CLAP] Embedding generation failed: {e}")
+            return [None for _ in audio_chunks]
 
     def cleanup(self) -> None:
         """Release model resources."""
