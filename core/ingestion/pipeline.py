@@ -1626,6 +1626,13 @@ class IngestionPipeline:
     async def _process_audio_events(
         self, path: Path, job_id: str | None = None
     ) -> None:
+        """Detects and indexes discrete audio events (Delegated to AudioHandler)."""
+        await self.audio_handler.process_audio_events(path, job_id=job_id)
+
+    @observe("audio_events")
+    async def _process_audio_events_legacy(
+        self, path: Path, job_id: str | None = None
+    ) -> None:
         """Detects and indexes discrete audio events (CLAP) using streaming chunks.
 
         Uses FFmpeg to stream audio in chunks instead of loading the entire file
