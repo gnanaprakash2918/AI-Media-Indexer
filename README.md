@@ -27,6 +27,7 @@ The AI-Media-Indexer implements a massively parallel ingestion pipeline coordina
 ### Technical Schematic
 
 ### Current State Demo
+
 > **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
 
 ![Demo](assets/demo.gif)
@@ -34,6 +35,7 @@ The AI-Media-Indexer implements a massively parallel ingestion pipeline coordina
 > **Note**: This architecture diagram reflects the **actual running code**, removing theoretical voting blocks for transparency.
 
 ### Ingestion Logic Flow
+
 ```mermaid
 flowchart TD
     A[Video Upload] --> B{File Validation}
@@ -83,7 +85,15 @@ flowchart TD
     AT --> SW
 ```
 
-### Search & Retrieval Flow
+---
+
+## Search & Retrieval Flow
+
+**Note in "Query Decomposition" branch** <span style="color:red"><strong>
+I am currently experimenting with vibecoding inside the <code>query-decompose</code> / constraint decomposition stage.
+This part is unstable, may change frequently, and is <u>not final</u>.
+I will merge it into the main flow once the behavior and accuracy are fixed. </strong></span>
+
 ```mermaid
 flowchart TD
     A[User Query] --> B[LLM Query Expansion]
@@ -116,45 +126,51 @@ flowchart TD
 
 ## Core Features
 
-- **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration.
-- **Multimodal Intelligence**:
-    - **Audio**: **AST (Audio Spectrogram Transformer)** for 527-class event tagging, **CLAP** for text-audio retrieval, and **Whisper v3** for ASR.
-    - **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 2** for tracking.
-    - **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
-- **Advanced Temporal Fusion**:
-    - **3-Tier Memory**: Tracks entities across short-term (Window) and long-term (Graph) contexts.
-    - **Fused Scenelets**: 5s window fusion of visual descriptions and dialogue transcripts.
-- **Agentic Search Engine**:
-    - **Hybrid Retrieval**: RRF Fusion (Vector + Keyword) across Multi-Vector Scenes.
-    - **LLM Reranking**: Reasoning-based verification using **Gemini 1.5**.
+* **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration.
+* **Multimodal Intelligence**:
+
+  * **Audio**: **AST (Audio Spectrogram Transformer)** for 527-class event tagging, **CLAP** for text-audio retrieval, and **Whisper v3** for ASR.
+  * **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 2** for tracking.
+  * **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
+* **Advanced Temporal Fusion**:
+
+  * **3-Tier Memory**: Tracks entities across short-term (Window) and long-term (Graph) contexts.
+  * **Fused Scenelets**: 5s window fusion of visual descriptions and dialogue transcripts.
+* **Agentic Search Engine**:
+
+  * **Hybrid Retrieval**: RRF Fusion (Vector + Keyword) across Multi-Vector Scenes.
+  * **LLM Reranking**: Reasoning-based verification using **Gemini 1.5**.
 
 ## Capabilities
 
-| Module | Technology | Capability |
-|--------|------------|------------|
-| **VLM Intelligence** | Gemini 1.5 Pro | Narrative synthesis & reasoning traces |
-| **Action Recognition** | InternVideo2.5 | Dense motion description |
-| **Face Identity** | InsightFace ArcFace | 512D biometric vectors |
-| **ASR** | Whisper/AI4Bharat | Multi-lingual transcription (Fallback logic) |
-| **Search Fusion** | RRF | Hybrid ranking (Dense + Sparse) |
+| Module                 | Technology          | Capability                                   |
+| ---------------------- | ------------------- | -------------------------------------------- |
+| **VLM Intelligence**   | Gemini 1.5 Pro      | Narrative synthesis & reasoning traces       |
+| **Action Recognition** | InternVideo2.5      | Dense motion description                     |
+| **Face Identity**      | InsightFace ArcFace | 512D biometric vectors                       |
+| **ASR**                | Whisper/AI4Bharat   | Multi-lingual transcription (Fallback logic) |
+| **Search Fusion**      | RRF                 | Hybrid ranking (Dense + Sparse)              |
 
 ## Tech Stack
 
-- **Backend**: Python 3.12, FastAPI, Celery, Redis
-- **Vector Database**: Qdrant with Multi-Vector support
-- **frontend**: React 19, Vite, Tailwind CSS 4.0
+* **Backend**: Python 3.12, FastAPI, Celery, Redis
+* **Vector Database**: Qdrant with Multi-Vector support
+* **frontend**: React 19, Vite, Tailwind CSS 4.0
 
 ## Getting Started
 
 ### 1. Requirements
+
 Ensure you have Docker, Python 3.12, and Node.js 20+ installed.
 
 ### 2. Initialization
+
 ```powershell
 ./init.ps1
 ```
 
 ### 3. Running
+
 ```powershell
 python run.py
 cd web && npm run dev
@@ -164,26 +180,19 @@ cd web && npm run dev
 
 ## Configuration (`.env`)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `QDRANT_HOST` | `localhost` | Vector DB host |
-| `USE_INDIC_ASR` | `True` | Enable AI4Bharat for Indic langs |
-| `ENABLE_HYBRID_SEARCH`| `True` | Use weighted RRF for ranking |
+| Variable               | Default     | Description                      |
+| ---------------------- | ----------- | -------------------------------- |
+| `QDRANT_HOST`          | `localhost` | Vector DB host                   |
+| `USE_INDIC_ASR`        | `True`      | Enable AI4Bharat for Indic langs |
+| `ENABLE_HYBRID_SEARCH` | `True`      | Use weighted RRF for ranking     |
 
 ---
 
 ## Search Examples
 
-| Query | Modalities Used |
-|-------|-----------------|
+| Query                              | Modalities Used                        |
+| ---------------------------------- | -------------------------------------- |
 | "Person in red shirt running fast" | Visual (SigLIP) + Action (InternVideo) |
-| "Crowd cheering in background" | Audio Events (AST + CLAP) |
-| "Prakash speaking near the door" | Face ID + Voice ID + VLM |
-| "Text 'EXIT' visible on sign" | OCR (PP-OCRv5) |
-
----
-
-<!-- 
-## Screenshots
-[Coming Soon]
--->
+| "Crowd cheering in background"     | Audio Events (AST + CLAP)              |
+| "Prakash speaking near the door"   | Face ID + Voice ID + VLM               |
+| "Text 'EXIT' visible on sign"      | OCR (PP-OCRv5)                         |
