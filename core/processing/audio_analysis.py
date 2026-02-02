@@ -75,11 +75,9 @@ class AudioTempoAnalyzer:
         try:
             # Lazy load CLAP via our centralized AudioEventDetector to save VRAM
             # (Reusing existing component instead of loading new model)
-            from core.processing.audio_events import AudioEventDetector
+            from core.processing.audio_events import get_audio_detector
 
-            # We use a singleton or new instance depending on how it's managed
-            # Here we instantiate but it lazy loads internally
-            detector = AudioEventDetector()
+            detector = get_audio_detector()
 
             # Define mood prompts for zero-shot classification
             mood_prompts = [

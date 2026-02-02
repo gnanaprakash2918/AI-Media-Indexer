@@ -28,12 +28,8 @@ class AudioEventDetector:
     def _get_device(self) -> str:
         if self._device:
             return self._device
-        try:
-            import torch
-
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
-            return "cpu"
+        from core.utils.device import get_device
+        return get_device()
 
     async def _lazy_load(self) -> bool:
         if self.model is not None:
@@ -686,3 +682,16 @@ class AudioEventDetector:
             pass
 
         log.info("[CLAP] Resources released")
+
+
+# Singleton instance
+_AUDIO_DETECTOR: AudioEventDetector | None = None
+
+
+def get_audio_detector(device: str | None = None) -> AudioEventDetector:
+    """Get singleton AudioEventDetector instance."""
+    global _AUDIO_DETECTOR
+    if _AUDIO_DETECTOR is None:
+        _AUDIO_DETECTOR = AudioEventDetector(device=device)
+    return _AUDIO_DETECTOR
+

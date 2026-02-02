@@ -3701,9 +3701,9 @@ class VectorDB:
         """
         try:
             # Use CLAP text encoder to get 512-dim embedding for audio search
-            from core.processing.audio_events import AudioEventDetector
+            from core.processing.audio_events import get_audio_detector
 
-            audio_detector = AudioEventDetector()
+            audio_detector = get_audio_detector()
             query_vec = await audio_detector.encode_text(query)
 
             if query_vec is None:

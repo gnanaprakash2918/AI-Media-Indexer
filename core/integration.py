@@ -116,9 +116,9 @@ class EnhancedPipelineConfig:
         if not self.enable_clap:
             return None
         if self._audio_detector is None:
-            from core.processing.audio_events import AudioEventDetector
+            from core.processing.audio_events import get_audio_detector
 
-            self._audio_detector = AudioEventDetector()
+            self._audio_detector = get_audio_detector()
             log.info("[Integration] CLAP AudioEventDetector enabled")
         return self._audio_detector
 

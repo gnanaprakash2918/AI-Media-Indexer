@@ -308,6 +308,28 @@ class Settings(BaseSettings):
         default=5, description="Frames before track finalization"
     )
 
+    # Face-Audio Sync (ATSC standard: 45ms lead, 125ms lag acceptable)
+    face_audio_sync_tolerance: float = Field(
+        default=0.3,
+        description="Tolerance in seconds for face-speaker linkage (0.3=300ms)",
+    )
+
+    # Query Expansion
+    query_expansion_enabled: bool = Field(
+        default=True,
+        description="Enable LLM query expansion for complex queries",
+    )
+    query_expansion_confidence: float = Field(
+        default=0.7,
+        description="Min confidence to apply query expansion (0.7=70%)",
+    )
+
+    # Frame Deduplication
+    frame_dedup_threshold: float = Field(
+        default=0.98,
+        description="Skip storing frames with >98% similarity to recent frames",
+    )
+
     # Scene Detection
     scene_detect_threshold: float = Field(
         default=15.0,

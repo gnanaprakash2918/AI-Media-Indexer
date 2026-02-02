@@ -27,40 +27,9 @@ router = APIRouter()
 
 
 def _normalize_results(results: list[dict]) -> list[dict]:
-    """Normalize search results to ensure consistent frontend fields.
-
-    Ensures all results have video_path, timestamp, and thumbnail_url.
-    """
-    normalized = []
-    for r in results:
-        # Normalize video path (some collections use media_path)
-        video = r.get("video_path") or r.get("media_path", "")
-        ts = r.get("timestamp") or r.get("start_time") or r.get("start", 0)
-
-        result = {
-            **r,
-            "video_path": video,
-            "timestamp": ts,
-        }
-
-        # Add thumbnail_url if not present
-        if video and "thumbnail_url" not in result:
-            safe_path = quote(str(video))
-            result["thumbnail_url"] = (
-                f"/media/thumbnail?path={safe_path}&time={ts}"
-            )
-            result["playback_url"] = (
-                f"/media?path={safe_path}#t={max(0, ts - 3)}"
-            )
-            # Add padded timestamps for VideoPlayer context window
-            end_ts = r.get("end_time") or r.get("end") or ts + 5
-            result["display_start"] = max(0, ts - 3)
-            result["display_end"] = end_ts + 3
-            result["match_start"] = ts
-            result["match_end"] = end_ts
-
-        normalized.append(result)
-    return normalized
+    """Normalize search results using centralized utility."""
+    from core.utils.normalize import normalize_result
+    return [normalize_result(r) for r in results]
 
 
 @router.get("/search/hybrid")

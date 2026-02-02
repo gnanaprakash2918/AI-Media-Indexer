@@ -268,40 +268,9 @@ class AudioTranscriber:
         return False
 
     def _has_audio_stream(self, input_path: Path) -> bool:
-        """Checks if the file contains an audio stream using ffprobe."""
-        try:
-            # Use ffprobe to check for audio streams
-            # -v error: split output
-            # -select_streams a: select audio
-            # -show_entries ...: only show type
-            # -of csv...: clean output
-            cmd = [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "a",
-                "-show_entries",
-                "stream=codec_type",
-                "-of",
-                "csv=p=0",
-                str(input_path),
-            ]
-            # Run in subprocess (fast enough to be check calling directly or use to_thread if strict)
-            # Since this is a fast check, blocking brieflly is often acceptable, but let's use subprocess.run
-            # Note: shutil.which("ffprobe") should be checked ideally, but assuming ffmpeg exists
-            output = (
-                subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-                .decode()
-                .strip()
-            )
-            return bool(
-                output
-            )  # If output is not empty ('audio'), it has audio
-        except Exception:
-            # Fallback: if ffprobe fails, assume maybe yes and let ffmpeg fail, or check file size?
-            # Safest is to return False if we can't verify
-            return False
+        """Check if file has audio stream (delegated to utility)."""
+        from core.utils.media import has_audio_stream
+        return has_audio_stream(input_path)
 
     def _get_duration(self, input_path: Path) -> float:
         """Get the duration of the media file in seconds."""

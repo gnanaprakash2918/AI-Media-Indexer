@@ -69,6 +69,23 @@ def is_audio_silent(
     return rms_db < threshold_db
 
 
+def compute_speaker_centroid(embeddings: list[list[float]]) -> np.ndarray | None:
+    """Compute centroid (mean) of speaker embeddings for cluster matching.
+    
+    Used to match new segments against existing speaker centroids
+    instead of comparing against all individual segments.
+    """
+    if not embeddings:
+        return None
+    arr = np.array(embeddings)
+    centroid = np.mean(arr, axis=0)
+    # Normalize for cosine similarity
+    norm = np.linalg.norm(centroid)
+    if norm > 0:
+        centroid = centroid / norm
+    return centroid
+
+
 class VoiceProcessor:
     """Handles speaker diarization and voice embedding extraction."""
 
@@ -106,30 +123,9 @@ class VoiceProcessor:
             self.enabled = False
 
     def _has_audio_stream(self, input_path: Path) -> bool:
-        """Checks if the file contains an audio stream using ffprobe."""
-        try:
-            import subprocess
-
-            cmd = [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "a",
-                "-show_entries",
-                "stream=codec_type",
-                "-of",
-                "csv=p=0",
-                str(input_path),
-            ]
-            output = (
-                subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-                .decode()
-                .strip()
-            )
-            return bool(output)
-        except Exception:
-            return False
+        """Check if file has audio stream (delegated to utility)."""
+        from core.utils.media import has_audio_stream
+        return has_audio_stream(input_path)
 
     def _get_cached_audio(self, path: Path) -> tuple[np.ndarray, int] | None:
         """Get audio from cache, loading if necessary.
@@ -410,20 +406,17 @@ class VoiceProcessor:
                 # This ensures segments are still stored for music/singing
                 if embedding is None and not is_silence_segment:
                     log.warning(
-                        f"[Voice] Embedding extraction failed for {start:.2f}-{end:.2f}s, using placeholder"
+                        f"[Voice] Skipping segment {start:.2f}-{end:.2f}s - no valid embedding"
                     )
-                    # Create a zeroed placeholder embedding (256-dim for wespeaker)
-                    embedding = [0.0] * 256
                     segments_with_placeholder += 1
+                    continue  # Skip instead of storing zero vector
 
                 segments.append(
                     SpeakerSegment(
                         start_time=start,
                         end_time=end,
                         speaker_label=speaker,
-                        confidence=1.0
-                        if is_silence_segment
-                        else (1.0 if segments_with_placeholder == 0 else 0.5),
+                        confidence=1.0 if is_silence_segment else 1.0,
                         embedding=embedding,
                     )
                 )

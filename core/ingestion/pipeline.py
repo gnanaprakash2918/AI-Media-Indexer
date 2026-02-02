@@ -160,6 +160,9 @@ class IngestionPipeline:
         self._cached_scenes = None
         self._cached_scenes_path = None
 
+        # Probe cache (avoid 6x FFprobe calls per video)
+        self._probe_cache: dict[str, dict] = {}
+
     @property
     def enhanced_config(self):
         """Lazy-load EnhancedPipelineConfig for SmartFrameSampler, audio events, etc."""
@@ -174,23 +177,27 @@ class IngestionPipeline:
         return self._enhanced_config
 
     def _cleanup_memory(self, context: str = "") -> None:
-        """Force garbage collection and clear CUDA cache.
-
-        Args:
-            context: Optional context string for logging (e.g., "audio_complete")
-        """
+        """Force garbage collection and clear CUDA cache."""
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()  # Ensure all GPU operations complete
+        from core.utils.device import empty_cache
+        empty_cache()
 
-        # Log VRAM status if available
         try:
             from core.utils.hardware import log_vram_status
-
             log_vram_status(context or "cleanup")
         except Exception:
             pass
+
+    async def get_probe_data(self, path: Path) -> dict:
+        """Get probe data with caching (avoids 6x FFprobe calls)."""
+        key = str(path)
+        if key not in self._probe_cache:
+            self._probe_cache[key] = await self.prober.probe(path)
+        return self._probe_cache[key]
+
+    def clear_probe_cache(self) -> None:
+        """Clear probe cache (call after video processing complete)."""
+        self._probe_cache.clear()
 
     @observe("process_video")
     async def process_video(
@@ -859,10 +866,10 @@ class IngestionPipeline:
             # CLAP defaults to True in EnhancedPipelineConfig, so use True as fallback
             # DUPLICATE LOGIC DISABLED: Use _process_audio_events instead
             if False:  # self.enhanced_config and getattr(self.enhanced_config, "enable_clap", True):
-                from core.processing.audio_events import AudioEventDetector
+                from core.processing.audio_events import get_audio_detector
 
                 log("[CLAP] Starting audio event detection...")
-                audio_detector = AudioEventDetector()
+                audio_detector = get_audio_detector()
 
                 # === STREAMING APPROACH (OOM FIX) ===
                 # Instead of loading entire audio file at once, we stream in chunks
@@ -1567,11 +1574,11 @@ class IngestionPipeline:
         try:
             import subprocess
 
-            from core.processing.audio_events import AudioEventDetector
+            from core.processing.audio_events import get_audio_detector
 
             # Model-based AST Prediction enabled. No hardcoded lists.
 
-            detector = AudioEventDetector()
+            detector = get_audio_detector()
 
             # Get duration via FFprobe (doesn't load file into memory)
             try:
@@ -3440,24 +3447,20 @@ class IngestionPipeline:
     ) -> list[int]:
         """Identifies speaker cluster IDs active at a specific timestamp.
 
-        Enables cross-modal mapping by finding which speaker is talking
-        at the moment a particular face or visual event occurs.
-
-        Args:
-            media_path: Path to the media file.
-            timestamp: The timestamp in seconds.
-
-        Returns:
-            A list of active speaker cluster IDs.
+        Uses configurable tolerance to handle A/V sync drift.
+        ATSC standard: 45ms audio lead, 125ms lag acceptable.
         """
+        from config import settings
+        tol = settings.face_audio_sync_tolerance  # Default 0.3s
+
         clusters = []
         try:
-            # Query voice segments that overlap with this timestamp
             voice_segments = self.db.get_voice_segments_for_media(media_path)
             for seg in voice_segments:
                 start = seg.get("start", 0)
                 end = seg.get("end", 0)
-                if start <= timestamp <= end:
+                # Apply tolerance window instead of exact match
+                if (start - tol) <= timestamp <= (end + tol):
                     cluster_id = seg.get("cluster_id")
                     if cluster_id is not None and cluster_id not in clusters:
                         clusters.append(cluster_id)
