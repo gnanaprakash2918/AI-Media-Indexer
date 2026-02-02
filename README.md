@@ -29,6 +29,10 @@ The AI-Media-Indexer implements a massively parallel ingestion pipeline coordina
 ### Current State Demo
 > **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
 
+
+### Current State Demo
+> **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
+
 ![Demo](assets/demo.gif)
 
 > **Note**: This architecture diagram reflects the **actual running code**, removing theoretical voting blocks for transparency.
@@ -118,9 +122,9 @@ flowchart TD
 
 - **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration.
 - **Multimodal Intelligence**:
-    - **Audio**: **CLAP** for text-audio retrieval and **Whisper v3/IndicConformer** for ASR (Fallback strategy).
-    - **Vision**: **InternVideo2.5** for temporal video understanding and **SAM 2** for tracking.
-    - **Identity**: Temporal face tracking with **InsightFace** and **HDBSCAN** clustering.
+    - **Audio**: **AST (Audio Spectrogram Transformer)** for 527-class event tagging, **CLAP** for text-audio retrieval, and **Whisper v3** for ASR.
+    - **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 2** for tracking.
+    - **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
 - **Advanced Temporal Fusion**:
     - **3-Tier Memory**: Tracks entities across short-term (Window) and long-term (Graph) contexts.
     - **Fused Scenelets**: 5s window fusion of visual descriptions and dialogue transcripts.
@@ -174,7 +178,16 @@ cd web && npm run dev
 
 ## Search Examples
 
-- "Person in red shirt running fast" (Visual)
-- "Crowd cheering in background" (Audio Events)
-- "Prakash speaking near the door" (Identity + Voice)
-- "Text 'EXIT' visible on sign" (OCR)
+| Query | Modalities Used |
+|-------|-----------------|
+| "Person in red shirt running fast" | Visual (SigLIP) + Action (InternVideo) |
+| "Crowd cheering in background" | Audio Events (AST + CLAP) |
+| "Prakash speaking near the door" | Face ID + Voice ID + VLM |
+| "Text 'EXIT' visible on sign" | OCR (PP-OCRv5) |
+
+---
+
+<!-- 
+## Screenshots
+[Coming Soon]
+-->
