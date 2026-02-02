@@ -24,11 +24,7 @@
 
 The AI-Media-Indexer implements a massively parallel ingestion pipeline coordinated by a centralized resource arbiter. It processes audio and video tracks independently before fusing them into a temporal context for hyper-granular hybrid search.
 
-### High-Fidelity Technical Schematic
-
-### Current State Demo
-> **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
-
+### Technical Schematic
 
 ### Current State Demo
 > **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
