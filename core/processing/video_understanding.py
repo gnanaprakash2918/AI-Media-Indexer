@@ -307,7 +307,7 @@ class LanguageBindEncoder:
     ) -> np.ndarray | None:
         """Encode audio to embedding."""
         try:
-            from core.processing.audio_events import get_audio_detector
+            from core.processing.audio.audio_events import get_audio_detector
 
             detector = get_audio_detector()
             if not await detector._lazy_load():

@@ -12,7 +12,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from core.llm.vlm_factory import VLMClient, get_vlm_client
-from core.processing.scene_detector import extract_scene_frame
+from core.processing.vision.scene_detector import extract_scene_frame
 from core.utils.logger import get_logger
 from core.utils.prompt_loader import load_prompt
 

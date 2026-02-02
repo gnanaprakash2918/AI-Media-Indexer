@@ -22,11 +22,11 @@ from typing import TYPE_CHECKING, Any
 from core.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from core.processing.audio_events import AudioEventDetector
+    from core.processing.audio.audio_events import AudioEventDetector
     from core.processing.biometric_arbitrator import BiometricArbitrator
-    from core.processing.frame_sampling import SmartFrameSampler, TextGatedOCR
+    from core.processing.vision.frame_sampling import SmartFrameSampler, TextGatedOCR
     from core.processing.object_detection import ObjectDetector
-    from core.processing.ocr import OCRProcessor
+    from core.processing.vision.vision.ocr import OCRProcessor
     from core.processing.temporal import TemporalAnalyzer
     from core.retrieval.hybrid import HybridSearcher
     from core.retrieval.privacy import PrivacyFilter
@@ -89,7 +89,7 @@ class EnhancedPipelineConfig:
         if not self.enable_smart_sampling:
             return None
         if self._frame_sampler is None:
-            from core.processing.frame_sampling import SmartFrameSampler
+            from core.processing.vision.frame_sampling import SmartFrameSampler
 
             self._frame_sampler = SmartFrameSampler(
                 motion_threshold=30.0,
@@ -104,7 +104,7 @@ class EnhancedPipelineConfig:
         if not self.enable_ocr:
             return None
         if self._text_gate is None:
-            from core.processing.frame_sampling import TextGatedOCR
+            from core.processing.vision.frame_sampling import TextGatedOCR
 
             self._text_gate = TextGatedOCR(edge_threshold=0.02)
             log.info("[Integration] TextGatedOCR enabled")
@@ -116,7 +116,7 @@ class EnhancedPipelineConfig:
         if not self.enable_clap:
             return None
         if self._audio_detector is None:
-            from core.processing.audio_events import get_audio_detector
+            from core.processing.audio.audio_events import get_audio_detector
 
             self._audio_detector = get_audio_detector()
             log.info("[Integration] CLAP AudioEventDetector enabled")
@@ -128,7 +128,7 @@ class EnhancedPipelineConfig:
         if not self.enable_ocr:
             return None
         if self._ocr is None:
-            from core.processing.ocr import OCRProcessor
+            from core.processing.vision.vision.ocr import OCRProcessor
 
             self._ocr = OCRProcessor(lang="en", use_gpu=True)
             log.info("[Integration] OCRProcessor enabled")

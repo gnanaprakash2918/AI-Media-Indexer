@@ -11,7 +11,7 @@ import torch
 
 from config import settings
 from core.ingestion.diarization import VoiceProcessor
-from core.processing.speech_emotion import SpeechEmotionAnalyzer
+from core.processing.audio.speech_emotion import SpeechEmotionAnalyzer
 from core.utils.observe import observe
 from core.utils.resource import resource_manager
 

@@ -24,7 +24,7 @@ class TestTemporalContext:
 
     def test_temporal_context_manager_produces_context(self):
         """Test temporal context manager without heavy imports."""
-        from core.processing.temporal_context import (
+        from core.processing.analysis.temporal_context import (
             TemporalContext,
             TemporalContextManager,
         )
@@ -111,7 +111,7 @@ class TestVLMPrompt:
         else:
             # Fallback: read from module but may trigger imports
             try:
-                from core.processing.vision import DENSE_MULTIMODAL_PROMPT
+                from core.processing.vision.vision import DENSE_MULTIMODAL_PROMPT
 
                 prompt = DENSE_MULTIMODAL_PROMPT.lower()
             except Exception:

@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
 
-from core.processing.indic_transcriber import IndicASRPipeline
+from core.processing.audio.indic_transcriber import IndicASRPipeline
 
 app = FastAPI(title="AI4Bharat ASR Service")
 

@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 
 from config import settings
-from core.processing.identity import FaceManager
+from core.processing.vision.identity import FaceManager
 from core.storage.identity_graph import identity_graph
 
 

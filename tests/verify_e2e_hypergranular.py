@@ -88,7 +88,7 @@ async def test_open_vocab_audio():
     """Test open-vocabulary CLAP-based audio event detection."""
     logger.info("4. Testing open-vocabulary audio detection...")
 
-    from core.processing.audio_events import AudioEventDetector
+    from core.processing.audio.audio_events import AudioEventDetector
 
     detector = AudioEventDetector()
 

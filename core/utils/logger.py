@@ -271,9 +271,10 @@ class LokiSink:
                 headers={"Content-Type": "application/json"},
                 timeout=2.0,
             )
-        except Exception:
-            # Failsafe: don't crash logging
-            pass
+        except Exception as e:
+            # Failsafe: don't crash logging, but report to stderr
+            import sys
+            sys.stderr.write(f"Loki logging failed: {e}\n")
 
 
 if settings.enable_loki:

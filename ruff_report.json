@@ -1,0 +1,4561 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 54,
+      "row": 5
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\deps.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from fastapi import Request\n\nfrom core.ingestion.pipeline import IngestionPipeline\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 9
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 3,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 9,
+      "row": 141
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\agent.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 9,
+            "row": 141
+          },
+          "location": {
+            "column": 1,
+            "row": 141
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 141
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 143,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D100",
+    "end_location": {
+      "column": 1,
+      "row": 1
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\graph.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Missing docstring in public module",
+    "noqa_row": 1,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-module"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 19,
+      "row": 10
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\graph.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 10
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 10,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 26,
+      "row": 17
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\graph.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 17
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 17,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D417",
+    "end_location": {
+      "column": 33,
+      "row": 147
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\graph.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 147
+    },
+    "message": "Missing argument description in the docstring for `find_temporal_sequence`: `request`",
+    "noqa_row": 147,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-param"
+  },
+  {
+    "cell": null,
+    "code": "D100",
+    "end_location": {
+      "column": 1,
+      "row": 1
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\manipulation.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Missing docstring in public module",
+    "noqa_row": 1,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-module"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 16,
+      "row": 11
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\manipulation.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 11
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 11,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 21,
+      "row": 17
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\manipulation.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 17
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 17,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 20,
+      "row": 23
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\manipulation.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 23
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 23,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 18,
+      "row": 30
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\manipulation.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 30
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 30,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D103",
+    "end_location": {
+      "column": 25,
+      "row": 129
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\manipulation.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 129
+    },
+    "message": "Missing docstring in public function",
+    "noqa_row": 129,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-function"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 100
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\search.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 100
+          },
+          "location": {
+            "column": 1,
+            "row": 100
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 100
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 100,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 9,
+      "row": 592
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\search.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 9,
+            "row": 592
+          },
+          "location": {
+            "column": 1,
+            "row": 592
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 592
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 592,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "E402",
+    "end_location": {
+      "column": 31,
+      "row": 1099
+    },
+    "filename": "D:\\AI-Media-Indexer\\api\\routes\\search.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1099
+    },
+    "message": "Module level import not at top of file",
+    "noqa_row": 1099,
+    "url": "https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file"
+  },
+  {
+    "cell": null,
+    "code": "D202",
+    "end_location": {
+      "column": 52,
+      "row": 244
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\agent\\handler.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 245
+          },
+          "location": {
+            "column": 52,
+            "row": 244
+          }
+        }
+      ],
+      "message": "Remove blank line(s) after function docstring"
+    },
+    "location": {
+      "column": 9,
+      "row": 244
+    },
+    "message": "No blank lines allowed after function docstring (found 1)",
+    "noqa_row": 244,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-after-function"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 11
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\errors.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 11
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 11,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 35,
+      "row": 52
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport gc\nimport traceback\nimport uuid\nfrom collections.abc import Iterable\nfrom pathlib import Path\nfrom typing import Any\n\nimport numpy as np\nimport torch\nfrom qdrant_client.http import models\n\nfrom config import settings\nfrom core.errors import IngestionError, MediaIndexerError\nfrom core.llm.video_vlm import VideoVLM\nfrom core.llm.vlm_factory import get_vlm_client\nfrom core.processing.deep_research import get_deep_research_processor\nfrom core.processing.extractor import FrameExtractor\nfrom core.processing.frame_sampling import TextGatedOCR\nfrom core.processing.identity import FaceManager, FaceTrackBuilder\nfrom core.processing.metadata import MetadataEngine\nfrom core.processing.ocr import EasyOCRProcessor\nfrom core.processing.prober import MediaProbeError, MediaProber\nfrom core.processing.scene_detector import (\n    TransNetV2,\n    detect_scenes,\n    extract_scene_frame,\n)\nfrom core.processing.segmentation import Sam3Tracker\nfrom core.processing.temporal_context import (\n    SceneletBuilder,\n    TemporalContextManager,\n)\nfrom core.processing.text_utils import parse_srt\nfrom core.processing.transcriber import AudioTranscriber\nfrom core.processing.vision import VisionAnalyzer\nfrom core.processing.voice import VoiceProcessor\nfrom core.schemas import MediaType\nfrom core.storage.db import VectorDB\nfrom core.storage.identity_graph import identity_graph\nfrom core.utils.frame_sampling import FrameSampler\nfrom core.utils.logger import bind_context, logger\nfrom core.utils.observe import observe\nfrom core.utils.progress import progress_tracker\nfrom core.utils.resource import resource_manager\nfrom core.utils.resource_arbiter import RESOURCE_ARBITER\nfrom core.utils.retry import retry\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 54
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 3,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 66
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 66
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 66,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 14,
+      "row": 557
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 555
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 555,
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "B905",
+    "end_location": {
+      "column": 22,
+      "row": 999
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": ", strict=False",
+          "end_location": {
+            "column": 52,
+            "row": 998
+          },
+          "location": {
+            "column": 52,
+            "row": 998
+          }
+        }
+      ],
+      "message": "Add explicit value for parameter `strict=`"
+    },
+    "location": {
+      "column": 65,
+      "row": 997
+    },
+    "message": "`zip()` without an explicit `strict=` parameter",
+    "noqa_row": 997,
+    "url": "https://docs.astral.sh/ruff/rules/zip-without-explicit-strict"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 1390
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 1390
+          },
+          "location": {
+            "column": 1,
+            "row": 1390
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1390
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1390,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 71,
+      "row": 1394
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "            from collections import defaultdict\n\n            from core.processing.voice import compute_speaker_centroid\n",
+          "end_location": {
+            "column": 1,
+            "row": 1395
+          },
+          "location": {
+            "column": 1,
+            "row": 1393
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 13,
+      "row": 1393
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 1393,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 1395
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 1395
+          },
+          "location": {
+            "column": 1,
+            "row": 1395
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1395
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1395,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 1399
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 1399
+          },
+          "location": {
+            "column": 1,
+            "row": 1399
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1399
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1399,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 1403
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 1403
+          },
+          "location": {
+            "column": 1,
+            "row": 1403
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1403
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1403,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 1409
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 1409
+          },
+          "location": {
+            "column": 1,
+            "row": 1409
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1409
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1409,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 1413
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 1413
+          },
+          "location": {
+            "column": 1,
+            "row": 1413
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1413
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1413,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 1416
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 1416
+          },
+          "location": {
+            "column": 1,
+            "row": 1416
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1416
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1416,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 25,
+      "row": 1431
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 25,
+            "row": 1431
+          },
+          "location": {
+            "column": 1,
+            "row": 1431
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1431
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1431,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 1444
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 1444
+          },
+          "location": {
+            "column": 1,
+            "row": 1444
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1444
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1444,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 1450
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 1450
+          },
+          "location": {
+            "column": 1,
+            "row": 1450
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1450
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1450,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 1454
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 1454
+          },
+          "location": {
+            "column": 1,
+            "row": 1454
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1454
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1454,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "B007",
+    "end_location": {
+      "column": 34,
+      "row": 1730
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "_window_audio",
+          "end_location": {
+            "column": 34,
+            "row": 1730
+          },
+          "location": {
+            "column": 22,
+            "row": 1730
+          }
+        }
+      ],
+      "message": "Rename unused `window_audio` to `_window_audio`"
+    },
+    "location": {
+      "column": 22,
+      "row": 1730
+    },
+    "message": "Loop control variable `window_audio` not used within loop body",
+    "noqa_row": 1730,
+    "url": "https://docs.astral.sh/ruff/rules/unused-loop-control-variable"
+  },
+  {
+    "cell": null,
+    "code": "C401",
+    "end_location": {
+      "column": 79,
+      "row": 3322
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\ingestion\\pipeline.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "{",
+          "end_location": {
+            "column": 40,
+            "row": 3322
+          },
+          "location": {
+            "column": 36,
+            "row": 3322
+          }
+        },
+        {
+          "content": "}",
+          "end_location": {
+            "column": 79,
+            "row": 3322
+          },
+          "location": {
+            "column": 78,
+            "row": 3322
+          }
+        }
+      ],
+      "message": "Rewrite as a set comprehension"
+    },
+    "location": {
+      "column": 36,
+      "row": 3322
+    },
+    "message": "Unnecessary generator (rewrite as a set comprehension)",
+    "noqa_row": 3322,
+    "url": "https://docs.astral.sh/ruff/rules/unnecessary-generator-set"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 173
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\llm\\video_vlm.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 173
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 173,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 16,
+      "row": 20
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\manipulation\\pipeline.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 20
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 20,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 22,
+      "row": 28
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\manipulation\\pipeline.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 28
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 28,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 42
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\manipulation\\pipeline.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 42
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 42,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 64
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\manipulation\\pipeline.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 64
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 64,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D103",
+    "end_location": {
+      "column": 30,
+      "row": 220
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\manipulation\\pipeline.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 220
+    },
+    "message": "Missing docstring in public function",
+    "noqa_row": 220,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-function"
+  },
+  {
+    "cell": null,
+    "code": "D205",
+    "end_location": {
+      "column": 8,
+      "row": 298
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 296
+    },
+    "message": "1 blank line required between summary line and description",
+    "noqa_row": 298,
+    "url": "https://docs.astral.sh/ruff/rules/missing-blank-line-after-summary"
+  },
+  {
+    "cell": null,
+    "code": "D208",
+    "end_location": {
+      "column": 1,
+      "row": 297
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    ",
+          "end_location": {
+            "column": 6,
+            "row": 297
+          },
+          "location": {
+            "column": 1,
+            "row": 297
+          }
+        }
+      ],
+      "message": "Remove over-indentation"
+    },
+    "location": {
+      "column": 1,
+      "row": 297
+    },
+    "message": "Docstring is over-indented",
+    "noqa_row": 298,
+    "url": "https://docs.astral.sh/ruff/rules/over-indentation"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 300
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 300
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 300,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 22,
+      "row": 325
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 325
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 325,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "E701",
+    "end_location": {
+      "column": 21,
+      "row": 393
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 393
+    },
+    "message": "Multiple statements on one line (colon)",
+    "noqa_row": 393,
+    "url": "https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-colon"
+  },
+  {
+    "cell": null,
+    "code": "E701",
+    "end_location": {
+      "column": 23,
+      "row": 394
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 394
+    },
+    "message": "Multiple statements on one line (colon)",
+    "noqa_row": 394,
+    "url": "https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-colon"
+  },
+  {
+    "cell": null,
+    "code": "E701",
+    "end_location": {
+      "column": 23,
+      "row": 395
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 395
+    },
+    "message": "Multiple statements on one line (colon)",
+    "noqa_row": 395,
+    "url": "https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-colon"
+  },
+  {
+    "cell": null,
+    "code": "E701",
+    "end_location": {
+      "column": 23,
+      "row": 396
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 396
+    },
+    "message": "Multiple statements on one line (colon)",
+    "noqa_row": 396,
+    "url": "https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-colon"
+  },
+  {
+    "cell": null,
+    "code": "E701",
+    "end_location": {
+      "column": 14,
+      "row": 397
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 397
+    },
+    "message": "Multiple statements on one line (colon)",
+    "noqa_row": 397,
+    "url": "https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-colon"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 34,
+      "row": 409
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 409
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 409,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 19,
+      "row": 425
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 425
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 425,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 17,
+      "row": 435
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 435
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 435,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 438
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 438
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 438,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 20,
+      "row": 451
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 451
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 451,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 460
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 460
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 460,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 470
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 470
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 470,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "E701",
+    "end_location": {
+      "column": 30,
+      "row": 477
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 29,
+      "row": 477
+    },
+    "message": "Multiple statements on one line (colon)",
+    "noqa_row": 477,
+    "url": "https://docs.astral.sh/ruff/rules/multiple-statements-on-one-line-colon"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 22,
+      "row": 487
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 487
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 487,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 496
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 496
+          },
+          "location": {
+            "column": 1,
+            "row": 496
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 496
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 496,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W291",
+    "end_location": {
+      "column": 27,
+      "row": 499
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 27,
+            "row": 499
+          },
+          "location": {
+            "column": 26,
+            "row": 499
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 26,
+      "row": 499
+    },
+    "message": "Trailing whitespace",
+    "noqa_row": 499,
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 500
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 500
+          },
+          "location": {
+            "column": 1,
+            "row": 500
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 500
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 500,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D103",
+    "end_location": {
+      "column": 23,
+      "row": 514
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_analysis.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 514
+    },
+    "message": "Missing docstring in public function",
+    "noqa_row": 514,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-function"
+  },
+  {
+    "cell": null,
+    "code": "B905",
+    "end_location": {
+      "column": 64,
+      "row": 577
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\audio_events.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": ", strict=False",
+          "end_location": {
+            "column": 63,
+            "row": 577
+          },
+          "location": {
+            "column": 63,
+            "row": 577
+          }
+        }
+      ],
+      "message": "Add explicit value for parameter `strict=`"
+    },
+    "location": {
+      "column": 41,
+      "row": 577
+    },
+    "message": "`zip()` without an explicit `strict=` parameter",
+    "noqa_row": 577,
+    "url": "https://docs.astral.sh/ruff/rules/zip-without-explicit-strict"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 24,
+      "row": 350
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\celebrity_lookup.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 350
+    },
+    "message": "Variable `MATCH_THRESHOLD` in function should be lowercase",
+    "noqa_row": 350,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "D202",
+    "end_location": {
+      "column": 63,
+      "row": 17
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\clustering.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 18
+          },
+          "location": {
+            "column": 63,
+            "row": 17
+          }
+        }
+      ],
+      "message": "Remove blank line(s) after function docstring"
+    },
+    "location": {
+      "column": 5,
+      "row": 17
+    },
+    "message": "No blank lines allowed after function docstring (found 1)",
+    "noqa_row": 17,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-after-function"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 41,
+      "row": 24
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\council_config.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nfrom collections.abc import Callable\nfrom dataclasses import dataclass, field\nfrom enum import Enum\n\nfrom core.utils.logger import get_logger\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 26
+          },
+          "location": {
+            "column": 1,
+            "row": 18
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 18
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 18,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 16,
+      "row": 490
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\deep_research.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 19,
+            "row": 490
+          },
+          "location": {
+            "column": 13,
+            "row": 490
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `fps`"
+    },
+    "location": {
+      "column": 13,
+      "row": 490
+    },
+    "message": "Local variable `fps` is assigned to but never used",
+    "noqa_row": 490,
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 14,
+      "row": 281
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\extractor.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 279
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 279,
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 14,
+      "row": 290
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\extractor.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 287
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 287,
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 50
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\grounding_pipeline.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 50
+          },
+          "location": {
+            "column": 1,
+            "row": 50
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 50
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 50,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 22,
+      "row": 979
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\identity.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 979
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 979,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 32,
+      "row": 992
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\identity.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 992
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 992,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 34,
+      "row": 1030
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\identity.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1030
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 1030,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 29,
+      "row": 1064
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\identity.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1064
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 1064,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D202",
+    "end_location": {
+      "column": 61,
+      "row": 306
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\identity_linker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 307
+          },
+          "location": {
+            "column": 61,
+            "row": 306
+          }
+        }
+      ],
+      "message": "Remove blank line(s) after function docstring"
+    },
+    "location": {
+      "column": 9,
+      "row": 306
+    },
+    "message": "No blank lines allowed after function docstring (found 1)",
+    "noqa_row": 306,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-after-function"
+  },
+  {
+    "cell": null,
+    "code": "D202",
+    "end_location": {
+      "column": 12,
+      "row": 262
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\indic_transcriber.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 263
+          },
+          "location": {
+            "column": 12,
+            "row": 262
+          }
+        }
+      ],
+      "message": "Remove blank line(s) after function docstring"
+    },
+    "location": {
+      "column": 9,
+      "row": 258
+    },
+    "message": "No blank lines allowed after function docstring (found 1)",
+    "noqa_row": 262,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-after-function"
+  },
+  {
+    "cell": null,
+    "code": "B023",
+    "end_location": {
+      "column": 44,
+      "row": 748
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\indic_transcriber.py",
+    "fix": null,
+    "location": {
+      "column": 34,
+      "row": 748
+    },
+    "message": "Function definition does not bind loop variable `chunk_path`",
+    "noqa_row": 748,
+    "url": "https://docs.astral.sh/ruff/rules/function-uses-loop-variable"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 37,
+      "row": 531
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\ocr.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "            import re\n\n            # Handle Path object if passed (though type hint suggests Any/ndarray)\n            from pathlib import Path\n\n            from PIL import Image\n",
+          "end_location": {
+            "column": 1,
+            "row": 532
+          },
+          "location": {
+            "column": 1,
+            "row": 527
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 13,
+      "row": 527
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 527,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 529
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\ocr.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 529
+          },
+          "location": {
+            "column": 1,
+            "row": 529
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 529
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 529,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 37,
+      "row": 591
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\ocr.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "            from pathlib import Path\n\n            import cv2\n            from PIL import Image\n",
+          "end_location": {
+            "column": 1,
+            "row": 592
+          },
+          "location": {
+            "column": 1,
+            "row": 589
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 13,
+      "row": 589
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 589,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "E402",
+    "end_location": {
+      "column": 19,
+      "row": 184
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\scene_detector.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 184
+    },
+    "message": "Module level import not at top of file",
+    "noqa_row": 184,
+    "url": "https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 44,
+      "row": 185
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\scene_detector.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import numpy as np\nfrom huggingface_hub import hf_hub_download\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 187
+          },
+          "location": {
+            "column": 1,
+            "row": 184
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 184
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 184,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "E402",
+    "end_location": {
+      "column": 44,
+      "row": 185
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\scene_detector.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 185
+    },
+    "message": "Module level import not at top of file",
+    "noqa_row": 185,
+    "url": "https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 17,
+      "row": 326
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\scene_detector.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 17,
+            "row": 326
+          },
+          "location": {
+            "column": 1,
+            "row": 326
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 326
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 326,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 9,
+      "row": 351
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\scene_detector.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 9,
+            "row": 351
+          },
+          "location": {
+            "column": 1,
+            "row": 351
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 351
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 351,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 363
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\scene_detector.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 363
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 363,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 135
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\speech_emotion.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 135
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 135,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "E402",
+    "end_location": {
+      "column": 19,
+      "row": 270
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\vision.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 270
+    },
+    "message": "Module level import not at top of file",
+    "noqa_row": 270,
+    "url": "https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 19,
+      "row": 270
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\vision.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import numpy as np\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 272
+          },
+          "location": {
+            "column": 1,
+            "row": 270
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 270
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 270,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 335
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\vision.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 335
+    },
+    "message": "Undefined name `Any`",
+    "noqa_row": 335,
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "D100",
+    "end_location": {
+      "column": 1,
+      "row": 1
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Missing docstring in public module",
+    "noqa_row": 1,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-module"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 22,
+      "row": 21
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 21
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 21,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 13,
+      "row": 25
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 25
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 25,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 28
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 28
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 28,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 33
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 33
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 33,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 26,
+      "row": 38
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 38
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 38,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "B027",
+    "end_location": {
+      "column": 35,
+      "row": 40
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 40
+    },
+    "message": "`VisualEncoderInterface.cleanup` is an empty method in an abstract base class, but has no abstract decorator",
+    "noqa_row": 40,
+    "url": "https://docs.astral.sh/ruff/rules/empty-method-without-abstract-decorator"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 40
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 40
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 40,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 46
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 46
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 46,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 22,
+      "row": 57
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 57
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 57,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 13,
+      "row": 61
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 61
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 61,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 102
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 102
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 102,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 152
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 152
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 152,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 26,
+      "row": 211
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 211
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 211,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 249
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 249
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 249,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 265
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 265
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 265,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 22,
+      "row": 273
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 273
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 273,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 13,
+      "row": 277
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 277
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 277,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 336
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 336
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 336,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 368
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 368
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 368,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 26,
+      "row": 401
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 401
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 401,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 16,
+      "row": 449
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 449
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 449,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 465
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 465
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 465,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 22,
+      "row": 470
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 470
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 470,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 13,
+      "row": 474
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 474
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 474,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 477
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 477
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 477,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 27,
+      "row": 495
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 495
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 495,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 26,
+      "row": 500
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\visual_encoder.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 500
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 500,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 5,
+      "row": 74
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processing\\voice.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 5,
+            "row": 74
+          },
+          "location": {
+            "column": 1,
+            "row": 74
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 74
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 77,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D100",
+    "end_location": {
+      "column": 1,
+      "row": 1
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processors\\audio.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Missing docstring in public module",
+    "noqa_row": 1,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-module"
+  },
+  {
+    "cell": null,
+    "code": "D101",
+    "end_location": {
+      "column": 21,
+      "row": 13
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processors\\audio.py",
+    "fix": null,
+    "location": {
+      "column": 7,
+      "row": 13
+    },
+    "message": "Missing docstring in public class",
+    "noqa_row": 13,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-class"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 57,
+      "row": 27
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processors\\audio.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 57,
+            "row": 27
+          },
+          "location": {
+            "column": 42,
+            "row": 27
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `transcriber`"
+    },
+    "location": {
+      "column": 46,
+      "row": 27
+    },
+    "message": "Local variable `transcriber` is assigned to but never used",
+    "noqa_row": 27,
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 24
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processors\\identity.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 24
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 24,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 35,
+      "row": 22
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processors\\video.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport logging\nfrom pathlib import Path\n\nfrom config import settings\nfrom core.ingestion.faces import FaceManager, FaceTrackBuilder\nfrom core.ingestion.vision import VisionAnalyzer\nfrom core.processing.scenelets import SceneletBuilder\nfrom core.processing.temporal_context import (\n    TemporalContext,\n    TemporalContextManager,\n)\nfrom core.storage.identity_graph import identity_graph\nfrom core.utils.observe import observe\nfrom core.utils.progress import progress_tracker\nfrom core.utils.resource import resource_manager\nfrom llm.factory import LLMFactory\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 24
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 3,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 30
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processors\\video.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 30
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 30,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "C420",
+    "end_location": {
+      "column": 73,
+      "row": 499
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\processors\\video.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "dict.fromkeys(face_cluster_ids, 1.0)",
+          "end_location": {
+            "column": 73,
+            "row": 499
+          },
+          "location": {
+            "column": 35,
+            "row": 499
+          }
+        }
+      ],
+      "message": "Replace with `dict.fromkeys(iterable)`)"
+    },
+    "location": {
+      "column": 35,
+      "row": 499
+    },
+    "message": "Unnecessary dict comprehension for iterable; use `dict.fromkeys` instead",
+    "noqa_row": 499,
+    "url": "https://docs.astral.sh/ruff/rules/unnecessary-dict-comprehension-for-iterable"
+  },
+  {
+    "cell": null,
+    "code": "E402",
+    "end_location": {
+      "column": 38,
+      "row": 30
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 30
+    },
+    "message": "Module level import not at top of file",
+    "noqa_row": 30,
+    "url": "https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file"
+  },
+  {
+    "cell": null,
+    "code": "D202",
+    "end_location": {
+      "column": 12,
+      "row": 146
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 147
+          },
+          "location": {
+            "column": 12,
+            "row": 146
+          }
+        }
+      ],
+      "message": "Remove blank line(s) after function docstring"
+    },
+    "location": {
+      "column": 9,
+      "row": 140
+    },
+    "message": "No blank lines allowed after function docstring (found 1)",
+    "noqa_row": 146,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-after-function"
+  },
+  {
+    "cell": null,
+    "code": "D205",
+    "end_location": {
+      "column": 12,
+      "row": 146
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 140
+    },
+    "message": "1 blank line required between summary line and description",
+    "noqa_row": 146,
+    "url": "https://docs.astral.sh/ruff/rules/missing-blank-line-after-summary"
+  },
+  {
+    "cell": null,
+    "code": "D411",
+    "end_location": {
+      "column": 13,
+      "row": 141
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "\n",
+          "end_location": {
+            "column": 1,
+            "row": 141
+          },
+          "location": {
+            "column": 1,
+            "row": 141
+          }
+        }
+      ],
+      "message": "Add blank line before \"Args\""
+    },
+    "location": {
+      "column": 9,
+      "row": 141
+    },
+    "message": "Missing blank line before section (\"Args\")",
+    "noqa_row": 146,
+    "url": "https://docs.astral.sh/ruff/rules/no-blank-line-before-section"
+  },
+  {
+    "cell": null,
+    "code": "D202",
+    "end_location": {
+      "column": 92,
+      "row": 716
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 717
+          },
+          "location": {
+            "column": 92,
+            "row": 716
+          }
+        }
+      ],
+      "message": "Remove blank line(s) after function docstring"
+    },
+    "location": {
+      "column": 9,
+      "row": 716
+    },
+    "message": "No blank lines allowed after function docstring (found 1)",
+    "noqa_row": 716,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-after-function"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 31,
+      "row": 729
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 730
+          },
+          "location": {
+            "column": 1,
+            "row": 729
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `expansion_used`"
+    },
+    "location": {
+      "column": 17,
+      "row": 729
+    },
+    "message": "Local variable `expansion_used` is assigned to but never used",
+    "noqa_row": 729,
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 31,
+      "row": 1024
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 1024
+    },
+    "message": "Variable `VISUAL_PROFILE` in function should be lowercase",
+    "noqa_row": 1024,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 33,
+      "row": 1032
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 1032
+    },
+    "message": "Variable `DIALOGUE_PROFILE` in function should be lowercase",
+    "noqa_row": 1032,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 30,
+      "row": 1040
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 1040
+    },
+    "message": "Variable `AUDIO_PROFILE` in function should be lowercase",
+    "noqa_row": 1040,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 33,
+      "row": 1048
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 1048
+    },
+    "message": "Variable `IDENTITY_PROFILE` in function should be lowercase",
+    "noqa_row": 1048,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 31,
+      "row": 1056
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 1056
+    },
+    "message": "Variable `ACTION_PROFILE` in function should be lowercase",
+    "noqa_row": 1056,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 33,
+      "row": 1064
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 1064
+    },
+    "message": "Variable `BALANCED_PROFILE` in function should be lowercase",
+    "noqa_row": 1064,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 18,
+      "row": 1526
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\agentic_search.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 21,
+            "row": 1526
+          },
+          "location": {
+            "column": 13,
+            "row": 1526
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `score`"
+    },
+    "location": {
+      "column": 13,
+      "row": 1526
+    },
+    "message": "Local variable `score` is assigned to but never used",
+    "noqa_row": 1526,
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 35
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\retrieval\\late_interaction.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 35
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 35,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 12
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\clustering.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 12
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 12,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 34,
+      "row": 34
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\clustering.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 34
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 34,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 33,
+      "row": 37
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\clustering.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 37
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 37,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 29
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport time\nimport uuid\nfrom functools import wraps\nfrom pathlib import Path\nfrom typing import Any, cast\n\nimport numpy as np\nimport torch\nfrom huggingface_hub import snapshot_download\nfrom qdrant_client import QdrantClient\nfrom qdrant_client.http import models\nfrom sentence_transformers import SentenceTransformer\n\nfrom config import settings\nfrom core.storage.filters import (\n    build_filter,\n    video_path_filter,\n)\nfrom core.utils.hardware import select_embedding_model\nfrom core.utils.logger import log\nfrom core.utils.observe import observe\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 32
+          },
+          "location": {
+            "column": 1,
+            "row": 7
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 7
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 7,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "D417",
+    "end_location": {
+      "column": 27,
+      "row": 511
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 511
+    },
+    "message": "Missing argument description in the docstring for `encode_texts`: `job_id`",
+    "noqa_row": 511,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-param"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 26,
+      "row": 543
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 544
+          },
+          "location": {
+            "column": 1,
+            "row": 543
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `cached_embeddings`"
+    },
+    "location": {
+      "column": 9,
+      "row": 543
+    },
+    "message": "Local variable `cached_embeddings` is assigned to but never used",
+    "noqa_row": 543,
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 9,
+      "row": 719
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 9,
+            "row": 719
+          },
+          "location": {
+            "column": 1,
+            "row": 719
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 719
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 719,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 19,
+      "row": 722
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 22,
+            "row": 722
+          },
+          "location": {
+            "column": 13,
+            "row": 722
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `frames`"
+    },
+    "location": {
+      "column": 13,
+      "row": 722
+    },
+    "message": "Local variable `frames` is assigned to but never used",
+    "noqa_row": 722,
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 723
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 723
+          },
+          "location": {
+            "column": 1,
+            "row": 723
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 723
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 723,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 727
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 727
+          },
+          "location": {
+            "column": 1,
+            "row": 727
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 727
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 727,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 13,
+      "row": 730
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 13,
+            "row": 730
+          },
+          "location": {
+            "column": 1,
+            "row": 730
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 730
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 730,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 17,
+      "row": 1224
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1224
+    },
+    "message": "Variable `CLAP_DIM` in function should be lowercase",
+    "noqa_row": 1224,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "D417",
+    "end_location": {
+      "column": 36,
+      "row": 1298
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 1298
+    },
+    "message": "Missing argument description in the docstring for `insert_media_segments`: `job_id`",
+    "noqa_row": 1298,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-param"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 26,
+      "row": 1723
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 29,
+            "row": 1723
+          },
+          "location": {
+            "column": 17,
+            "row": 1723
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `avg_score`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1723
+    },
+    "message": "Local variable `avg_score` is assigned to but never used",
+    "noqa_row": 1723,
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 23,
+      "row": 1755
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1755
+    },
+    "message": "Redefinition of unused `insert_masklet` from line 650: `insert_masklet` redefined here",
+    "noqa_row": 1755,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 37,
+      "row": 1937
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 1937
+    },
+    "message": "Undefined name `media_path_filter`",
+    "noqa_row": 1937,
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 9,
+      "row": 1938
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 9,
+            "row": 1938
+          },
+          "location": {
+            "column": 1,
+            "row": 1938
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 1938
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 1938,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D202",
+    "end_location": {
+      "column": 88,
+      "row": 2271
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 2272
+          },
+          "location": {
+            "column": 88,
+            "row": 2271
+          }
+        }
+      ],
+      "message": "Remove blank line(s) after function docstring"
+    },
+    "location": {
+      "column": 9,
+      "row": 2271
+    },
+    "message": "No blank lines allowed after function docstring (found 1)",
+    "noqa_row": 2271,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-after-function"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 17,
+      "row": 3147
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 3147
+    },
+    "message": "Variable `CLAP_DIM` in function should be lowercase",
+    "noqa_row": 3147,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "D102",
+    "end_location": {
+      "column": 34,
+      "row": 3705
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 3705
+    },
+    "message": "Missing docstring in public method",
+    "noqa_row": 3705,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-method"
+  },
+  {
+    "cell": null,
+    "code": "D417",
+    "end_location": {
+      "column": 36,
+      "row": 3909
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 3909
+    },
+    "message": "Missing argument description in the docstring for `search_video_metadata`: `score_threshold`",
+    "noqa_row": 3909,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-param"
+  },
+  {
+    "cell": null,
+    "code": "D417",
+    "end_location": {
+      "column": 28,
+      "row": 3954
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 3954
+    },
+    "message": "Missing argument descriptions in the docstring for `search_scenes`: `aesthetic_score`, `mood`, `shot_type`, `video_paths`",
+    "noqa_row": 3954,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-param"
+  },
+  {
+    "cell": null,
+    "code": "B007",
+    "end_location": {
+      "column": 20,
+      "row": 6299
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\db.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 6299
+    },
+    "message": "Loop control variable `key` not used within loop body",
+    "noqa_row": 6299,
+    "url": "https://docs.astral.sh/ruff/rules/unused-loop-control-variable"
+  },
+  {
+    "cell": null,
+    "code": "W291",
+    "end_location": {
+      "column": 77,
+      "row": 846
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\identity_graph.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 77,
+            "row": 846
+          },
+          "location": {
+            "column": 76,
+            "row": 846
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 76,
+      "row": 846
+    },
+    "message": "Trailing whitespace",
+    "noqa_row": 849,
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W291",
+    "end_location": {
+      "column": 49,
+      "row": 965
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\identity_graph.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 49,
+            "row": 965
+          },
+          "location": {
+            "column": 48,
+            "row": 965
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 48,
+      "row": 965
+    },
+    "message": "Trailing whitespace",
+    "noqa_row": 967,
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "B007",
+    "end_location": {
+      "column": 14,
+      "row": 976
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\identity_graph.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "_i",
+          "end_location": {
+            "column": 14,
+            "row": 976
+          },
+          "location": {
+            "column": 13,
+            "row": 976
+          }
+        }
+      ],
+      "message": "Rename unused `i` to `_i`"
+    },
+    "location": {
+      "column": 13,
+      "row": 976
+    },
+    "message": "Loop control variable `i` not used within loop body",
+    "noqa_row": 976,
+    "url": "https://docs.astral.sh/ruff/rules/unused-loop-control-variable"
+  },
+  {
+    "cell": null,
+    "code": "W291",
+    "end_location": {
+      "column": 51,
+      "row": 1178
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\identity_graph.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 51,
+            "row": 1178
+          },
+          "location": {
+            "column": 50,
+            "row": 1178
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 50,
+      "row": 1178
+    },
+    "message": "Trailing whitespace",
+    "noqa_row": 1183,
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W291",
+    "end_location": {
+      "column": 43,
+      "row": 1179
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\identity_graph.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 43,
+            "row": 1179
+          },
+          "location": {
+            "column": 42,
+            "row": 1179
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 42,
+      "row": 1179
+    },
+    "message": "Trailing whitespace",
+    "noqa_row": 1183,
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W291",
+    "end_location": {
+      "column": 51,
+      "row": 1189
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\identity_graph.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 51,
+            "row": 1189
+          },
+          "location": {
+            "column": 50,
+            "row": 1189
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 50,
+      "row": 1189
+    },
+    "message": "Trailing whitespace",
+    "noqa_row": 1193,
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 102
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\min_db.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 102
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 102,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "D107",
+    "end_location": {
+      "column": 17,
+      "row": 17
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\model_loader.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 17
+    },
+    "message": "Missing docstring in `__init__`",
+    "noqa_row": 17,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-init"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 24,
+      "row": 102
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\storage\\model_loader.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 102
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 102,
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 37,
+      "row": 8
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\utils\\cancellation.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from collections.abc import Callable\nfrom dataclasses import dataclass, field\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 11
+          },
+          "location": {
+            "column": 1,
+            "row": 7
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 7
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 7,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "D103",
+    "end_location": {
+      "column": 15,
+      "row": 9
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\utils\\device.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 9
+    },
+    "message": "Missing docstring in public function",
+    "noqa_row": 9,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-function"
+  },
+  {
+    "cell": null,
+    "code": "D103",
+    "end_location": {
+      "column": 22,
+      "row": 13
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\utils\\device.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 13
+    },
+    "message": "Missing docstring in public function",
+    "noqa_row": 13,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-function"
+  },
+  {
+    "cell": null,
+    "code": "D103",
+    "end_location": {
+      "column": 16,
+      "row": 17
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\utils\\device.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 17
+    },
+    "message": "Missing docstring in public function",
+    "noqa_row": 17,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-function"
+  },
+  {
+    "cell": null,
+    "code": "D205",
+    "end_location": {
+      "column": 4,
+      "row": 3
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\utils\\model_warmer.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "1 blank line required between summary line and description",
+    "noqa_row": 3,
+    "url": "https://docs.astral.sh/ruff/rules/missing-blank-line-after-summary"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 65,
+      "row": 23
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\utils\\model_warmer.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        from core.processing.transnet_detector import TransNetV2\n        from huggingface_hub import hf_hub_download\n",
+          "end_location": {
+            "column": 1,
+            "row": 24
+          },
+          "location": {
+            "column": 1,
+            "row": 21
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 9,
+      "row": 21
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 21,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 13,
+      "row": 14
+    },
+    "filename": "D:\\AI-Media-Indexer\\core\\utils\\resource_arbiter.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import asyncio\nimport gc\nfrom collections.abc import Callable\nfrom contextlib import asynccontextmanager\nfrom dataclasses import dataclass\nfrom typing import TYPE_CHECKING\n\nimport torch\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 16
+          },
+          "location": {
+            "column": 1,
+            "row": 7
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 7
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "noqa_row": 7,
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "N806",
+    "end_location": {
+      "column": 32,
+      "row": 534
+    },
+    "filename": "D:\\AI-Media-Indexer\\llm\\ollama.py",
+    "fix": null,
+    "location": {
+      "column": 21,
+      "row": 534
+    },
+    "message": "Variable `VLM_TIMEOUT` in function should be lowercase",
+    "noqa_row": 534,
+    "url": "https://docs.astral.sh/ruff/rules/non-lowercase-variable-in-function"
+  },
+  {
+    "cell": null,
+    "code": "B904",
+    "end_location": {
+      "column": 26,
+      "row": 547
+    },
+    "filename": "D:\\AI-Media-Indexer\\llm\\ollama.py",
+    "fix": null,
+    "location": {
+      "column": 25,
+      "row": 545
+    },
+    "message": "Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling",
+    "noqa_row": 545,
+    "url": "https://docs.astral.sh/ruff/rules/raise-without-from-inside-except"
+  },
+  {
+    "cell": null,
+    "code": "D415",
+    "end_location": {
+      "column": 4,
+      "row": 12
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": ".",
+          "end_location": {
+            "column": 41,
+            "row": 1
+          },
+          "location": {
+            "column": 41,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Add closing punctuation"
+    },
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "First line should end with a period, question mark, or exclamation point",
+    "noqa_row": 12,
+    "url": "https://docs.astral.sh/ruff/rules/missing-terminal-punctuation"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 5,
+      "row": 36
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 5,
+            "row": 36
+          },
+          "location": {
+            "column": 1,
+            "row": 36
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 36
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 36,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W291",
+    "end_location": {
+      "column": 20,
+      "row": 40
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 20,
+            "row": 40
+          },
+          "location": {
+            "column": 19,
+            "row": 40
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 19,
+      "row": 40
+    },
+    "message": "Trailing whitespace",
+    "noqa_row": 40,
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 5,
+      "row": 46
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 5,
+            "row": 46
+          },
+          "location": {
+            "column": 1,
+            "row": 46
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 46
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 46,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D103",
+    "end_location": {
+      "column": 19,
+      "row": 59
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 59
+    },
+    "message": "Missing docstring in public function",
+    "noqa_row": 59,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-function"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 5,
+      "row": 65
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 5,
+            "row": 65
+          },
+          "location": {
+            "column": 1,
+            "row": 65
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 65
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 65,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 5,
+      "row": 68
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 5,
+            "row": 68
+          },
+          "location": {
+            "column": 1,
+            "row": 68
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 68
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 68,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 5,
+      "row": 84
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 5,
+            "row": 84
+          },
+          "location": {
+            "column": 1,
+            "row": 84
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 84
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 84,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "W293",
+    "end_location": {
+      "column": 5,
+      "row": 96
+    },
+    "filename": "D:\\AI-Media-Indexer\\tests\\goldenrun.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 5,
+            "row": 96
+          },
+          "location": {
+            "column": 1,
+            "row": 96
+          }
+        }
+      ],
+      "message": "Remove whitespace from blank line"
+    },
+    "location": {
+      "column": 1,
+      "row": 96
+    },
+    "message": "Blank line contains whitespace",
+    "noqa_row": 96,
+    "url": "https://docs.astral.sh/ruff/rules/blank-line-with-whitespace"
+  },
+  {
+    "cell": null,
+    "code": "D100",
+    "end_location": {
+      "column": 1,
+      "row": 1
+    },
+    "filename": "D:\\AI-Media-Indexer\\tools\\diagnose_search.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Missing docstring in public module",
+    "noqa_row": 1,
+    "url": "https://docs.astral.sh/ruff/rules/undocumented-public-module"
+  },
+  {
+    "cell": null,
+    "code": "F541",
+    "end_location": {
+      "column": 42,
+      "row": 173
+    },
+    "filename": "D:\\AI-Media-Indexer\\tools\\diagnose_search.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "\"  ✓ Parsed successfully!\"",
+          "end_location": {
+            "column": 42,
+            "row": 173
+          },
+          "location": {
+            "column": 15,
+            "row": 173
+          }
+        }
+      ],
+      "message": "Remove extraneous `f` prefix"
+    },
+    "location": {
+      "column": 15,
+      "row": 173
+    },
+    "message": "f-string without any placeholders",
+    "noqa_row": 173,
+    "url": "https://docs.astral.sh/ruff/rules/f-string-missing-placeholders"
+  },
+  {
+    "cell": null,
+    "code": "E722",
+    "end_location": {
+      "column": 11,
+      "row": 236
+    },
+    "filename": "D:\\AI-Media-Indexer\\tools\\diagnose_search.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 236
+    },
+    "message": "Do not use bare `except`",
+    "noqa_row": 236,
+    "url": "https://docs.astral.sh/ruff/rules/bare-except"
+  },
+  {
+    "cell": null,
+    "code": "E722",
+    "end_location": {
+      "column": 11,
+      "row": 252
+    },
+    "filename": "D:\\AI-Media-Indexer\\tools\\diagnose_search.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 252
+    },
+    "message": "Do not use bare `except`",
+    "noqa_row": 252,
+    "url": "https://docs.astral.sh/ruff/rules/bare-except"
+  },
+  {
+    "cell": null,
+    "code": "E722",
+    "end_location": {
+      "column": 11,
+      "row": 274
+    },
+    "filename": "D:\\AI-Media-Indexer\\tools\\diagnose_search.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 274
+    },
+    "message": "Do not use bare `except`",
+    "noqa_row": 274,
+    "url": "https://docs.astral.sh/ruff/rules/bare-except"
+  }
+]

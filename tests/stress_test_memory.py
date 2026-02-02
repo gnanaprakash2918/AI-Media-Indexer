@@ -137,7 +137,7 @@ async def test_visual_encoder() -> dict:
     """Test visual encoder (SigLIP/CLIP) model load/unload."""
     print("\n🖼️ Testing VisualEncoder (SigLIP/CLIP)...")
 
-    from core.processing.visual_encoder import (
+    from core.processing.vision.visual_encoder import (
         get_default_visual_encoder,
         reset_visual_encoder,
     )
@@ -177,7 +177,7 @@ async def test_audio_events() -> dict:
     """Test CLAP audio event detector."""
     print("\n🔊 Testing AudioEventDetector (CLAP)...")
 
-    from core.processing.audio_events import AudioEventDetector
+    from core.processing.audio.audio_events import AudioEventDetector
 
     before = get_vram_info()[0]
     detector = AudioEventDetector()

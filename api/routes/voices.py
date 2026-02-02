@@ -215,7 +215,7 @@ async def trigger_voice_clustering(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        from core.processing.voice_clustering import cluster_voices
+        from core.processing.audio.voice_clustering import cluster_voices
 
         stats = await cluster_voices(pipeline.db)
         return {"status": "completed", **stats}

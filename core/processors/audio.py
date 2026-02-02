@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from core.processing.transcriber import AudioTranscriber
+from core.processing.audio.transcriber import AudioTranscriber
 from core.utils.resource import resource_manager
 
 logger = logging.getLogger(__name__)

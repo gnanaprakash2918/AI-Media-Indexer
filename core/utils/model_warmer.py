@@ -54,7 +54,7 @@ async def warmup_models():
 
     # 4. CLIP/SigLIP (Visual Encoder)
     try:
-        from core.processing.visual_encoder import get_default_visual_encoder
+        from core.processing.vision.visual_encoder import get_default_visual_encoder
 
         encoder = get_default_visual_encoder()
         # Trigger load - trust lazy loading

@@ -12,7 +12,7 @@ async def test_deep_research():
     print("--- Testing Deep Research Integration ---")
 
     try:
-        from core.processing.deep_research import get_deep_research_processor
+        from core.processing.analysis.deep_research import get_deep_research_processor
 
         processor = get_deep_research_processor()
         print("[OK] Processor initialized")

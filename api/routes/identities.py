@@ -89,7 +89,7 @@ async def suggest_merges(
         raise HTTPException(status_code=503, detail="Pipeline invalid")
 
     try:
-        from core.processing.identity_linker import get_identity_linker
+        from core.processing.vision.identity_linker import get_identity_linker
 
         # 1. Gather Data
         # Face Clusters (Unresolved + Named)

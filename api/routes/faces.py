@@ -516,7 +516,7 @@ async def identify_face_cluster(
             raise HTTPException(status_code=500, detail="Face has no embedding")
 
         # 2. Lookup Metadata
-        from core.processing.metadata import get_metadata_engine
+        from core.processing.metadata.metadata import get_metadata_engine
 
         metadata_engine = get_metadata_engine()
 
@@ -555,7 +555,7 @@ async def identify_face_cluster(
         # Initialize FaceManager if needed (borrow from pipeline)
         if not pipeline.faces:
             # Should be initialized by now usually
-            from core.processing.identity import FaceManager
+            from core.processing.vision.identity import FaceManager
 
             pipeline.faces = FaceManager(db_client=pipeline.db.client)
 
