@@ -1,8 +1,5 @@
 # AI-MEDIA-INDEXER
 
-> [!CAUTION]
-> **WORK IN PROGRESS**: The architecture and features documented below reflect the current development on the `query-decompose` branch. This is an experiment I have been doing with some new models and agents. For the stable version, please refer to the latest release or wait for the branch to be merged.
-
 *Multimodal Intelligence for Media Discovery and Understanding*
 
 ![last commit](https://img.shields.io/github/last-commit/gnanaprakash2918/AI-Media-Indexer)
@@ -28,7 +25,12 @@
 The AI-Media-Indexer implements a massively parallel ingestion pipeline coordinated by a centralized resource arbiter. It processes audio and video tracks independently before fusing them into a temporal context for hyper-granular hybrid search.
 
 ### High-Fidelity Technical Schematic
-![SOTA Technical Schematic](assets/architecture.png)
+
+### Current State Demo
+> **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
+
+<video src="assets/Demo.mp4" controls width="100%"></video>
+
 
 ### Ingestion Council Flow
 ```mermaid
@@ -102,18 +104,12 @@ flowchart TD
 
 ---
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=gnanaprakash2918/AI-Media-Indexer&type=date&legend=top-left)](https://www.star-history.com/#gnanaprakash2918/AI-Media-Indexer&type=date&legend=top-left)
-
----
-
 ## Core Features
 
 - **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration (Semaphores in `processing/identity.py`).
 - **Multimodal Intelligence**:
-    - **Audio**: Multi-pass language detection, **ROVER word-level voting** between Whisper v3, IndicConformer, and SeamlessM4T.
-    - **Vision**: **InternVideo2.5** for dense captioning, **SAM 2** for temporal visual tracking, and **PP-OCRv5** for Indic text extraction.
+    - **Audio**: **AST (Audio Spectrogram Transformer)** for 527-class event tagging, **CLAP** for text-audio retrieval, and **Whisper v3** for ASR.
+    - **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 2** for tracking.
     - **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
 - **Advanced Temporal Fusion**:
     - **3-Tier Memory**: XMem-inspired sensory (sliding window), working, and long-term memory tiers.
@@ -208,7 +204,7 @@ Settings are managed via `.env` (overrides `config.py` defaults).
 | Query | Modalities Used |
 |-------|-----------------|
 | "Person in red shirt running fast" | Visual (SigLIP) + Action (InternVideo) |
-| "Crowd cheering in background" | Audio Events (CLAP) |
+| "Crowd cheering in background" | Audio Events (AST + CLAP) |
 | "Prakash speaking near the door" | Face ID + Voice ID + VLM |
 | "Text 'EXIT' visible on sign" | OCR (PP-OCRv5) |
 
