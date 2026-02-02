@@ -103,7 +103,7 @@ class FacialEmotionDetector:
 
     async def detect(
         self,
-        frame: "np.ndarray",
+        frame: np.ndarray,
         face_box: tuple[int, int, int, int] | None = None,
     ) -> list[EmotionResult]:
         """Detect emotions in a frame.

@@ -82,7 +82,7 @@ class AudioProcessor:
 
                     # We should probably offload the LOAD and TRANSCRIBE to thread, but _slice_audio must be awaited before.
 
-                    if AudioTranscriber._SHARED_SIZE != model_id:
+                    if model_id != AudioTranscriber._SHARED_SIZE:
                         # This blocks!
                         await asyncio.to_thread(
                             transcriber._load_model, model_id

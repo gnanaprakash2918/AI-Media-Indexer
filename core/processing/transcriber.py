@@ -506,7 +506,7 @@ class AudioTranscriber:
         # Check if already loaded with correct size
         if (
             AudioTranscriber._SHARED_MODEL is not None
-            and AudioTranscriber._SHARED_SIZE == model_key
+            and model_key == AudioTranscriber._SHARED_SIZE
         ):
             return
 
@@ -847,7 +847,7 @@ class AudioTranscriber:
 
                 # Check shared model state
                 if AudioTranscriber._SHARED_BATCHED is None or (
-                    AudioTranscriber._SHARED_SIZE != model_to_use
+                    model_to_use != AudioTranscriber._SHARED_SIZE
                 ):
                     self._load_model(model_to_use)
 
@@ -1012,7 +1012,7 @@ class AudioTranscriber:
 
         try:
             # Ensure model is loaded (handles download/conversion)
-            if AudioTranscriber._SHARED_SIZE != model_id:
+            if model_id != AudioTranscriber._SHARED_SIZE:
                 self._load_model(model_id)
 
             # Use the underlying model directly for detection (no batching needed)

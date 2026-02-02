@@ -42,10 +42,15 @@ class GroundingPipeline:
         # If no concepts provided, try to fetch some from DB or use heuristics
         # For now, we'll rely on explicit concepts or simple fallback
         if not concepts:
-            # TODO: Fetch top entities from scenelets/frames once indexed
-            # For now, return 0 if no explicit concepts
-            logger.warning(f"No concepts provided for grounding: {video_path}")
-            return 0
+            # Fetch top detected entities/concepts from indexing to bootstrap grounding
+            try:
+                concepts = self.db.extract_concepts_from_video(video_path)
+            except Exception as e:
+                logger.warning(f"Could not fetch concepts from DB: {e}")
+            
+            if not concepts:
+                logger.warning(f"No concepts provided or found for grounding: {video_path}")
+                return 0
 
         logger.info(
             f"Starting grounding for {path.name} with concepts: {concepts}"

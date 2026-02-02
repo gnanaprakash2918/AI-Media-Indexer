@@ -8,7 +8,8 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 # Clean dependency injection
-from api.deps import get_pipeline
+# Clean dependency injection
+from api.deps import get_pipeline, get_search_agent
 from api.schemas import AdvancedSearchRequest
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
@@ -37,6 +38,7 @@ async def hybrid_search(
     q: Annotated[str, Query(..., description="Search query")],
     limit: Annotated[int, Query(description="Maximum results")] = 20,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)] = None,
+    agent: Annotated[object, Depends(get_search_agent)] = None,
     video_path: Annotated[
         str | None, Query(description="Optional video filter")
     ] = None,
@@ -60,6 +62,7 @@ async def hybrid_search(
         q: The natural language search query.
         limit: Maximum number of results to return.
         pipeline: The core ingestion pipeline instance.
+        agent: The singleton SearchAgent instance.
         video_path: Optional path to filter results by a specific video.
         use_reranking: Whether to enable LLM re-ranking (slower but more accurate).
         use_reasoning: Whether to enable LLM query decomposition (slower but better for complex queries).
@@ -78,9 +81,8 @@ async def hybrid_search(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        if SearchAgent:
-            # Re-instantiate per request or usage? SearchAgent seems lightweight (just helper)
-            agent = SearchAgent(db=pipeline.db)
+        if agent:
+            # Singleton SearchAgent usage
             result = await agent.sota_search(
                 query=q,
                 limit=limit,
@@ -202,12 +204,14 @@ async def hybrid_search(
 async def hybrid_search_post(
     request: AdvancedSearchRequest,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    agent: Annotated[object, Depends(get_search_agent)] = None,
 ) -> dict:
     """POST endpoint for hybrid search, supporting complex structured queries.
 
     Args:
         request: The search request payload with filters and settings.
         pipeline: The core ingestion pipeline instance.
+        agent: The singleton SearchAgent instance.
 
     Returns:
         A dictionary of ranked search results.
@@ -218,6 +222,7 @@ async def hybrid_search_post(
         limit=request.limit,
         use_reranking=request.use_rerank,
         pipeline=pipeline,
+        agent=agent,
     )
 
 
@@ -225,6 +230,7 @@ async def hybrid_search_post(
 async def advanced_search(
     req: AdvancedSearchRequest,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    agent: Annotated[object, Depends(get_search_agent)] = None,
 ):
     """Executes an advanced search with filtering and reranking."""
     # REFACTOR: Use SearchAgent instead of missing core.retrieval.engine
@@ -232,8 +238,8 @@ async def advanced_search(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        if SearchAgent:
-            agent = SearchAgent(db=pipeline.db)
+        if agent:
+            # Use sota_search for advanced capabilities (RRF + Rerank)
             # Use sota_search for advanced capabilities (RRF + Rerank)
             result = await agent.sota_search(
                 query=req.query,
@@ -481,6 +487,7 @@ async def search(
 async def agentic_search(
     q: str,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    agent: Annotated[object, Depends(get_search_agent)] = None,
     limit: int = 20,
     use_expansion: bool = False,  # Default OFF to prevent hallucination
 ):
@@ -490,8 +497,7 @@ async def agentic_search(
 
     try:
         # Use simple import if reliable, otherwise fallback handled at top level
-        if SearchAgent:
-            agent = SearchAgent(db=pipeline.db)
+        if agent:
             result = await agent.search(
                 q, limit=limit, use_expansion=use_expansion
             )
@@ -518,6 +524,7 @@ async def agentic_search(
 async def scene_search(
     q: str,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    agent: Annotated[object, Depends(get_search_agent)] = None,
     limit: int = 20,
     use_expansion: bool = False,  # Default OFF to prevent hallucination
     video_path: Annotated[
@@ -534,8 +541,7 @@ async def scene_search(
     )
 
     try:
-        if SearchAgent:
-            agent = SearchAgent(db=pipeline.db)
+        if agent:
             result = await agent.search_scenes(
                 query=q,
                 limit=limit,
@@ -581,6 +587,7 @@ async def scene_search(
 async def granular_search(
     query: str,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    agent: Annotated[object, Depends(get_search_agent)] = None,
     limit: int = 20,
     video_path: Annotated[
         str | None, Query(description="Filter to specific video")
@@ -607,16 +614,16 @@ async def granular_search(
     )
 
     try:
-        agent = SearchAgent(db=pipeline.db)
-
-        # Use sota_search which now handles granular constraints internally
-        result = await agent.sota_search(
-            query=query,
-            limit=limit,
-            video_path=video_path,
-            use_reranking=enable_rerank,
-            use_expansion=True,  # Enable expansion for granular parsing
-        )
+        if agent:
+        
+            # Use sota_search which now handles granular constraints internally
+            result = await agent.sota_search(
+                query=query,
+                limit=limit,
+                video_path=video_path,
+                use_reranking=enable_rerank,
+                use_expansion=True,  # Enable expansion for granular parsing
+            )
 
         results = result.get("results", [])
         parsed = result.get("parsed", {})
@@ -678,6 +685,7 @@ async def granular_search(
 async def explainable_search(
     q: Annotated[str, Query(..., description="Search query")],
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    agent: Annotated[object, Depends(get_search_agent)] = None,
     limit: Annotated[int, Query(description="Maximum results")] = 10,
 ) -> dict:
     """Search with detailed reasoning for each result.
@@ -693,10 +701,11 @@ async def explainable_search(
     Args:
         q: Natural language search query.
         pipeline: The core ingestion pipeline instance.
+        agent: The singleton SearchAgent instance.
         limit: Maximum number of results to return.
 
     Returns:
-        Results with explainable metadata and reasoning.
+        Results with explainable matches and reasoning.
     """
     start_time = time.perf_counter()
     logger.info(f"[ExplainableSearch] Query: '{q[:80]}...'")
@@ -707,8 +716,7 @@ async def explainable_search(
     try:
         # Parse query for entity extraction
         parsed = None
-        if SearchAgent:
-            agent = SearchAgent(db=pipeline.db)
+        if agent:
             parsed = await agent.parse_query(q)
 
         # Call the explainable search method

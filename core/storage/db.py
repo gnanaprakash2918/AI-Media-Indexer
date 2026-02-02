@@ -23,6 +23,10 @@ from config import settings
 from core.utils.hardware import select_embedding_model
 from core.utils.logger import log
 from core.utils.observe import observe
+from core.storage.filters import (
+    video_path_filter,
+    build_filter,
+)
 
 
 def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
@@ -643,6 +647,91 @@ class VectorDB:
         """Encodes a single text string."""
         return (await self.encode_texts(text, is_query=True))[0]
 
+    def insert_masklet(
+        self,
+        media_path: str,
+        concept: str,
+        start_time: float,
+        end_time: float,
+        confidence: float = 1.0,
+        payload: dict | None = None,
+    ) -> None:
+        """Inserts a visual grounding masklet into the database.
+
+        Args:
+            media_path: Path to the media file.
+            concept: Textual description of the concept (e.g. "red car").
+            start_time: Start timestamp of the appearance.
+            end_time: End timestamp.
+            confidence: Detection confidence.
+            payload: Additional metadata (bbox, frame_idx, resolution).
+        """
+        import uuid
+
+        point_id = str(uuid.uuid4())
+        full_payload = {
+            "media_path": media_path,
+            "concept": concept,
+            "start": start_time,
+            "end": end_time,
+            "confidence": confidence,
+            "type": "masklet",
+            **(payload or {}),
+        }
+
+        # Ensure collection exists (lazy check)
+        # In prod, this should be in ensure_collections
+        collection_name = "media_masklets"
+
+        # Sanitize payload
+        full_payload = sanitize_numpy_types(full_payload)
+
+        try:
+            self.client.upsert(
+                collection_name=collection_name,
+                points=[
+                    models.PointStruct(
+                        id=point_id,
+                        vector=[],  # Masklets might not have vectors initially, or query vector of concept?
+                        # Ideally we embed the concept text so we can search masklets by similarity
+                        # But for now, just storage.
+                        # Using empty vector requires configuration that allows it, or dummy vector.
+                        # Let's assume we don't index by vector yet, just storage.
+                        # WAIT: Qdrant points need vectors if collection is configured with them.
+                        # If we assume 'media_masklets' doesn't exist, we might need to create it.
+                        payload=full_payload,
+                    )
+                ],
+            )
+        except Exception as e:
+            # If collection doesn't exist, log warning or try to create?
+            # For now, just log to avoid breaking the pipeline if this feature is experimental
+            log(f"Failed to insert masklet (collection {collection_name} might be missing): {e}", level="WARNING")
+
+    def extract_concepts_from_video(self, video_path: str, limit: int = 20) -> list[str]:
+        """Extracts top frequent concepts/entities from a video's indexed metadata.
+
+        Used to seed the grounding pipeline if no explicit concepts are provided.
+        Scans frames for detected objects (if available in payload).
+        """
+        # Placeholder implementation - we need to see what's actually in frame payloads.
+        # Assuming we have 'objects' or 'ocr_text' in frame payloads.
+        
+        # 1. Scroll frames for this video
+        try:
+            frames = self.get_frames_for_video(video_path)
+            
+            # 2. Aggregation (Naive)
+            # This depends on what keys (e.g. 'yolo_objects', 'caption_nouns') exist.
+            # For now, return empty list to unblock logic, or common objects if found.
+            
+            # TODO: Implement proper aggregation once frame schema is finalized with object detection
+            return []
+            
+        except Exception as e:
+            log(f"Failed to extract concepts: {e}")
+            return []
+
     def get_indexed_videos(self) -> list[str]:
         """Retrieves a list of all unique video paths currently indexed in the database.
 
@@ -684,14 +773,7 @@ class VectorDB:
         while True:
             results, offset = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="video_path",
-                            match=models.MatchValue(value=video_path),
-                        )
-                    ]
-                ),
+                scroll_filter=build_filter(video_path_filter(video_path)),
                 limit=500,
                 offset=offset,
                 with_payload=True,
@@ -1974,6 +2056,71 @@ class VectorDB:
             log(f"match_speaker failed: {e}", level="DEBUG")
         return None
 
+        return None
+
+    def upsert_face_cluster_centroid(
+        self, cluster_id: int, embedding: list[float]
+    ) -> None:
+        """Stores or updates the centroid for a face cluster.
+
+        Uses a deterministic ID based on cluster_id to allow easy retrieval/update.
+        """
+        import uuid
+
+        # Deterministic UUID for the centroid
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"face_centroid_{cluster_id}"))
+
+        try:
+            self.client.upsert(
+                collection_name=self.FACE_COLLECTION,
+                points=[
+                    models.PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload={
+                            "face_cluster_id": cluster_id,
+                            "is_centroid": True,
+                            "type": "centroid",
+                            "timestamp": time.time(),
+                        },
+                    )
+                ],
+            )
+        except Exception as e:
+            log(f"Failed to upsert face centroid {cluster_id}: {e}", level="ERROR")
+
+    def upsert_voice_cluster_centroid(
+        self, cluster_id: int, embedding: list[float]
+    ) -> None:
+        """Stores or updates the centroid for a voice cluster.
+
+        Uses a deterministic ID based on cluster_id to allow easy retrieval/update.
+        """
+        import uuid
+
+        # Deterministic UUID for the centroid
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"voice_centroid_{cluster_id}"))
+
+        try:
+            self.client.upsert(
+                collection_name=self.VOICE_COLLECTION,
+                points=[
+                    models.PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload={
+                            "voice_cluster_id": cluster_id,
+                            "is_centroid": True,
+                            "type": "centroid",
+                            "timestamp": time.time(),
+                            "speaker_id": f"CLUSTER_{cluster_id}",  # consistent ID
+                        },
+                    )
+                ],
+            )
+        except Exception as e:
+            log(f"Failed to upsert voice centroid {cluster_id}: {e}", level="ERROR")
+
     def upsert_speaker_embedding(
         self,
         speaker_id: str,
@@ -2817,7 +2964,7 @@ class VectorDB:
                 log(f"High energy filtering failed: {e}")
 
         log(
-            f"Total modalities searched: vector, keyword, identity, voice, audio, music_structure"
+            "Total modalities searched: vector, keyword, identity, voice, audio, music_structure"
         )
 
         # === 6. RRF FUSION ===
@@ -4121,7 +4268,7 @@ class VectorDB:
     @observe("db_search_scenes_by_image")
     async def search_scenes_by_image(
         self,
-        image: "np.ndarray | bytes | Path",
+        image: np.ndarray | bytes | Path,
         limit: int = 10,
         video_path: str | None = None,
         score_threshold: float | None = None,

@@ -41,7 +41,7 @@ class SearchCandidate:
 class RankedResult:
     """A search result scored by the reranking council."""
 
-    candidate: "SearchCandidate"
+    candidate: SearchCandidate
     final_score: float = 0.0
     vlm_confidence: int = 0
     vlm_reason: str = ""
@@ -136,7 +136,7 @@ class RerankingCouncil:
 
         self._models_loaded = True
 
-    def _get_text_for_ranking(self, candidate: "SearchCandidate") -> str:
+    def _get_text_for_ranking(self, candidate: SearchCandidate) -> str:
         """Extract ALL multimodal text from candidate for comprehensive ranking.
 
         This method extracts text from ALL available fields to ensure the
@@ -281,7 +281,7 @@ class RerankingCouncil:
     async def council_rerank(
         self,
         query: str,
-        candidates: list["SearchCandidate"],
+        candidates: list[SearchCandidate],
         max_candidates: int = 10,
         use_vlm: bool = True,
     ) -> list[RankedResult]:

@@ -338,7 +338,7 @@ class FrameExtractor:
 
             if result.returncode != 0:
                 log(
-                    f"FFprobe timestamp extraction failed, using calculated timestamps"
+                    "FFprobe timestamp extraction failed, using calculated timestamps"
                 )
                 return []
 

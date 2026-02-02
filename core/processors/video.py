@@ -6,7 +6,6 @@ import asyncio
 import logging
 from pathlib import Path
 
-import torch
 
 from config import settings
 from core.ingestion.faces import FaceManager, FaceTrackBuilder
@@ -195,7 +194,7 @@ class VideoProcessor:
                 video_duration = total_duration
                 if not video_duration:
                     try:
-                        probe_data = await self.pipeline.prober.probe(path)
+                        probe_data = await self.pipeline.get_probe_data(path)
                         video_duration = float(
                             probe_data.get("format", {}).get("duration", 0.0)
                         )
@@ -251,9 +250,8 @@ class VideoProcessor:
             cleanup_interval = 5
             if frame_count % cleanup_interval == 0:
                 self.pipeline._cleanup_memory(context=f"frame_{frame_count}")
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
+                from core.utils.device import empty_cache
+                empty_cache()
 
                 await resource_manager.throttle_if_needed("compute")
 
@@ -655,8 +653,8 @@ class VideoProcessor:
 
             finally:
                 cleanup_vram()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                from core.utils.device import empty_cache
+                empty_cache()
 
             return description
 

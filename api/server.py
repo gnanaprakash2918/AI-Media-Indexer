@@ -162,6 +162,17 @@ async def lifespan(app: FastAPI):
                 f"Crash recovery: Marked {recovery_stats['paused']} interrupted jobs as PAUSED"
             )
 
+        # Initialize Search Agent (Singleton)
+        try:
+            from core.retrieval.agentic_search import SearchAgent
+
+            # Use the DB from the pipeline
+            app.state.search_agent = SearchAgent(pipeline.db)
+            logger.info("SearchAgent initialized (Singleton)")
+        except Exception as sa_err:
+            logger.error(f"SearchAgent init failed: {sa_err}")
+            app.state.search_agent = None
+
     except Exception as exc:
         pipeline = None
         app.state.pipeline = None

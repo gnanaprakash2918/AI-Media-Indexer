@@ -243,7 +243,7 @@ class VLMCouncil:
 
     async def analyze_frame_simple(
         self,
-        frame: "bytes | np.ndarray | str | Path",
+        frame: bytes | np.ndarray | str | Path,
         prompt: str | None = None,
     ) -> str:
         """Simple single-model analysis (fast mode).

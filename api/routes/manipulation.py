@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -17,7 +16,7 @@ class MaskFrame(BaseModel):
 
 class InpaintRequest(BaseModel):
     video_path: str
-    regions: List[Dict]  # List of objects with {frame, bbox} or similar
+    regions: list[dict]  # List of objects with {frame, bbox} or similar
     # For a real MVP, let's stick to simplest: BBox over a time range
 
 
@@ -25,15 +24,15 @@ class RegionRequest(BaseModel):
     video_path: str
     start_time: float
     end_time: float
-    bbox: List[int]  # [x, y, w, h]
+    bbox: list[int]  # [x, y, w, h]
 
 
 class JobResponse(BaseModel):
     job_id: str
     status: str
     progress: float
-    result_path: Optional[str] = None
-    error: Optional[str] = None
+    result_path: str | None = None
+    error: str | None = None
 
 
 @router.post("/inpaint", response_model=JobResponse)

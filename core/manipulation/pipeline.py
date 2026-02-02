@@ -9,7 +9,6 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Optional
 
 import numpy as np
 
@@ -32,8 +31,8 @@ class ManipulationJob:
     video_path: Path
     status: JobStatus = JobStatus.PENDING
     progress: float = 0.0
-    result_path: Optional[Path] = None
-    error: Optional[str] = None
+    result_path: Path | None = None
+    error: str | None = None
     created_at: float = 0.0
 
 
@@ -41,9 +40,9 @@ class ManipulationPipeline:
     """Manages video manipulation jobs."""
 
     def __init__(self):
-        self._jobs: Dict[str, ManipulationJob] = {}
+        self._jobs: dict[str, ManipulationJob] = {}
         self._queue = asyncio.Queue()
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: asyncio.Task | None = None
         self._privacy_blur = PrivacyBlur(blur_type="gaussian", kernel_size=51)
 
     def start(self):
@@ -62,11 +61,11 @@ class ManipulationPipeline:
                 pass
             self._worker_task = None
 
-    def get_job(self, job_id: str) -> Optional[ManipulationJob]:
+    def get_job(self, job_id: str) -> ManipulationJob | None:
         return self._jobs.get(job_id)
 
     def submit_inpaint(
-        self, video_path: Path, mask_frames: Dict[int, "np.ndarray"]
+        self, video_path: Path, mask_frames: dict[int, "np.ndarray"]
     ) -> str:
         """Submit an inpainting job."""
         import time
@@ -86,7 +85,7 @@ class ManipulationPipeline:
         return job_id
 
     def submit_redact(
-        self, video_path: Path, mask_frames: Dict[int, "np.ndarray"]
+        self, video_path: Path, mask_frames: dict[int, "np.ndarray"]
     ) -> str:
         """Submit a redaction (blur) job."""
         import time
@@ -141,7 +140,7 @@ class ManipulationPipeline:
                 await asyncio.sleep(1)
 
     async def _process_inpaint(
-        self, job: ManipulationJob, mask_frames: Dict[int, "np.ndarray"]
+        self, job: ManipulationJob, mask_frames: dict[int, "np.ndarray"]
     ):
         """Run inpainting logic (CPU blocking, run in executor)."""
         import asyncio
@@ -168,7 +167,7 @@ class ManipulationPipeline:
             )
 
     async def _process_redact(
-        self, job: ManipulationJob, mask_frames: Dict[int, "np.ndarray"]
+        self, job: ManipulationJob, mask_frames: dict[int, "np.ndarray"]
     ):
         """Run redaction logic."""
         import cv2
@@ -215,7 +214,7 @@ class ManipulationPipeline:
 
 
 # Global singleton
-_pipeline: Optional[ManipulationPipeline] = None
+_pipeline: ManipulationPipeline | None = None
 
 
 def get_manipulation_pipeline() -> ManipulationPipeline:

@@ -239,13 +239,8 @@ class ObjectDetector:
             del self.model
             self.model = None
 
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        from core.utils.device import empty_cache
+        empty_cache()
 
         log.info("[YOLO-World] Resources released")
 
@@ -408,12 +403,7 @@ class GroundingDINODetector:
             del self.processor
             self.processor = None
 
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        from core.utils.device import empty_cache
+        empty_cache()
 
         log.info("[GroundingDINO] Resources released")

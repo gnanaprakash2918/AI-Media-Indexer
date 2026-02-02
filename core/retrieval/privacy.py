@@ -47,7 +47,7 @@ class PrivacyFilter:
         filtered = await filter.filter_results(results, mode="personal", approved={"cluster_1"})
     """
 
-    def __init__(self, db: "VectorDB | None" = None):
+    def __init__(self, db: VectorDB | None = None):
         """Initialize the privacy filter.
 
         Args:

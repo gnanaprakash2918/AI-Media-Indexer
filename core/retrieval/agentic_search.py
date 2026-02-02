@@ -53,8 +53,8 @@ class SearchAgent:
 
     def __init__(
         self,
-        db: "VectorDB",
-        llm: "LLMInterface | None" = None,
+        db: VectorDB,
+        llm: LLMInterface | None = None,
         enable_hybrid: bool = True,
     ) -> None:
         """Initializes the search agent.
@@ -799,7 +799,7 @@ class SearchAgent:
                 person_names or parsed.clothing_color or parsed.location
             ):
                 log(
-                    f"[SOTA] Strict scene search yielded 0 results. Retrying with relaxed semantic search..."
+                    "[SOTA] Strict scene search yielded 0 results. Retrying with relaxed semantic search..."
                 )
                 try:
                     fallback_scenes = await self.db.search_scenes(

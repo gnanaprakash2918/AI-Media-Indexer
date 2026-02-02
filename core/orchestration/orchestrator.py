@@ -151,7 +151,6 @@ class MultiAgentOrchestrator:
             return {"route": route_result, "results": results}
 
         elif agent_type == "vision":
-            from core.processing.vision import VisionAnalyzer
 
             # analyzer = VisionAnalyzer()
             # If "describe_image" or similar tool is requested, we might need a file path

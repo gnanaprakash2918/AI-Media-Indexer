@@ -5,7 +5,7 @@ Uses cooperative checkpointing - call token.check() at safe points.
 """
 
 from dataclasses import dataclass, field
-from typing import Callable
+from collections.abc import Callable
 
 
 class CancellationError(Exception):

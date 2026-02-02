@@ -110,7 +110,7 @@ class ASRCouncil:
 
     async def transcribe(
         self,
-        audio: "np.ndarray",
+        audio: np.ndarray,
         sample_rate: int = 16000,
         language: str | None = None,
     ) -> CouncilTranscript:
@@ -191,7 +191,7 @@ class ASRCouncil:
 
     async def _transcribe_with_whisper(
         self,
-        audio: "np.ndarray",
+        audio: np.ndarray,
         sample_rate: int,
         language: str | None,
     ) -> str:
@@ -282,7 +282,7 @@ class ASRCouncil:
 
     async def transcribe_simple(
         self,
-        audio: "np.ndarray",
+        audio: np.ndarray,
         sample_rate: int = 16000,
         language: str | None = None,
     ) -> str:

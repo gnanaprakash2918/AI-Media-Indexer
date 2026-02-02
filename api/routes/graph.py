@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -18,14 +17,14 @@ class CoOccurrence(BaseModel):
 class SocialGraphResponse(BaseModel):
     center_person: str
     center_cluster_id: int
-    connections: List[CoOccurrence]
+    connections: list[CoOccurrence]
 
 
 @router.get("/social", response_model=SocialGraphResponse)
 async def get_social_graph(
     request: Request,
-    name: Optional[str] = None,
-    cluster_id: Optional[int] = None,
+    name: str | None = None,
+    cluster_id: int | None = None,
     min_strength: int = 2,
 ):
     """Get the social graph (co-occurrences) for a specific person.
@@ -139,9 +138,9 @@ async def get_scene_timeline(
 class SequenceSearchRequest(BaseModel):
     """Request body for temporal sequence search."""
 
-    pattern: List[str]  # e.g., ["speaks", "speaks", "exits"]
-    video_path: Optional[str] = None
-    person_name: Optional[str] = None
+    pattern: list[str]  # e.g., ["speaks", "speaks", "exits"]
+    video_path: str | None = None
+    person_name: str | None = None
 
 
 @router.post("/sequence")

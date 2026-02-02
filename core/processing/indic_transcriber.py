@@ -364,7 +364,7 @@ class IndicASRPipeline:
                 log("[IndicASR] No model_config.yaml found in archive")
                 return None
 
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = yaml.safe_load(f)
 
             # Patch tokenizer config to add 'dir' key

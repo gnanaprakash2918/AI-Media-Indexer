@@ -269,14 +269,14 @@ def safe_path(path_str: str | Path) -> Path:
     return _safe(path_str)
 
 
-def get_biometric_arbitrator() -> "BiometricArbitrator":
+def get_biometric_arbitrator() -> BiometricArbitrator:
     """Get the global BiometricArbitrator for face verification."""
     from core.processing.biometric_arbitrator import BIOMETRIC_ARBITRATOR
 
     return BIOMETRIC_ARBITRATOR
 
 
-def get_privacy_filter() -> "PrivacyFilter":
+def get_privacy_filter() -> PrivacyFilter:
     """Get the global PrivacyFilter for personal/movie mode."""
     from core.retrieval.privacy import PRIVACY_FILTER
 

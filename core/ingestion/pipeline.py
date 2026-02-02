@@ -303,7 +303,7 @@ class IngestionPipeline:
         _ = await self.metadata_engine.identify(path, user_hint=hint_enum)
 
         try:
-            probed = await self.prober.probe(path)
+            probed = await self.get_probe_data(path)
             duration = float(probed.get("format", {}).get("duration", 0.0))
         except MediaProbeError as e:
             progress_tracker.fail(job_id, error=f"Media probe failed: {e}")
@@ -662,7 +662,7 @@ class IngestionPipeline:
                     if detection_confidence < 0.5:
                         try:
                             # Probe for duration
-                            probed = await self.prober.probe(path)
+                            probed = await self.get_probe_data(path)
                             duration = float(
                                 probed.get("format", {}).get("duration", 0.0)
                             )
@@ -808,7 +808,7 @@ class IngestionPipeline:
                 # NEVER-EMPTY GUARANTEE: Create a placeholder segment to preserve timeline
                 # This ensures search can still find the media by path/timestamp
                 try:
-                    probed = await self.prober.probe(path)
+                    probed = await self.get_probe_data(path)
                     duration = float(
                         probed.get("format", {}).get("duration", 0.0)
                     )
@@ -834,7 +834,7 @@ class IngestionPipeline:
             log(f"[Audio] Stored {len(prepared)} dialogue segments in DB")
 
             try:
-                probed = await self.prober.probe(path)
+                probed = await self.get_probe_data(path)
                 total_duration = float(
                     probed.get("format", {}).get("duration", 0.0)
                 )
@@ -1306,7 +1306,7 @@ class IngestionPipeline:
             try:
                 # Load model if needed
                 model_id = "Systran/faster-whisper-base"
-                if AudioTranscriber._SHARED_SIZE != model_id:
+                if model_id != AudioTranscriber._SHARED_SIZE:
                     transcriber._load_model(model_id)
 
                 if AudioTranscriber._SHARED_MODEL is None:
@@ -1383,44 +1383,81 @@ class IngestionPipeline:
             # 3. Persist specific samples for future matching
 
             # Cluster IDs now use db.get_next_voice_cluster_id() for uniqueness
-
-            for _idx, seg in enumerate(voice_segments or []):
-                audio_path: str | None = None
-                global_speaker_id = f"unknown_{uuid.uuid4().hex[:8]}"
-                voice_cluster_id = -1
-
-                # Respect explicit SILENCE label
-                if seg.speaker_label == "SILENCE":
-                    global_speaker_id = "SILENCE"
-
-                # Check Global Registry if embedding exists
-                if seg.embedding is not None and global_speaker_id != "SILENCE":
+            
+            # === P0.4 FIX: GHOST SPEAKER EXPLOSION ===
+            # Group segments by local speaker label first
+            from collections import defaultdict
+            from core.processing.voice import compute_speaker_centroid
+            
+            local_speaker_segments = defaultdict(list)
+            for seg in (voice_segments or []):
+                local_speaker_segments[seg.speaker_label].append(seg)
+            
+            # Resolve global identity for each local speaker
+            local_to_global_map = {}
+            local_to_cluster_map = {}
+            
+            for local_label, segments in local_speaker_segments.items():
+                if local_label == "SILENCE":
+                    local_to_global_map[local_label] = "SILENCE"
+                    local_to_cluster_map[local_label] = -1
+                    continue
+                
+                # Compute centroid for this local speaker
+                valid_embeddings = [s.embedding for s in segments if s.embedding is not None]
+                centroid = compute_speaker_centroid(valid_embeddings)
+                
+                global_id = f"unknown_{uuid.uuid4().hex[:8]}"
+                cluster_id = -1
+                
+                if centroid is not None:
+                    # Match CENTROID against global DB (much more stable than single segment)
                     match = await self.db.match_speaker(
-                        seg.embedding,
+                        centroid,
                         threshold=settings.voice_clustering_threshold,
                     )
                     if match:
-                        global_speaker_id, existing_cluster_id, _score = match
-                        voice_cluster_id = existing_cluster_id
-                        # If existing matched speaker has no cluster ID (-1), generate one?
-                        # Usually it should have one if we follow this new logic consistently.
-                        if voice_cluster_id == -1:
-                            voice_cluster_id = (
-                                self.db.get_next_voice_cluster_id()
-                            )
+                        global_id, cluster_id, _ = match
+                        if cluster_id == -1:
+                            cluster_id = self.db.get_next_voice_cluster_id()
                     else:
-                        # New Global Speaker -> New Cluster
-                        global_speaker_id = f"SPK_{uuid.uuid4().hex[:12]}"
-                        voice_cluster_id = self.db.get_next_voice_cluster_id()
-
+                        # New Global Speaker
+                        global_id = f"SPK_{uuid.uuid4().hex[:12]}"
+                        cluster_id = self.db.get_next_voice_cluster_id()
+                        
+                        # Register this new speaker with the CENTROID (or first good embedding)
+                        # We use the centroid as the representative vector
                         self.db.upsert_speaker_embedding(
-                            speaker_id=global_speaker_id,
-                            embedding=seg.embedding,
-                            media_path=str(path),
-                            start=seg.start_time,
-                            end=seg.end_time,
-                            voice_cluster_id=voice_cluster_id,
+                            speaker_id=global_id,
+                            embedding=centroid, # Use centroid as reference
+                            media_path=str(path), # Representative path
+                            start=segments[0].start_time,
+                            end=segments[0].end_time,
+                            voice_cluster_id=cluster_id,
                         )
+                        # Also upsert the centroid specifically if we have a collection for it
+                        self.db.upsert_voice_cluster_centroid(cluster_id, centroid)
+                
+                local_to_global_map[local_label] = global_id
+                local_to_cluster_map[local_label] = cluster_id
+
+            for _idx, seg in enumerate(voice_segments or []):
+                audio_path: str | None = None
+                
+                # Apply resolved global identity
+                global_speaker_id = local_to_global_map.get(seg.speaker_label, "unknown")
+                voice_cluster_id = local_to_cluster_map.get(seg.speaker_label, -1)
+                
+                # Store individual segment embedding linked to the cluster
+                if seg.embedding is not None and global_speaker_id != "SILENCE":
+                     self.db.upsert_speaker_embedding(
+                        speaker_id=global_speaker_id,
+                        embedding=seg.embedding,
+                        media_path=str(path),
+                        start=seg.start_time,
+                        end=seg.end_time,
+                        voice_cluster_id=voice_cluster_id,
+                    )
 
                 # ALWAYS extract audio clip for every segment (not just those with embeddings)
                 audio_extraction_success = False
@@ -2060,7 +2097,7 @@ class IngestionPipeline:
                     video_duration = total_duration
                     if not video_duration:
                         try:
-                            probe_data = await self.prober.probe(path)
+                            probe_data = await self.get_probe_data(path)
                             video_duration = float(
                                 probe_data.get("format", {}).get(
                                     "duration", 0.0
@@ -4017,7 +4054,7 @@ class IngestionPipeline:
 
             if duration > 0.5:  # Ignore blips
                 self.db.insert_masklet(
-                    video_path=str(path),
+                    media_path=str(path),
                     concept=data["concept"],
                     start_time=start_time,
                     end_time=end_time,

@@ -100,7 +100,7 @@ class VisualContentModerator:
             log.error(f"[Moderation] Model load failed: {e}")
             return False
 
-    async def check_frame(self, frame: "np.ndarray") -> ModerationResult:
+    async def check_frame(self, frame: np.ndarray) -> ModerationResult:
         """Check a frame for inappropriate content.
 
         Args:
