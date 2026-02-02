@@ -1892,14 +1892,11 @@ class VectorDB:
             Summary payload or None.
         """
         try:
-            results = self.client.scroll(
+            results, _ = self.client.scroll(
                 collection_name=self.SUMMARIES_COLLECTION,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="video_path",
-                            match=models.MatchValue(value=video_path),
-                        ),
+                scroll_filter=build_filter(
+                    [
+                        video_path_filter(video_path),
                         models.FieldCondition(
                             key="level",
                             match=models.MatchValue(value="L2"),  # L2 is global
@@ -1937,29 +1934,22 @@ class VectorDB:
         """
         query_vector = await self.encode_texts(query)
 
-        filters = []
-        if video_path:
-            filters.append(
-                models.FieldCondition(
-                    key="video_path",
-                    match=models.MatchValue(value=video_path),
-                )
-            )
-
+        filters = [media_path_filter(video_path)]
+        
         try:
             results = self.client.search(
                 collection_name=self.MASKLETS_COLLECTION,
                 query_vector=query_vector,
                 limit=limit,
                 score_threshold=score_threshold,
-                query_filter=models.Filter(must=filters) if filters else None,
+                query_filter=build_filter(filters),
             )
 
             return [
                 {
                     "id": str(r.id),
                     "score": r.score,
-                    "video_path": r.payload.get("video_path", ""),
+                    "video_path": r.payload.get("media_path", ""),
                     "concept": r.payload.get("concept", ""),
                     "start_time": r.payload.get("start_time", 0),
                     "end_time": r.payload.get("end_time", 0),

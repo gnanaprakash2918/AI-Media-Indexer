@@ -47,42 +47,11 @@ interface Job {
     error?: string;
 }
 
-// API Functions
-const triggerInpaint = async (data: {
-    video_path: string;
-    start_time: number;
-    end_time: number;
-    bbox: number[];
-}): Promise<Job> => {
-    const res = await fetch('/api/manipulation/inpaint', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-};
-
-const triggerRedact = async (data: {
-    video_path: string;
-    start_time: number;
-    end_time: number;
-    bbox: number[];
-}): Promise<Job> => {
-    const res = await fetch('/api/manipulation/redact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-};
-
-const getJobStatus = async (jobId: string): Promise<Job> => {
-    const res = await fetch(`/api/manipulation/jobs/${jobId}`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-};
+import {
+    triggerInpaint,
+    triggerRedact,
+    getManipulationJob as getJobStatus,
+} from '../api/client';
 
 export default function VideoEditor() {
     const videoRef = useRef<HTMLVideoElement>(null);

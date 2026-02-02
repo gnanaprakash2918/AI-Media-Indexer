@@ -1,3 +1,4 @@
+import { mergeFaceClusters } from '../api/client';
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -679,12 +680,12 @@ export default function FacesPage() {
 
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
 
+
+  // ... inside component ...
+
   const mergeClustersMutation = useMutation({
     mutationFn: ({ from, to }: { from: number; to: number }) =>
-      fetch(
-        `http://localhost:8000/faces/merge?from_cluster=${from}&to_cluster=${to}`,
-        { method: 'POST' },
-      ).then(res => res.json()),
+      mergeFaceClusters(from, to),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['faces'] });
       setMergeSourceId(null);

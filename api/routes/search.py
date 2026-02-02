@@ -92,21 +92,15 @@ async def hybrid_search(
             )
 
             # Transform results for frontend compatibility
+            from core.utils.normalize import normalize_result
             transformed_results = []
             for r in result.get("results", []):
-                # Normalize video_path (some collections use media_path)
-                video = r.get("video_path") or r.get("media_path", "")
-                ts = (
-                    r.get("timestamp")
-                    or r.get("start_time")
-                    or r.get("start", 0)
-                )
-                transformed = {
-                    **r,
-                    "video_path": video,  # Ensure video_path is always present
-                    "match_reason": r.get(
-                        "llm_reasoning", r.get("reasoning", "")
-                    ),
+                # Use centralized normalization for paths/urls/timestamps
+                normalized = normalize_result(r)
+                
+                # Add agent-specific fields
+                normalized.update({
+                    "match_reason": r.get("llm_reasoning", r.get("reasoning", "")),
                     "agent_thought": r.get("llm_reasoning", ""),
                     "matched_constraints": [
                         c.get("constraint", "")
@@ -115,28 +109,8 @@ async def hybrid_search(
                     if r.get("constraints_satisfied")
                     else [],
                     "score": r.get("combined_score", r.get("score", 0.5)),
-                    "timestamp": ts,
-                }
-                # Add thumbnail_url if not present
-                if video and "thumbnail_url" not in transformed:
-                    safe_path = quote(str(video))
-                    transformed["thumbnail_url"] = (
-                        f"/media/thumbnail?path={safe_path}&time={ts}"
-                    )
-                    transformed["playback_url"] = (
-                        f"/media?path={safe_path}#t={max(0, ts - 3)}"
-                    )
-                    # Add padded timestamps for VideoPlayer context window
-                    end_ts = r.get("end_time") or r.get("end") or ts + 5
-                    transformed["display_start"] = max(
-                        0, ts - 3
-                    )  # 3s before match
-                    transformed["display_end"] = end_ts + 3  # 3s after match
-                    transformed["match_start"] = (
-                        ts  # Original match point for highlighting
-                    )
-                    transformed["match_end"] = end_ts  # Original match end
-                transformed_results.append(transformed)
+                })
+                transformed_results.append(normalized)
 
             duration = time.perf_counter() - start_time
             logger.info(
