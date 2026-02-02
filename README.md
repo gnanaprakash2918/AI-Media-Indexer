@@ -29,10 +29,15 @@ The AI-Media-Indexer implements a massively parallel ingestion pipeline coordina
 ### Current State Demo
 > **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
 
-<video src="assets/Demo.mp4" controls width="100%"></video>
 
+### Current State Demo
+> **Note**: This is the current state of the system. I am still strictly working on improving accuracy. Leaving a star on the repository helps ⭐!
 
-### Ingestion Council Flow
+![Demo](assets/demo.gif)
+
+> **Note**: This architecture diagram reflects the **actual running code**, removing theoretical voting blocks for transparency.
+
+### Ingestion Logic Flow
 ```mermaid
 flowchart TD
     A[Video Upload] --> B{File Validation}
@@ -40,27 +45,39 @@ flowchart TD
     
     C --> D[Parallel Pipeline Orchestration]
     
-    subgraph D[GPU-Aware Pipeline]
+    subgraph D["GPU-Aware Pipeline"]
         D1[Frame Extraction]
         D2[Audio Demuxing]
     end
     
-    subgraph AudioLogic[Audio Council]
-        AL[Multi-pass Lang Detect] --> AC[ASR Council: ROVER voting]
-        AC -->|Whisper v3, Indic, Seamless| AT[Final Transcript]
-        AT --> AD[Analysis: Pyannote 3.1, SER, CLAP Events]
+    subgraph AudioLogic["Audio Handler"]
+        AL[Input Audio] --> AC{Sidecar/Embedded?}
+        AC -->|Yes| AT[Parse Subtitles]
+        AC -->|No| AD{Language Detect}
+        
+        AD -->|Indic > 20%| AI["IndicConformer (AI4Bharat)"]
+        AD -->|Other| AW[Whisper v3 Large]
+        
+        AI --> AT
+        AW --> AT
+        
+        AT --> AN[Diarization & Analysis]
+        AN --> S1[Pyannote 3.1 - Speakers]
+        AN --> S2[Speech Emotion Recognition]
+        AN --> S3["CLAP Event Detection (Streaming)"]
     end
     
-    subgraph VideoLogic[Video Council]
-        VS[Text-Gated Smart Sampler] --> VC[Video Council: InternVideo2.5]
-        VC --> VT[SAM 2 Temporal Tracking]
-        VT --> VM[Metadata: InsightFace 512D, PP-OCRv5]
+    subgraph VideoLogic["Video Loop"]
+        VS[Scene Detection] --> VSAMP[Text-Gated Sampler]
+        VSAMP --> VLM[InternVideo2.5 / Qwen-VL]
+        VLM --> VT[SAM 2 Temporal Tracking]
+        VT --> VM[Metadata: InsightFace, OCR]
     end
     
     D1 --> VS
     D2 --> AL
     
-    subgraph Memory[3-Tier Temporal Memory]
+    subgraph Memory["Temporal Context Manager"]
         SW[Sensory Sliding Window]
         WM[Working Entity Map]
         LT[Long-term Identity Graph]
@@ -70,96 +87,66 @@ flowchart TD
     AT --> SW
 ```
 
-### Search & Retrieval Council
+### Search & Retrieval Flow
 ```mermaid
 flowchart TD
     A[User Query] --> B[LLM Query Expansion]
-    B --> C[Constraint Decomposition: 7 Types]
+    B --> C[Constraint Decomposition]
     
-    subgraph Retrieval[Retriever Council]
+    subgraph Retrieval["Retriever (Parallel)"]
         V[Vector Search: NV-Embed-v2]
-        K[Keyword Search: BM25 Dense]
-        F[Face/Identity Search: Identity Graph]
+        K[Keyword Search: BM25]
+        F[Graph Search: Identity Graph]
     end
     
     C --> V
     C --> K
     C --> F
     
-    subgraph Scoring[Reranker Council]
-        RRF[Hybrid RRF Fusion: 0.7/0.3]
-        CE[Cross-Encoder: MiniLM-L-12-v2]
-        BGE[BGE-Reranker v2: M3]
-        VV[VLM Visual Verification: Gemini 1.5]
+    subgraph Scoring["Reranking"]
+        RRF["Hybrid Fusion (Weighted)"]
+        CE[Cross-Encoder Verification]
+        LLM["VLM Visual Verification (Gemini)"]
     end
     
     V --> RRF
     K --> RRF
     RRF --> CE
-    CE --> BGE
-    BGE --> VV
-    
-    VV --> Q[Final Ranked Results]
+    CE --> LLM
+    LLM --> Q[Final Ranked Results]
 ```
 
 ---
 
 ## Core Features
 
-- **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration (Semaphores in `processing/identity.py`).
+- **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration.
 - **Multimodal Intelligence**:
     - **Audio**: **AST (Audio Spectrogram Transformer)** for 527-class event tagging, **CLAP** for text-audio retrieval, and **Whisper v3** for ASR.
     - **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 2** for tracking.
     - **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
 - **Advanced Temporal Fusion**:
-    - **3-Tier Memory**: XMem-inspired sensory (sliding window), working, and long-term memory tiers.
+    - **3-Tier Memory**: Tracks entities across short-term (Window) and long-term (Graph) contexts.
     - **Fused Scenelets**: 5s window fusion of visual descriptions and dialogue transcripts.
 - **Agentic Search Engine**:
-    - **Hybrid Retrieval**: RRF Fusion (0.7 Vector / 0.3 BM25) across **Multi-Vector Scenes** (Visual/Motion/Dialogue).
-    - **LLM Reranking**: Reasoning-based verification using **Gemini 1.5** or Ollama, with reasoning traces.
+    - **Hybrid Retrieval**: RRF Fusion (Vector + Keyword) across Multi-Vector Scenes.
+    - **LLM Reranking**: Reasoning-based verification using **Gemini 1.5**.
 
 ## Capabilities
 
 | Module | Technology | Capability |
 |--------|------------|------------|
-| **VLM Intelligence** | Gemini 1.5 Pro/Flash | Narrative synthesis, reasoning traces, re-ranking |
-| **Action Recognition** | InternVideo2.5 | Dense motion description and semantic indexing |
-| **Face Identity** | InsightFace ArcFace | 512D biometric vectors with temporal track building |
-| **Object Tracking** | SAM 2 | Zero-shot visual segmentation and multi-frame tracking |
-| **Search Fusion** | RRF + Cross-Encoders | Hybrid ranking (MiniLM-L-12-v2 + BGE-Reranker v2) |
+| **VLM Intelligence** | Gemini 1.5 Pro | Narrative synthesis & reasoning traces |
+| **Action Recognition** | InternVideo2.5 | Dense motion description |
+| **Face Identity** | InsightFace ArcFace | 512D biometric vectors |
+| **ASR** | Whisper/AI4Bharat | Multi-lingual transcription (Fallback logic) |
+| **Search Fusion** | RRF | Hybrid ranking (Dense + Sparse) |
 
 ## Tech Stack
 
 - **Backend**: Python 3.12, FastAPI, Celery, Redis
-- **Vector Database**: Qdrant with Multi-Vector support (Visual/Motion/Audio)
-- **Visual Intelligence**: 
-  - VLM: InternVideo2.5, LLAVA
-  - Face: InsightFace, SFace
-  - Detection: YOLO-World
-  - OCR: PP-OCRv5
-- **Audio Intelligence**: 
-  - ASR: Whisper v3, AI4Bharat IndicASR
-  - Diarization: Pyannote 4.0
-  - Embeddings: WeSpeaker
-- **LLM/VLM Providers**: Google Gemini 1.5, Ollama (Llama 3 / Moondream)
-- **Frontend**: React 19, Vite, Tailwind CSS 4.0, Framer Motion
-
-## Project Structure
-
-```
-AI-Media-Indexer/
-├── api/                    # FastAPI route definitions
-├── core/                   # Processing logic
-│   ├── ingestion/         # Ingestion pipeline & task management
-│   ├── retrieval/         # Search agents & RRF fusion
-│   ├── processing/        # Model wrappers (ASR, VLM, Face)
-│   └── storage/           # Qdrant & SQLite adapters
-├── web/                    # Frontend assets
-├── architecture.d2        # Deep architectural source (D2 Format)
-└── init.ps1               # System initialization script
-```
-
----
+- **Vector Database**: Qdrant with Multi-Vector support
+- **frontend**: React 19, Vite, Tailwind CSS 4.0
 
 ## Getting Started
 
@@ -171,31 +158,21 @@ Ensure you have Docker, Python 3.12, and Node.js 20+ installed.
 ./init.ps1
 ```
 
-### 3. Running the Application
+### 3. Running
 ```powershell
-# Start Backend
 python run.py
-
-# Start Frontend
-cd web
-npm run dev
+cd web && npm run dev
 ```
 
 ---
 
-## Configuration
-
-Settings are managed via `.env` (overrides `config.py` defaults).
+## Configuration (`.env`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `QDRANT_HOST` | `localhost` | Vector DB host |
-| `QDRANT_PORT` | `6333` | Vector DB port |
-| `OLLAMA_MODEL` | `moondream` | Default VLM model |
-| `GEMINI_API_KEY` | None | Google Gemini API Key |
 | `USE_INDIC_ASR` | `True` | Enable AI4Bharat for Indic langs |
 | `ENABLE_HYBRID_SEARCH`| `True` | Use weighted RRF for ranking |
-| `FACE_RECOGNITION_THRESHOLD` | `0.45` | Global face matching threshold |
 
 ---
 
