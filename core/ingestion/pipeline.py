@@ -37,6 +37,7 @@ from core.processing.transcriber import AudioTranscriber
 from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
+from core.ingestion.handlers.audio import AudioHandler
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
@@ -116,6 +117,10 @@ class IngestionPipeline:
         self.scene_detector = detect_scenes
         self.prober = MediaProber()
         self.sam_tracker = Sam3Tracker()
+        
+        # Handlers
+        # Initialization deferred until db is ready? No, db is not passed to __init__?
+        # db is init at line 124.
 
         # OCR Components
         self.ocr_engine = EasyOCRProcessor(langs=["en"], use_gpu=True)
@@ -142,6 +147,9 @@ class IngestionPipeline:
         self.vision: VisionAnalyzer | None = None
         self.faces: FaceManager | None = None
         self.voice: VoiceProcessor | None = None
+
+        # Handlers
+        self.audio_handler = AudioHandler(db=self.db, prober=self.prober)
 
         # Enhanced pipeline config for SmartFrameSampler, BiometricArbitrator, etc.
         self._enhanced_config = None
@@ -556,6 +564,14 @@ class IngestionPipeline:
 
     @observe("audio_processing")
     async def _process_audio(self, path: Path) -> None:
+        """Processes audio to generate transcriptions and language classification.
+        Delegates to AudioHandler.
+        """
+        classification = await self.audio_handler.process_audio(path)
+        if classification:
+            self._audio_classification = classification
+
+    async def _process_audio_legacy(self, path: Path) -> None:
         """Processes audio to generate transcriptions and language classification.
 
         Prioritizes sidecar SRT files, then tries to extract embedded
@@ -1354,7 +1370,11 @@ class IngestionPipeline:
 
     @observe("voice_processing")
     async def _process_voice(self, path: Path) -> None:
-        """Processes voice diarization and identity registries.
+        """Processes voice (Delegated to AudioHandler)."""
+        await self.audio_handler.process_voice(path)
+
+    async def _process_voice_legacy(self, path: Path) -> None:
+        """LEGACY: Processes voice diarization and identity registries.
 
         Extracts voice segments, generates embeddings, matches them against
         the global speaker registry, and stores them in the database. Also
@@ -4638,27 +4658,14 @@ class IngestionPipeline:
 
     @observe("audio_processing")
     async def _process_audio(self, path: Path) -> None:
-        """Processes audio to generate transcriptions and language classification.
+        """Processes audio (Delegated to AudioHandler)."""
+        classification = await self.audio_handler.process_audio(path)
+        if classification:
+            self._audio_classification = classification
 
-        Prioritizes sidecar SRT files, then tries to extract embedded
-        subtitles, and finally falls back to AI-based ASR (Whisper or AI4Bharat).
-        Stores the resulting segments in the vector database.
+    async def _process_audio_legacy(self, path: Path) -> None:
+        """LEGACY: Processes audio to generate transcriptions and language classification.
 
-        Args:
-            path: Path to the media file.
-        """
-        from core.utils.logger import log
-
-        audio_segments: list[dict[str, Any]] = []
-        srt_path = path.with_suffix(".srt")
-
-        # Check for existing sidecar SRT
-        if srt_path.exists():
-            audio_segments = parse_srt(srt_path) or []
-            if audio_segments:
-                log(
-                    f"[Audio] Using existing SRT: {len(audio_segments)} segments"
-                )
 
         # Check for embedded subtitles
         if not audio_segments:

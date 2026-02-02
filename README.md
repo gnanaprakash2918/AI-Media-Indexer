@@ -25,7 +25,7 @@
 The AI-Media-Indexer implements a massively parallel ingestion pipeline coordinated by a centralized resource arbiter. It processes audio and video tracks independently before fusing them into a temporal context for hyper-granular hybrid search.
 
 ### High-Fidelity Technical Schematic
-![SOTA Technical Schematic](assets/architecture.png)
+
 
 ### Ingestion Council Flow
 ```mermaid

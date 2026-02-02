@@ -1176,7 +1176,7 @@ class IdentityGraphManager:
                 cursor = conn.execute(
                     """
                     SELECT * FROM temporal_events 
-                    WHERE identity_id = ? 
+                    WHERE identity_id = ?
                     AND scene_id IN (SELECT id FROM scenes WHERE media_id = ?)
                     ORDER BY timestamp
                     LIMIT ?
