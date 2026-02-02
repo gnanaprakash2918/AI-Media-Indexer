@@ -69,9 +69,11 @@ def is_audio_silent(
     return rms_db < threshold_db
 
 
-def compute_speaker_centroid(embeddings: list[list[float]]) -> np.ndarray | None:
+def compute_speaker_centroid(
+    embeddings: list[list[float]],
+) -> np.ndarray | None:
     """Compute centroid (mean) of speaker embeddings for cluster matching.
-    
+
     Used to match new segments against existing speaker centroids
     instead of comparing against all individual segments.
     """
@@ -125,6 +127,7 @@ class VoiceProcessor:
     def _has_audio_stream(self, input_path: Path) -> bool:
         """Check if file has audio stream (delegated to utility)."""
         from core.utils.media import has_audio_stream
+
         return has_audio_stream(input_path)
 
     def _get_cached_audio(self, path: Path) -> tuple[np.ndarray, int] | None:

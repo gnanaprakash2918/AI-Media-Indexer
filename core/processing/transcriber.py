@@ -270,6 +270,7 @@ class AudioTranscriber:
     def _has_audio_stream(self, input_path: Path) -> bool:
         """Check if file has audio stream (delegated to utility)."""
         from core.utils.media import has_audio_stream
+
         return has_audio_stream(input_path)
 
     def _get_duration(self, input_path: Path) -> float:

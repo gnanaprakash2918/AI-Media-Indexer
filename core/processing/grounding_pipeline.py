@@ -47,9 +47,11 @@ class GroundingPipeline:
                 concepts = self.db.extract_concepts_from_video(video_path)
             except Exception as e:
                 logger.warning(f"Could not fetch concepts from DB: {e}")
-            
+
             if not concepts:
-                logger.warning(f"No concepts provided or found for grounding: {video_path}")
+                logger.warning(
+                    f"No concepts provided or found for grounding: {video_path}"
+                )
                 return 0
 
         logger.info(

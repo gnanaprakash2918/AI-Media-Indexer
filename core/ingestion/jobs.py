@@ -219,7 +219,12 @@ class JobManager:
             if k in valid_fields:
                 if k == "status" and isinstance(v, JobStatus):
                     v = v.value
-                elif k == "checkpoint_data" and isinstance(v, dict) or k == "stage_stats" and isinstance(v, dict):
+                elif (
+                    k == "checkpoint_data"
+                    and isinstance(v, dict)
+                    or k == "stage_stats"
+                    and isinstance(v, dict)
+                ):
                     v = json.dumps(v, default=_numpy_safe_serializer)
                 updates.append(f"{k} = ?")
                 values.append(v)

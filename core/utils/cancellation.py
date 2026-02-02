@@ -4,8 +4,8 @@ Enables "Stop Job" to actually stop within seconds, not minutes.
 Uses cooperative checkpointing - call token.check() at safe points.
 """
 
-from dataclasses import dataclass, field
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 
 class CancellationError(Exception):

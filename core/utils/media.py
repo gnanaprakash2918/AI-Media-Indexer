@@ -9,13 +9,21 @@ def has_audio_stream(path: Path) -> bool:
     try:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-select_streams", "a",
-            "-show_entries", "stream=codec_type",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
             str(path),
         ]
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+        output = (
+            subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
         return bool(output)
     except Exception:
         return False
@@ -26,12 +34,19 @@ def get_duration(path: Path) -> float:
     try:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             str(path),
         ]
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+        output = (
+            subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
         return float(output)
     except Exception:
         return 0.0

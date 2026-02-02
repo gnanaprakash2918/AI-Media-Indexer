@@ -151,7 +151,6 @@ class MultiAgentOrchestrator:
             return {"route": route_result, "results": results}
 
         elif agent_type == "vision":
-
             # analyzer = VisionAnalyzer()
             # If "describe_image" or similar tool is requested, we might need a file path
             # However, the vision agent serves mostly for VQA on frames or scene analysis

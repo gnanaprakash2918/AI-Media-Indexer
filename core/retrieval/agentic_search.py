@@ -138,13 +138,13 @@ class SearchAgent:
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:
         """Parses and expands a natural language search query using an LLM.
+
         Args:
             query: The user's natural language search query.
 
         Returns:
             A ParsedQuery object containing structured filters and expanded text.
         """
-
         prompt = QUERY_EXPANSION_PROMPT.format(query=query)
 
         try:
@@ -714,7 +714,6 @@ class SearchAgent:
         expansion_fallback: bool = True,
     ) -> dict[str, Any]:
         """Performs a state-of-the-art search with full verification and explainability."""
-
         log(f"[SOTA Search] Query: '{query[:100]}...'")
         log(
             f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}"

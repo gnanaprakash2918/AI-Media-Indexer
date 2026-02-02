@@ -301,3 +301,19 @@ class SceneChangeDetector:
         """Reset for new video."""
         self.prev_hist = None
         self.scene_changes = 0
+
+
+from dataclasses import dataclass, field
+
+from config import settings
+
+
+@dataclass(slots=True)
+class FrameSampler:
+    """Simple interval-based frame sampler."""
+
+    every_n: int = field(default_factory=lambda: settings.frame_sample_ratio)
+
+    def should_sample(self, index: int) -> bool:
+        """Check if frame index matches sampling interval."""
+        return index % self.every_n == 0

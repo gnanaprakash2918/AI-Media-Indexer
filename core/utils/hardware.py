@@ -173,7 +173,11 @@ def get_system_profile(
 
     if "nv-embed-v2" in embedding_model.lower():
         embedding_dim = 4096
-    elif "sfr-embedding-2" in embedding_model.lower() or "bge-m3" in embedding_model or "large" in embedding_model:
+    elif (
+        "sfr-embedding-2" in embedding_model.lower()
+        or "bge-m3" in embedding_model
+        or "large" in embedding_model
+    ):
         embedding_dim = 1024
     elif "base" in embedding_model:
         embedding_dim = 768

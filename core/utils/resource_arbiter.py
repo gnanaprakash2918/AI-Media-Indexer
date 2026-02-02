@@ -6,10 +6,10 @@ Integrates with CancellationToken for preemptive job cancellation.
 
 import asyncio
 import gc
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from collections.abc import Callable
 
 import torch
 

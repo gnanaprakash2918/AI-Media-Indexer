@@ -304,7 +304,6 @@ class IdentityLinker:
         entity_occurrences: dict[int, dict[str, int]] | None = None,
     ) -> list[dict]:
         """Get all identity suggestions across all types."""
-
         all_suggestions = []
 
         all_suggestions.extend(

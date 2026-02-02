@@ -23,7 +23,9 @@ def video_path_filter(path: str | None) -> models.Condition | None:
     )
 
 
-def face_cluster_filter(cluster_ids: list[int] | None) -> models.Condition | None:
+def face_cluster_filter(
+    cluster_ids: list[int] | None,
+) -> models.Condition | None:
     """Build filter for face_cluster_id field."""
     if not cluster_ids:
         return None
@@ -33,7 +35,9 @@ def face_cluster_filter(cluster_ids: list[int] | None) -> models.Condition | Non
     )
 
 
-def voice_cluster_filter(cluster_ids: list[int] | None) -> models.Condition | None:
+def voice_cluster_filter(
+    cluster_ids: list[int] | None,
+) -> models.Condition | None:
     """Build filter for voice_cluster_id field."""
     if not cluster_ids:
         return None
@@ -61,7 +65,9 @@ def text_contains_filter(field: str, text: str) -> models.Condition:
     )
 
 
-def build_filter(conditions: list[models.Condition | None]) -> models.Filter | None:
+def build_filter(
+    conditions: list[models.Condition | None],
+) -> models.Filter | None:
     """Combine multiple conditions into a Filter with must clause."""
     valid = [c for c in conditions if c is not None]
     if not valid:
@@ -69,7 +75,9 @@ def build_filter(conditions: list[models.Condition | None]) -> models.Filter | N
     return models.Filter(must=valid)
 
 
-def build_should_filter(conditions: list[models.Condition | None]) -> models.Filter | None:
+def build_should_filter(
+    conditions: list[models.Condition | None],
+) -> models.Filter | None:
     """Combine conditions with OR logic (should clause)."""
     valid = [c for c in conditions if c is not None]
     if not valid:

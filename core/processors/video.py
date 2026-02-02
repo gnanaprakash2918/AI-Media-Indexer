@@ -6,7 +6,6 @@ import asyncio
 import logging
 from pathlib import Path
 
-
 from config import settings
 from core.ingestion.faces import FaceManager, FaceTrackBuilder
 from core.ingestion.vision import VisionAnalyzer
@@ -251,6 +250,7 @@ class VideoProcessor:
             if frame_count % cleanup_interval == 0:
                 self.pipeline._cleanup_memory(context=f"frame_{frame_count}")
                 from core.utils.device import empty_cache
+
                 empty_cache()
 
                 await resource_manager.throttle_if_needed("compute")
@@ -496,7 +496,7 @@ class VideoProcessor:
                         logger.error(f"Face processing failed: {e}")
 
             # Store detected faces for temporal context (simplified map)
-            self._face_clusters = {cid: 1.0 for cid in face_cluster_ids}
+            self._face_clusters = dict.fromkeys(face_cluster_ids, 1.0)
 
             # 2. RUN VISION ANALYSIS (With OCR and structured output)
             description: str | None = None
@@ -654,6 +654,7 @@ class VideoProcessor:
             finally:
                 cleanup_vram()
                 from core.utils.device import empty_cache
+
                 empty_cache()
 
             return description

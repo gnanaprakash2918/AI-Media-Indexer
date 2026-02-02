@@ -20,7 +20,7 @@ from core.llm.video_vlm import VideoVLM
 from core.llm.vlm_factory import get_vlm_client
 from core.processing.deep_research import get_deep_research_processor
 from core.processing.extractor import FrameExtractor
-from core.processing.frame_sampling import TextGatedOCR
+from core.processing.frame_sampling import FrameSampler, TextGatedOCR
 from core.processing.identity import FaceManager, FaceTrackBuilder
 from core.processing.metadata import MetadataEngine
 from core.processing.ocr import EasyOCRProcessor
@@ -39,7 +39,6 @@ from core.processing.voice import VoiceProcessor
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
-from core.utils.frame_sampling import FrameSampler
 from core.utils.logger import bind_context, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
@@ -180,10 +179,12 @@ class IngestionPipeline:
         """Force garbage collection and clear CUDA cache."""
         gc.collect()
         from core.utils.device import empty_cache
+
         empty_cache()
 
         try:
             from core.utils.hardware import log_vram_status
+
             log_vram_status(context or "cleanup")
         except Exception:
             pass
@@ -1383,33 +1384,36 @@ class IngestionPipeline:
             # 3. Persist specific samples for future matching
 
             # Cluster IDs now use db.get_next_voice_cluster_id() for uniqueness
-            
+
             # === P0.4 FIX: GHOST SPEAKER EXPLOSION ===
             # Group segments by local speaker label first
             from collections import defaultdict
+
             from core.processing.voice import compute_speaker_centroid
-            
+
             local_speaker_segments = defaultdict(list)
-            for seg in (voice_segments or []):
+            for seg in voice_segments or []:
                 local_speaker_segments[seg.speaker_label].append(seg)
-            
+
             # Resolve global identity for each local speaker
             local_to_global_map = {}
             local_to_cluster_map = {}
-            
+
             for local_label, segments in local_speaker_segments.items():
                 if local_label == "SILENCE":
                     local_to_global_map[local_label] = "SILENCE"
                     local_to_cluster_map[local_label] = -1
                     continue
-                
+
                 # Compute centroid for this local speaker
-                valid_embeddings = [s.embedding for s in segments if s.embedding is not None]
+                valid_embeddings = [
+                    s.embedding for s in segments if s.embedding is not None
+                ]
                 centroid = compute_speaker_centroid(valid_embeddings)
-                
+
                 global_id = f"unknown_{uuid.uuid4().hex[:8]}"
                 cluster_id = -1
-                
+
                 if centroid is not None:
                     # Match CENTROID against global DB (much more stable than single segment)
                     match = await self.db.match_speaker(
@@ -1424,33 +1428,39 @@ class IngestionPipeline:
                         # New Global Speaker
                         global_id = f"SPK_{uuid.uuid4().hex[:12]}"
                         cluster_id = self.db.get_next_voice_cluster_id()
-                        
+
                         # Register this new speaker with the CENTROID (or first good embedding)
                         # We use the centroid as the representative vector
                         self.db.upsert_speaker_embedding(
                             speaker_id=global_id,
-                            embedding=centroid, # Use centroid as reference
-                            media_path=str(path), # Representative path
+                            embedding=centroid,  # Use centroid as reference
+                            media_path=str(path),  # Representative path
                             start=segments[0].start_time,
                             end=segments[0].end_time,
                             voice_cluster_id=cluster_id,
                         )
                         # Also upsert the centroid specifically if we have a collection for it
-                        self.db.upsert_voice_cluster_centroid(cluster_id, centroid)
-                
+                        self.db.upsert_voice_cluster_centroid(
+                            cluster_id, centroid
+                        )
+
                 local_to_global_map[local_label] = global_id
                 local_to_cluster_map[local_label] = cluster_id
 
             for _idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
-                
+
                 # Apply resolved global identity
-                global_speaker_id = local_to_global_map.get(seg.speaker_label, "unknown")
-                voice_cluster_id = local_to_cluster_map.get(seg.speaker_label, -1)
-                
+                global_speaker_id = local_to_global_map.get(
+                    seg.speaker_label, "unknown"
+                )
+                voice_cluster_id = local_to_cluster_map.get(
+                    seg.speaker_label, -1
+                )
+
                 # Store individual segment embedding linked to the cluster
                 if seg.embedding is not None and global_speaker_id != "SILENCE":
-                     self.db.upsert_speaker_embedding(
+                    self.db.upsert_speaker_embedding(
                         speaker_id=global_speaker_id,
                         embedding=seg.embedding,
                         media_path=str(path),
@@ -3488,6 +3498,7 @@ class IngestionPipeline:
         ATSC standard: 45ms audio lead, 125ms lag acceptable.
         """
         from config import settings
+
         tol = settings.face_audio_sync_tolerance  # Default 0.3s
 
         clusters = []

@@ -240,6 +240,7 @@ class ObjectDetector:
             self.model = None
 
         from core.utils.device import empty_cache
+
         empty_cache()
 
         log.info("[YOLO-World] Resources released")
@@ -404,6 +405,7 @@ class GroundingDINODetector:
             self.processor = None
 
         from core.utils.device import empty_cache
+
         empty_cache()
 
         log.info("[GroundingDINO] Resources released")

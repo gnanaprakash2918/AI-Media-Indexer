@@ -13,20 +13,17 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-import torch
-from huggingface_hub import snapshot_download
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from sentence_transformers import SentenceTransformer
 
 from config import settings
+from core.storage.filters import (
+    build_filter,
+    video_path_filter,
+)
 from core.utils.hardware import select_embedding_model
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.storage.filters import (
-    video_path_filter,
-    build_filter,
-)
 
 
 def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
@@ -230,16 +227,7 @@ class VectorDB:
                 f"Unknown backend: {backend!r} (use 'memory' or 'docker')"
             )
 
-        # LAZY LOADING: Do NOT load encoder at startup to prevent OOM
-        # Encoder will be loaded on first encode_texts() call
-        self.encoder: SentenceTransformer | None = None
-        self._encoder_last_used: float = 0.0
-        self._idle_unload_seconds = 300  # Unload after 5 min idle
-
-        log(
-            f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
-        )
-        self._ensure_collections()  # This is sync and should stay sync as it's in __init__
+        self._ensure_collections()
 
         # Thread-safe cluster ID counter (uses timestamp + counter for uniqueness)
         import threading
@@ -346,167 +334,6 @@ class VectorDB:
         except Exception:
             return 0
 
-    def _load_encoder(self) -> SentenceTransformer:
-        """Loads the SentenceTransformer model from local cache or HuggingFace Hub.
-
-        Attempts to load from a local directory first. If missing or corrupt,
-        it downloads the model using snapshot_download to ensure all necessary
-        files are present. It also handles GPU-to-CPU fallback logic.
-
-        Returns:
-            A SentenceTransformer instance loaded on the configured device.
-        """
-        models_dir = settings.model_cache_dir
-        models_dir.mkdir(parents=True, exist_ok=True)
-        local_model_dir = models_dir / self.MODEL_NAME
-        target_device = settings.device or "cpu"
-
-        def _create(path_or_name: str, device: str) -> SentenceTransformer:
-            log(
-                "Creating SentenceTransformer",
-                path_or_name=path_or_name,
-                device=device,
-            )
-
-            # Use trust_remote_code for BGE models, allow Hub download if needed
-            return SentenceTransformer(
-                path_or_name,
-                device=device,
-                trust_remote_code=True,
-            )
-
-        if local_model_dir.exists():
-            log(
-                "Loading cached model",
-                path=str(local_model_dir),
-                device=target_device,
-            )
-            try:
-                return _create(str(local_model_dir), device=target_device)
-            except Exception as exc:
-                log(
-                    f"GPU Load Failed: {exc}. Retrying on CPU...",
-                    level="warning",
-                )
-                try:
-                    return _create(str(local_model_dir), device="cpu")
-                except Exception as exc_cpu:
-                    log(f"CPU Fallback Failed: {exc_cpu}", level="error")
-                    # Local likely corrupt, fall through to re-download
-                    pass
-
-        log(
-            "Local model missing/corrupt, downloading from Hub",
-            model=self.MODEL_NAME,
-        )
-
-        # Use snapshot_download to ensure ALL files (tokenizer, config, weights) are present
-        try:
-            snapshot_download(
-                repo_id=self.MODEL_NAME,
-                local_dir=str(local_model_dir),
-                token=settings.hf_token,
-            )
-        except Exception as dl_exc:
-            log(f"Snapshot Download Failed: {dl_exc}", level="error")
-            # If download fails, we try loading directly from Hub as last resort
-            return _create(self.MODEL_NAME, device=target_device)
-
-        # Retry loading from local after download
-        try:
-            return _create(str(local_model_dir), device=target_device)
-        except Exception as final_exc:
-            log(f"Final Load Failed: {final_exc}", level="error")
-            # Last resort: try Hub direct load
-            return _create(self.MODEL_NAME, device=target_device)
-
-    def encoder_to_cpu(self) -> None:
-        """Moves the encoder model to CPU memory.
-
-        Used to free up GPU VRAM for Ollama or other heavy processes when
-        embedding operations are idle.
-        """
-        if hasattr(self, "encoder") and self.encoder is not None:
-            try:
-                self.encoder = self.encoder.to("cpu")
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                log("Encoder moved to CPU, VRAM freed for Ollama")
-            except Exception as e:
-                log(f"Failed to move encoder to CPU: {e}", level="WARNING")
-
-    def encoder_to_gpu(self) -> None:
-        """Moves the encoder model back to the configured GPU device.
-
-        Enables high-performance embedding operations. Fallback to CPU if
-        GPU move fails.
-        """
-        device = settings.device or "cuda"
-        if (
-            device != "cpu"
-            and hasattr(self, "encoder")
-            and self.encoder is not None
-        ):
-            try:
-                self.encoder = self.encoder.to(device)
-                log(f"Encoder moved back to {device}")
-            except Exception as e:
-                log(f"Failed to move encoder to GPU: {e}", level="WARNING")
-
-    async def _ensure_encoder_loaded(self, job_id: str | None = None) -> None:
-        """Initializes the encoder model if it hasn't been loaded yet.
-
-        Updates the last used timestamp for idle unloading logic.
-        Uses RESOURCE_ARBITER to manage VRAM.
-        """
-        if self.encoder is None:
-            # Determine VRAM requirement
-            vram_gb = 1.0  # Default for small models
-            model_lower = self.MODEL_NAME.lower()
-            if "nv-embed-v2" in model_lower:
-                vram_gb = 16.0
-            elif "sfr-embedding-2" in model_lower:
-                vram_gb = 4.0
-            elif "bge-m3" in model_lower:
-                vram_gb = 2.0
-
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
-
-            log(
-                f"Lazy loading encoder: {self.MODEL_NAME} ({vram_gb}GB VRAM requested)..."
-            )
-
-            async with RESOURCE_ARBITER.acquire(
-                "embedding_encoder", vram_gb=vram_gb, job_id=job_id
-            ):
-                self.encoder = self._load_encoder()
-
-        self._encoder_last_used = time.time()
-
-    def unload_encoder_if_idle(self) -> bool:
-        """Unloads the encoder model from memory if it has exceeded idle time.
-
-        Should be called periodically (e.g., in a background task) to optimize
-        VRAM usage.
-
-        Returns:
-            True if the model was unloaded, False otherwise.
-        """
-        if self.encoder is None:
-            return False
-        idle_time = time.time() - self._encoder_last_used
-        if idle_time > self._idle_unload_seconds:
-            log(f"Unloading encoder after {idle_time:.0f}s idle")
-            self.encoder = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            import gc
-
-            gc.collect()
-            return True
-        return False
-
     @observe("db_encode_texts")
     async def encode_texts(
         self,
@@ -516,113 +343,26 @@ class VectorDB:
         is_query: bool = False,
         job_id: str | None = None,
     ) -> list[list[float]]:
-        """Transforms text or a list of texts into vector embeddings.
-
-        Handles lazy model loading, instructs models (e5, nv-embed) with
-        required prefixes, and performs batch encoding.
+        """Generates embeddings for a list of texts using TextEmbedder service.
 
         Args:
-            texts: Single string or list of strings to encode.
-            batch_size: Number of texts to process simultaneously.
-            show_progress_bar: passed to SentenceTransformer.encode.
-            is_query: Whether these texts are search queries (affects prefixes).
+           texts: Single string or list of strings to encode.
+           batch_size: Ignored (handled by service).
+           show_progress_bar: Ignored.
+           is_query: Whether these texts are search queries (affects prefixes).
+           job_id: Ignored.
 
         Returns:
             A list of embedding vectors (list of floats).
         """
-        # LAZY LOAD on first use
-        await self._ensure_encoder_loaded(job_id=job_id)
+        from core.processing.text_embedder import text_embedder
 
-        # Prepare texts
         if isinstance(texts, str):
             input_texts = [texts]
         else:
             input_texts = list(texts)
 
-        # Check Cache
-        cached_embeddings = []
-        indices_to_compute = []
-
-        # Keys involve text + is_query + model_name to be safe
-        cache_keys = [(t, is_query, self.MODEL_NAME) for t in input_texts]
-
-        results = [None] * len(input_texts)
-
-        for i, key in enumerate(cache_keys):
-            if key in self._embedding_cache:
-                # Cache hit - move to end (LRU behavior)
-                results[i] = self._embedding_cache.pop(key)
-                self._embedding_cache[key] = results[i]
-            else:
-                indices_to_compute.append(i)
-
-        if not indices_to_compute:
-            return [list(r) for r in results]
-
-        # Prepare texts for computing
-        texts_to_compute = [input_texts[i] for i in indices_to_compute]
-
-        # e5 models require prefix (query: or passage:)
-        model_lower = self.MODEL_NAME.lower()
-        processed_texts = texts_to_compute
-
-        if "e5" in model_lower:
-            prefix = "query: " if is_query else "passage: "
-            processed_texts = [prefix + t for t in texts_to_compute]
-        elif "nv-embed-v2" in model_lower:
-            # NV-Embed-v2 instructions
-            if is_query:
-                prefix = "Instruction: Given a web search query, retrieve relevant passages that answer the query.\nQuery: "
-                processed_texts = [prefix + t for t in texts_to_compute]
-            # No prefix for passages
-        elif "mxbai" in model_lower:
-            # mxbai-embed-large-v1 instructions
-            if is_query:
-                prefix = (
-                    "Represent this sentence for searching relevant passages: "
-                )
-                processed_texts = [prefix + t for t in texts_to_compute]
-            # No prefix for passages
-
-        try:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-
-        if self.encoder is None:
-            # Lazy load if needed or raise error
-            await self._ensure_encoder_loaded(job_id=job_id)
-            if self.encoder is None:
-                log("Encoder not available", level="ERROR")
-                return []
-
-        # Encode uncached texts
-        embeddings = self.encoder.encode(
-            processed_texts,
-            batch_size=batch_size,
-            show_progress_bar=show_progress_bar,
-        )
-
-        # Update results and cache
-        computed_list = [list(e) for e in embeddings]
-        for idx_in_batch, original_idx in enumerate(indices_to_compute):
-            emb = computed_list[idx_in_batch]
-            results[original_idx] = emb
-
-            # Add to cache
-            key = cache_keys[original_idx]
-            self._embedding_cache[key] = emb
-
-            # Simple eviction
-            if len(self._embedding_cache) > self._embedding_cache_max_size:
-                # Remove first element (LRU)
-                try:
-                    self._embedding_cache.pop(next(iter(self._embedding_cache)))
-                except Exception:
-                    pass
-
-        return results
+        return await text_embedder.encode_texts(input_texts, is_query=is_query)
 
     async def get_embedding(self, text: str) -> list[float]:
         """Convenience method to get a single query embedding for a string.
@@ -640,7 +380,7 @@ class VectorDB:
                 f"Error generating embedding for '{text[:20]}...': {e}",
                 level="ERROR",
             )
-            # Return zero vector as fallback to prevent crash
+            # Return zero vector as fallback
             return [0.0] * self.MEDIA_VECTOR_SIZE
 
     async def encode_text(self, text: str) -> list[float]:
@@ -706,9 +446,14 @@ class VectorDB:
         except Exception as e:
             # If collection doesn't exist, log warning or try to create?
             # For now, just log to avoid breaking the pipeline if this feature is experimental
-            log(f"Failed to insert masklet (collection {collection_name} might be missing): {e}", level="WARNING")
+            log(
+                f"Failed to insert masklet (collection {collection_name} might be missing): {e}",
+                level="WARNING",
+            )
 
-    def extract_concepts_from_video(self, video_path: str, limit: int = 20) -> list[str]:
+    def extract_concepts_from_video(
+        self, video_path: str, limit: int = 20
+    ) -> list[str]:
         """Extracts top frequent concepts/entities from a video's indexed metadata.
 
         Used to seed the grounding pipeline if no explicit concepts are provided.
@@ -716,18 +461,18 @@ class VectorDB:
         """
         # Placeholder implementation - we need to see what's actually in frame payloads.
         # Assuming we have 'objects' or 'ocr_text' in frame payloads.
-        
+
         # 1. Scroll frames for this video
         try:
             frames = self.get_frames_for_video(video_path)
-            
+
             # 2. Aggregation (Naive)
             # This depends on what keys (e.g. 'yolo_objects', 'caption_nouns') exist.
             # For now, return empty list to unblock logic, or common objects if found.
-            
+
             # TODO: Implement proper aggregation once frame schema is finalized with object detection
             return []
-            
+
         except Exception as e:
             log(f"Failed to extract concepts: {e}")
             return []
@@ -1935,7 +1680,7 @@ class VectorDB:
         query_vector = await self.encode_texts(query)
 
         filters = [media_path_filter(video_path)]
-        
+
         try:
             results = self.client.search(
                 collection_name=self.MASKLETS_COLLECTION,
@@ -2058,7 +1803,9 @@ class VectorDB:
         import uuid
 
         # Deterministic UUID for the centroid
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"face_centroid_{cluster_id}"))
+        point_id = str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, f"face_centroid_{cluster_id}")
+        )
 
         try:
             self.client.upsert(
@@ -2077,7 +1824,10 @@ class VectorDB:
                 ],
             )
         except Exception as e:
-            log(f"Failed to upsert face centroid {cluster_id}: {e}", level="ERROR")
+            log(
+                f"Failed to upsert face centroid {cluster_id}: {e}",
+                level="ERROR",
+            )
 
     def upsert_voice_cluster_centroid(
         self, cluster_id: int, embedding: list[float]
@@ -2089,7 +1839,9 @@ class VectorDB:
         import uuid
 
         # Deterministic UUID for the centroid
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"voice_centroid_{cluster_id}"))
+        point_id = str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, f"voice_centroid_{cluster_id}")
+        )
 
         try:
             self.client.upsert(
@@ -2109,7 +1861,10 @@ class VectorDB:
                 ],
             )
         except Exception as e:
-            log(f"Failed to upsert voice centroid {cluster_id}: {e}", level="ERROR")
+            log(
+                f"Failed to upsert voice centroid {cluster_id}: {e}",
+                level="ERROR",
+            )
 
     def upsert_speaker_embedding(
         self,
@@ -2269,7 +2024,6 @@ class VectorDB:
         high_energy: bool = False,
     ) -> list[dict[str, Any]]:
         """Performs a hybrid search combining vector, keyword, and identity filters."""
-
         from collections import defaultdict
 
         results_by_id: dict[str, dict] = {}

@@ -17,9 +17,9 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from collections.abc import Callable
 
 from core.utils.logger import get_logger
 

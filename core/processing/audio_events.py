@@ -29,6 +29,7 @@ class AudioEventDetector:
         if self._device:
             return self._device
         from core.utils.device import get_device
+
         return get_device()
 
     async def _lazy_load(self) -> bool:
@@ -694,4 +695,3 @@ def get_audio_detector(device: str | None = None) -> AudioEventDetector:
     if _AUDIO_DETECTOR is None:
         _AUDIO_DETECTOR = AudioEventDetector(device=device)
     return _AUDIO_DETECTOR
-

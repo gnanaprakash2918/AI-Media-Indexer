@@ -110,8 +110,6 @@ class DeepResearchProcessor:
         self._audio_fingerprinter = None
         self._languagebind = None
         self._internvideo = None
-        self._dinov2 = None
-        self._videomae = None
 
         self._init_lock = asyncio.Lock()
 
@@ -251,30 +249,6 @@ class DeepResearchProcessor:
             except Exception as e:
                 log.warning(f"[DeepResearch] InternVideoEncoder failed: {e}")
         return self._internvideo
-
-    async def _get_dinov2(self):
-        """Lazy load DINOv2Encoder."""
-        if self._dinov2 is None and self._enable_video:
-            try:
-                from core.processing.academic_models import DINOv2Encoder
-
-                self._dinov2 = DINOv2Encoder(device=self._device)
-                log.info("[DeepResearch] DINOv2Encoder loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] DINOv2Encoder failed: {e}")
-        return self._dinov2
-
-    async def _get_videomae(self):
-        """Lazy load VideoMAEEncoder."""
-        if self._videomae is None and self._enable_video:
-            try:
-                from core.processing.academic_models import VideoMAEEncoder
-
-                self._videomae = VideoMAEEncoder(device=self._device)
-                log.info("[DeepResearch] VideoMAEEncoder loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] VideoMAEEncoder failed: {e}")
-        return self._videomae
 
     # =========================================================================
     # ANALYSIS METHODS
@@ -600,10 +574,6 @@ class DeepResearchProcessor:
             self._languagebind.cleanup()
         if self._internvideo:
             self._internvideo.cleanup()
-        if self._dinov2:
-            self._dinov2.cleanup()
-        if self._videomae:
-            self._videomae.cleanup()
 
         log.info("[DeepResearch] All resources released")
 
