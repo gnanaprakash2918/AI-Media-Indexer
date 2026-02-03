@@ -71,10 +71,11 @@ class SearchAgent:
         self._enable_hybrid = enable_hybrid
         self._council = None
 
-        # Query embedding cache for instant repeat queries
-        self._query_cache: dict[
+        # Query embedding cache for instant repeat queries (OrderedDict for O(1) LRU)
+        from collections import OrderedDict
+        self._query_cache: OrderedDict[
             str, tuple[list[float], float]
-        ] = {}  # {hash: (vector, timestamp)}
+        ] = OrderedDict()  # {hash: (vector, timestamp)}
         self._cache_ttl = 3600  # 1 hour TTL
         self._cache_max_size = 1000  # Max 1000 entries (~1MB)
 
@@ -111,6 +112,8 @@ class SearchAgent:
         if cache_key in self._query_cache:
             vector, timestamp = self._query_cache[cache_key]
             if time.time() - timestamp < self._cache_ttl:
+                # Move to end for LRU (most recently used)
+                self._query_cache.move_to_end(cache_key)
                 return vector
             else:
                 # Expired, remove
@@ -125,13 +128,10 @@ class SearchAgent:
 
         cache_key = hashlib.md5(query.encode()).hexdigest()
 
-        # LRU eviction if cache is full
+        # LRU eviction if cache is full - O(1) with OrderedDict
         if len(self._query_cache) >= self._cache_max_size:
-            # Remove oldest entry
-            oldest_key = min(
-                self._query_cache, key=lambda k: self._query_cache[k][1]
-            )
-            del self._query_cache[oldest_key]
+            # Remove oldest (first) entry
+            self._query_cache.popitem(last=False)
 
         self._query_cache[cache_key] = (vector, time.time())
 

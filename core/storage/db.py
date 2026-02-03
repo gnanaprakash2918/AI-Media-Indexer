@@ -1347,7 +1347,7 @@ class VectorDB:
         self,
         query: str,
         limit: int = 10,
-        score_threshold: float = 0.25,
+        score_threshold: float = None,  # Uses settings.frame_search_score_threshold if None
         allowed_video_paths: list[str] | None = None,
         face_cluster_id: int | None = None,
     ) -> list[dict[str, Any]]:
@@ -2272,7 +2272,7 @@ class VectorDB:
         limit: int = 20,
         video_paths: str | list[str] | None = None,
         face_cluster_ids: list[int] | None = None,
-        rrf_k: int = 60,
+        rrf_k: int = None,  # Uses settings.rrf_constant if None
         transcript_query: str | None = None,
         music_section: str | None = None,
         high_energy: bool = False,
@@ -2464,7 +2464,7 @@ class VectorDB:
                 masklet_filter = models.Filter(must=masklet_conditions)
 
                 mask_resp = self.client.scroll(
-                    collection_name="masklets",
+                    collection_name=self.MASKLETS_COLLECTION,  # Fixed: use constant
                     scroll_filter=masklet_filter,
                     limit=50,
                     with_payload=True,
