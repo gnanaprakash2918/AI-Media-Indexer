@@ -287,6 +287,7 @@ class SigLIPEncoder(VisualEncoderInterface):
             def _load():
                 # Aggressive cleanup before loading large model
                 import gc
+
                 import torch
                 gc.collect()
                 if torch.cuda.is_available():
@@ -314,7 +315,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                         )
                     )
                     model.eval()
-                    
+
                     if torch.cuda.is_available():
                         # Check memory before moving to GPU
                         try:
@@ -322,7 +323,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                         except torch.cuda.OutOfMemoryError:
                             log.error("[VisualEncoder] OOM moving SigLIP to GPU. Falling back to CPU/CLIP.")
                             raise  # Trigger fallback
-                            
+
                     return model, preprocess
                 except Exception as e:
                     log.warning(
@@ -336,8 +337,8 @@ class SigLIPEncoder(VisualEncoderInterface):
                 # Transformers fallback for SigLIP
                 try:
                     # MUST use SiglipModel, NOT AutoModel (AutoModel fails for SigLIP)
-                    from transformers import SiglipModel, SiglipProcessor
                     import torch
+                    from transformers import SiglipModel, SiglipProcessor
 
                     hf_model = "google/siglip-so400m-patch14-384"
                     log.info(f"[VisualEncoder] Loading SigLIP from transformers: {hf_model}")
@@ -345,7 +346,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                     model = SiglipModel.from_pretrained(hf_model)
                     preprocess = SiglipProcessor.from_pretrained(hf_model)
                     model.eval()
-                    
+
                     if torch.cuda.is_available():
                         try:
                             model = model.cuda()
@@ -360,18 +361,18 @@ class SigLIPEncoder(VisualEncoderInterface):
 
                 # Last resort: Fall back to basic CLIP (smaller, more reliable)
                 try:
-                    from transformers import CLIPModel, CLIPProcessor
                     import torch
+                    from transformers import CLIPModel, CLIPProcessor
 
                     hf_model = "openai/clip-vit-base-patch32"  # Smallest CLIP
                     log.warning(f"[VisualEncoder] Final fallback to basic CLIP: {hf_model}")
                     model = CLIPModel.from_pretrained(hf_model)
                     preprocess = CLIPProcessor.from_pretrained(hf_model)
                     model.eval()
-                    
+
                     # Update dimension for CLIP-base
                     self._dim = 512  # CLIP-base dimension
-                    
+
                     if torch.cuda.is_available():
                         try:
                             model = model.cuda()
@@ -403,7 +404,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                 pil_img = Image.open(io.BytesIO(image)).convert("RGB")
             else:
                 pil_img = Image.fromarray(image).convert("RGB")
-            
+
             # Handle both OpenCLIP (returns tensor) and Transformers (returns dict)
             if hasattr(self._preprocess, '__call__') and not hasattr(self._preprocess, 'feature_extractor'):
                 # OpenCLIP - returns tensor directly
@@ -411,7 +412,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                     return self._preprocess(pil_img).unsqueeze(0)
                 except Exception:
                     pass
-            
+
             # Transformers processor - returns dict
             inputs = self._preprocess(images=pil_img, return_tensors="pt")
             return inputs
@@ -424,7 +425,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                 import torch
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                
+
                 # Handle dict (Transformers) vs tensor (OpenCLIP)
                 if isinstance(inputs, dict):
                     gpu_inputs = {k: v.to(device) for k, v in inputs.items() if hasattr(v, 'to')}
@@ -438,7 +439,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                     gpu_inputs = inputs.to(device)
                     with torch.no_grad():
                         feats = self._model.encode_image(gpu_inputs)
-                
+
                 feats = feats / feats.norm(dim=-1, keepdim=True)
                 return feats.cpu().numpy().flatten().tolist()
 
@@ -459,7 +460,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                     pil = Image.open(io.BytesIO(img)).convert("RGB")
                 else:
                     pil = Image.fromarray(img).convert("RGB")
-                
+
                 # Handle both OpenCLIP and Transformers
                 if hasattr(self._preprocess, '__call__') and not hasattr(self._preprocess, 'feature_extractor'):
                     try:
@@ -479,7 +480,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                 import torch
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                
+
                 # Check if items are tensors (OpenCLIP) or PIL images (Transformers)
                 if isinstance(items[0], Image.Image):
                     # Transformers batch processing
@@ -495,7 +496,7 @@ class SigLIPEncoder(VisualEncoderInterface):
                     batch = torch.stack(items).to(device)
                     with torch.no_grad():
                         feats = self._model.encode_image(batch)
-                
+
                 feats = feats / feats.norm(dim=-1, keepdim=True)
                 return feats.cpu().numpy().tolist()
 

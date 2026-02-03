@@ -192,10 +192,11 @@ class DeepResearchProcessor:
         """Lazy load SaliencyDetector."""
         if self._saliency_detector is None and self._enable_cinematography:
             try:
-                from core.processing.audio_analysis import SaliencyDetector
+                # CHANGED: Moved from audio_analysis to saliency module
+                from core.processing.saliency import SaliencyDetector
 
-                self._saliency_detector = SaliencyDetector()
-                log.info("[DeepResearch] SaliencyDetector loaded")
+                self._saliency_detector = SaliencyDetector(use_sam3=True)
+                log.info("[DeepResearch] SaliencyDetector loaded (SAM 3 enabled)")
             except Exception as e:
                 log.warning(f"[DeepResearch] SaliencyDetector failed: {e}")
         return self._saliency_detector

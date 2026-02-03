@@ -364,7 +364,6 @@ class MusicStructureAnalyzer:
         is_last: bool,
     ) -> str:
         """Classify a section based on its features and position."""
-
         # Position-based classification
         if is_first and position_ratio < 0.1:
             return "intro"

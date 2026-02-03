@@ -89,6 +89,7 @@ class LanguageBindEncoder:
 
                 def _load():
                     import gc
+
                     import torch
 
                     # AGGRESSIVE VRAM cleanup before loading - CRITICAL for 8GB GPUs

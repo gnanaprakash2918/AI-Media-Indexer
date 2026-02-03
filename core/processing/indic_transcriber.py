@@ -260,7 +260,6 @@ class IndicASRPipeline:
         Uses pre-trained IndicConformer models from HuggingFace Hub.
         Patches tokenizer config for compatibility with NeMo 2.x.
         """
-
         if self.NEMO_MODEL_MAP is None:
             raise ValueError("NEMO_MODEL_MAP is missing")
         model_info = self.NEMO_MODEL_MAP.get(

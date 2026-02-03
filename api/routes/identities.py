@@ -201,6 +201,18 @@ async def rename_identity(identity_id: str, req: IdentityRenameRequest) -> dict:
     if not identity:
         raise HTTPException(status_code=404, detail="Identity not found")
     identity_graph.update_identity_name(identity_id, req.name)
+
+    # Also update SAM 3 Masklets (The "Track Everywhere" promise)
+    try:
+        if pipeline and pipeline.db:
+             # We need the OLD name to find masklets. identity object has it.
+             old_name = identity.name
+             count = pipeline.db.update_masklet_concept(old_name, req.name)
+             if count > 0:
+                 logger.info(f"[Identity] Also renamed {count} masklets for {req.name}")
+    except Exception as e:
+        logger.warning(f"[Identity] Failed to propagate rename to masklets: {e}")
+
     return {"status": "renamed", "id": identity_id, "name": req.name}
 
 

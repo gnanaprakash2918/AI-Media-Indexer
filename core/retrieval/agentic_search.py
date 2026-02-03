@@ -138,13 +138,13 @@ class SearchAgent:
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:
         """Parses and expands a natural language search query using an LLM.
+
         Args:
             query: The user's natural language search query.
 
         Returns:
             A ParsedQuery object containing structured filters and expanded text.
         """
-
         prompt = QUERY_EXPANSION_PROMPT.format(query=query)
 
         try:
@@ -258,13 +258,34 @@ class SearchAgent:
         resolved_name: str | None = None
 
         if parsed.person_name:
+            # 2a. Check Face Clusters (Automatic)
             cluster_id = self._resolve_identity(parsed.person_name)
             if cluster_id is not None:
                 face_ids = self._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
-                log(
-                    f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}"
-                )
+                log(f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}")
+
+            # 2b. Check Masklets (HITL / SAM 3) - The "Name Once" feature
+            # Used for non-face objects or specific people tagged via SAM 3
+            masklet_hits = await self.db.search_masklets(
+                concept=parsed.person_name,
+                limit=5
+            )
+            if masklet_hits:
+                log(f"[Search] Found {len(masklet_hits)} tagged masklets for '{parsed.person_name}'")
+                # Add found masklets directly to results
+                for hit in masklet_hits:
+                    # Convert masklet hit to result format
+                    results.append({
+                        "id": hit.get("id"),
+                        "score": hit.get("score", 1.0) * 1.5, # Boost tracked objects
+                        "type": "object_track",
+                        "text": f"Tracked Object: {parsed.person_name}",
+                        "start": hit.get("start_time"),
+                        "end": hit.get("end_time"),
+                        "video_path": hit.get("video_path"),
+                        "thumbnail_url": f"/thumbnails/{hit.get('id')}.jpg" # Placeholder
+                    })
 
         # 3. Build search query from expanded keywords
         search_text = parsed.to_search_text()
@@ -704,7 +725,6 @@ class SearchAgent:
         expansion_fallback: bool = True,
     ) -> dict[str, Any]:
         """Performs a state-of-the-art search with full verification and explainability."""
-
         log(f"[SOTA Search] Query: '{query[:100]}...'")
         log(
             f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}"

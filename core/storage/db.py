@@ -20,13 +20,12 @@ from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 
 from config import settings
+from core.storage.filters import (
+    build_filter,
+)
 from core.utils.hardware import select_embedding_model
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.storage.filters import (
-    video_path_filter,
-    build_filter,
-)
 
 
 def retry_on_connection_error(max_retries: int = 3, delay: float = 1.0):
@@ -263,11 +262,11 @@ class VectorDB:
         """
         if vector is None:
             return True  # None vectors are OK (some collections allow payload-only)
-        
+
         expected = self._expected_dims.get(collection)
         if expected is None:
             return True  # Unknown collection, skip validation
-        
+
         actual = len(vector)
         if actual != expected:
             log(
@@ -746,18 +745,18 @@ class VectorDB:
         """
         # Placeholder implementation - we need to see what's actually in frame payloads.
         # Assuming we have 'objects' or 'ocr_text' in frame payloads.
-        
+
         # 1. Scroll frames for this video
         try:
             frames = self.get_frames_for_video(video_path)
-            
+
             # 2. Aggregation (Naive)
             # This depends on what keys (e.g. 'yolo_objects', 'caption_nouns') exist.
             # For now, return empty list to unblock logic, or common objects if found.
-            
+
             # TODO: Implement proper aggregation once frame schema is finalized with object detection
             return []
-            
+
         except Exception as e:
             log(f"Failed to extract concepts: {e}")
             return []
@@ -1282,12 +1281,12 @@ class VectorDB:
             )
 
         # Masklets Collection (Video Concept Segmentation)
+        # CHANGED: Now uses standard visual vector size (1152 for SigLIP/1024 for others)
+        # to enable "Search by Appearance" (finding the same object across videos).
         self._check_and_fix_collection(
             self.MASKLETS_COLLECTION,
-            self.TEXT_DIM,  # Assuming text-based concept search, or visual? If MaskLet is concept TEXT, use TEXT_DIM
-            # Wait, if masklets are tracked objects, they might be visual features?
-            # Based on "Failed to fetch masklets", let's assume standard TEXT_DIM for now until proven otherwise.
-            # Actually, if it's "concept", it's likely text embedding of the concept name.
+            self.MEDIA_VECTOR_SIZE,  # Was TEXT_DIM, now Visual (1152 or 1024)
+            distance=models.Distance.COSINE,
         )
         self.client.create_payload_index(
             collection_name=self.MASKLETS_COLLECTION,
@@ -1801,6 +1800,7 @@ class VectorDB:
         end_time: float,
         confidence: float = 1.0,
         payload: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
     ) -> None:
         """Inserts a masklet (video segment tracking a specific concept).
 
@@ -1811,6 +1811,7 @@ class VectorDB:
             end_time: End timestamp of the masklet in seconds.
             confidence: Confidence score of the tracking.
             payload: Optional additional metadata for the masklet.
+            embedding: Visual embedding vector (1152d) for SigLIP search.
         """
         unique_str = f"{video_path}_{concept}_{start_time}_{end_time}"
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
@@ -1826,13 +1827,17 @@ class VectorDB:
         if payload:
             final_payload.update(payload)
 
+        # Use provided embedding or dummy fallback (not ideal for search)
+        # Saliency/Tracking should provide this!
+        vector = embedding if embedding else [0.0] * self.MEDIA_VECTOR_SIZE
+
         try:
             self.client.upsert(
                 collection_name=self.MASKLETS_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=point_id,
-                        vector=[1.0],  # Dummy vector, as we filter by payload
+                        vector=vector,
                         payload=final_payload,
                     )
                 ],
@@ -1840,6 +1845,97 @@ class VectorDB:
             )
         except Exception as e:
             log(f"Failed to insert masklet: {e}", level="ERROR")
+
+    @observe("db_search_masklets")
+    def search_masklets(
+        self,
+        query_vector: list[float] | None = None,
+        concept: str | None = None,
+        limit: int = 10,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search masklets by visual similarity OR concept text."""
+        conditions = []
+        if concept:
+            conditions.append(
+                models.FieldCondition(
+                    key="concept",
+                    match=models.MatchValue(value=concept),
+                )
+            )
+
+        query_filter = models.Filter(must=conditions) if conditions else None
+
+        # If no vector provided, we can only scroll by filter (Concept Lookup)
+        if query_vector is None:
+            if not conditions:
+                return [] # No search criteria
+
+            try:
+                # Scroll lookup
+                resp, _ = self.client.scroll(
+                    collection_name=self.MASKLETS_COLLECTION,
+                    scroll_filter=query_filter,
+                    limit=limit,
+                    with_vectors=True if query_vector else False
+                )
+                return [
+                    # If we scroll, we might want the vector for downstream usage?
+                    # For now just return payload + id.
+                    {"id": str(p.id), "score": 1.0, "vector": p.vector, **(p.payload or {})}
+                    for p in resp
+                ]
+            except Exception as e:
+                log(f"Masklet scroll failed: {e}")
+                return []
+
+        # Vector Search
+        try:
+            resp = self.client.search(
+                collection_name=self.MASKLETS_COLLECTION,
+                query_vector=query_vector,
+                query_filter=query_filter,
+                limit=limit,
+                score_threshold=score_threshold,
+                with_vectors=False # Don't need return vector usually
+            )
+            return [
+                {"id": str(h.id), "score": h.score, **(h.payload or {})}
+                for h in resp
+            ]
+    @observe("db_update_masklet_concept")
+    def update_masklet_concept(
+        self,
+        old_concept: str,
+        new_concept: str,
+    ) -> int:
+        """Updates the concept name for all matching masklets (Renaming).
+
+        Used when an identity is renamed to ensure SAM 3 tracks are updated.
+        """
+        try:
+            # 1. Find all masklets with old_concept (Scroll)
+            masklets = self.search_masklets(concept=old_concept, limit=1000)
+            if not masklets:
+                return 0
+
+            count = 0
+            for m in masklets:
+                point_id = m["id"]
+                # Qdrant set_payload allows partial updates
+                self.client.set_payload(
+                    collection_name=self.MASKLETS_COLLECTION,
+                    payload={"concept": new_concept},
+                    points=[point_id],
+                )
+                count += 1
+
+            log(f"Renamed {count} masklets from '{old_concept}' to '{new_concept}'")
+            return count
+
+        except Exception as e:
+            log(f"Failed to update masklet concepts: {e}", level="ERROR")
+            return 0
 
     @observe("db_update_masklet")
     def update_masklet(
@@ -1976,7 +2072,7 @@ class VectorDB:
         query_vector = await self.encode_texts(query)
 
         filters = [media_path_filter(video_path)]
-        
+
         try:
             results = self.client.search(
                 collection_name=self.MASKLETS_COLLECTION,
@@ -2308,7 +2404,6 @@ class VectorDB:
         high_energy: bool = False,
     ) -> list[dict[str, Any]]:
         """Performs a hybrid search combining vector, keyword, and identity filters."""
-
         from collections import defaultdict
 
         results_by_id: dict[str, dict] = {}

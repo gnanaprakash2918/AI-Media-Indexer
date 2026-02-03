@@ -242,7 +242,6 @@ class MediaAgentHandler(RequestHandler):
         context: ServerCallContext | None = None,
     ) -> Task:
         """Handle an A2A `message.send` request."""
-
         # 1. Extract user text
         logger.info("DEBUG: Handler received request!")
         user_message: Message = params.message  # type: ignore[assignment]

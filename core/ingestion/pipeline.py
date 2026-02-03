@@ -1358,33 +1358,34 @@ class IngestionPipeline:
             # 3. Persist specific samples for future matching
 
             # Cluster IDs now use db.get_next_voice_cluster_id() for uniqueness
-            
+
             # === P0.4 FIX: GHOST SPEAKER EXPLOSION ===
             # Group segments by local speaker label first
             from collections import defaultdict
+
             from core.processing.voice import compute_speaker_centroid
-            
+
             local_speaker_segments = defaultdict(list)
             for seg in (voice_segments or []):
                 local_speaker_segments[seg.speaker_label].append(seg)
-            
+
             # Resolve global identity for each local speaker
             local_to_global_map = {}
             local_to_cluster_map = {}
-            
+
             for local_label, segments in local_speaker_segments.items():
                 if local_label == "SILENCE":
                     local_to_global_map[local_label] = "SILENCE"
                     local_to_cluster_map[local_label] = -1
                     continue
-                
+
                 # Compute centroid for this local speaker
                 valid_embeddings = [s.embedding for s in segments if s.embedding is not None]
                 centroid = compute_speaker_centroid(valid_embeddings)
-                
+
                 global_id = f"unknown_{uuid.uuid4().hex[:8]}"
                 cluster_id = -1
-                
+
                 if centroid is not None:
                     # Match CENTROID against global DB (much more stable than single segment)
                     match = await self.db.match_speaker(
@@ -1399,7 +1400,7 @@ class IngestionPipeline:
                         # New Global Speaker
                         global_id = f"SPK_{uuid.uuid4().hex[:12]}"
                         cluster_id = self.db.get_next_voice_cluster_id()
-                        
+
                         # Register this new speaker with the CENTROID (or first good embedding)
                         # We use the centroid as the representative vector
                         self.db.upsert_speaker_embedding(
@@ -1412,17 +1413,17 @@ class IngestionPipeline:
                         )
                         # Also upsert the centroid specifically if we have a collection for it
                         self.db.upsert_voice_cluster_centroid(cluster_id, centroid)
-                
+
                 local_to_global_map[local_label] = global_id
                 local_to_cluster_map[local_label] = cluster_id
 
             for _idx, seg in enumerate(voice_segments or []):
                 audio_path: str | None = None
-                
+
                 # Apply resolved global identity
                 global_speaker_id = local_to_global_map.get(seg.speaker_label, "unknown")
                 voice_cluster_id = local_to_cluster_map.get(seg.speaker_label, -1)
-                
+
                 # Store individual segment embedding linked to the cluster
                 if seg.embedding is not None and global_speaker_id != "SILENCE":
                      self.db.upsert_speaker_embedding(
@@ -1584,7 +1585,6 @@ class IngestionPipeline:
         logger.info(f"Starting audio event detection for {path.name}")
 
         try:
-            import subprocess
 
             from core.processing.audio_events import get_audio_detector
 
@@ -2377,7 +2377,7 @@ class IngestionPipeline:
 
         # Get all audio segments for this video (for dialogue per scene)
         audio_segments = self._get_audio_segments_for_video(str(path))
-        
+
         # Get audio events (sirens, alarms, etc.)
         audio_events = self._get_audio_events_for_video(str(path))
 
@@ -2416,7 +2416,7 @@ class IngestionPipeline:
                 if a.get("end", 0) > scene.start_time
                 and a.get("start", 0) < scene.end_time
             ]
-            
+
             # Filter audio events that overlap this scene
             scene_events = [
                 e
@@ -2455,7 +2455,7 @@ class IngestionPipeline:
             visual_parts.extend(aggregated.get("visible_text", []))
             if visual_summary:
                 visual_parts.append(visual_summary)
-            
+
             # Explicitly add audio events for semantic search (e.g. "siren sound")
             audio_evts = aggregated.get("audio_events", [])
             if audio_evts:
@@ -2532,7 +2532,7 @@ class IngestionPipeline:
                                     current_actions = set(aggregated.get("actions", []))
                                     current_actions.update(video_result.action_labels)
                                     aggregated["actions"] = list(current_actions)
-                                    
+
                                     # Add to motion text for vector search
                                     motion_text += " " + " ".join(video_result.action_labels)
 

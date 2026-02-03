@@ -6,7 +6,6 @@ import asyncio
 import logging
 from pathlib import Path
 
-
 from config import settings
 from core.ingestion.faces import FaceManager, FaceTrackBuilder
 from core.ingestion.vision import VisionAnalyzer
@@ -496,7 +495,7 @@ class VideoProcessor:
                         logger.error(f"Face processing failed: {e}")
 
             # Store detected faces for temporal context (simplified map)
-            self._face_clusters = {cid: 1.0 for cid in face_cluster_ids}
+            self._face_clusters = dict.fromkeys(face_cluster_ids, 1.0)
 
             # 2. RUN VISION ANALYSIS (With OCR and structured output)
             description: str | None = None

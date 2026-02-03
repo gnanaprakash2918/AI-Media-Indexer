@@ -97,7 +97,7 @@ async def hybrid_search(
             for r in result.get("results", []):
                 # Use centralized normalization for paths/urls/timestamps
                 normalized = normalize_result(r)
-                
+
                 # Add agent-specific fields
                 normalized.update({
                     "match_reason": r.get("llm_reasoning", r.get("reasoning", "")),
@@ -589,7 +589,7 @@ async def granular_search(
 
     try:
         if agent:
-        
+
             # Use sota_search which now handles granular constraints internally
             result = await agent.sota_search(
                 query=query,

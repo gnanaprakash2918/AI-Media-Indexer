@@ -15,7 +15,6 @@ except ImportError:
 
 async def cluster_faces(db: VectorDB) -> dict[str, Any]:
     """Re-clusters all faces in the database using HDBSCAN."""
-
     try:
         from sklearn.cluster import AgglomerativeClustering
 
