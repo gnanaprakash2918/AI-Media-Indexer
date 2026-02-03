@@ -5961,7 +5961,7 @@ class VectorDB:
                         "media_path": payload.get("media_path"),
                         "start": payload.get("start", 0),
                         "end": payload.get("end", 0),
-                        "cluster_id": payload.get("cluster_id"),
+                        "cluster_id": payload.get("voice_cluster_id"),
                         "speaker_label": payload.get("speaker_label"),
                         "speaker_name": payload.get("speaker_name"),
                         "audio_path": payload.get("audio_path"),

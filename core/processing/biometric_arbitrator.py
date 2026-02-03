@@ -104,6 +104,9 @@ class BiometricArbitrator:
     ) -> bool:
         """Async version of should_merge_sync.
 
+        Offloads CPU-bound numpy operations to thread pool to avoid
+        blocking the event loop.
+
         Args:
             emb1: First face embedding.
             emb2: Second face embedding.
@@ -112,7 +115,10 @@ class BiometricArbitrator:
         Returns:
             True if faces should be merged.
         """
-        return self.should_merge_sync(emb1, emb2, primary_sim)
+        import asyncio
+        return await asyncio.to_thread(
+            self.should_merge_sync, emb1, emb2, primary_sim
+        )
 
     def get_merge_confidence(
         self,

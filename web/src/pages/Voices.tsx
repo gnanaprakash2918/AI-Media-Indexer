@@ -277,7 +277,7 @@ export const Voices: React.FC = () => {
         {seg.media_path ? seg.media_path.split(/[/\\]/).pop() : 'Unknown Source'}
       </TableCell>
       <TableCell>
-        {seg.start.toFixed(2)}s - {seg.end.toFixed(2)}s
+        {seg.start != null ? seg.start.toFixed(2) : 'N/A'}s - {seg.end != null ? seg.end.toFixed(2) : 'N/A'}s
       </TableCell>
       <TableCell>
         <Chip label={seg.speaker_label} size="small" variant="outlined" />

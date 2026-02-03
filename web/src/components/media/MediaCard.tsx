@@ -369,8 +369,8 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
             />
             <Tooltip
               title={
-                item.base_score !== undefined
-                  ? `Base: ${(item.base_score * 100).toFixed(0)}% + Keyword: ${((item.keyword_boost || 0) * 100).toFixed(0)}%`
+                item.base_score != null
+                  ? `Base: ${((item.base_score ?? 0) * 100).toFixed(0)}% + Keyword: ${((item.keyword_boost ?? 0) * 100).toFixed(0)}%`
                   : 'Confidence Score'
               }
             >
@@ -382,7 +382,7 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
                   fontFamily: 'monospace',
                 }}
               >
-                {(item.score * 100).toFixed(0)}%
+                {((item.score ?? 0) * 100).toFixed(0)}%
               </Typography>
             </Tooltip>
 
@@ -582,11 +582,11 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
                     📊 SCORE DETAILS
                   </Typography>
                   <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
-                    <Typography variant="caption">Final Score: <strong>{(item.score * 100).toFixed(1)}%</strong></Typography>
-                    {item.fused_score && <Typography variant="caption">Fused: {item.fused_score.toFixed(4)}</Typography>}
-                    {item.vector_score && <Typography variant="caption">Vector: {(item.vector_score * 100).toFixed(1)}%</Typography>}
-                    {item.keyword_score && <Typography variant="caption">Keyword: {(item.keyword_score * 100).toFixed(1)}%</Typography>}
-                    {item._debug?.raw_fused_score && <Typography variant="caption">Raw Fused: {item._debug.raw_fused_score.toFixed(4)}</Typography>}
+                    <Typography variant="caption">Final Score: <strong>{((item.score ?? 0) * 100).toFixed(1)}%</strong></Typography>
+                    {item.fused_score != null && <Typography variant="caption">Fused: {item.fused_score.toFixed(4)}</Typography>}
+                    {item.vector_score != null && <Typography variant="caption">Vector: {(item.vector_score * 100).toFixed(1)}%</Typography>}
+                    {item.keyword_score != null && <Typography variant="caption">Keyword: {(item.keyword_score * 100).toFixed(1)}%</Typography>}
+                    {item._debug?.raw_fused_score != null && <Typography variant="caption">Raw Fused: {item._debug.raw_fused_score.toFixed(4)}</Typography>}
                     {item._debug?.match_type && <Typography variant="caption">Match Type: {item._debug.match_type}</Typography>}
                   </Box>
                 </Box>
@@ -790,7 +790,7 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
               )}
 
               {/* Score Breakdown */}
-              {item.base_score !== undefined && (
+              {item.base_score != null && (
                 <Box
                   sx={{
                     display: 'flex',
@@ -799,9 +799,9 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
                     color: 'text.secondary',
                   }}
                 >
-                  <span>Base: {(item.base_score * 100).toFixed(0)}%</span>
+                  <span>Base: {((item.base_score ?? 0) * 100).toFixed(0)}%</span>
                   <span>
-                    Boost: +{((item.keyword_boost || 0) * 100).toFixed(0)}%
+                    Boost: +{((item.keyword_boost ?? 0) * 100).toFixed(0)}%
                   </span>
                 </Box>
               )}

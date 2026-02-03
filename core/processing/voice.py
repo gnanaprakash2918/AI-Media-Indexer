@@ -193,9 +193,9 @@ class VoiceProcessor:
             log.info("Voice analysis disabled by config.")
             return
 
-        if not self.hf_token:
-            log.warning("HF_TOKEN missing. Voice analysis disabled.")
-            self.enabled = False
+        # Only clear cache - do not disable processor based on token presence
+        # The token is checked at init/lazy_load if needed
+        pass
 
     async def _lazy_init(self) -> None:
         """Loads heavy pyannote models only safe-guarded by a lock.

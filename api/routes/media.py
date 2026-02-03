@@ -1,5 +1,6 @@
 """API routes for media file operations (streaming, thumbnails)."""
 
+import asyncio
 import hashlib
 import subprocess
 from pathlib import Path
@@ -109,21 +110,28 @@ async def get_face_thumbnail(
             str(file_path),
         ]
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=10,  # 10 second timeout
+        # Use async subprocess to avoid blocking the event loop
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise HTTPException(
+                status_code=504, detail="Thumbnail generation timeout"
+            )
 
-        if result.returncode == 0 and file_path.exists():
+        if proc.returncode == 0 and file_path.exists():
             return FileResponse(file_path, media_type="image/jpeg")
         else:
             raise HTTPException(
                 status_code=500, detail="FFmpeg extraction failed"
             )
 
-    except subprocess.TimeoutExpired as e:
+    except asyncio.TimeoutError as e:
         raise HTTPException(
             status_code=504, detail="Thumbnail generation timeout"
         ) from e
@@ -201,9 +209,13 @@ async def get_voice_audio(
             "a",
             str(file_path),
         ]
-        _ = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        # Use async subprocess to avoid blocking
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
+        await proc.wait()
 
         if file_path.exists():
             return FileResponse(file_path, media_type="audio/mpeg")

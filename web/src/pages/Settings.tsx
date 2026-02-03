@@ -184,10 +184,10 @@ function SettingsContent({
     setEditMode(false);
   };
 
-  const vramPercent =
-    (initialSystemConfig.vram_used_gb /
-      (initialSystemConfig.vram_used_gb + initialSystemConfig.vram_free_gb)) *
-    100;
+  const vramUsed = initialSystemConfig.vram_used_gb ?? 0;
+  const vramFree = initialSystemConfig.vram_free_gb ?? 0;
+  const vramTotal = vramUsed + vramFree;
+  const vramPercent = vramTotal > 0 ? (vramUsed / vramTotal) * 100 : 0;
 
   return (
     <Box>
@@ -253,10 +253,10 @@ function SettingsContent({
                   }}
                 >
                   <Typography variant="body2" fontWeight={600}>
-                    VRAM: {initialSystemConfig.vram_used_gb.toFixed(1)} /{' '}
+                    VRAM: {(initialSystemConfig.vram_used_gb ?? 0).toFixed(1)} /{' '}
                     {(
-                      initialSystemConfig.vram_used_gb +
-                      initialSystemConfig.vram_free_gb
+                      (initialSystemConfig.vram_used_gb ?? 0) +
+                      (initialSystemConfig.vram_free_gb ?? 0)
                     ).toFixed(1)}{' '}
                     GB
                   </Typography>

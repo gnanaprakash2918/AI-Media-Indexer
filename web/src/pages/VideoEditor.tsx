@@ -466,7 +466,7 @@ export default function VideoEditor() {
                                 Job: {activeJobId}
                             </Typography>
                             <Typography variant="caption">
-                                Status: {jobData.status} | Progress: {(jobData.progress * 100).toFixed(0)}%
+                                Status: {jobData.status} | Progress: {((jobData.progress ?? 0) * 100).toFixed(0)}%
                             </Typography>
                         </Box>
                     </Stack>

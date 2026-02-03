@@ -180,7 +180,7 @@ export default function CouncilsPage() {
                                                             sx={{ flex: 1 }}
                                                         />
                                                         <Typography variant="caption" fontWeight="bold">
-                                                            {model.weight.toFixed(1)}
+                                                            {(model.weight ?? 0).toFixed(1)}
                                                         </Typography>
                                                     </Box>
                                                 </CardContent>
