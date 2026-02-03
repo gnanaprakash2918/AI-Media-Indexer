@@ -23,10 +23,9 @@ from core.processing.extractor import FrameExtractor
 from core.processing.frame_sampling import TextGatedOCR
 from core.processing.identity import FaceManager, FaceTrackBuilder
 from core.processing.metadata import MetadataEngine
-from core.processing.ocr import EasyOCRProcessor
+from core.processing.ocr_factory import get_ocr_engine
 from core.processing.prober import MediaProbeError, MediaProber
 from core.processing.scene_detector import detect_scenes, extract_scene_frame
-from core.processing.segmentation import Sam3Tracker
 from core.processing.temporal_context import (
     SceneletBuilder,
     TemporalContextManager,
@@ -115,12 +114,14 @@ class IngestionPipeline:
             frame_interval_seconds: Interval between sampled frames in seconds.
             tmdb_api_key: Optional API key for TMDB movie metadata.
         """
+        from core.processing.dependency_check import check_model_dependencies
+
+        check_model_dependencies()
+
         self.scene_detector = detect_scenes
         self.prober = MediaProber()
-        self.sam_tracker = Sam3Tracker()
-
         # OCR Components
-        self.ocr_engine = EasyOCRProcessor(langs=["en"], use_gpu=True)
+        self.ocr_engine = get_ocr_engine()
         self.text_gate = TextGatedOCR()
         self.extractor = FrameExtractor()
         self.db = VectorDB(
@@ -1913,9 +1914,10 @@ class IngestionPipeline:
 
             temporal_ctx = TemporalContextManager(sensory_size=5)
 
-            # Scenelet Builder (Sliding Window: 5s window, 2.5s stride)
+            # Scenelet Builder (Sliding Window: Optimized via Config)
             scenelet_builder = SceneletBuilder(
-                window_seconds=5.0, stride_seconds=2.5
+                window_seconds=settings.scenelet_window_seconds,
+                stride_seconds=settings.scenelet_stride_seconds,
             )
             scenelet_builder.set_audio_segments(
                 self._get_audio_segments_for_video(str(path))
@@ -3089,42 +3091,8 @@ class IngestionPipeline:
                     else:
                         logger.debug("[OCR] Disabled via config")
 
-                    # Deep Research Enrichment (Safety & Time)
-                    try:
-                        # Content Moderation
-                        if getattr(
-                            settings, "enable_content_moderation", False
-                        ):
-                            if not hasattr(self, "_moderator"):
-                                from core.processing.content_moderation import (
-                                    VisualContentModerator,
-                                )
-
-                                self._moderator = VisualContentModerator()
-
-                            safe_res = await self._moderator.check_frame(
-                                frame_img
-                            )
-                            if not safe_res.is_safe:
-                                flags_str = ", ".join(
-                                    [f.name for f in safe_res.flags]
-                                )
-                                video_context += f"\n[SAFETY-FLAG]: {flags_str}"
-
-                        # Clock Reader
-                        if getattr(settings, "enable_time_extraction", False):
-                            if not hasattr(self, "_clock"):
-                                from core.processing.clock_reader import (
-                                    ClockReader,
-                                )
-
-                                self._clock = ClockReader()
-
-                            clock_res = await self._clock.read(frame_img)
-                            if clock_res:
-                                video_context += f"\n[VISIBLE-TIME]: {clock_res.get('time_string')}"
-                    except Exception as e:
-                        logger.warning(f"Deep Research enrichment error: {e}")
+                    # Deep Research Enrichment (REMOVED: Content Moderation & Clock Reader as per user request)
+                    pass
 
             except Exception as e:
                 logger.warning(f"[OCR] Failed: {e}")
@@ -3269,9 +3237,18 @@ class IngestionPipeline:
             # Add structured data if available for hybrid search
             if analysis:
                 payload["structured_data"] = analysis.model_dump()
-                payload["visible_text"] = (
-                    analysis.scene.visible_text if analysis.scene else []
-                )
+                payload["visible_text"] = analysis.scene.visible_text if analysis.scene else []
+                # CRITICAL FIX: Merge OCR-detected text with VLM-detected text
+                if ocr_text:
+                    # Split OCR text into searchable tokens
+                    ocr_tokens = [w.strip() for w in ocr_text.split() if len(w.strip()) > 2]
+                    # Extend both tokenized words and full text
+                    current_text = payload["visible_text"]
+                    if isinstance(current_text, list):
+                        current_text.extend(ocr_tokens)
+                        if len(ocr_text) > 3:
+                            current_text.append(ocr_text.strip())
+                        payload["visible_text"] = list(set(current_text))
                 payload["entities"] = (
                     [e.name for e in analysis.entities]
                     if analysis.entities

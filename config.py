@@ -538,6 +538,26 @@ class Settings(BaseSettings):
         default=1024,
         description="Dimension of video embeddings (InternVideo/LanguageBind projected)",
     )
+    
+    # Video Model Selection
+    enable_internvideo: bool = Field(
+        default=True,
+        description="Enable InternVideo2 (SOTA action understanding).",
+    )
+    enable_languagebind: bool = Field(
+        default=False,
+        description="Enable LanguageBind (Multimodal). DISABLED by default to save VRAM/Storage.",
+    )
+
+    # Scenelet Optimization
+    scenelet_window_seconds: float = Field(
+        default=10.0,
+        description="Duration of scenelet sliding window (10s = better action context)",
+    )
+    scenelet_stride_seconds: float = Field(
+        default=5.0,
+        description="Stride between scenelets (5s = 50% overlap).",
+    )
 
     visual_features_dim: int = Field(
         default=1152,
@@ -767,14 +787,6 @@ class Settings(BaseSettings):
     enable_ocr: bool = Field(
         default=True, description="Master switch for text extraction (OCR)."
     )
-    enable_content_moderation: bool = Field(
-        default=False,
-        description="Master switch for NSFW/Safety checks (default OFF for speed).",
-    )
-    enable_time_extraction: bool = Field(
-        default=False,
-        description="Master switch for clock/time extraction (default OFF).",
-    )
     enable_object_detection: bool = Field(
         default=True, description="Master switch for YOLO object detection."
     )
@@ -785,7 +797,15 @@ class Settings(BaseSettings):
         description="Enable tempo/beat detection. OFF by default (only useful for music videos).",
     )
 
-    # --- OCR Optimization ---
+    # --- OCR Configuration ---
+    ocr_engine: str = Field(
+        default="paddle",
+        description='OCR engine to use: "paddle" (recommended), "easy", "surya".',
+    )
+    ocr_language: str = Field(
+        default="multilingual",
+        description='OCR language: "multilingual" (auto), "en", "ta", etc.',
+    )
     ocr_skip_unchanged_frames: bool = Field(
         default=True,
         description="Skip OCR if frame is visually similar to previous (perceptual hash).",

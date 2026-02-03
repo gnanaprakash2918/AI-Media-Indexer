@@ -226,7 +226,14 @@ class DeepResearchProcessor:
 
     async def _get_languagebind(self):
         """Lazy load LanguageBindEncoder."""
-        if self._languagebind is None and self._enable_video:
+        """Lazy load LanguageBindEncoder."""
+        from config import settings
+
+        if (
+            self._languagebind is None
+            and self._enable_video
+            and getattr(settings, "enable_languagebind", False)
+        ):
             try:
                 from core.processing.video_understanding import (
                     LanguageBindEncoder,
