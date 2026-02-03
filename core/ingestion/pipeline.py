@@ -2377,6 +2377,9 @@ class IngestionPipeline:
 
         # Get all audio segments for this video (for dialogue per scene)
         audio_segments = self._get_audio_segments_for_video(str(path))
+        
+        # Get audio events (sirens, alarms, etc.)
+        audio_events = self._get_audio_events_for_video(str(path))
 
         # Get all frames for this video (for aggregation per scene)
         all_frames = self._get_frames_for_video(str(path))
@@ -2407,11 +2410,19 @@ class IngestionPipeline:
             ]
 
             # 3. Filter audio segments that overlap this scene
-            scene_audio = [
+            scene_dialogue = [
                 a
                 for a in audio_segments
                 if a.get("end", 0) > scene.start_time
                 and a.get("start", 0) < scene.end_time
+            ]
+            
+            # Filter audio events that overlap this scene
+            scene_events = [
+                e
+                for e in audio_events
+                if e.get("end", 0) > scene.start_time
+                and e.get("start", 0) < scene.end_time
             ]
 
             # 4. Aggregate frame data into scene
@@ -2419,7 +2430,8 @@ class IngestionPipeline:
                 frames=scene_frames,
                 start_time=scene.start_time,
                 end_time=scene.end_time,
-                dialogue_segments=scene_audio,
+                dialogue_segments=scene_dialogue,
+                audio_events=scene_events,
             )
 
             # Override with VLM summary if available
@@ -2443,6 +2455,12 @@ class IngestionPipeline:
             visual_parts.extend(aggregated.get("visible_text", []))
             if visual_summary:
                 visual_parts.append(visual_summary)
+            
+            # Explicitly add audio events for semantic search (e.g. "siren sound")
+            audio_evts = aggregated.get("audio_events", [])
+            if audio_evts:
+                visual_parts.append(f"Sounds: {', '.join(audio_evts)}")
+
             visual_text = " ".join(filter(None, visual_parts))
 
             # Motion: actions
@@ -2507,6 +2525,17 @@ class IngestionPipeline:
                                         "internvideo"
                                     ].tolist()
                                 )
+                                # CAPTURE ACTION LABELS (Gap #2 Fix)
+                                # Merge specialized motion labels with VLM general actions
+                                if video_result.action_labels:
+                                    # Add to aggregated actions for payload
+                                    current_actions = set(aggregated.get("actions", []))
+                                    current_actions.update(video_result.action_labels)
+                                    aggregated["actions"] = list(current_actions)
+                                    
+                                    # Add to motion text for vector search
+                                    motion_text += " " + " ".join(video_result.action_labels)
+
                             if "languagebind" in video_result.video_features:
                                 languagebind_features = (
                                     video_result.video_features[
@@ -2610,6 +2639,7 @@ class IngestionPipeline:
                         for e in aggregated.get("entities", [])
                         if isinstance(e, dict)
                     ],
+                    "audio_events": aggregated.get("audio_events", []),
                     # Deep Research Metadata
                     "shot_type": dr_meta.get("shot_type", ""),
                     "mood": dr_meta.get("mood", ""),
@@ -3479,6 +3509,42 @@ class IngestionPipeline:
                     "end": p.payload.get("end", 0),
                     "text": p.payload.get("text", ""),
                     "type": p.payload.get("type", "dialogue"),
+                }
+                for p in resp[0]
+                if p.payload
+            ]
+        except Exception:
+            return []
+
+    def _get_audio_events_for_video(self, media_path: str) -> list[dict]:
+        """Retrieves non-speech audio events (sirens, etc.) for a video.
+
+        Args:
+            media_path: Path to the media file.
+
+        Returns:
+            List of audio event dicts (start, end, label, confidence).
+        """
+        try:
+            resp = self.db.client.scroll(
+                collection_name=self.db.AUDIO_EVENTS_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="media_path",
+                            match=models.MatchValue(value=media_path),
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=True,
+            )
+            return [
+                {
+                    "start": p.payload.get("start", 0),
+                    "end": p.payload.get("end", 0),
+                    "label": p.payload.get("label", ""),
+                    "confidence": p.payload.get("confidence", 0.0),
                 }
                 for p in resp[0]
                 if p.payload

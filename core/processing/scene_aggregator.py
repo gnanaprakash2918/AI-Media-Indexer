@@ -140,7 +140,9 @@ class SceneAggregator:
             frames: List of frame-level analysis results.
             start_time: Start timestamp of the scene.
             end_time: End timestamp of the scene.
+            end_time: End timestamp of the scene.
             dialogue_segments: Optional list of transcripts to associate.
+            audio_events: Optional list of sound events (sirens, laughter, etc.).
 
         Returns:
             A comprehensive scene dictionary for database insertion.
@@ -266,9 +268,25 @@ class SceneAggregator:
                     if seg.get("speaker_name"):
                         speaker_names.add(seg["speaker_name"])
 
+        all_audio_events: list[str] = []
+        if audio_events:
+            for evt in audio_events:
+                evt_start = evt.get("start", 0)
+                evt_end = evt.get("end", 0)
+                # Loose overlap check
+                if evt_end > start_time and evt_start < end_time:
+                    label = evt.get("label", "")
+                    if label:
+                        all_audio_events.append(label)
+
         visual_summary = self._build_visual_summary(
             unique_actions, all_entities, all_person_names
         )
+
+        # Append audio events to visual summary so they are vector-searchable
+        if all_audio_events:
+            event_str = ", ".join(list(set(all_audio_events))[:5])
+            visual_summary += f". Sounds heard: {event_str}."
 
         scene_data = {
             "start_time": start_time,
@@ -287,7 +305,10 @@ class SceneAggregator:
             "dialogue_transcript": dialogue.strip(),
             "location": best_location,
             "cultural_context": best_cultural,
+            "location": best_location,
+            "cultural_context": best_cultural,
             "frame_count": len(frames),
+            "audio_events": list(set(all_audio_events)),
         }
 
         self.global_context.add_scene(scene_data)
@@ -380,6 +401,7 @@ def aggregate_frames_to_scene(
     start_time: float,
     end_time: float,
     dialogue_segments: list[dict] | None = None,
+    audio_events: list[dict] | None = None,
 ) -> dict:
     """Convenience functional wrapper for SceneAggregator.
 
@@ -394,5 +416,5 @@ def aggregate_frames_to_scene(
     """
     aggregator = SceneAggregator()
     return aggregator.aggregate_frames(
-        frames, start_time, end_time, dialogue_segments
+        frames, start_time, end_time, dialogue_segments, audio_events
     )
