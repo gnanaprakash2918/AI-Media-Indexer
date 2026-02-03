@@ -773,7 +773,7 @@ class VectorDB:
         while True:
             results, offset = self.client.scroll(
                 collection_name=self.MEDIA_COLLECTION,
-                scroll_filter=build_filter(video_path_filter(video_path)),
+                scroll_filter=build_filter([media_path_filter(video_path)]),
                 limit=500,
                 offset=offset,
                 with_payload=True,
@@ -1261,7 +1261,7 @@ class VectorDB:
         )
         self.client.create_payload_index(
             collection_name=self.MASKLETS_COLLECTION,
-            field_name="video_path",
+            field_name="media_path",  # Standardized to media_path (was video_path)
             field_schema=models.PayloadSchemaType.KEYWORD,
         )
 
@@ -1363,20 +1363,23 @@ class VectorDB:
         Returns:
             A list of payload dictionaries containing frame metadata.
         """
-        # CRITICAL FIX: Use Visual Encoder (SigLIP/CLIP) to encode text for Frame Search
-        # Frames are indexed with Visual Encoder, so query must be in same latent space.
-        # BGE (self.encode_text) is for TEXT-only collections.
+        # CRITICAL: Use Visual Encoder (SigLIP/CLIP) to encode text for Frame Search
+        # Frames are indexed with Visual Encoder, so query MUST be in same latent space.
+        # BGE is for TEXT-only collections - using it here would cause ~0 similarity.
         try:
             query_vector = await self.visual_encoder.encode_text(query)
             if not query_vector:
-                # Fallback purely to handle dry-run or error cases
-                query_vector = await self.encode_text(query)
+                log(
+                    f"Visual encoder returned empty for query: '{query[:50]}'",
+                    level="WARNING",
+                )
+                return []  # Return empty, not garbage results
         except Exception as e:
             log(
-                f"Visual Text Encoding failed: {e}, falling back to BGE",
-                level="WARNING",
+                f"Visual Text Encoding failed: {e}. Cannot search frames without visual encoder.",
+                level="ERROR",
             )
-            query_vector = await self.encode_text(query)
+            return []  # Return empty, not wrong-space results
 
         # Build filter conditions
         filter_conditions = []
@@ -1904,7 +1907,7 @@ class VectorDB:
                 collection_name=self.SUMMARIES_COLLECTION,
                 scroll_filter=build_filter(
                     [
-                        video_path_filter(video_path),
+                        media_path_filter(video_path),
                         models.FieldCondition(
                             key="level",
                             match=models.MatchValue(value="L2"),  # L2 is global
@@ -2052,8 +2055,6 @@ class VectorDB:
                 )
         except Exception as e:
             log(f"match_speaker failed: {e}", level="DEBUG")
-        return None
-
         return None
 
     def upsert_face_cluster_centroid(

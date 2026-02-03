@@ -828,10 +828,48 @@ if (-not $SkipDocker) {
     }
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ERROR: Docker start failed" -ForegroundColor Red
+        Write-Host "  WARNING: Docker start failed. Attempting auto-recovery (Pull & Build)..." -ForegroundColor Yellow
+        
+        # Auto-Recovery: Pull and Build to fix missing/broken images
+        Write-Host "  [Recovery] Pulling latest images..." -ForegroundColor Gray
+        Invoke-Expression "$dockerComposeCmd pull"
+        
+        Write-Host "  [Recovery] Building services..." -ForegroundColor Gray
+        Invoke-Expression "$dockerComposeCmd build"
+        
+        # Retry Start
+        Write-Host "  [Recovery] Retrying start..." -ForegroundColor Gray
+        if ($Distributed) {
+             if ($dockerComposeCmd -eq "docker-compose") {
+                 Invoke-Expression "$dockerComposeCmd up -d qdrant redis"
+             } else {
+                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis"
+             }
+        } else {
+             if ($dockerComposeCmd -eq "docker-compose") {
+                 Invoke-Expression "$dockerComposeCmd up -d qdrant"
+             } else {
+                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant"
+             }
+        }
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR: Docker start failed after recovery attempt." -ForegroundColor Red
+            Write-Host "  Please check your Docker Desktop status and internet connection." -ForegroundColor Yellow
+            exit 1
+        } else {
+            Write-Host "  Docker services recovered and started!" -ForegroundColor Green
+        }
     } else {
-        Write-Host "  Docker services started and healthy!" -ForegroundColor Green
+        Write-Host "  Docker containers started." -ForegroundColor Green
     }
+        
+    # Wait for Qdrant to stabilize
+    # Simple 5s buffer since the container just started
+    Write-Host ""
+    Write-Host "  Waiting for Qdrant to initialize (5s)..." -ForegroundColor Gray
+    Start-Sleep -Seconds 5
+    Write-Host "  Qdrant should be ready." -ForegroundColor Green
 } else {
     Write-Host "[5/8] Skipping Docker cleanup (--SkipDocker)" -ForegroundColor Gray
     Write-Host "[6/8] Skipping Docker pull (--SkipDocker)" -ForegroundColor Gray

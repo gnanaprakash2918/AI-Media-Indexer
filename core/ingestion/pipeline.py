@@ -47,9 +47,9 @@ from core.utils.resource import resource_manager
 from core.utils.resource_arbiter import RESOURCE_ARBITER
 from core.utils.retry import retry
 
-# Global semaphore for VLM parallelism (limits concurrent VLM calls to 4)
+# Global semaphore for VLM parallelism (auto-scales based on hardware profile)
 # This prevents OOM when using Ollama/Gemini with large contexts
-VLM_SEMAPHORE = asyncio.Semaphore(4)
+VLM_SEMAPHORE = asyncio.Semaphore(settings.vlm_concurrency)
 
 
 class FrameBuffer:
@@ -59,9 +59,11 @@ class FrameBuffer:
     of `batch_size` for ~10x performance over individual writes.
     """
 
-    def __init__(self, db: VectorDB, batch_size: int = 50):
+    def __init__(self, db: VectorDB, batch_size: int | None = None):
+        # Use config value if not provided (auto-tunes based on hardware)
+        from config import settings
         self.db = db
-        self.batch_size = batch_size
+        self.batch_size = batch_size or settings.embedding_batch_size or 50
         self._buffer: list[dict] = []
         self._total_flushed = 0
 
@@ -691,20 +693,8 @@ class IngestionPipeline:
                 detected_lang = settings.language or "en"
 
             # Choose transcriber based on language
-            indic_languages = [
-                "ta",
-                "hi",
-                "te",
-                "ml",
-                "kn",
-                "bn",
-                "gu",
-                "mr",
-                "or",
-                "pa",
-            ]
-
-            if settings.use_indic_asr and detected_lang in indic_languages:
+            # Use config for Indic languages list (centralized)
+            if settings.use_indic_asr and detected_lang in settings.indic_languages:
                 # Use AI4Bharat for Indic languages
                 log(
                     f"[Audio] Attempting AI4Bharat IndicConformer for '{detected_lang}'"
@@ -875,25 +865,9 @@ class IngestionPipeline:
                 # Instead of loading entire audio file at once, we stream in chunks
                 # This prevents OOM on videos longer than 15 minutes
                 try:
-                    # Get duration via FFprobe (doesn't load file into memory)
-                    import subprocess
-
-                    probe_cmd = [
-                        "ffprobe",
-                        "-v",
-                        "quiet",
-                        "-show_entries",
-                        "format=duration",
-                        "-of",
-                        "csv=p=0",
-                        str(path),
-                    ]
-                    duration_str = await asyncio.to_thread(
-                        lambda: subprocess.check_output(probe_cmd)
-                        .decode()
-                        .strip()
-                    )
-                    total_duration = float(duration_str)
+                    # Get duration via cached probe (avoids redundant FFprobe calls)
+                    probe_data = await self.get_probe_data(path)
+                    total_duration = float(probe_data.get("format", {}).get("duration", 0))
                     log(
                         f"[CLAP] Video duration: {total_duration:.1f}s (streaming mode)"
                     )
@@ -1617,24 +1591,13 @@ class IngestionPipeline:
 
             detector = get_audio_detector()
 
-            # Get duration via FFprobe (doesn't load file into memory)
+            # Get duration via cached probe (avoids redundant FFprobe calls)
             try:
-                probe_cmd = [
-                    "ffprobe",
-                    "-v",
-                    "quiet",
-                    "-show_entries",
-                    "format=duration",
-                    "-of",
-                    "csv=p=0",
-                    str(path),
-                ]
-                duration = float(
-                    subprocess.check_output(probe_cmd).decode().strip()
-                )
+                probe_data = await self.get_probe_data(path)
+                duration = float(probe_data.get("format", {}).get("duration", 0))
             except Exception as e:
                 logger.warning(
-                    f"FFprobe failed, falling back to librosa for duration: {e}"
+                    f"Probe failed, falling back to librosa for duration: {e}"
                 )
                 import librosa
 
@@ -1651,8 +1614,8 @@ class IngestionPipeline:
             previous_events = []  # For deduplication
 
             # CLAP processing parameters (within each chunk)
-            clap_window = 5.0  # 5s windows for CLAP
-            clap_stride = 2.5  # 2.5s stride
+            clap_window = settings.clap_window_seconds
+            clap_stride = settings.clap_stride_seconds
 
             for chunk_idx in range(total_chunks):
                 chunk_start = chunk_idx * stride_seconds
@@ -2075,7 +2038,8 @@ class IngestionPipeline:
 
                 if self.frame_sampler.should_sample(frame_count):
                     pending_frames.append(extracted_frame)
-                    if len(pending_frames) >= 16:
+                    # Use config batch_size for optimal hardware utilization
+                    if len(pending_frames) >= settings.batch_size:
                         await _process_batch_items(pending_frames)
                         pending_frames = []
 

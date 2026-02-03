@@ -127,7 +127,8 @@ class GeminiText(TextLLMClient):
                 import google.generativeai as genai  # type: ignore
 
                 if not self.api_key:
-                    raise ValueError("GOOGLE_API_KEY not set")
+                    log("[GeminiText] GOOGLE_API_KEY not set, Gemini disabled")
+                    return None
                 genai.configure(api_key=self.api_key)  # type: ignore
                 self._client = genai.GenerativeModel(  # type: ignore
                     self.model,
@@ -135,14 +136,20 @@ class GeminiText(TextLLMClient):
                         "response_mime_type": "application/json"
                     },
                 )
-            except ImportError as e:
-                raise ImportError("google-generativeai not installed") from e
+            except ImportError:
+                log("[GeminiText] google-generativeai not installed, Gemini disabled")
+                return None
+            except Exception as e:
+                log(f"[GeminiText] Failed to initialize: {e}")
+                return None
         return self._client
 
     def generate(self, prompt: str) -> str:
         """Sends a content generation request to Gemini."""
         try:
             client = self._get_client()
+            if client is None:
+                return ""  # Gemini not available
             response = client.generate_content(prompt)
             return response.text.strip() if response.text else ""
         except Exception as e:

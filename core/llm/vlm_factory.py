@@ -127,11 +127,16 @@ class GeminiVLM(VLMClient):
                 import google.generativeai as genai  # type: ignore
 
                 if not self.api_key:
-                    raise ValueError("GOOGLE_API_KEY not set")
+                    log("[GeminiVLM] GOOGLE_API_KEY not set, Gemini disabled")
+                    return None
                 genai.configure(api_key=self.api_key)  # type: ignore
                 self._client = genai.GenerativeModel(self.model)  # type: ignore
-            except ImportError as e:
-                raise ImportError("google-generativeai not installed") from e
+            except ImportError:
+                log("[GeminiVLM] google-generativeai not installed, Gemini disabled")
+                return None
+            except Exception as e:
+                log(f"[GeminiVLM] Failed to initialize: {e}")
+                return None
         return self._client
 
     def generate_caption(self, image_path: Path | str, prompt: str) -> str:
@@ -159,6 +164,8 @@ class GeminiVLM(VLMClient):
         """Internal helper to generate content from an image and prompt using Gemini."""
         try:
             client = self._get_client()
+            if client is None:
+                return ""  # Gemini not available
             response = client.generate_content([prompt, img])
             return response.text.strip() if response.text else ""
         except Exception as e:

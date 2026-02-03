@@ -285,53 +285,109 @@ class SigLIPEncoder(VisualEncoderInterface):
                 return
 
             def _load():
+                # Aggressive cleanup before loading large model
+                import gc
+                import torch
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    log.info(f"[VisualEncoder] VRAM freed. Loading {self.name}...")
+
                 log.info(f"[VisualEncoder] Initializing {self.name}...")
                 try:
                     import open_clip
                 except ImportError:
                     log.error(
-                        "[VisualEncoder] open_clip not installed. Install with `pip install open_clip_torch`. Visual features will be disabled."
+                        "[VisualEncoder] open_clip not installed. Visual features will be disabled."
                     )
                     return None, None
 
                 # Try OpenCLIP first
                 try:
                     import open_clip
+                    import torch
 
+                    # Force load to CPU first to avoid VRAM fragmentation
                     model, _, preprocess = (
                         open_clip.create_model_and_transforms(
-                            self._model_name, pretrained="webli"
+                            self._model_name, pretrained="webli", device="cpu"
                         )
                     )
                     model.eval()
-                    import torch
-
+                    
                     if torch.cuda.is_available():
-                        model = model.cuda()
+                        # Check memory before moving to GPU
+                        try:
+                            model = model.cuda()
+                        except torch.cuda.OutOfMemoryError:
+                            log.error("[VisualEncoder] OOM moving SigLIP to GPU. Falling back to CPU/CLIP.")
+                            raise  # Trigger fallback
+                            
                     return model, preprocess
                 except Exception as e:
                     log.warning(
                         f"[VisualEncoder] OpenCLIP load failed ({e}). Trying Transformers fallback..."
                     )
+                    # Aggressive cleanup again
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
                 # Transformers fallback for SigLIP
                 try:
-                    from transformers import AutoModel, AutoProcessor
-
-                    hf_model = "google/siglip-so400m-patch14-384"
-                    model = AutoModel.from_pretrained(hf_model)
-                    preprocess = AutoProcessor.from_pretrained(hf_model)
-                    model.eval()
+                    # MUST use SiglipModel, NOT AutoModel (AutoModel fails for SigLIP)
+                    from transformers import SiglipModel, SiglipProcessor
                     import torch
 
+                    hf_model = "google/siglip-so400m-patch14-384"
+                    log.info(f"[VisualEncoder] Loading SigLIP from transformers: {hf_model}")
+                    # Load to CPU first
+                    model = SiglipModel.from_pretrained(hf_model)
+                    preprocess = SiglipProcessor.from_pretrained(hf_model)
+                    model.eval()
+                    
                     if torch.cuda.is_available():
-                        model = model.cuda()
+                        try:
+                            model = model.cuda()
+                        except torch.cuda.OutOfMemoryError:
+                            log.warning("[VisualEncoder] SigLIP OOM on GPU, keeping on CPU")
                     return model, preprocess
                 except Exception as e2:
-                    log.error(f"[VisualEncoder] SigLIP Fallback failed: {e2}")
+                    log.warning(f"[VisualEncoder] SigLIP Transformers failed: {e2}")
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                # Last resort: Fall back to basic CLIP (smaller, more reliable)
+                try:
+                    from transformers import CLIPModel, CLIPProcessor
+                    import torch
+
+                    hf_model = "openai/clip-vit-base-patch32"  # Smallest CLIP
+                    log.warning(f"[VisualEncoder] Final fallback to basic CLIP: {hf_model}")
+                    model = CLIPModel.from_pretrained(hf_model)
+                    preprocess = CLIPProcessor.from_pretrained(hf_model)
+                    model.eval()
+                    
+                    # Update dimension for CLIP-base
+                    self._dim = 512  # CLIP-base dimension
+                    
+                    if torch.cuda.is_available():
+                        try:
+                            model = model.cuda()
+                        except torch.cuda.OutOfMemoryError:
+                            log.warning("[VisualEncoder] CLIP OOM, using CPU")
+                    return model, preprocess
+                except Exception as e3:
+                    log.error(f"[VisualEncoder] All fallbacks failed: {e3}")
                     return None, None
 
-            self._model, self._preprocess = await asyncio.to_thread(_load)
+            # Execute load
+            try:
+                self._model, self._preprocess = await asyncio.to_thread(_load)
+            except Exception as e:
+                log.error(f"[VisualEncoder] Failed to init SigLIP: {e}")
+                self._model = None
 
     async def encode_image(
         self, image: np.ndarray | bytes | Path
@@ -347,7 +403,18 @@ class SigLIPEncoder(VisualEncoderInterface):
                 pil_img = Image.open(io.BytesIO(image)).convert("RGB")
             else:
                 pil_img = Image.fromarray(image).convert("RGB")
-            return self._preprocess(pil_img).unsqueeze(0)
+            
+            # Handle both OpenCLIP (returns tensor) and Transformers (returns dict)
+            if hasattr(self._preprocess, '__call__') and not hasattr(self._preprocess, 'feature_extractor'):
+                # OpenCLIP - returns tensor directly
+                try:
+                    return self._preprocess(pil_img).unsqueeze(0)
+                except Exception:
+                    pass
+            
+            # Transformers processor - returns dict
+            inputs = self._preprocess(images=pil_img, return_tensors="pt")
+            return inputs
 
         inputs = await asyncio.to_thread(_process)
 
@@ -357,10 +424,22 @@ class SigLIPEncoder(VisualEncoderInterface):
                 import torch
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                gpu_inputs = inputs.to(device)
-                with torch.no_grad():
-                    feats = self._model.encode_image(gpu_inputs)
-                    feats = feats / feats.norm(dim=-1, keepdim=True)
+                
+                # Handle dict (Transformers) vs tensor (OpenCLIP)
+                if isinstance(inputs, dict):
+                    gpu_inputs = {k: v.to(device) for k, v in inputs.items() if hasattr(v, 'to')}
+                    with torch.no_grad():
+                        if hasattr(self._model, 'get_image_features'):
+                            feats = self._model.get_image_features(**gpu_inputs)
+                        else:
+                            feats = self._model(**gpu_inputs).pooler_output
+                else:
+                    # OpenCLIP tensor
+                    gpu_inputs = inputs.to(device)
+                    with torch.no_grad():
+                        feats = self._model.encode_image(gpu_inputs)
+                
+                feats = feats / feats.norm(dim=-1, keepdim=True)
                 return feats.cpu().numpy().flatten().tolist()
 
             return await asyncio.to_thread(_infer)
@@ -369,6 +448,8 @@ class SigLIPEncoder(VisualEncoderInterface):
         self, images: list[np.ndarray | bytes | Path]
     ) -> list[list[float]]:
         await self._lazy_init()
+        if self._model is None:
+            return []
 
         async def _prep(img):
             def __task():
@@ -378,11 +459,19 @@ class SigLIPEncoder(VisualEncoderInterface):
                     pil = Image.open(io.BytesIO(img)).convert("RGB")
                 else:
                     pil = Image.fromarray(img).convert("RGB")
-                return self._preprocess(pil)
+                
+                # Handle both OpenCLIP and Transformers
+                if hasattr(self._preprocess, '__call__') and not hasattr(self._preprocess, 'feature_extractor'):
+                    try:
+                        return self._preprocess(pil)
+                    except Exception:
+                        pass
+                # Return PIL for Transformers batch processing
+                return pil
 
             return await asyncio.to_thread(__task)
 
-        tensors = await asyncio.gather(*[_prep(img) for img in images])
+        items = await asyncio.gather(*[_prep(img) for img in images])
 
         async with GPU_SEMAPHORE:
 
@@ -390,10 +479,24 @@ class SigLIPEncoder(VisualEncoderInterface):
                 import torch
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                batch = torch.stack(tensors).to(device)
-                with torch.no_grad():
-                    feats = self._model.encode_image(batch)
-                    feats = feats / feats.norm(dim=-1, keepdim=True)
+                
+                # Check if items are tensors (OpenCLIP) or PIL images (Transformers)
+                if isinstance(items[0], Image.Image):
+                    # Transformers batch processing
+                    inputs = self._preprocess(images=list(items), return_tensors="pt")
+                    inputs = {k: v.to(device) for k, v in inputs.items() if hasattr(v, 'to')}
+                    with torch.no_grad():
+                        if hasattr(self._model, 'get_image_features'):
+                            feats = self._model.get_image_features(**inputs)
+                        else:
+                            feats = self._model(**inputs).pooler_output
+                else:
+                    # OpenCLIP tensors
+                    batch = torch.stack(items).to(device)
+                    with torch.no_grad():
+                        feats = self._model.encode_image(batch)
+                
+                feats = feats / feats.norm(dim=-1, keepdim=True)
                 return feats.cpu().numpy().tolist()
 
             return await asyncio.to_thread(_infer_batch)

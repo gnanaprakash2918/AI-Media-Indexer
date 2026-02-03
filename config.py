@@ -692,6 +692,11 @@ class Settings(BaseSettings):
         default=True, description="Unload models after use to free VRAM."
     )
 
+    vlm_concurrency: int = Field(
+        default=_HW_PROFILE["worker_count"] * 2,  # Auto-scale: 2 for laptop, 4 for workstation, 8 for server
+        description="Max concurrent VLM calls. Higher = faster captioning but more VRAM usage.",
+    )
+
     # --- Memory Chunking (OOM Prevention) ---
     enable_chunking: bool = Field(
         default=True,
@@ -708,6 +713,23 @@ class Settings(BaseSettings):
     auto_chunk_by_hardware: bool = Field(
         default=True,
         description="Auto-adjust chunking based on VRAM. Low VRAM = smaller chunks.",
+    )
+
+    # --- Audio Processing ---
+    clap_window_seconds: float = Field(
+        default=5.0,
+        description="CLAP window duration in seconds for audio event detection",
+    )
+    
+    clap_stride_seconds: float = Field(
+        default=2.5,
+        description="CLAP stride in seconds (overlap between windows)",
+    )
+
+    # --- Language Support ---
+    indic_languages: list[str] = Field(
+        default=["ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"],
+        description="List of Indic language codes for AI4Bharat ASR",
     )
 
     # --- Search Feature Flags (Master Switches) ---

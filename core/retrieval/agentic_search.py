@@ -990,45 +990,15 @@ class SearchAgent:
                 "hitting",
             }
 
-            # SEMANTIC INTENT CLASSIFICATION (replaces brittle keyword matching)
-            # Uses embedding similarity instead of exact keyword matching
-            # This works for ANY query, not just predefined words
-            import numpy as np
-
-            # Intent anchor phrases (represent each intent type semantically)
-            INTENT_ANCHORS = {
-                "visual": "person wearing clothes standing near object scene visual appearance",
-                "audio": "music sound effect cheering clapping singing playing loud background noise",
-                "dialogue": "said speaking told asking conversation talking quote transcript words",
-                "identity": "who is the person face speaker voice recognize name",
-                "action": "running jumping dancing fighting driving kicking throwing movement activity",
-            }
-
-            # Encode query and anchors for semantic similarity
-            try:
-                from core.storage.db import VectorDB
-                # Use singleton encoder if available
-                _db = getattr(self, "_db", None) or VectorDB()
-                query_vec = np.array(_db.encode_text(query_lower))
-                
-                intent_scores = {}
-                for intent_name, anchor_text in INTENT_ANCHORS.items():
-                    anchor_vec = np.array(_db.encode_text(anchor_text))
-                    # Cosine similarity
-                    similarity = np.dot(query_vec, anchor_vec) / (
-                        np.linalg.norm(query_vec) * np.linalg.norm(anchor_vec) + 1e-8
-                    )
-                    intent_scores[intent_name] = float(similarity)
-                
-                # Map to canonical score names
-                visual_score = max(0, intent_scores.get("visual", 0) - 0.3) * 10
-                audio_score = max(0, intent_scores.get("audio", 0) - 0.3) * 10
-                dialogue_score = max(0, intent_scores.get("dialogue", 0) - 0.3) * 10
-                identity_score = max(0, intent_scores.get("identity", 0) - 0.3) * 10
-                action_score = max(0, intent_scores.get("action", 0) - 0.3) * 10
-            except Exception:
-                # Fallback to zero scores if encoding fails
-                visual_score = audio_score = dialogue_score = identity_score = action_score = 0
+            # INTENT CLASSIFICATION using keyword heuristics
+            # Fast and reliable for common query patterns
+            # NOTE: Semantic embedding-based classification was removed as it added latency
+            # and required async calls which don't work in this sync context
+            visual_score = sum(1 for kw in visual_keywords if kw in query_lower)
+            audio_score = sum(1 for kw in audio_keywords if kw in query_lower)
+            dialogue_score = sum(1 for kw in dialogue_keywords if kw in query_lower)
+            identity_score = sum(1 for kw in identity_keywords if kw in query_lower)
+            action_score = sum(1 for kw in action_keywords if kw in query_lower)
 
 
             # Also check parsed query for entities (visual) and person names (identity)
