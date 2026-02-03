@@ -15,6 +15,7 @@ import {
   ThumbDown,
   ExpandMore,
   BugReport,
+  TrackChanges,
 } from '@mui/icons-material';
 import {
   Card,
@@ -157,6 +158,7 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
   const getIcon = () => {
     if (item.type === 'dialogue') return <GraphicEq fontSize="small" />;
     if (item.type === 'visual') return <Videocam fontSize="small" />;
+    if (item.type === 'object_track') return <TrackChanges fontSize="small" />;
     return <TextFields fontSize="small" />;
   };
 

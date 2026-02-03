@@ -131,6 +131,7 @@ from config import settings  # noqa: E402
 from core.ingestion.jobs import job_manager  # noqa: E402
 from core.ingestion.pipeline import IngestionPipeline  # noqa: E402
 from core.utils.logger import bind_context, clear_context, logger  # noqa: E402
+from core.utils.model_warmer import warmup_models  # [NEW] Warmer
 from core.utils.observability import (  # noqa: E402
     end_trace,
     init_langfuse,
@@ -148,6 +149,13 @@ async def lifespan(app: FastAPI):
 
     thumb_dir = settings.cache_dir / "thumbnails"
     thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    # Warmup Models (Background but awaited for safety or fire-and-forget?)
+    # "Download needed ones not fallbacks at starting itself" -> Await it.
+    try:
+        await warmup_models()
+    except Exception as e:
+        logger.warning(f"Model warmup warning: {e}")
 
     global pipeline
     try:

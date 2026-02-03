@@ -54,6 +54,7 @@ thumbnails/
 .cache/
 test_videos/
 uploads/
+data/
 
 # SQLite Databases (generated at runtime)
 *.db

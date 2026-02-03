@@ -170,7 +170,7 @@ async def main():
 
         print("  Parsing with LLM...")
         parsed = await agent.parse_query(test_query)
-        print(f"  ✓ Parsed successfully!")
+        print("  ✓ Parsed successfully!")
 
         # Helper to safely extract names whether it uses legacy or new schema
         names = []

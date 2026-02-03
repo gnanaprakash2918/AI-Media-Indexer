@@ -35,6 +35,7 @@ from core.processing.transcriber import AudioTranscriber
 from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
+from core.tracking.sam3_tracker import SAM3Tracker
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
@@ -146,13 +147,17 @@ class IngestionPipeline:
         self.faces: FaceManager | None = None
         self.voice: VoiceProcessor | None = None
 
+        # GraphRAG Builder (Lazy load later or init here if safe)
+        from core.knowledge.graph_builder import GraphBuilder
+        self.graph_builder = GraphBuilder()
+
         # Enhanced pipeline config for SmartFrameSampler, BiometricArbitrator, etc.
         self._enhanced_config = None
         self._face_clusters: dict[int, list[float]] = {}
 
         # Deep Video Understanding (SAM 3)
         self.sam3_tracker = (
-            Sam3Tracker() if settings.enable_sam3_tracking else None
+            SAM3Tracker() if settings.enable_sam3_tracking else None
         )
         self.frame_sampler = FrameSampler(every_n=5)
 
@@ -2676,6 +2681,68 @@ class IngestionPipeline:
                 )
                 scenes_stored += 1
 
+                # === NEO4J GRAPH INGESTION (Prod Ready Abuse) ===
+                try:
+                    # Initialize Video Node (idempotent)
+                    if scenes_stored == 1:
+                        from core.schemas import MediaFile, MediaMetadata
+                        mf_wrapper = MediaFile(
+                            path=str(path),
+                            filename=path.name,
+                            metadata=MediaMetadata(duration=self.prober.get_duration(path) if hasattr(self.prober, 'get_duration') else 0)
+                        )
+                        self.graph_builder.process_video_node(mf_wrapper)
+
+                    # Construct Synthetic Analysis for Graph
+                    from core.schemas import FrameAnalysis, SceneContext
+
+                    # Explicitly capture Deep Research signals
+                    dr_mood = dr_meta.get("mood", "") if dr_meta else ""
+                    dr_shot = dr_meta.get("shot_type", "") if dr_meta else ""
+
+                    scene_ctx = SceneContext(
+                        location=aggregated.get("location", ""),
+                        visible_text=aggregated.get("visible_text", []),
+                        cultural_context=aggregated.get("cultural_context", ""),
+                        mood=dr_mood # <--- CRITICAL: Graph gets the DR Mood
+                    )
+
+                    # Merge DR Shot info into action/description if needed
+                    action_desc = aggregated.get("action_sequence", "") or aggregated.get("action", "")
+                    if dr_shot:
+                        action_desc += f" ({dr_shot})"
+
+                    synth_analysis = FrameAnalysis(
+                        main_subject=aggregated.get("main_subject", ""),
+                        action=action_desc,
+                        entities=aggregated.get("entities", []),
+                        scene=scene_ctx,
+                        face_cluster_ids=aggregated.get("face_cluster_ids", [])
+                    )
+
+                    # Qdrant Scene ID (re-generated to match store_scene logic if needed, but db.store_scene handles it)
+                    # We need the ID used by Qdrant to link.
+                    # db.store_scene generates ID internally.
+                    # We should align ID generation.
+                    # Ideally db.store_scene returns ID or we generate it here.
+                    # QdrantHandler.store_scene uses uuid5(video_path + start_time).
+                    import uuid
+                    graph_scene_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{str(path)}_scene_{scene.start_time:.3f}"))
+
+                    self.graph_builder.process_scene(
+                        video_path=str(path),
+                        scene_id=graph_scene_id,
+                        start_time=scene.start_time,
+                        end_time=scene.end_time,
+                        analysis=synth_analysis,
+                        prev_scene_id=None # GraphBuilder handles temporal linking internally via query/TimeGap
+                    )
+                    logger.debug(f"[Graph] Ingested Scene {idx} (Mood: {dr_mood})")
+
+                except Exception as ge:
+                    logger.warning(f"[Graph] Ingestion failed for scene {idx}: {ge}")
+
+
             except Exception as e:
                 logger.warning(f"Failed to store scene {idx}: {e}")
 
@@ -3679,6 +3746,16 @@ class IngestionPipeline:
                 except Exception as e:
                     logger.warning(f"SAM3 Tracking failed: {e}")
 
+                # === GRAPH INGESTION (Masklets / Precision Objects) ===
+                # "Abuse it" - Ensure precise objects are in the Graph
+                try:
+                    full_masklets = self.db.get_masklets_for_media(media_path)
+                    if full_masklets:
+                        self.graph_builder.process_masklets(media_path, full_masklets)
+                        logger.info(f"[Graph] Ingested {len(full_masklets)} masklet nodes.")
+                except Exception as e:
+                    logger.warning(f"[Graph] Masklet ingestion failed: {e}")
+
             # ------------------------------------------------------------
             # SOTA SCENE INDEXING (Adaptive Scene Segmentation)
             # ------------------------------------------------------------
@@ -3784,6 +3861,45 @@ class IngestionPipeline:
                             )
                         ],
                     )
+
+                    # === NEO4J GRAPH INGESTION (Prod Ready Abuse) ===
+                    try:
+                        # Extract Deep Research signals (Mood/Shot) from frames
+                        # We need to peek into the raw payload if not in dict
+                        # For now, simplistic aggregation
+                        dr_mood = ""
+                        if "mood" in scene_data:
+                            dr_mood = scene_data["mood"]
+
+                        # Create synthetic analysis for Graph
+                        # We use 'graph_builder' which consumes FrameAnalysis
+                        from core.schemas import FrameAnalysis, SceneContext
+
+                        scene_ctx = SceneContext(
+                            location=scene_data.get("location", ""),
+                            mood=dr_mood,
+                            visible_text=scene_data.get("visible_text", [])
+                        )
+
+                        synth_analysis = FrameAnalysis(
+                            scene=scene_ctx,
+                            action=scene_data.get("action_sequence", ""),
+                            entities=scene_data.get("entities", []),
+                            face_cluster_ids=scene_data.get("face_cluster_ids", [])
+                        )
+
+                        self.graph_builder.process_scene(
+                            video_path=media_path,
+                            scene_id=scene_id,
+                            start_time=scene_info.start_time,
+                            end_time=scene_info.end_time,
+                            analysis=synth_analysis
+                        )
+                    except Exception:
+                        pass
+                        # logger.warning(f"[Graph] Ingestion failed for scene {scene_id}: {ge}")
+                        # logger.warning(f"[Graph] Ingestion failed for scene {scene_id}: {ge}")
+
 
                 # Add simplified global scene for context
                 # (Existing logic below can remain or be replaced by this granular loop metadata)

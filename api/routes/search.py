@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 # Clean dependency injection
 from api.deps import get_pipeline, get_search_agent
 from api.schemas import AdvancedSearchRequest
+from config import settings
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
 

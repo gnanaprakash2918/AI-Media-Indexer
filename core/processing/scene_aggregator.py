@@ -130,6 +130,7 @@ class SceneAggregator:
         start_time: float,
         end_time: float,
         dialogue_segments: list[dict] | None = None,
+        audio_events: list[dict] | None = None,
     ) -> dict:
         """Aggregates multiple frame analysis dicts into a single scene record.
 
@@ -303,8 +304,6 @@ class SceneAggregator:
             "speaker_ids": list(speaker_ids),
             "speaker_names": list(speaker_names),
             "dialogue_transcript": dialogue.strip(),
-            "location": best_location,
-            "cultural_context": best_cultural,
             "location": best_location,
             "cultural_context": best_cultural,
             "frame_count": len(frames),

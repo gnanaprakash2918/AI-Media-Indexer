@@ -182,7 +182,11 @@ async def merge_identities(identity_id: str, req: IdentityMergeRequest) -> dict:
 
 
 @router.patch("/identities/{identity_id}")
-async def rename_identity(identity_id: str, req: IdentityRenameRequest) -> dict:
+async def rename_identity(
+    identity_id: str,
+    req: IdentityRenameRequest,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
     """Updates the display name of a recognized identity.
 
     Args:

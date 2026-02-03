@@ -380,3 +380,9 @@ class SearchResultDetail(BaseModel):
     thumbnail_url: str | None = None
     dense_context: str = ""
     matched_identities: list[str] = Field(default_factory=list)
+    face_bboxes: list[tuple[int, int, int, int]] = Field(
+        default_factory=list, description="List of [x, y, w, h] for faces in this result"
+    )
+    voice_segments: list[dict[str, Any]] = Field(
+        default_factory=list, description="List of voice segments {start, end, label}"
+    )

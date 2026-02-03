@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, Field
+
 from core.knowledge.schemas import ParsedQuery
 from core.retrieval.reranker import RerankingCouncil
 from core.utils.logger import log
@@ -16,6 +18,7 @@ from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
 
+from config import settings  # [FIX] Added missing import
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
     from llm.interface import LLMInterface
@@ -27,9 +30,7 @@ QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT  # Legacy alias
 
 
 # Pydantic model for LLM reranking results (moved from loop to module level)
-from pydantic import BaseModel, Field
-
-
+# Pydantic model for LLM reranking results (moved from loop to module level)
 class RerankResult(BaseModel):
     """Structured output for LLM-based reranking verification."""
 
@@ -56,6 +57,7 @@ class SearchAgent:
         db: VectorDB,
         llm: LLMInterface | None = None,
         enable_hybrid: bool = True,
+        enable_graph: bool = True, # Enable GraphRAG
     ) -> None:
         """Initializes the search agent.
 
@@ -64,12 +66,15 @@ class SearchAgent:
             llm: Optional LLM interface for query expansion. If not provided,
                 the default LLM from factory will be used.
             enable_hybrid: Enable hybrid BM25+vector search with RRF fusion.
+            enable_graph: Enable GraphRAG traversal (default True).
         """
         self.db = db
         self.llm = llm or LLMFactory.create_llm()
         self._hybrid_searcher = None
         self._enable_hybrid = enable_hybrid
+        self._enable_graph = enable_graph
         self._council = None
+        self._graph_searcher = None
 
         # Query embedding cache for instant repeat queries (OrderedDict for O(1) LRU)
         from collections import OrderedDict
@@ -98,6 +103,18 @@ class SearchAgent:
         if self._council is None:
             self._council = RerankingCouncil()
         return self._council
+
+    @property
+    def graph_searcher(self):
+        """Lazy-load GraphSearcher."""
+        if self._graph_searcher is None and self._enable_graph:
+            try:
+                from core.retrieval.graph import GraphSearcher
+                self._graph_searcher = GraphSearcher()
+                log("[Search] GraphSearcher initialized - PROD READY")
+            except Exception as e:
+                log(f"[Search] GraphSearcher init failed: {e}")
+        return self._graph_searcher
 
     async def _get_cached_embedding(self, query: str) -> list[float] | None:
         """Get cached query embedding if exists and not expired.
@@ -245,6 +262,7 @@ class SearchAgent:
             A dictionary containing results, parsed query, and metadata.
         """
         log(f"[Search] Scene search: '{query[:100]}...'")
+        results = []
 
         # 1. Parse and expand query
         if use_expansion:
@@ -293,7 +311,7 @@ class SearchAgent:
 
         # 4. Execute scene search with comprehensive filters
         try:
-            results = await self.db.search_scenes(
+            scene_results = await self.db.search_scenes(
                 query=search_text,
                 limit=limit,
                 person_name=resolved_name,
@@ -316,14 +334,96 @@ class SearchAgent:
                 aesthetic_score=parsed.aesthetic_score,
                 search_mode="hybrid",
             )
-            log(f"[Search] Found {len(results)} scene results")
+            results.extend(scene_results)
+            log(f"[Search] Found {len(scene_results)} scene results")
         except Exception as e:
             log(
                 f"[Search] Scene search failed: {e}, falling back to frame search"
             )
-            results = await self._fallback_frame_search(
+            frame_results = await self._fallback_frame_search(
                 parsed, search_text, limit
             )
+            results.extend(frame_results)
+
+
+        # Fallback if no results found (and no exception occurred previously to fill them)
+        if not results:
+            log("[Search] No scene results found. Triggering fallback frame search.")
+            frame_results = await self._fallback_frame_search(parsed, search_text, limit)
+            results.extend(frame_results)
+
+        # 4b. [NEW] Execute Graph Search (Abusing Relations)
+        # If we have Graph enabled, run it and merge results!
+        if self.graph_searcher:
+            try:
+                # Extract potential entity names and actions from parsed query
+                graph_entities = []
+                if parsed.person_name:
+                    graph_entities.append(parsed.person_name)
+                    # Add resolved cluster ID if available
+                    if cluster_id is not None:
+                         graph_entities.append(str(cluster_id))
+
+                # Use entities from parsed query if available
+                if parsed.visual_keywords:
+                     # Heuristic: treat short keywords as potential objects/actions
+                     graph_entities.extend([k for k in parsed.visual_keywords if len(k) > 3])
+
+                graph_actions = parsed.action_keywords if parsed.action_keywords else []
+
+                if graph_entities or graph_actions:
+                    log(f"[Search] Executing Graph Query for entities={graph_entities}, actions={graph_actions}")
+                    graph_results = await self.graph_searcher.search(
+                        query=query,
+                        entities=graph_entities,
+                        actions=graph_actions
+                    )
+
+                    if graph_results:
+                        log(f"[Search] Graph found {len(graph_results)} results. Merging...")
+                        # Merge strategy: Append unique Graph results to Vector results
+                        # Or boost score of vector results that match graph results?
+
+                        existing_ids = {r.get("id") for r in results}
+                        for gr in graph_results:
+                            if gr.get("id") not in existing_ids:
+                                # Convert Graph Result to Standard Result Format
+                                gr_formatted = {
+                                    "id": gr.get("id"), # scene_id
+                                    "score": gr.get("score", 0.9), # High confidence for graph matches
+                                    "type": "scene_graph_match",
+                                    "text": f"Graph Match: {gr.get('description', '')}",
+                                    "start_time": gr.get("start"),
+                                    "end_time": gr.get("end"),
+                                    "video_path": video_path, # Ideally graph returns video path, but we assume single video filter or need to fetch it
+                                    # TODO: Fetch video path for scene ID if missing
+                                }
+                                # Add minimal required fields
+                                if not gr_formatted.get("video_path") and len(results) > 0:
+                                     # Fallback: assume same video if filtering by video
+                                     gr_formatted["video_path"] = results[0]["video_path"]
+
+                                results.append(gr_formatted)
+            except Exception as e:
+                log(f"[Search] Graph search failed: {e}")
+
+        # 5. [NEW] Enrich results with UI Toggle Data (Face BBoxes, Voice Segments)
+
+        # 5. [NEW] Enrich results with UI Toggle Data (Face BBoxes, Voice Segments)
+        # This is strictly visual metadata for the frontend
+        for res in results:
+            try:
+                vid_path = res.get("video_path")
+                start = res.get("start_time")
+                end = res.get("end_time") or (start + 2.0 if start else None)
+
+                if vid_path and start is not None and end is not None:
+                    # Get Face BBoxes
+                    res["face_bboxes"] = self.db.get_faces_in_range(vid_path, start, end)
+                    # Get Voice Segments
+                    res["voice_segments"] = self.db.get_voice_segments_in_range(vid_path, start, end)
+            except Exception as e:
+                log(f"[Search] Failed to enrich result {res.get('id')}: {e}")
 
         # GOLD.md Compliance: Comprehensive Search Reasoning Trace
         reasoning_chain = {

@@ -22,6 +22,7 @@ from sentence_transformers import SentenceTransformer
 from config import settings
 from core.storage.filters import (
     build_filter,
+    media_path_filter,
 )
 from core.utils.hardware import select_embedding_model
 from core.utils.logger import log
@@ -250,7 +251,7 @@ class VectorDB:
         self._expected_dims = {
             self.MEDIA_COLLECTION: self.MEDIA_VECTOR_SIZE,
             self.FACES_COLLECTION: self.FACE_VECTOR_SIZE,
-            self.SCENE_COLLECTION: self.TEXT_DIM,
+            self.SCENES_COLLECTION: self.TEXT_DIM,
             self.SCENELETS_COLLECTION: self.TEXT_DIM,
             self.VOICE_COLLECTION: self.VOICE_VECTOR_SIZE,
         }
@@ -1903,6 +1904,9 @@ class VectorDB:
                 {"id": str(h.id), "score": h.score, **(h.payload or {})}
                 for h in resp
             ]
+        except Exception as e:
+            log(f"search_masklets failed: {e}")
+            return []
     @observe("db_update_masklet_concept")
     def update_masklet_concept(
         self,
@@ -7620,3 +7624,37 @@ class VectorDB:
                     )
         except Exception as e:
             log(f"_merge_face_cluster_frames failed: {e}")
+
+    def get_masklets_for_media(self, media_path: str) -> list[dict]:
+        """Retrieve all masklets (SAM tracks) for a specific video."""
+        try:
+            resp = self.client.scroll(
+                collection_name=self.MASKLETS_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="media_path",
+                            match=models.MatchValue(value=media_path),
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=True,
+                with_vectors=False,
+            )
+            masklets = []
+            for p in resp[0]:
+                payload = p.payload or {}
+                masklets.append({
+                    "id": p.id,
+                    "concept": payload.get("concept"),
+                    "start_time": payload.get("start_time"),
+                    "end_time": payload.get("end_time"),
+                    "confidence": payload.get("confidence", 1.0),
+                    "bbox": payload.get("bbox"),
+                    "frame_idx": payload.get("frame_idx")
+                })
+            return masklets
+        except Exception as e:
+            log(f"get_masklets_for_media failed: {e}")
+            return []

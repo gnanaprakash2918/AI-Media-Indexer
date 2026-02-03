@@ -27,8 +27,15 @@ class VideoProcessor:
     """Handles video visual analysis, including frame extraction, face detection, and VLM analysis."""
 
     def __init__(self, db, pipeline):
+        """Initialize the VideoProcessor.
+
+        Args:
+            db: Database instance.
+            pipeline: Reference to the parent pipeline for helper access.
+        """
         self.db = db
         # We need access to the pipeline for some helpers (extractor, etc.)
+
         # or we should pass them in. Ideally we decouple, but for refactor speed
         # we'll take dependencies.
         # However, looking at usage, we need:

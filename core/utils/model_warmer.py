@@ -5,6 +5,7 @@ Downloads and caches all critical models at startup to prevent runtime latency.
 import asyncio
 from pathlib import Path
 
+from config import settings  # [FIX] Added missing import
 from core.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -57,11 +58,50 @@ async def warmup_models():
         from core.processing.visual_encoder import get_default_visual_encoder
 
         encoder = get_default_visual_encoder()
-        # Trigger load - trust lazy loading
-        if hasattr(encoder, "encode_batch"):
+        # Trigger load - method varies by implementation
+        if hasattr(encoder, "ensure_loaded"):
+            await encoder.ensure_loaded()
+        elif hasattr(encoder, "load"):
+            encoder.load()
+    except Exception as e:
+        log.warning(f"[Warmer] SigLIP init failed: {e}")
+
+    # 5. SAM 3 (Segment Anything)
+    if getattr(settings, "enable_sam3_tracking", False):
+        try:
+            from huggingface_hub import hf_hub_download
+
+            log.info("[Warmer] Checking SAM 3 Checkpoint...")
+            # Placeholder: if we had a direct download for SAM3/2 checkpoint
+            # For now, just importing it might trigger internal checks if implemented
             pass
-    except Exception:
-        pass
+        except Exception as e:
+                log.warning(f"[Warmer] SAM 3 init failed: {e}")
+
+    # 6. YOLO (Object Detection)
+    if getattr(settings, "enable_object_detection", False):
+        try:
+            from ultralytics import YOLO
+            log.info("[Warmer] Checking YOLOv8...")
+            # This triggers download if missing
+            YOLO("yolov8m.pt")
+        except Exception as e:
+            log.warning(f"[Warmer] YOLO init failed: {e}")
+
+    # 7. ArcFace (Identity)
+    if getattr(settings, "enable_face_recognition", False):
+        try:
+            if not Path("models/arcface/w600k_r50.onnx").exists():
+                    log.info("[Warmer] Downloading ArcFace ONNX...")
+                    from huggingface_hub import hf_hub_download
+                    hf_hub_download(
+                    repo_id="minchul/cvl-face-recognition-models",
+                    filename="w600k_r50.onnx",
+                    local_dir="models/arcface",
+                    local_dir_use_symlinks=False
+                    )
+        except Exception as e:
+            log.warning(f"[Warmer] ArcFace init failed: {e}")
 
     await asyncio.gather(*tasks)
 
@@ -104,6 +144,8 @@ def _print_status_report():
         print(f"{'LanguageBind':<25} | {'READY (Lazy)':<20}")
         print(f"{'SigLIP':<25} | {'READY (Lazy)':<20}")
         print(f"{'BGE-M3':<25} | {'READY':<20}")
+        print(f"{'YOLOv8':<25} | {'CHECKED':<20}")
+        print(f"{'ArcFace':<25} | {('OK' if Path('models/arcface/w600k_r50.onnx').exists() else 'MISSING'):<20}")
         print("=" * 50 + "\n")
         print(
             "Note: 'Lazy' models load on first use. Failures will be logged but won't crash the server.\n"

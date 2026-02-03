@@ -116,6 +116,7 @@ dependencies = [
     { name = "hf-transfer" },
     { name = "hf-xet" },
     { name = "httpx" },
+    { name = "hydra-core" },
     { name = "imagehash" },
     { name = "insightface" },
     { name = "instructor" },
@@ -126,6 +127,7 @@ dependencies = [
     { name = "loguru" },
     { name = "mcp" },
     { name = "ml-dtypes" },
+    { name = "neo4j" },
     { name = "ninja" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },
@@ -137,6 +139,7 @@ dependencies = [
     { name = "opencv-python-headless" },
     { name = "packaging" },
     { name = "paddleocr" },
+    { name = "paddlepaddle" },
     { name = "pillow" },
     { name = "psutil" },
     { name = "pyannote-audio" },
@@ -206,6 +209,7 @@ requires-dist = [
     { name = "hf-transfer", specifier = ">=0.1.0" },
     { name = "hf-xet", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "imagehash", specifier = ">=4.3.0" },
     { name = "insightface", specifier = ">=0.7.3" },
     { name = "instructor", specifier = ">=1.13.0" },
@@ -218,6 +222,7 @@ requires-dist = [
     { name = "ml-dtypes", specifier = ">=0.4.0,<0.6.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10.0" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'indic'", specifier = ">=1.23.0" },
+    { name = "neo4j", specifier = ">=6.1.0" },
     { name = "ninja", specifier = ">=1.11.0" },
     { name = "numpy", specifier = ">=1.26.0,<2.0.0" },
     { name = "nvidia-ml-py", specifier = ">=12.535.0" },
@@ -229,6 +234,7 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = ">=4.8.0" },
     { name = "packaging" },
     { name = "paddleocr", specifier = ">=2.9.1" },
+    { name = "paddlepaddle", specifier = ">=3.3.0" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "protobuf", marker = "extra == 'indic'" },
     { name = "psutil", specifier = ">=5.9.0" },
@@ -4265,6 +4271,18 @@ asr = [
 ]
 
 [[package]]
+name = "neo4j"
+version = "6.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/01/d6ce65e4647f6cb2b9cca3b813978f7329b54b4e36660aaec1ddf0ccce7a/neo4j-6.1.0.tar.gz", hash = "sha256:b5dde8c0d8481e7b6ae3733569d990dd3e5befdc5d452f531ad1884ed3500b84", size = 239629, upload-time = "2026-01-12T11:27:34.777Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/5c/ee71e2dd955045425ef44283f40ba1da67673cf06404916ca2950ac0cd39/neo4j-6.1.0-py3-none-any.whl", hash = "sha256:3bd93941f3a3559af197031157220af9fd71f4f93a311db687bd69ffa417b67d", size = 325326, upload-time = "2026-01-12T11:27:33.196Z" },
+]
+
+[[package]]
 name = "networkx"
 version = "3.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -4784,11 +4802,14 @@ wheels = [
 
 [[package]]
 name = "opt-einsum"
-version = "3.4.0"
+version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8c/b9/2ac072041e899a52f20cf9510850ff58295003aa75525e58343591b0cbfb/opt_einsum-3.4.0.tar.gz", hash = "sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac", size = 63004, upload-time = "2024-09-26T14:33:24.483Z" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7d/bf/9257e53a0e7715bc1127e15063e831f076723c6cd60985333a1c18878fb8/opt_einsum-3.3.0.tar.gz", hash = "sha256:59f6475f77bbc37dcf7cd748519c0ec60722e91e63ca114e68821c0c54a46549", size = 73951, upload-time = "2020-07-19T22:40:32.141Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl", hash = "sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd", size = 71932, upload-time = "2024-09-26T14:33:23.039Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/19/404708a7e54ad2798907210462fd950c3442ea51acc8790f3da48d2bee8b/opt_einsum-3.3.0-py3-none-any.whl", hash = "sha256:2455e59e3947d3c275477df7f5205b30635e266fe6dc300e3d9f9646bfcea147", size = 65486, upload-time = "2020-07-19T22:40:30.301Z" },
 ]
 
 [[package]]
@@ -4980,6 +5001,34 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/11/db/b0e4c23e4ae471edb2f62b8f1e848d089ae8b390e693c12f04ed94435561/paddleocr-2.10.0.tar.gz", hash = "sha256:c0646aae769c957df698558e9264c94113ee60244a4ac0c46dfcd2324d215df4", size = 2221836, upload-time = "2025-03-07T07:04:29.4Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f5/b8/b5ee34d6da98b69ae5483f5fb9170a4d83b998ad38462dd31dada007400b/paddleocr-2.10.0-py3-none-any.whl", hash = "sha256:38df818d87a00af854cbfd14e33615edc3c4fa2caeb662149d51e6f2e212013f", size = 2364999, upload-time = "2025-03-07T07:04:27.813Z" },
+]
+
+[[package]]
+name = "paddlepaddle"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy" },
+    { name = "opt-einsum" },
+    { name = "pillow" },
+    { name = "protobuf" },
+    { name = "safetensors" },
+    { name = "setuptools", marker = "python_full_version >= '3.12'" },
+    { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/ac/20f5107136e903430a0a405c395d68a07a44d29002cf5af6ed7d9a46dc63/paddlepaddle-3.3.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:d7829960c98fdff2fe9be8fe5500e43a6365e31a5f1025bd1108f636361e0f1a", size = 103656753, upload-time = "2026-01-13T09:14:12.305Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/d5/ce19b6c204e6180362d31baf910ed7240d488ea4e08b0f34baff55a5f7c3/paddlepaddle-3.3.0-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:2c8507b5cec35286e05ba67100edcb4e528bdd80be03d40bbac2a1396e03fc70", size = 193697833, upload-time = "2026-01-13T08:54:12.398Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/4b/7aa9eed9c9cfcc882d7ba745aa13d3e7749abedaaebe1535dfb3815b45e4/paddlepaddle-3.3.0-cp310-cp310-win_amd64.whl", hash = "sha256:87a9fe86bd6f5932f09f14c2326dd1a4896bba1caac999cfcd38b93f5ead5027", size = 104257759, upload-time = "2026-01-13T09:32:17.534Z" },
+    { url = "https://files.pythonhosted.org/packages/89/a3/e137deefdde591291d971f082e3089561460934e2844ececd19bb13a8099/paddlepaddle-3.3.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:ccc6d259c75f91e0baded01f89f35d64c1bbd84477d81461bd3f6c5b7abc1918", size = 103662106, upload-time = "2026-01-13T09:16:40.689Z" },
+    { url = "https://files.pythonhosted.org/packages/64/1b/2af5dfe38f7b062ebcc89abca798288ece19dff6aaf51290bda1840ce809/paddlepaddle-3.3.0-cp311-cp311-manylinux1_x86_64.whl", hash = "sha256:a4f2e0595e827c179b4fff4278fb41a24f4abe5927ffd5efb1ace26a916145f2", size = 193703893, upload-time = "2026-01-13T08:58:01.075Z" },
+    { url = "https://files.pythonhosted.org/packages/53/62/79dd3233fd28bc7950bcabf57ee32eeb88d6c758a35111dd25af6a6fe216/paddlepaddle-3.3.0-cp311-cp311-win_amd64.whl", hash = "sha256:ad1b946dd4ea035c268dd6c5468bac9cad15baf81f2f6bd49e803858c041f4da", size = 104266905, upload-time = "2026-01-13T09:34:34.528Z" },
+    { url = "https://files.pythonhosted.org/packages/22/07/1aacbce9ad8989c621d4cbd91945dd1d6ed01b315f46f925fb4bbcabb971/paddlepaddle-3.3.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:17aab6b90d8cef2ccf893f4be82cf05e906e21fe86c40a34fea6701937d7782b", size = 103701539, upload-time = "2026-01-13T09:19:10.174Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/ad/93342171c84f95331b2823c57b77de5aa80b13079927f3fdee5eee459f8b/paddlepaddle-3.3.0-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:3ee996ee2bf2d2b33e9865876fb82ff03cb7bb2246cc5aa0027edd6a9a0640eb", size = 193740207, upload-time = "2026-01-13T09:01:48.188Z" },
+    { url = "https://files.pythonhosted.org/packages/12/52/632b1013923a67cbcc778e6e1a308f3848f699f80024a737940e5e17b52a/paddlepaddle-3.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:f19a6a0728103b6b6b6b85726ac39fb77277d72ffff08d66ca3a8a97f0759a02", size = 104281149, upload-time = "2026-01-13T09:36:51.506Z" },
 ]
 
 [[package]]
@@ -6626,7 +6675,7 @@ wheels = [
 [[package]]
 name = "sam3"
 version = "0.1.0"
-source = { git = "https://github.com/facebookresearch/sam3.git#11dec2936de97f2857c1f76b66d982d5a001155d" }
+source = { git = "https://github.com/facebookresearch/sam3.git#99d02f28c8d34610ab35559b72642b01f10fdb1e" }
 dependencies = [
     { name = "ftfy" },
     { name = "huggingface-hub" },

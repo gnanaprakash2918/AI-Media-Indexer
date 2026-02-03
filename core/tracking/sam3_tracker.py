@@ -28,8 +28,8 @@ log = get_logger(__name__)
 # User requested robustness here.
 try:
     # 1. Try SAM 3 (Official / Fork)
-    from sam3.video_predictor import SAM3VideoPredictor
     from sam3 import build_sam3_video_predictor
+    from sam3.video_predictor import SAM3VideoPredictor
     SAM_NAMESPACE = "sam3"
 except ImportError:
     try:

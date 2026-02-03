@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from core.storage.db import get_vector_db
+from core.storage.db import VectorDB
 from core.tracking.sam3_tracker import SAM3Tracker
 from core.utils.logger import get_logger
 
@@ -60,7 +60,7 @@ async def _run_tracking_task(req: TagObjectRequest):
     """Background worker to run SAM 3 tracking and upsert masklets."""
     log.info(f"[Tracking] Starting task for {req.video_path}...")
 
-    db = get_vector_db()
+    db = VectorDB()
 
     try:
         segments = []

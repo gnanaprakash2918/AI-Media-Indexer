@@ -538,7 +538,7 @@ class Settings(BaseSettings):
         default=1024,
         description="Dimension of video embeddings (InternVideo/LanguageBind projected)",
     )
-    
+
     # Video Model Selection
     enable_internvideo: bool = Field(
         default=True,
@@ -740,7 +740,7 @@ class Settings(BaseSettings):
         default=5.0,
         description="CLAP window duration in seconds for audio event detection",
     )
-    
+
     clap_stride_seconds: float = Field(
         default=2.5,
         description="CLAP stride in seconds (overlap between windows)",
@@ -757,7 +757,7 @@ class Settings(BaseSettings):
         default=5.0,
         description="Skip results within this window of a previous result (seconds)",
     )
-    
+
     context_expansion_seconds: float = Field(
         default=3.5,
         description="Expand result timestamps by ±this amount for context (seconds)",

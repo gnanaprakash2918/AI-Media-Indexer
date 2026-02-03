@@ -580,7 +580,8 @@ if ($NukeQdrant) {
             "media_agent_clickhouse", 
             "media_agent_langfuse", 
             "media_agent_langfuse_worker", 
-            "media_agent_createbuckets"
+            "media_agent_createbuckets",
+            "aimI_knowledge_graph"
         )
         foreach ($c in $containers) {
             docker rm -f $c 2>&1 | Out-Null
@@ -733,6 +734,9 @@ if (-not $SkipDocker) {
     
     # Stop all containers
     # Use Invoke-Expression to handle the command string with arguments correctly
+    # Merging graph compose file
+    $dockerComposeCmd = "$dockerComposeCmd -f docker-compose.yaml -f docker-compose.graph.yaml"
+    
     Invoke-Expression "$dockerComposeCmd down --remove-orphans" 2>&1 | Out-Null
     
     Write-Host "  Docker containers stopped and orphans removed" -ForegroundColor Green
@@ -808,22 +812,18 @@ if (-not $SkipDocker) {
     Write-Host "  Starting containers with $dockerComposeCmd..." -ForegroundColor Gray
     
     if ($Distributed) {
-         # Ensure Redis is up
+         # Ensure Redis and Neo4j are up
          if ($dockerComposeCmd -eq "docker-compose") {
-             Invoke-Expression "$dockerComposeCmd up -d qdrant redis"
+             Invoke-Expression "$dockerComposeCmd up -d qdrant redis neo4j"
          } else {
-             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis"
+             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
          }
     } else {
-         # Standard Start - Just Qdrant for now? Or everything?
-         # Original script just did 'up' for whatever is in compose?
-         # No, wait. Original script didn't select services, it did 'up'. 
-         # But usually we only need Qdrant minimal.
-         # Let's start Qdrant by default.
+         # Start Qdrant and Neo4j
          if ($dockerComposeCmd -eq "docker-compose") {
-             Invoke-Expression "$dockerComposeCmd up -d qdrant"
+             Invoke-Expression "$dockerComposeCmd up -d qdrant neo4j"
          } else {
-             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant"
+             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant neo4j"
          }
     }
 
@@ -841,15 +841,15 @@ if (-not $SkipDocker) {
         Write-Host "  [Recovery] Retrying start..." -ForegroundColor Gray
         if ($Distributed) {
              if ($dockerComposeCmd -eq "docker-compose") {
-                 Invoke-Expression "$dockerComposeCmd up -d qdrant redis"
+                 Invoke-Expression "$dockerComposeCmd up -d qdrant redis neo4j"
              } else {
-                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis"
+                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
              }
         } else {
              if ($dockerComposeCmd -eq "docker-compose") {
-                 Invoke-Expression "$dockerComposeCmd up -d qdrant"
+                 Invoke-Expression "$dockerComposeCmd up -d qdrant neo4j"
              } else {
-                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant"
+                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant neo4j"
              }
         }
         

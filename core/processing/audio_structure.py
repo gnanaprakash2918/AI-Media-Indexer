@@ -277,6 +277,7 @@ class MusicStructureAnalyzer:
         spectral_contrast = librosa.feature.spectral_contrast(
             y=y, sr=sr, hop_length=self.hop_length
         )
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=self.hop_length)
 
         # Compute self-similarity matrix for structure detection
 
