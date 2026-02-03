@@ -58,7 +58,7 @@ import {
 
 interface VoiceSegment {
   id: string;
-  media_path: string;
+  media_path: string | null;
   start: number;
   end: number;
   speaker_label: string;
@@ -274,7 +274,7 @@ export const Voices: React.FC = () => {
       <TableCell
         sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}
       >
-        {seg.media_path.split(/[/\\]/).pop()}
+        {seg.media_path ? seg.media_path.split(/[/\\]/).pop() : 'Unknown Source'}
       </TableCell>
       <TableCell>
         {seg.start.toFixed(2)}s - {seg.end.toFixed(2)}s
@@ -329,7 +329,7 @@ export const Voices: React.FC = () => {
           </IconButton>
         </Tooltip>
       </TableCell>
-    </TableRow>
+    </TableRow >
   );
 
   return (
