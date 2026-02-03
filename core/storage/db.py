@@ -247,6 +247,36 @@ class VectorDB:
         self._cluster_id_lock = threading.Lock()
         self._cluster_id_counter = 0
 
+        # Expected dimensions for validation (Issue 9)
+        self._expected_dims = {
+            self.MEDIA_COLLECTION: self.MEDIA_VECTOR_SIZE,
+            self.FACES_COLLECTION: self.FACE_VECTOR_SIZE,
+            self.SCENE_COLLECTION: self.TEXT_DIM,
+            self.SCENELETS_COLLECTION: self.TEXT_DIM,
+            self.VOICE_COLLECTION: self.VOICE_VECTOR_SIZE,
+        }
+
+    def _validate_vector_dim(self, vector: list | None, collection: str, context: str = "") -> bool:
+        """Validate vector dimension before insert (Issue 9).
+        
+        Returns True if valid, False if invalid. Logs warning on mismatch.
+        """
+        if vector is None:
+            return True  # None vectors are OK (some collections allow payload-only)
+        
+        expected = self._expected_dims.get(collection)
+        if expected is None:
+            return True  # Unknown collection, skip validation
+        
+        actual = len(vector)
+        if actual != expected:
+            log(
+                f"[DIM MISMATCH] {collection}: expected {expected}d, got {actual}d. {context}",
+                level="ERROR"
+            )
+            return False
+        return True
+
         # Embedding cache for repeated queries
         self._embedding_cache = {}
         self._embedding_cache_max_size = 1000

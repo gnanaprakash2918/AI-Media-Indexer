@@ -214,18 +214,8 @@ class SearchAgent:
         Returns:
             List of model names that contributed to the search.
         """
-        model_map = {
-            "scenes": [
-                "E5-Large",
-                "CLIP/SigLIP",
-                "InternVideo",
-                "LanguageBind",
-            ],
-            "frames": ["E5-Large", "CLIP/SigLIP"],
-            "scenelets": ["E5-Large"],
-            "voice": ["E5-Large", "Whisper"],
-            "audio_events": ["E5-Large", "CLAP"],
-        }
+        # Use config model map (Issue 3 fix)
+        model_map = settings.modality_model_map
         models = set()
         for modality in modalities:
             models.update(model_map.get(modality, []))

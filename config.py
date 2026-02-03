@@ -732,6 +732,29 @@ class Settings(BaseSettings):
         description="List of Indic language codes for AI4Bharat ASR",
     )
 
+    # --- Search Deduplication ---
+    deduplication_window_seconds: float = Field(
+        default=5.0,
+        description="Skip results within this window of a previous result (seconds)",
+    )
+    
+    context_expansion_seconds: float = Field(
+        default=3.5,
+        description="Expand result timestamps by ±this amount for context (seconds)",
+    )
+
+    # --- Model Mapping (for search result attribution) ---
+    modality_model_map: dict[str, list[str]] = Field(
+        default={
+            "scenes": ["BGE-M3", "CLIP/SigLIP", "InternVideo", "LanguageBind"],
+            "frames": ["BGE-M3", "CLIP/SigLIP"],
+            "scenelets": ["BGE-M3"],
+            "voice": ["BGE-M3", "Whisper"],
+            "audio_events": ["BGE-M3", "CLAP"],
+        },
+        description="Map of modality sources to AI models used for attribution",
+    )
+
     # --- Search Feature Flags (Master Switches) ---
     enable_deep_research: bool = Field(
         default=True,

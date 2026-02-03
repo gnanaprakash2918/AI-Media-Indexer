@@ -359,10 +359,10 @@ async def search(
                 occurrence_tracker[video]["count"] += 1
                 occurrence_tracker[video]["timestamps"].append(ts)
 
-            # Deduplication: Skip if within 5 seconds
+            # Deduplication: Skip if within configured window
             if video in seen_timestamps:
                 if any(
-                    abs(ts - existing) < 5.0
+                    abs(ts - existing) < settings.deduplication_window_seconds
                     for existing in seen_timestamps[video]
                 ):
                     continue
@@ -372,9 +372,9 @@ async def search(
             if video is not None:
                 seen_timestamps[video].append(ts)
 
-            # Expand to 7-second context
-            start_context = max(0.0, ts - 3.5)
-            end_context = ts + 3.5
+            # Expand to context window (configurable)
+            start_context = max(0.0, ts - settings.context_expansion_seconds)
+            end_context = ts + settings.context_expansion_seconds
 
             hit["result_type"] = "visual"
             hit["start"] = start_context
