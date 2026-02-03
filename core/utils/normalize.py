@@ -3,6 +3,8 @@
 from typing import Any
 from urllib.parse import quote
 
+from config import settings
+
 
 def normalize_timestamp(result: dict[str, Any]) -> float:
     """Extract timestamp from result with fallback chain."""
@@ -14,13 +16,13 @@ def normalize_timestamp(result: dict[str, Any]) -> float:
     )
 
 
-def normalize_end_time(result: dict[str, Any], default_duration: float = 5.0) -> float:
-    """Extract end time from result."""
+def normalize_end_time(result: dict[str, Any]) -> float:
+    """Extract end time from result, using configurable default duration."""
     start = normalize_timestamp(result)
     return float(
         result.get("end_time")
         or result.get("end")
-        or (start + default_duration)
+        or (start + settings.search_default_duration)
     )
 
 
@@ -30,7 +32,7 @@ def normalize_media_path(result: dict[str, Any]) -> str:
 
 
 def add_media_urls(result: dict[str, Any], base_url: str = "") -> dict[str, Any]:
-    """Add thumbnail and playback URLs to result."""
+    """Add thumbnail and playback URLs to result with configurable padding."""
     media = normalize_media_path(result)
     ts = normalize_timestamp(result)
     end_ts = normalize_end_time(result)
@@ -40,14 +42,19 @@ def add_media_urls(result: dict[str, Any], base_url: str = "") -> dict[str, Any]
 
     safe_path = quote(str(media))
 
+    # Use configurable padding from settings
+    display_start = max(0, ts - settings.search_padding_before)
+    display_end = end_ts + settings.search_padding_after
+
     result["thumbnail_url"] = f"{base_url}/media/thumbnail?path={safe_path}&time={ts}"
-    result["playback_url"] = f"{base_url}/media?path={safe_path}#t={max(0, ts - 3)}"
-    result["display_start"] = max(0, ts - 3)
-    result["display_end"] = end_ts + 3
+    result["playback_url"] = f"{base_url}/media?path={safe_path}#t={display_start}"
+    result["display_start"] = display_start
+    result["display_end"] = display_end
     result["match_start"] = ts
     result["match_end"] = end_ts
 
     return result
+
 
 
 def normalize_result(result: dict[str, Any], base_url: str = "") -> dict[str, Any]:

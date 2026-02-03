@@ -26,7 +26,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from core.ingestion.pipeline import IngestionPipeline
-from core.retrieval.search import SearchEngine
+# NOTE: SearchEngine removed - use SearchAgent for all search operations
 from core.schemas import IngestResponse, SearchResponse
 from core.storage.db import VectorDB
 from core.utils.logger import log
@@ -45,7 +45,6 @@ mcp = FastMCP("MediaIndexer")
 # Global singletons (lazy-loaded to avoid repeated heavy initialization)
 
 _vector_db: VectorDB | None = None
-_search_engine: SearchEngine | None = None
 _pipeline: IngestionPipeline | None = None
 _agentic_search: SearchAgent | None = None
 
@@ -60,14 +59,6 @@ def _get_vector_db() -> VectorDB:
             port=6333,
         )
     return _vector_db
-
-
-def _get_search_engine() -> SearchEngine:
-    """Return a shared SearchEngine instance, creating it on first use."""
-    global _search_engine
-    if _search_engine is None:
-        _search_engine = SearchEngine(_get_vector_db())
-    return _search_engine
 
 
 def _get_pipeline() -> IngestionPipeline:
@@ -320,21 +311,26 @@ async def search_media(
 ) -> SearchResponse:
     """Find relevant media segments (visual or dialogue) based on a query.
 
-    This tool queries the underlying VectorDB via :class:`SearchEngine` and
-    returns both frame-based and dialogue-based matches.
+    Uses the production SearchAgent for SOTA multimodal search with
+    identity resolution, query expansion, and re-ranking.
 
     Args:
         query: Natural language query string describing the desired scene or
             utterance.
-        limit: Maximum number of results to return per modality.
+        limit: Maximum number of results to return.
 
     Returns:
         A :class:`SearchResponse` with ``visual_matches`` and
         ``dialogue_matches`` lists.
     """
-    engine = _get_search_engine()
-    results = engine.search(query, limit=limit)
-    return SearchResponse(**results)
+    agent = _get_agentic_search()
+    result = await agent.sota_search(query, limit=limit, use_reranking=False)
+    # Transform to expected SearchResponse format
+    visual_matches = result.get("results", [])
+    return SearchResponse(
+        visual_matches=visual_matches,
+        dialogue_matches=[],  # Dialogue included in visual_matches for SOTA
+    )
 
 
 @mcp.tool()

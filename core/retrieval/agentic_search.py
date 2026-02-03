@@ -677,16 +677,16 @@ class SearchAgent:
                 # Apply penalty for missing constraints
                 missing_penalty = len(result.missing) * 0.1
                 adjusted_score = max(0.0, result.match_score - missing_penalty)
-
                 # Merge LLM verification with candidate
                 candidate["llm_score"] = adjusted_score
                 candidate["llm_reasoning"] = result.reasoning
                 candidate["constraints_satisfied"] = result.constraints_checked
                 candidate["constraints_missing"] = result.missing
-                # Weight: 30% original vector score, 70% LLM verification
+                # Weight: configurable vector/LLM balance from settings
+                from config import settings
                 candidate["combined_score"] = (
-                    candidate.get("score", 0) * 0.3  # Vector similarity
-                    + adjusted_score * 0.7  # LLM verification (higher weight)
+                    candidate.get("score", 0) * settings.rerank_vector_weight
+                    + adjusted_score * settings.rerank_llm_weight
                 )
                 reranked.append(candidate)
 
@@ -903,14 +903,15 @@ class SearchAgent:
             """Compute modality weights based on detected query intent."""
             query_lower = query.lower()
 
-            # Base weights (sum = 1.0)
+            # Base weights from config (sum = 1.0)
+            from config import settings
             weights = {
-                "scenes": 0.20,
-                "frames": 0.18,
-                "scenelets": 0.15,
-                "voice": 0.15,
-                "dialogue": 0.17,
-                "audio_events": 0.15,
+                "scenes": settings.modality_weight_scenes,
+                "frames": settings.modality_weight_frames,
+                "scenelets": settings.modality_weight_scenelets,
+                "voice": settings.modality_weight_voice,
+                "dialogue": settings.modality_weight_dialogue,
+                "audio_events": settings.modality_weight_audio,
             }
 
             # Intent detection patterns
@@ -989,14 +990,46 @@ class SearchAgent:
                 "hitting",
             }
 
-            # Detect intents
-            query_words = set(query_lower.split())
+            # SEMANTIC INTENT CLASSIFICATION (replaces brittle keyword matching)
+            # Uses embedding similarity instead of exact keyword matching
+            # This works for ANY query, not just predefined words
+            import numpy as np
 
-            visual_score = len(query_words & visual_keywords)
-            audio_score = len(query_words & audio_keywords)
-            dialogue_score = len(query_words & dialogue_keywords)
-            identity_score = len(query_words & identity_keywords)
-            action_score = len(query_words & action_keywords)
+            # Intent anchor phrases (represent each intent type semantically)
+            INTENT_ANCHORS = {
+                "visual": "person wearing clothes standing near object scene visual appearance",
+                "audio": "music sound effect cheering clapping singing playing loud background noise",
+                "dialogue": "said speaking told asking conversation talking quote transcript words",
+                "identity": "who is the person face speaker voice recognize name",
+                "action": "running jumping dancing fighting driving kicking throwing movement activity",
+            }
+
+            # Encode query and anchors for semantic similarity
+            try:
+                from core.storage.db import VectorDB
+                # Use singleton encoder if available
+                _db = getattr(self, "_db", None) or VectorDB()
+                query_vec = np.array(_db.encode_text(query_lower))
+                
+                intent_scores = {}
+                for intent_name, anchor_text in INTENT_ANCHORS.items():
+                    anchor_vec = np.array(_db.encode_text(anchor_text))
+                    # Cosine similarity
+                    similarity = np.dot(query_vec, anchor_vec) / (
+                        np.linalg.norm(query_vec) * np.linalg.norm(anchor_vec) + 1e-8
+                    )
+                    intent_scores[intent_name] = float(similarity)
+                
+                # Map to canonical score names
+                visual_score = max(0, intent_scores.get("visual", 0) - 0.3) * 10
+                audio_score = max(0, intent_scores.get("audio", 0) - 0.3) * 10
+                dialogue_score = max(0, intent_scores.get("dialogue", 0) - 0.3) * 10
+                identity_score = max(0, intent_scores.get("identity", 0) - 0.3) * 10
+                action_score = max(0, intent_scores.get("action", 0) - 0.3) * 10
+            except Exception:
+                # Fallback to zero scores if encoding fails
+                visual_score = audio_score = dialogue_score = identity_score = action_score = 0
+
 
             # Also check parsed query for entities (visual) and person names (identity)
             if parsed:
@@ -1146,7 +1179,9 @@ class SearchAgent:
 
         weights = _compute_adaptive_weights(search_text, parsed)
 
-        k = 60
+        # Use configurable RRF k from settings
+        from config import settings
+        k = settings.rrf_constant
 
         for modality, results in all_results.items():
             weight = weights.get(modality, 0.1)
@@ -1168,10 +1203,8 @@ class SearchAgent:
                     or 0
                 )
 
-                # Round timestamp to 4s window for fuzzy matching across modalities
-                # Research: 10-20s for high-level retrieval, 3-4s for fine-grained moment localization
-                # 4s balances typical scene duration (2-10s) with cross-modal alignment needs
-                time_bucket = int(float(start_time) / 4) * 4
+                # Use configurable timestamp bucket from settings
+                time_bucket = int(float(start_time) / settings.timestamp_bucket_seconds) * int(settings.timestamp_bucket_seconds)
                 fusion_key = f"{video_path}:{time_bucket}"
 
                 rrf_score = 1.0 / (k + rank)

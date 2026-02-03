@@ -324,6 +324,58 @@ class Settings(BaseSettings):
         description="Min confidence to apply query expansion (0.7=70%)",
     )
 
+    # --- Search Fusion Configuration (PRODUCTION-TUNABLE) ---
+    # These values were previously hardcoded in agentic_search.py
+    rrf_constant: int = Field(
+        default=60,
+        description="RRF k parameter. Higher = less aggressive reranking (60=default)",
+    )
+    timestamp_bucket_seconds: float = Field(
+        default=4.0,
+        description="Time bucket for multimodal fusion (4s balances 2-10s scenes)",
+    )
+    rerank_vector_weight: float = Field(
+        default=0.3,
+        description="Weight for vector similarity in final score (0.3=30%)",
+    )
+    rerank_llm_weight: float = Field(
+        default=0.7,
+        description="Weight for LLM verification in final score (0.7=70%)",
+    )
+    # Base modality weights (sum should be ~1.0)
+    modality_weight_scenes: float = Field(
+        default=0.20, description="Weight for scene-level search"
+    )
+    modality_weight_frames: float = Field(
+        default=0.18, description="Weight for frame-level search"
+    )
+    modality_weight_scenelets: float = Field(
+        default=0.15, description="Weight for action scenelets"
+    )
+    modality_weight_voice: float = Field(
+        default=0.15, description="Weight for voice/speaker search"
+    )
+    modality_weight_dialogue: float = Field(
+        default=0.17, description="Weight for dialogue transcript search"
+    )
+    modality_weight_audio: float = Field(
+        default=0.15, description="Weight for audio event search"
+    )
+
+    # Search result display configuration
+    search_default_duration: float = Field(
+        default=5.0,
+        description="Default clip duration when end_time is missing (seconds)",
+    )
+    search_padding_before: float = Field(
+        default=3.0,
+        description="Seconds to add before match start for context",
+    )
+    search_padding_after: float = Field(
+        default=3.0,
+        description="Seconds to add after match end for context",
+    )
+
     # Frame Deduplication
     frame_dedup_threshold: float = Field(
         default=0.98,

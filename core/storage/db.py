@@ -1559,10 +1559,18 @@ class VectorDB:
         points = []
         for frame in frames:
             payload = frame.get("payload", {}) or {}
+            ts = frame.get("timestamp", 0.0)
+            # Add end_time and duration for proper clip playback
+            end_time = frame.get("end_time") or ts + settings.search_default_duration
+            duration = frame.get("duration") or settings.search_default_duration
             payload.update(
                 {
                     "video_path": frame.get("video_path", ""),
-                    "timestamp": frame.get("timestamp", 0.0),
+                    "media_path": frame.get("video_path", ""),
+                    "timestamp": ts,
+                    "start_time": ts,
+                    "end_time": end_time,
+                    "duration": duration,
                     "action": frame.get("action"),
                     "dialogue": frame.get("dialogue"),
                     "ocr_text": frame.get("ocr_text"),
