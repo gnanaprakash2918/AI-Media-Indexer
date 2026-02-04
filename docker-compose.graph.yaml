@@ -1,4 +1,4 @@
-version: "3.8"
+# Neo4j Knowledge Graph for GraphRAG
 
 services:
   neo4j:
@@ -21,6 +21,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s

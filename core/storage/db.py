@@ -239,6 +239,15 @@ class VectorDB:
         log(
             f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
         )
+
+        # Embedding cache for repeated queries (LRU-like)
+        self._embedding_cache: dict = {}
+        self._embedding_cache_max_size = 1000
+
+        # Load Visual Encoder for cross-modal search (Text -> Visual Embedding)
+        from core.processing.visual_encoder import get_default_visual_encoder
+        self.visual_encoder = get_default_visual_encoder()
+
         self._ensure_collections()  # This is sync and should stay sync as it's in __init__
 
         # Thread-safe cluster ID counter (uses timestamp + counter for uniqueness)
@@ -276,15 +285,6 @@ class VectorDB:
             )
             return False
         return True
-
-        # Embedding cache for repeated queries
-        self._embedding_cache = {}
-        self._embedding_cache_max_size = 1000
-
-        # Load Visual Encoder for cross-modal search (Text -> Visual Embedding)
-        from core.processing.visual_encoder import get_default_visual_encoder
-
-        self.visual_encoder = get_default_visual_encoder()
 
     def get_next_voice_cluster_id(self) -> int:
         """Generate a unique voice cluster ID.
@@ -507,12 +507,28 @@ class VectorDB:
                 f"Lazy loading encoder: {self.MODEL_NAME} ({vram_gb}GB VRAM requested)..."
             )
 
+            # NOTE: Don't pass cleanup_fn here - we want the encoder to stay loaded!
+            # The cleanup_fn is registered separately so it only runs during force_release_all
             async with RESOURCE_ARBITER.acquire(
                 "embedding_encoder", vram_gb=vram_gb, job_id=job_id
             ):
                 self.encoder = self._load_encoder()
+            
+            # Register cleanup for emergency unloading only
+            RESOURCE_ARBITER.register_model("embedding_encoder", self.unload_encoder)
 
         self._encoder_last_used = time.time()
+
+    def unload_encoder(self) -> None:
+        """Unloads the encoder model from memory to free VRAM."""
+        if self.encoder is None:
+            return
+        log("Unloading text encoder to free VRAM")
+        self.encoder = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        import gc
+        gc.collect()
 
     def unload_encoder_if_idle(self) -> bool:
         """Unloads the encoder model from memory if it has exceeded idle time.
@@ -528,12 +544,7 @@ class VectorDB:
         idle_time = time.time() - self._encoder_last_used
         if idle_time > self._idle_unload_seconds:
             log(f"Unloading encoder after {idle_time:.0f}s idle")
-            self.encoder = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            import gc
-
-            gc.collect()
+            self.unload_encoder()
             return True
         return False
 
@@ -569,8 +580,7 @@ class VectorDB:
         else:
             input_texts = list(texts)
 
-        # Check Cache
-        cached_embeddings = []
+        # Check Cache and compute indices
         indices_to_compute = []
 
         # Keys involve text + is_query + model_name to be safe
@@ -677,66 +687,6 @@ class VectorDB:
         """Encodes a single text string."""
         return (await self.encode_texts(text, is_query=True))[0]
 
-    def insert_masklet(
-        self,
-        media_path: str,
-        concept: str,
-        start_time: float,
-        end_time: float,
-        confidence: float = 1.0,
-        payload: dict | None = None,
-    ) -> None:
-        """Inserts a visual grounding masklet into the database.
-
-        Args:
-            media_path: Path to the media file.
-            concept: Textual description of the concept (e.g. "red car").
-            start_time: Start timestamp of the appearance.
-            end_time: End timestamp.
-            confidence: Detection confidence.
-            payload: Additional metadata (bbox, frame_idx, resolution).
-        """
-        import uuid
-
-        point_id = str(uuid.uuid4())
-        full_payload = {
-            "media_path": media_path,
-            "concept": concept,
-            "start": start_time,
-            "end": end_time,
-            "confidence": confidence,
-            "type": "masklet",
-            **(payload or {}),
-        }
-
-        # Ensure collection exists (lazy check)
-        # In prod, this should be in ensure_collections
-        collection_name = "media_masklets"
-
-        # Sanitize payload
-        full_payload = sanitize_numpy_types(full_payload)
-
-        try:
-            self.client.upsert(
-                collection_name=collection_name,
-                points=[
-                    models.PointStruct(
-                        id=point_id,
-                        vector=[],  # Masklets might not have vectors initially, or query vector of concept?
-                        # Ideally we embed the concept text so we can search masklets by similarity
-                        # But for now, just storage.
-                        # Using empty vector requires configuration that allows it, or dummy vector.
-                        # Let's assume we don't index by vector yet, just storage.
-                        # WAIT: Qdrant points need vectors if collection is configured with them.
-                        # If we assume 'media_masklets' doesn't exist, we might need to create it.
-                        payload=full_payload,
-                    )
-                ],
-            )
-        except Exception as e:
-            # If collection doesn't exist, log warning or try to create?
-            # For now, just log to avoid breaking the pipeline if this feature is experimental
-            log(f"Failed to insert masklet (collection {collection_name} might be missing): {e}", level="WARNING")
 
     def extract_concepts_from_video(self, video_path: str, limit: int = 20) -> list[str]:
         """Extracts top frequent concepts/entities from a video's indexed metadata.
@@ -1812,7 +1762,7 @@ class VectorDB:
             end_time: End timestamp of the masklet in seconds.
             confidence: Confidence score of the tracking.
             payload: Optional additional metadata for the masklet.
-            embedding: Visual embedding vector (1152d) for SigLIP search.
+            embedding: Visual embedding vector (1024d/1152d) for SigLIP search.
         """
         unique_str = f"{video_path}_{concept}_{start_time}_{end_time}"
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
@@ -1828,8 +1778,10 @@ class VectorDB:
         if payload:
             final_payload.update(payload)
 
+        # Sanitize for Qdrant compatibility
+        final_payload = sanitize_numpy_types(final_payload)
+
         # Use provided embedding or dummy fallback (not ideal for search)
-        # Saliency/Tracking should provide this!
         vector = embedding if embedding else [0.0] * self.MEDIA_VECTOR_SIZE
 
         try:
@@ -1848,67 +1800,86 @@ class VectorDB:
             log(f"Failed to insert masklet: {e}", level="ERROR")
 
     @observe("db_search_masklets")
-    def search_masklets(
+    async def search_masklets(
         self,
+        query: str | None = None,
         query_vector: list[float] | None = None,
         concept: str | None = None,
         limit: int = 10,
+        video_path: str | None = None,
         score_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Search masklets by visual similarity OR concept text."""
+        """Search masklets (tracked concepts) by text, vector, or exact concept.
+
+        Args:
+            query: Natural language query (e.g., "red car").
+            query_vector: Pre-computed visual embedding.
+            concept: Exact concept name filter.
+            limit: Result limit.
+            video_path: Optional filter by source video.
+            score_threshold: Minimum similarity score.
+        """
+        # 1. Resolve Query Vector
+        if query and not query_vector:
+            query_vector = await self.encode_text(query)
+
+        # 2. Build Filters
         conditions = []
         if concept:
             conditions.append(
                 models.FieldCondition(
-                    key="concept",
-                    match=models.MatchValue(value=concept),
+                    key="concept", match=models.MatchValue(value=concept)
                 )
             )
+        if video_path:
+            conditions.append(media_path_filter(video_path))
 
-        query_filter = models.Filter(must=conditions) if conditions else None
+        query_filter = build_filter(conditions) if conditions else None
 
-        # If no vector provided, we can only scroll by filter (Concept Lookup)
-        if query_vector is None:
-            if not conditions:
-                return [] # No search criteria
-
-            try:
-                # Scroll lookup
+        # 3. Execute Search or Scroll
+        try:
+            if query_vector:
+                results = self.client.search(
+                    collection_name=self.MASKLETS_COLLECTION,
+                    query_vector=query_vector,
+                    query_filter=query_filter,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    with_payload=True,
+                )
+            else:
+                # Fallback to scroll if no vector provided (Exact Concept lookup)
                 resp, _ = self.client.scroll(
                     collection_name=self.MASKLETS_COLLECTION,
                     scroll_filter=query_filter,
                     limit=limit,
-                    with_vectors=True if query_vector else False
+                    with_payload=True,
                 )
-                return [
-                    # If we scroll, we might want the vector for downstream usage?
-                    # For now just return payload + id.
-                    {"id": str(p.id), "score": 1.0, "vector": p.vector, **(p.payload or {})}
+                # Mock result objects for consistency
+                results = [
+                    type("Point", (), {"id": p.id, "score": 1.0, "payload": p.payload})
                     for p in resp
                 ]
-            except Exception as e:
-                log(f"Masklet scroll failed: {e}")
-                return []
 
-        # Vector Search
-        try:
-            resp = self.client.search(
-                collection_name=self.MASKLETS_COLLECTION,
-                query_vector=query_vector,
-                query_filter=query_filter,
-                limit=limit,
-                score_threshold=score_threshold,
-                with_vectors=False # Don't need return vector usually
-            )
             return [
-                {"id": str(h.id), "score": h.score, **(h.payload or {})}
-                for h in resp
+                {
+                    "id": str(r.id),
+                    "score": r.score,
+                    "video_path": r.payload.get("video_path") or r.payload.get("media_path", ""),
+                    "concept": r.payload.get("concept", ""),
+                    "start_time": r.payload.get("start_time") or r.payload.get("start", 0),
+                    "end_time": r.payload.get("end_time") or r.payload.get("end", 0),
+                    "confidence": r.payload.get("confidence", 1.0),
+                    **r.payload,
+                }
+                for r in results
+                if r.payload
             ]
         except Exception as e:
-            log(f"search_masklets failed: {e}")
+            log(f"search_masklets failed: {e}", level="ERROR")
             return []
     @observe("db_update_masklet_concept")
-    def update_masklet_concept(
+    async def update_masklet_concept(
         self,
         old_concept: str,
         new_concept: str,
@@ -1919,7 +1890,7 @@ class VectorDB:
         """
         try:
             # 1. Find all masklets with old_concept (Scroll)
-            masklets = self.search_masklets(concept=old_concept, limit=1000)
+            masklets = await self.search_masklets(concept=old_concept, limit=1000)
             if not masklets:
                 return 0
 
@@ -2053,56 +2024,6 @@ class VectorDB:
             log(f"Failed to fetch summary: {e}", level="ERROR")
             return None
 
-    async def search_masklets(
-        self,
-        query: str,
-        limit: int = 10,
-        video_path: str | None = None,
-        score_threshold: float | None = None,
-    ) -> list[dict]:
-        """Search masklets (tracked objects/concepts) semantically.
-
-        Enables queries like "track the red car" or "follow the person in blue".
-
-        Args:
-            query: Natural language search query.
-            limit: Maximum results to return.
-            video_path: Optional filter by video.
-            score_threshold: Minimum similarity score.
-
-        Returns:
-            List of matching masklet dictionaries with scores.
-        """
-        query_vector = await self.encode_texts(query)
-
-        filters = [media_path_filter(video_path)]
-
-        try:
-            results = self.client.search(
-                collection_name=self.MASKLETS_COLLECTION,
-                query_vector=query_vector,
-                limit=limit,
-                score_threshold=score_threshold,
-                query_filter=build_filter(filters),
-            )
-
-            return [
-                {
-                    "id": str(r.id),
-                    "score": r.score,
-                    "video_path": r.payload.get("media_path", ""),
-                    "concept": r.payload.get("concept", ""),
-                    "start_time": r.payload.get("start_time", 0),
-                    "end_time": r.payload.get("end_time", 0),
-                    "confidence": r.payload.get("confidence", 0),
-                    **r.payload,
-                }
-                for r in results
-                if r.payload
-            ]
-        except Exception as e:
-            log(f"Masklet search failed: {e}")
-            return []
 
     async def search_global_summaries(
         self,

@@ -76,6 +76,10 @@ class AudioEventDetector:
                 self.model.to(device)  # type: ignore
                 self._device = device
 
+                # Register cleanup for emergency unloading
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                RESOURCE_ARBITER.register_model("clap", self.cleanup)
+
                 log.info(f"[CLAP] Model loaded on {device}")
                 return True
 

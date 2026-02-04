@@ -188,6 +188,7 @@ IMPORTANT RULES:
         for attempt in range(max_retries):
             try:
                 # Acquire VRAM -> this may trigger unloading of Whisper/other models
+                # NOTE: Don't pass cleanup_fn here - model is registered in __init__
                 async with RESOURCE_ARBITER.acquire("vision_llm", vram_gb=6.0):
                     analysis = await self.llm.describe_image_structured(
                         schema=FrameAnalysis,

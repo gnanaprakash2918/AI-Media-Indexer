@@ -84,6 +84,7 @@ class ResourceArbiter:
         model_name: str,
         vram_gb: float,
         job_id: str | None = None,
+        cleanup_fn: Callable | None = None,
     ):
         """Acquire GPU resources for a model.
 
@@ -91,6 +92,8 @@ class ResourceArbiter:
             model_name: Name of the model.
             vram_gb: Approximate VRAM required in GB.
             job_id: Optional job ID for cancellation support.
+            cleanup_fn: Optional function to call to unload the model when done.
+                       If provided, enables automatic lazy unloading.
         """
         import logging
         import time
@@ -110,15 +113,17 @@ class ResourceArbiter:
             if token and token.is_cancelled:
                 raise CancellationError(f"Job {job_id} cancelled")
 
-            # Update registry
+            # Update registry - always update cleanup_fn if provided
             if model_name not in self.registry:
-                # If not registered with callback, just track basic usage
                 self.registry[model_name] = {
                     "vram": vram_gb,
-                    "unload_fn": None,
+                    "unload_fn": cleanup_fn,
                     "last_used": time.time(),
                     "active": False,
                 }
+            elif cleanup_fn:
+                # Update cleanup function if newly provided
+                self.registry[model_name]["unload_fn"] = cleanup_fn
 
             # Wait for VRAM availability (simple greedy approach)
             limit = self.total_vram * 0.9
@@ -160,6 +165,22 @@ class ResourceArbiter:
                 # CRITICAL FIX: Decrement current_usage to free VRAM budget
                 model_vram = self.registry[model_name].get("vram", vram_gb)
                 self.current_usage = max(0, self.current_usage - model_vram)
+                
+                # LAZY UNLOAD: Actually unload the model if setting enabled
+                from config import settings
+                unload_fn = self.registry[model_name].get("unload_fn")
+                if settings.lazy_unload and unload_fn:
+                    try:
+                        logger.info(f"[Arbiter] Lazy unloading {model_name}...")
+                        if asyncio.iscoroutinefunction(unload_fn):
+                            await unload_fn()
+                        else:
+                            unload_fn()
+                        self._cleanup_vram()
+                        logger.info(f"[Arbiter] {model_name} unloaded successfully")
+                    except Exception as e:
+                        logger.warning(f"[Arbiter] Failed to unload {model_name}: {e}")
+                
                 logger.info(
                     f"[Arbiter] Released {model_vram}GB VRAM, current usage: {self.current_usage:.1f}GB"
                 )
@@ -209,9 +230,28 @@ class ResourceArbiter:
             torch.cuda.synchronize()
 
     def force_release_all(self) -> None:
-        """Emergency release all resources."""
+        """Emergency release all resources by calling all registered unload functions."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        unloaded_count = 0
+        for name, data in list(self.registry.items()):
+            unload_fn = data.get("unload_fn")
+            if unload_fn:
+                try:
+                    logger.info(f"[Arbiter] Force unloading {name}...")
+                    unload_fn()
+                    unloaded_count += 1
+                except Exception as e:
+                    logger.warning(f"[Arbiter] Failed to unload {name}: {e}")
+        
+        # Reset tracking
         self.current_usage = 0
+        self.registry.clear()  # Clear registry since models are unloaded
         self._cleanup_vram()
+        
+        if unloaded_count > 0:
+            logger.info(f"[Arbiter] Force released {unloaded_count} models")
 
     def get_status(self) -> dict:
         """Get current resource status."""

@@ -391,6 +391,7 @@ class FaceTrackBuilder:
 
 # Directories
 MODELS_DIR = settings.project_root() / "models"
+MODEL_ROOT = settings.project_root()
 CACHE_DIR = settings.project_root() / ".face_cache"
 
 # OpenCV models (fallback)
@@ -600,7 +601,7 @@ class FaceManager:
                 )
                 app = face_analysis_cls(
                     name="buffalo_l",
-                    root=str(MODELS_DIR),
+                    root=str(MODEL_ROOT),
                     providers=providers,
                 )
                 app.prepare(
@@ -628,7 +629,7 @@ class FaceManager:
                 # This skips: genderage.onnx, 1k3d68.onnx, 2d106det.onnx
                 app = face_analysis_cls(
                     name="buffalo_l",
-                    root=str(MODELS_DIR),
+                    root=str(MODEL_ROOT),
                     providers=providers,
                     allowed_modules=[
                         "detection",
@@ -646,6 +647,11 @@ class FaceManager:
                 gc.collect()
 
             self._insightface_app = app
+            
+            # Register cleanup for emergency unloading
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            RESOURCE_ARBITER.register_model("insightface", self.unload_gpu)
+            
             print(
                 f"[FaceManager] SUCCESS: Using InsightFace ArcFace (512-dim). Providers: {providers}"
             )

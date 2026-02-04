@@ -54,7 +54,8 @@ class ModelLoader:
             log("CUDA not available, falling back to CPU for Encoders")
             device = "cpu"
 
-        cache_dir = settings.cache_dir / "models" / "embeddings"
+        # Use centralized model storage
+        cache_dir = settings.model_cache_dir / "embeddings"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine local path

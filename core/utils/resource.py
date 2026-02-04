@@ -40,12 +40,72 @@ class ResourceManager:
         # But we still check RAM to prevent OOM crashes
         check_thermal = task_type == "compute"
 
+        throttle_count = 0
         while not self._is_safe(check_thermal=check_thermal):
+            throttle_count += 1
             log.warning(
                 f"System throttled! Cooling down for {settings.cool_down_seconds}s.. "
                 f"({self._get_status_string()})"
             )
+            
+            # After first throttle, try to clear GPU memory
+            if throttle_count == 1:
+                self._clear_gpu_memory()
+            
             await asyncio.sleep(settings.cool_down_seconds)
+            
+            # If stuck for too long (3+ cycles), force aggressive cleanup
+            if throttle_count >= 3:
+                log.warning("Throttle stuck! Attempting aggressive GPU cleanup...")
+                self._clear_gpu_memory(aggressive=True)
+                throttle_count = 0  # Reset to prevent spamming
+
+    def _clear_gpu_memory(self, aggressive: bool = False) -> None:
+        """Force clear GPU memory by unloading models and clearing cache.
+        
+        Uses RESOURCE_ARBITER for centralized model lifecycle management.
+        
+        Args:
+            aggressive: If True, force unload all models. If False, only clear cache.
+        """
+        try:
+            import gc
+            gc.collect()
+            
+            import torch
+            if torch.cuda.is_available():
+                # First, unload models if aggressive cleanup needed
+                if aggressive or self._should_aggressive_cleanup():
+                    try:
+                        from core.utils.resource_arbiter import RESOURCE_ARBITER
+                        # Force release all to free VRAM
+                        RESOURCE_ARBITER.force_release_all()
+                        log.info("Force released all models via RESOURCE_ARBITER")
+                    except Exception as e:
+                        log.debug(f"Could not use RESOURCE_ARBITER: {e}")
+                
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                
+                # Log actual VRAM freed
+                try:
+                    from core.utils.hardware import get_vram_usage_percent
+                    log.info(f"GPU memory cleared. VRAM now at {get_vram_usage_percent():.1f}%")
+                except Exception:
+                    log.info("GPU memory cache cleared")
+        except ImportError:
+            pass  # torch not available
+        except Exception as e:
+            log.debug(f"Failed to clear GPU memory: {e}")
+
+    def _should_aggressive_cleanup(self) -> bool:
+        """Check if aggressive model unloading is needed."""
+        try:
+            from core.utils.hardware import get_vram_usage_percent
+            # If VRAM > 80%, do aggressive cleanup
+            return get_vram_usage_percent() > 80.0
+        except Exception:
+            return False
 
     def _is_safe(self, check_thermal: bool = True) -> bool:
         """Returns True if system resources are within safe limits."""
@@ -59,8 +119,8 @@ class ResourceManager:
             from core.utils.hardware import get_vram_usage_percent
 
             vram_percent = get_vram_usage_percent()
-            # Use 75% threshold for VRAM to leave headroom
-            if vram_percent > 75.0:
+            # Use configurable threshold (default 85%)
+            if vram_percent > settings.max_vram_percent:
                 log.warning(f"VRAM usage high: {vram_percent:.1f}%")
                 return False
         except Exception:

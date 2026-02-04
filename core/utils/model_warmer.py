@@ -3,17 +3,46 @@ Downloads and caches all critical models at startup to prevent runtime latency.
 """
 
 import asyncio
+import shutil
 from pathlib import Path
 
-from config import settings  # [FIX] Added missing import
+from config import settings
 from core.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+# Default cache locations to clean up (Windows)
+_STALE_CACHE_DIRS = [
+    Path.home() / ".cache" / "huggingface",
+    Path.home() / ".cache" / "torch",
+    Path.home() / ".cache" / "clip",
+    Path.home() / ".cache" / "sentence_transformers",
+]
+
+
+def cleanup_stale_caches() -> None:
+    """Delete leftover model caches from default Windows locations.
+    
+    Since we redirect all downloads to project's models/ dir via env vars,
+    any files in the default locations are stale and waste disk space.
+    """
+    for cache_dir in _STALE_CACHE_DIRS:
+        if cache_dir.exists() and cache_dir.is_dir():
+            try:
+                size_mb = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file()) / (1024 * 1024)
+                if size_mb > 10:  # Only log if > 10MB
+                    log.info(f"[Cleanup] Removing stale cache: {cache_dir} ({size_mb:.1f}MB)")
+                shutil.rmtree(cache_dir, ignore_errors=True)
+            except Exception as e:
+                log.warning(f"[Cleanup] Failed to remove {cache_dir}: {e}")
 
 
 async def warmup_models():
     """Download and cache all critical models."""
     log.info("[Warmer] Starting model warmup sequence...")
+    
+    # Clean up any stale caches from default Windows locations (C drive)
+    cleanup_stale_caches()
 
     tasks = []
 
@@ -27,7 +56,7 @@ async def warmup_models():
         hf_hub_download(
             repo_id="elya5/transnetv2",
             filename="transnetv2.onnx",
-            local_dir="models",
+            local_dir=str(settings.model_cache_dir),
             local_dir_use_symlinks=False,
         )
 
@@ -91,15 +120,16 @@ async def warmup_models():
     # 7. ArcFace (Identity)
     if getattr(settings, "enable_face_recognition", False):
         try:
-            if not Path("models/arcface/w600k_r50.onnx").exists():
-                    log.info("[Warmer] Downloading ArcFace ONNX...")
-                    from huggingface_hub import hf_hub_download
-                    hf_hub_download(
+            arcface_path = settings.model_cache_dir / "arcface" / "w600k_r50.onnx"
+            if not arcface_path.exists():
+                log.info("[Warmer] Downloading ArcFace ONNX...")
+                from huggingface_hub import hf_hub_download
+                hf_hub_download(
                     repo_id="minchul/cvl-face-recognition-models",
                     filename="w600k_r50.onnx",
-                    local_dir="models/arcface",
-                    local_dir_use_symlinks=False
-                    )
+                    local_dir=str(settings.model_cache_dir / "arcface"),
+                    local_dir_use_symlinks=False,
+                )
         except Exception as e:
             log.warning(f"[Warmer] ArcFace init failed: {e}")
 
@@ -131,7 +161,7 @@ def _print_status_report():
     try:
         # Check TransNet
         t_status = (
-            "OK" if Path("models/transnetv2.onnx").exists() else "MISSING"
+            "OK" if (settings.model_cache_dir / "transnetv2.onnx").exists() else "MISSING"
         )
 
         print("\n" + "=" * 50)
@@ -145,7 +175,7 @@ def _print_status_report():
         print(f"{'SigLIP':<25} | {'READY (Lazy)':<20}")
         print(f"{'BGE-M3':<25} | {'READY':<20}")
         print(f"{'YOLOv8':<25} | {'CHECKED':<20}")
-        print(f"{'ArcFace':<25} | {('OK' if Path('models/arcface/w600k_r50.onnx').exists() else 'MISSING'):<20}")
+        print(f"{'ArcFace':<25} | {('OK' if (settings.model_cache_dir / 'arcface' / 'w600k_r50.onnx').exists() else 'MISSING'):<20}")
         print("=" * 50 + "\n")
         print(
             "Note: 'Lazy' models load on first use. Failures will be logged but won't crash the server.\n"

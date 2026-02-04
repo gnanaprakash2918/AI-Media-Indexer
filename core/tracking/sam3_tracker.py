@@ -25,25 +25,22 @@ from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 log = get_logger(__name__)
 
 # DYNAMIC IMPORT: Don't assume package name (sam3 vs sam2)
-# User requested robustness here.
 try:
     # 1. Try SAM 3 (Official / Fork)
-    from sam3 import build_sam3_video_predictor
-    from sam3.video_predictor import SAM3VideoPredictor
-    SAM_NAMESPACE = "sam3"
+    from sam3.model_builder import build_sam3_video_predictor
+    _SAM_NAMESPACE = "sam3"
 except ImportError:
     try:
         # 2. Key Fallback: SAM 2 (Meta Official)
-        # Functionally similar for many tracking tasks
-        from sam2.build_sam import (
-            build_sam2_video_predictor as build_sam3_video_predictor,
-        )
-        SAM_NAMESPACE = "sam2"
+        from sam2.build_sam import build_sam2_video_predictor as build_sam3_video_predictor
+        _SAM_NAMESPACE = "sam2"
     except ImportError:
         # Fallback for dev/mocking if neither exists
         log.warning("[SAM] neither 'sam3' nor 'sam2' found. Using mocks.")
-        SAM_NAMESPACE = "mock"
+        _SAM_NAMESPACE = "mock"
         build_sam3_video_predictor = None
+
+SAM_NAMESPACE = _SAM_NAMESPACE
 
 
 class SAM3Tracker:
@@ -71,12 +68,12 @@ class SAM3Tracker:
             log.info(f"[SAM3] Loading model on {self.device}...")
 
             def _load():
-                # Use standard config paths or download them
-                # Ideally configs are in 'core/models/configs'
-                checkpoint = settings.sam_checkpoint  # e.g., "sam2_hiera_small.pt"
-                config = settings.sam_config          # e.g., "sam2_hiera_small.yaml"
-
-                return build_sam2_video_predictor(config, checkpoint, device=self.device)
+                # SAM3 uses HuggingFace for checkpoint download (facebook/sam3 -> sam3.pt)
+                # The build_sam3_video_predictor handles this automatically with load_from_HF=True
+                return build_sam3_video_predictor(
+                    load_from_HF=True,  # Auto-downloads sam3.pt from facebook/sam3
+                    device=self.device,
+                )
 
             try:
                 self.predictor = await asyncio.to_thread(_load)

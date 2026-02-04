@@ -406,6 +406,10 @@ class Settings(BaseSettings):
     max_cpu_percent: float = 90.0
     max_ram_percent: float = 95.0
     max_temp_celsius: float = 85.0  # Pause if CPU hits 85°C
+    max_vram_percent: float = Field(
+        default=85.0,
+        description="Max VRAM usage before throttling (85% gives headroom for 8GB GPUs)",
+    )
 
     # Pause duration when overheated (seconds)
     cool_down_seconds: int = 30
@@ -464,6 +468,14 @@ class Settings(BaseSettings):
         default=True,
         description="Enable SAM 3 Promptable Concept Segmentation for frame-exact object tracking",
     )
+    sam_checkpoint: str = Field(
+        default="sam3.pt",
+        description="SAM3 model checkpoint (auto-downloaded from facebook/sam3 on HuggingFace)",
+    )
+    sam_config: str = Field(
+        default="config.json",
+        description="SAM3 model config (auto-downloaded from facebook/sam3 on HuggingFace)",
+    )
 
     manipulation_backend: Literal["disabled", "wan", "propainter", "auto"] = (
         Field(
@@ -483,10 +495,11 @@ class Settings(BaseSettings):
     )
 
     # --- Biometrics Configuration ---
-    arcface_model_path: Path = Field(
-        default=Path("models/arcface/w600k_r50.onnx"),
-        description="Path to ArcFace ONNX model for twin verification",
-    )
+    @property
+    def arcface_model_path(self) -> Path:
+        """Absolute path to ArcFace model."""
+        return self.model_cache_dir / "arcface" / "w600k_r50.onnx"
+
     biometric_threshold: float = Field(
         default=0.6,
         description="Distance threshold for ArcFace identity verification",
@@ -909,4 +922,15 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Centralize ALL model downloads to project's models/ directory
+# Must be set BEFORE any HuggingFace/Transformers imports elsewhere
+import os
+_hf_cache = str(settings.model_cache_dir / "huggingface")
+os.environ["HF_HOME"] = _hf_cache
+os.environ["HF_HUB_CACHE"] = _hf_cache  # Explicit hub cache location
+# Note: TRANSFORMERS_CACHE is deprecated in v5, HF_HOME handles it
+os.environ["TORCH_HOME"] = str(settings.model_cache_dir / "torch")
+os.environ["XDG_CACHE_HOME"] = str(settings.model_cache_dir)
+
 sys.pycache_prefix = str(settings.cache_dir / "pycache")
+
