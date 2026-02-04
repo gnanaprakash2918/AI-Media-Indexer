@@ -78,29 +78,33 @@ class ObjectDetector:
 
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
+                
+                # Persistent load: Allocate VRAM and register cleanup
+                if not await RESOURCE_ARBITER.ensure_loaded("yolo_world", vram_gb=1.0, cleanup_fn=self.cleanup):
+                    log.warning("[YOLO-World] VRAM full, cannot load")
+                    return False
 
-                async with RESOURCE_ARBITER.acquire("yolo_world", vram_gb=1.0):
-                    log.info(
-                        f"[YOLO-World] Loading model size={self.model_size}"
+                log.info(
+                    f"[YOLO-World] Loading model size={self.model_size}"
+                )
+
+                try:
+                    from ultralytics import YOLO  # type: ignore
+                except ImportError:
+                    # Fallback or strict requirement
+                    from ultralytics.models.yolo import (
+                        YOLO,
                     )
 
-                    try:
-                        from ultralytics import YOLO  # type: ignore
-                    except ImportError:
-                        # Fallback or strict requirement
-                        from ultralytics.models.yolo import (
-                            YOLO,
-                        )
+                model_name = f"yolov8{self.model_size}-worldv2.pt"
+                self.model = YOLO(model_name)
 
-                    model_name = f"yolov8{self.model_size}-worldv2.pt"
-                    self.model = YOLO(model_name)
+                device = self._get_device()
+                self._device = device
+                self.model.to(device)  # type: ignore
 
-                    device = self._get_device()
-                    self._device = device
-                    self.model.to(device)  # type: ignore
-
-                    log.info(f"[YOLO-World] Model loaded on {device}")
-                    return True
+                log.info(f"[YOLO-World] Model loaded on {device}")
+                return True
 
             except ImportError as e:
                 log.warning(f"[YOLO-World] ultralytics not available: {e}")
@@ -275,34 +279,36 @@ class GroundingDINODetector:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-                async with RESOURCE_ARBITER.acquire(
-                    "grounding_dino", vram_gb=2.0
-                ):
-                    log.info("[GroundingDINO] Loading model...")
+                # Persistent load
+                if not await RESOURCE_ARBITER.ensure_loaded("grounding_dino", vram_gb=2.0, cleanup_fn=self.cleanup):
+                    log.warning("[GroundingDINO] VRAM full, cannot load")
+                    return False
 
-                    from transformers import (
-                        AutoModelForZeroShotObjectDetection,
-                        AutoProcessor,
+                log.info("[GroundingDINO] Loading model...")
+
+                from transformers import (
+                    AutoModelForZeroShotObjectDetection,
+                    AutoProcessor,
+                )
+
+                model_id = "IDEA-Research/grounding-dino-tiny"
+                self.processor = AutoProcessor.from_pretrained(model_id)
+                self.model = (
+                    AutoModelForZeroShotObjectDetection.from_pretrained(
+                        model_id
                     )
+                )
 
-                    model_id = "IDEA-Research/grounding-dino-tiny"
-                    self.processor = AutoProcessor.from_pretrained(model_id)
-                    self.model = (
-                        AutoModelForZeroShotObjectDetection.from_pretrained(
-                            model_id
-                        )
-                    )
+                import torch
 
-                    import torch
+                device = self._device or (
+                    "cuda" if torch.cuda.is_available() else "cpu"
+                )
+                self.model.to(device)
+                self._device = device
 
-                    device = self._device or (
-                        "cuda" if torch.cuda.is_available() else "cpu"
-                    )
-                    self.model.to(device)
-                    self._device = device
-
-                    log.info(f"[GroundingDINO] Model loaded on {device}")
-                    return True
+                log.info(f"[GroundingDINO] Model loaded on {device}")
+                return True
 
             except ImportError as e:
                 log.warning(f"[GroundingDINO] transformers not available: {e}")

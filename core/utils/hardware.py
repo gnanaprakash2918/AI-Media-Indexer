@@ -107,6 +107,26 @@ def get_vram_usage_percent() -> float:
     return (get_used_vram() / total) * 100
 
 
+def get_global_vram_usage_percent() -> float:
+    """Calculates the GLOBAL VRAM usage percentage (all processes).
+    
+    Uses torch.cuda.mem_get_info() to check actual free memory, 
+    accounting for other apps (Browser, Docker, etc.) and driver overhead.
+    """
+    if not torch.cuda.is_available():
+        return 0.0
+        
+    try:
+        # mem_get_info returns (free, total) in bytes
+        free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+        used_bytes = total_bytes - free_bytes
+        return (used_bytes / total_bytes) * 100
+    except Exception as e:
+        log(f"Warning: Failed to get global VRAM info: {e}")
+        # Fallback to local usage
+        return get_vram_usage_percent()
+
+
 def cleanup_vram() -> None:
     """Forces garbage collection and clears the PyTorch CUDA cache.
 
@@ -115,7 +135,9 @@ def cleanup_vram() -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
+    gc.collect()
+    torch.cuda.synchronize()
 
 
 VramTier = Literal["low", "medium", "high"]
@@ -320,7 +342,8 @@ def log_vram_status(context: str = "") -> None:
         total = get_available_vram()
         used = get_used_vram()
         percent = get_vram_usage_percent()
-        log(f"VRAM [{context}]: {used:.2f}/{total:.2f}GB ({percent:.1f}%)")
+        global_percent = get_global_vram_usage_percent()
+        log(f"VRAM [{context}]: Local={used:.2f}GB ({percent:.1f}%) | Global={global_percent:.1f}%")
 
 
 class VRAMManager:

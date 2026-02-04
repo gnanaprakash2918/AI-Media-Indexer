@@ -43,6 +43,19 @@ class VideoVLM:
             if self.model is not None:
                 return True
             try:
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                
+                # Check VRAM requirement (approx 4GB for 2B model in BF16, 14GB for 7B)
+                vram_gb = 4.0 if "2B" in self.model_id else 14.0
+                
+                if not await RESOURCE_ARBITER.ensure_loaded(
+                    "video_vlm", 
+                    vram_gb=vram_gb, 
+                    cleanup_fn=self.cleanup
+                ):
+                     log.error("[VideoVLM] Failed to acquire VRAM")
+                     return False
+
                 log.info(f"[VideoVLM] Loading {self.model_id}...")
 
                 # Check for Flash Attention 2

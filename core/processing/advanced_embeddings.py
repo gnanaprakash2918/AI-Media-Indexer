@@ -72,6 +72,16 @@ class NVEmbedEncoder:
                     "[NV-Embed-v2] Loading SOTA embedding model (7B params)..."
                 )
 
+                # Use Resource Arbiter for VRAM management
+                # Use Resource Arbiter for VRAM management
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                
+                # Persistent load - acquire 14GB VRAM (7B parameters ~14GB in FP16)
+                if not await RESOURCE_ARBITER.ensure_loaded("nv_embed_v2", vram_gb=14.0, cleanup_fn=self.cleanup):
+                    log.warning("[NV-Embed-v2] VRAM full, cannot load")
+                    self._load_failed = True
+                    return False
+
                 import torch
                 from transformers import AutoModel, AutoTokenizer
 
@@ -260,7 +270,14 @@ class NomicEmbedEncoder:
                 return True
 
             try:
+            try:
                 log.info("[Nomic] Loading nomic-embed-text-v1.5...")
+
+                # Use Resource Arbiter for VRAM management (approx 0.5GB)
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                if not await RESOURCE_ARBITER.ensure_loaded("nomic_embed", vram_gb=0.5, cleanup_fn=self.cleanup):
+                    log.warning("[Nomic] VRAM full, cannot load")
+                    return False
 
                 from sentence_transformers import SentenceTransformer
 

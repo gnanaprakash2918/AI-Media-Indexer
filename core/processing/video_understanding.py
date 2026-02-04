@@ -87,10 +87,19 @@ class LanguageBindEncoder:
                     "[VideoEncoder] Loading X-CLIP for video understanding..."
                 )
 
+                # Acquire resources first
+                # Acquire resources first
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                # Reserve 2GB for Video Encoder - Persistent
+                if not await RESOURCE_ARBITER.ensure_loaded("video_encoder", vram_gb=2.0, cleanup_fn=self.cleanup):
+                     log.warning("[VideoEncoder] VRAM full, cannot load")
+                     return False
+
                 def _load():
                     import gc
-
                     import torch
+                    
+                    # ... (rest of loading logic) ...
 
                     # AGGRESSIVE VRAM cleanup before loading - CRITICAL for 8GB GPUs
                     gc.collect()

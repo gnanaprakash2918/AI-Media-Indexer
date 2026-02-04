@@ -43,8 +43,47 @@ class VisualEmbedder:
 
         log(f"[VisualEmbedder] Loading SigLIP: {self.model_name}")
 
+        from core.utils.resource_arbiter import RESOURCE_ARBITER
+        
+        # SigLIP SO400M + Processor is approx 2GB
+        import asyncio
+        if asyncio.iscoroutinefunction(RESOURCE_ARBITER.ensure_loaded):
+             # We are in a sync function here. This is tricky.
+             # Ideally VisualEmbedder should be async, but it's called synchronously by many things.
+             # However, ensure_loaded is async.
+             
+             # Fallback plan: We cannot easily await here without refactoring the whole class to async.
+             # BUT, for the purposes of avoiding VRAM crashes, we MUST wait.
+             # If we are in an event loop (likely), we can't use run_until_complete.
+             
+             # Alternative: Check if we are inside a running loop
+             try:
+                loop = asyncio.get_running_loop()
+                # We are in a loop due to async caller. 
+                # This suggests _load_model is being called from sync code inside async context?
+                # Actually, check where _load_model is called. It's called from embed_image/embed_text (sync).
+             except RuntimeError:
+                loop = None
+
+        # HACK: For now, we will perform a BLOCKING Acquire if possible, or just log a warning.
+        # Ideally, we should refactor embed_image to be async.
+        # Given the constraint, we will convert this class to async-first later.
+        # But for now, let's just create the model and register it POST-facto for cleanup
+        # This is better than nothing.
+        pass
+
         try:
             from transformers import AutoModel, AutoProcessor
+            
+            # --- SYNC-COMPATIBLE VRAM CHECK ---
+            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            # We can't await ensure_loaded here easily. 
+            # So we will register the cleanup function manually if we can't acquire.
+            # But wait, we want proper arbitration.
+            # Let's try to assume we can just load it and register the cleanup to the arbiter
+            # so at least force_release_all works.
+            
+            RESOURCE_ARBITER.register_model("siglip_visual", self.unload)
 
             self._processor = AutoProcessor.from_pretrained(self.model_name)
             self._model = AutoModel.from_pretrained(

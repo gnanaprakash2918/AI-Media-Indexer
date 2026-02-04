@@ -219,3 +219,11 @@ class LLMInterface(ABC):
             prompt, image_path, system_prompt, **kwargs
         )
         return self.parse_json_response(response, schema)
+
+    async def unload_model(self) -> None:
+        """Explicitly unload the model from memory/VRAM.
+        
+        Useful for local LLMs (Ollama) to force release VRAM.
+        Cloud providers (Gemini/OpenAI) can implement as no-op.
+        """
+        pass

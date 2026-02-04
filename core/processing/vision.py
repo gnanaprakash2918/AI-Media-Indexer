@@ -66,9 +66,15 @@ class VisionAnalyzer:
         )
         log_verbose(f"[Vision] Init: prompt_file={prompt_filename}, llm_provided={llm is not None}")
 
-    def unload_model(self) -> None:
+    async def unload_model(self) -> None:
         """Unload the LLM to free VRAM resources."""
         if self._llm is not None:
+            # 1. Explicitly unload from provider (Ollama)
+            try:
+                await self._llm.unload_model()
+            except Exception as e:
+                log(f"[Vision] Failed to unload LLM provider: {e}")
+
             self._llm = None
             self._llm_loaded = False
 

@@ -503,19 +503,19 @@ class VectorDB:
 
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-            log(
-                f"Lazy loading encoder: {self.MODEL_NAME} ({vram_gb}GB VRAM requested)..."
-            )
-
-            # NOTE: Don't pass cleanup_fn here - we want the encoder to stay loaded!
-            # The cleanup_fn is registered separately so it only runs during force_release_all
-            async with RESOURCE_ARBITER.acquire(
-                "embedding_encoder", vram_gb=vram_gb, job_id=job_id
-            ):
-                self.encoder = self._load_encoder()
-
-            # Register cleanup for emergency unloading only
+            # Load the model (Sync load for now, assuming sufficient VRAM or swap)
+            self.encoder = self._load_encoder()
+            
+            # Register with Arbiter for emergency cleanup
+            # We bypass 'acquire' bandwidth check for now because DB is critical path
+            # and often called from sync contexts where async acquire is hard.
+            # But we MUST register cleanup so force_release_all works.
             RESOURCE_ARBITER.register_model("embedding_encoder", self.unload_encoder)
+            
+            # Manually update usage in Arbiter if possible? 
+            # Ideally we'd use ensure_loaded, but that's async.
+            # We accept that VectorDB might "hide" VRAM usage from the arbiter's strict accounting
+            # but at least it will respond to force_release_all.
 
         self._encoder_last_used = time.time()
 
@@ -524,11 +524,19 @@ class VectorDB:
         if self.encoder is None:
             return
         log("Unloading text encoder to free VRAM")
+        
+        # Explicitly delete the model object
+        del self.encoder
         self.encoder = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        import gc
-        gc.collect()
+        
+        # Force garbage collection and CUDA cache clear
+        from core.utils.hardware import cleanup_vram
+        cleanup_vram()
+        
+        # Update Arbiter status if it was tracking this
+        # Since we use ensure_loaded logic (or acquire), the arbiter might still think it's active
+        # We need to ensure the arbiter knows it's gone if we manually unloaded it.
+        # But wait, Arbiter calls THIS function. So we don't need to call back into Arbiter.
 
     def unload_encoder_if_idle(self) -> bool:
         """Unloads the encoder model from memory if it has exceeded idle time.

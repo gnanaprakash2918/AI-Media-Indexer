@@ -40,10 +40,11 @@ class SpeechEmotionAnalyzer:
                 return True
 
             try:
-                from transformers import (
-                    AutoModelForAudioClassification,
-                    Wav2Vec2FeatureExtractor,
-                )
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                # Wav2Vec2 fits in 1GB easily
+                if not await RESOURCE_ARBITER.ensure_loaded("speech_emotion", vram_gb=1.0, cleanup_fn=self.cleanup):
+                    log.error("[SER] VRAM full, cannot load model")
+                    return False
 
                 # Using a popular fine-tuned model for emotion
                 model_name = (

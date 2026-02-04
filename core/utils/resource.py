@@ -50,17 +50,17 @@ class ResourceManager:
             
             # After first throttle, try to clear GPU memory
             if throttle_count == 1:
-                self._clear_gpu_memory()
+                await self._clear_gpu_memory()
             
             await asyncio.sleep(settings.cool_down_seconds)
             
             # If stuck for too long (3+ cycles), force aggressive cleanup
             if throttle_count >= 3:
                 log.warning("Throttle stuck! Attempting aggressive GPU cleanup...")
-                self._clear_gpu_memory(aggressive=True)
+                await self._clear_gpu_memory(aggressive=True)
                 throttle_count = 0  # Reset to prevent spamming
 
-    def _clear_gpu_memory(self, aggressive: bool = False) -> None:
+    async def _clear_gpu_memory(self, aggressive: bool = False) -> None:
         """Force clear GPU memory by unloading models and clearing cache.
         
         Uses RESOURCE_ARBITER for centralized model lifecycle management.
@@ -79,7 +79,7 @@ class ResourceManager:
                     try:
                         from core.utils.resource_arbiter import RESOURCE_ARBITER
                         # Force release all to free VRAM
-                        RESOURCE_ARBITER.force_release_all()
+                        await RESOURCE_ARBITER.force_release_all()
                         log.info("Force released all models via RESOURCE_ARBITER")
                     except Exception as e:
                         log.debug(f"Could not use RESOURCE_ARBITER: {e}")
@@ -116,12 +116,12 @@ class ResourceManager:
 
         # 2. Check VRAM (GPU memory) if available
         try:
-            from core.utils.hardware import get_vram_usage_percent
-
-            vram_percent = get_vram_usage_percent()
-            # Use configurable threshold (default 85%)
+            # Check VRAM (Global usage is safer than just local)
+            from core.utils.hardware import get_global_vram_usage_percent
+            vram_percent = get_global_vram_usage_percent()
+            
             if vram_percent > settings.max_vram_percent:
-                log.warning(f"VRAM usage high: {vram_percent:.1f}%")
+                self.status = f"High VRAM ({vram_percent:.1f}%)"
                 return False
         except Exception:
             pass  # No GPU or import failed

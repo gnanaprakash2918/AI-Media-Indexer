@@ -1024,7 +1024,16 @@ class IndicASRPipeline:
         log(f"[IndicASR] Wrote {len(segments)} segments to {srt_path}")
 
     def _cleanup(self) -> None:
-        """Force garbage collection and clear CUDA cache."""
+        """Force garbage collection and clear CUDA cache.
+        
+        CRITICAL: Must also release model references if we want to truly free VRAM.
+        Since this is called in finally block of transcribe, and we instantiate per-request,
+        we should aggressively unload here.
+        """
+        self.pipe = None
+        self.model = None
+        self._is_loaded = False
+        
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()

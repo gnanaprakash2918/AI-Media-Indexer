@@ -586,3 +586,16 @@ Be specific with names (e.g., "Tesla Model 3" not "car", "Idly" not "food").
                         f"Ollama structured image description failed: {e}"
                     ) from e
             raise RuntimeError("Exhausted retries")
+
+    async def unload_model(self) -> None:
+        """Unload the model from the Ollama server to free VRAM."""
+        print(f"[Ollama] Unloading models {self.model} and {self.text_model}...")
+        try:
+            # Send keep_alive=0 to force unload immediately
+            # We try both vision and text models just in case
+            await self.client.generate(model=self.model, prompt="", keep_alive=0)
+            if self.text_model != self.model:
+                 await self.client.generate(model=self.text_model, prompt="", keep_alive=0)
+            print("[Ollama] Models unloaded successfully")
+        except Exception as e:
+            print(f"[Ollama] Warning: Failed to unload model: {e}")
