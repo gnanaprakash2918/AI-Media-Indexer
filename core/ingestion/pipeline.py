@@ -35,12 +35,12 @@ from core.processing.transcriber import AudioTranscriber
 from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
-from core.tracking.sam3_tracker import SAM3Tracker
 from core.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
+from core.tracking.sam3_tracker import SAM3Tracker
 from core.utils.frame_sampling import FrameSampler
-from core.utils.logger import bind_context, logger
+from core.utils.logger import bind_context, log_verbose, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
@@ -226,6 +226,14 @@ class IngestionPipeline:
 
         bind_context(component="pipeline")
 
+        # Verbose logging for full context
+        log_verbose(
+            f"[Pipeline] process_video started: path={video_path}, "
+            f"job_id={job_id}, resume={resume}, media_type={media_type_hint}, "
+            f"start_time={start_time}, end_time={end_time}, "
+            f"content_type_hint={content_type_hint}"
+        )
+
         self._start_time = start_time
         self._end_time = end_time
         self._hitl_content_type = (
@@ -234,6 +242,8 @@ class IngestionPipeline:
         self._audio_classification = None
 
         path = Path(video_path)
+        log_verbose(f"[Pipeline] Resolved path: {path}, exists={path.exists()}, size={path.stat().st_size if path.exists() else 0}")
+
         progress_tracker.start(
             job_id,
             file_path=str(path),

@@ -16,6 +16,38 @@ trace_id_ctx: ContextVar[str | None] = ContextVar("trace_id", default=None)
 span_ctx: ContextVar[str | None] = ContextVar("span", default=None)
 component_ctx: ContextVar[str | None] = ContextVar("component", default=None)
 
+VERBOSE_PATTERNS = (
+    "Frame ",
+    "Processing frame",
+    "Processed frame",
+    "chunk_",
+    "frames_chunk",
+    "Embedding",
+    "Vector",
+    "Upserting",
+    "Flushing buffer",
+    "batch",
+    "CLAP",
+    "Whisper",
+    "Transcribing",
+    "segment ",
+)
+
+PROGRESS_PATTERNS = (
+    "[PROGRESS]",
+    "% complete",
+    "Stage:",
+    "ETA:",
+)
+
+
+def _is_verbose_message(msg: str) -> bool:
+    return any(p in msg for p in VERBOSE_PATTERNS)
+
+
+def _is_progress_message(msg: str) -> bool:
+    return any(p in msg for p in PROGRESS_PATTERNS)
+
 
 class InterceptHandler(logging.Handler):
     """Redirects standard logging into Loguru while preserving correct caller info."""
@@ -39,46 +71,52 @@ class InterceptHandler(logging.Handler):
         )
 
 
+def _console_filter(record) -> bool:
+    msg = record["message"]
+    if record["extra"].get("file_only"):
+        return False
+    if record["level"].name == "DEBUG" and _is_verbose_message(msg):
+        return False
+    return True
+
+
 def setup_logger() -> None:
     """Configure Loguru for console and file logging.
 
     Features:
-    - Human-friendly console logs
-    - Structured JSON file logs (Grafana Loki / ELK)
-    - Full interception of stdlib logging
+    - Clean console with important logs only (INFO+, progress updates)
+    - Full DEBUG logs to file for debugging
+    - Progress-specific formatting
+    - Verbose internal logs filtered from console
     """
     logger.remove()
 
     def _patcher(record):
-        # actively fetch from context if not already present in extra
         if record["extra"].get("trace_id") is None:
             record["extra"]["trace_id"] = trace_id_ctx.get()
         if record["extra"].get("span") is None:
             record["extra"]["span"] = span_ctx.get()
         if record["extra"].get("component") is None:
             record["extra"]["component"] = component_ctx.get()
+        if "file_only" not in record["extra"]:
+            record["extra"]["file_only"] = False
 
-    # Ensure trace_id always exists to prevent KeyErrors in format string
     logger.configure(patcher=_patcher)
 
-    # Ensure log directory exists
     log_dir: Path = settings.log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "app.log"
 
     logger.add(
         sys.stderr,
-        level=getattr(settings, "log_level", "INFO"),
+        level="INFO",
         colorize=True,
-        backtrace=True,
+        backtrace=False,
         diagnose=False,
+        filter=_console_filter,
         format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-            "<level>{level:<8}</level> | "
-            "trace=<cyan>{extra[trace_id]}</cyan> "
-            "span=<cyan>{extra[span]}</cyan> "
-            "comp=<cyan>{extra[component]}</cyan> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<green>{time:HH:mm:ss}</green> | "
+            "<level>{level:<7}</level> | "
             "<level>{message}</level>"
         ),
     )
@@ -86,7 +124,7 @@ def setup_logger() -> None:
     logger.add(
         str(log_file),
         level="DEBUG",
-        rotation="00:00",  # Daily rotation at midnight
+        rotation="00:00",
         retention="7 days",
         compression="zip",
         serialize=True,
@@ -117,14 +155,12 @@ def setup_logger() -> None:
             msg = record.getMessage()
             if "The following layers were not sharded" in msg:
                 return False
-            # Suppress specific dtype warning if ctranslate2 logic triggers it
             if "unexpected keyword argument 'dtype'" in msg:
                 return False
             return True
 
     sharding_filter = ShardingFilter()
 
-    # Suppress noisy ML frameworks per GOLD.md compliance (console: INFO+, file: full DEBUG)
     noisy_ml_frameworks = (
         "speechbrain",
         "nemo",
@@ -132,7 +168,7 @@ def setup_logger() -> None:
         "nemo.collections",
         "transformers",
         "transformers.modeling_utils",
-        "accelerate",  # Added accelerate
+        "accelerate",
         "torch",
         "torch.distributed",
         "torch.cuda",
@@ -193,6 +229,54 @@ def log(message: str, level: str = "INFO", **kwargs: Any) -> None:
     """
     lvl = level.upper()
     _base_logger(kwargs).log(lvl, message)
+
+
+def log_progress(
+    stage: str,
+    percent: float,
+    message: str = "",
+    eta_seconds: float | None = None,
+    speed: str = "",
+) -> None:
+    """Log a clean progress update to terminal.
+
+    Shows a single-line progress update that's easy to read.
+    Format: [PROGRESS] Stage: 45% | message | ETA: 2m 30s | 2.5 fps
+
+    Args:
+        stage: Current pipeline stage name
+        percent: Progress percentage (0-100)
+        message: Optional status message
+        eta_seconds: Optional ETA in seconds
+        speed: Optional speed string (e.g., "2.5 fps")
+    """
+    parts = [f"[PROGRESS] {stage}: {percent:.0f}%"]
+    if message:
+        parts.append(message)
+    if eta_seconds is not None and eta_seconds > 0:
+        if eta_seconds < 60:
+            parts.append(f"ETA: {eta_seconds:.0f}s")
+        elif eta_seconds < 3600:
+            parts.append(f"ETA: {eta_seconds / 60:.1f}m")
+        else:
+            parts.append(f"ETA: {eta_seconds / 3600:.1f}h")
+    if speed:
+        parts.append(speed)
+
+    _base_logger().info(" | ".join(parts))
+
+
+def log_verbose(message: str, **kwargs: Any) -> None:
+    """Log a verbose debug message to file only.
+
+    Use this for high-frequency internal operations that would spam the terminal.
+    These logs still go to the log file for debugging.
+
+    Args:
+        message: The log message
+        **kwargs: Additional context to include
+    """
+    _base_logger({"file_only": True, **kwargs}).debug(message)
 
 
 def _handle_uncaught(exc_type, exc, tb):

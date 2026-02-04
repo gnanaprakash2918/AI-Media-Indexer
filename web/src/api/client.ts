@@ -91,8 +91,54 @@ export const browseFileSystem = async (): Promise<string | null> => {
 };
 
 // Jobs
-export const getJobs = async () => {
-  const res = await apiClient.get('/jobs');
+export interface StageStats {
+  status: 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
+  start?: number;
+  end?: number;
+  duration?: number;
+  items_processed?: number;
+  items_total?: number;
+  error?: string;
+  retries?: number;
+}
+
+export interface JobSpeed {
+  fps: number;
+  speed_ratio: number;
+}
+
+export interface Job {
+  job_id: string;
+  status: string;
+  progress: number;
+  weighted_progress: number;
+  file_path: string;
+  media_type: string;
+  current_stage: string;
+  pipeline_stage: string;
+  message: string;
+  started_at: number;
+  completed_at: number | null;
+  error: string | null;
+  total_frames: number;
+  processed_frames: number;
+  current_item_index: number;
+  total_items: number;
+  timestamp: number;
+  duration: number;
+  last_heartbeat: number;
+  stage_stats: Record<string, StageStats>;
+  eta_seconds: number | null;
+  speed: JobSpeed;
+  checkpoint_data?: Record<string, unknown>;
+}
+
+export interface JobsResponse {
+  jobs: Job[];
+}
+
+export const getJobs = async (): Promise<JobsResponse> => {
+  const res = await apiClient.get<JobsResponse>('/jobs');
   return res.data;
 };
 
@@ -429,28 +475,7 @@ export interface MediaItem {
   thumbnail_url?: string;
 }
 
-export interface Job {
-  job_id: string;
-  status:
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'paused';
-  progress: number;
-  file_path: string;
-  media_type: string;
-  current_stage: string;
-  message: string;
-  started_at: number;
-  completed_at: number | null;
-  error: string | null;
-  total_frames?: number;
-  processed_frames?: number;
-  timestamp?: number;
-  duration?: number;
-}
+// Job interface is defined at the top of the file with full stats
 
 export interface FaceCluster {
   id: string;

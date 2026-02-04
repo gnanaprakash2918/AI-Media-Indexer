@@ -95,22 +95,29 @@ class ResourceArbiter:
             cleanup_fn: Optional function to call to unload the model when done.
                        If provided, enables automatic lazy unloading.
         """
-        import logging
         import time
 
         from core.utils.cancellation import (
             CancellationError,
             get_or_create_token,
         )
+        from core.utils.logger import get_logger, log_verbose
 
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
 
         token = get_or_create_token(job_id) if job_id else None
 
-        logger.info(f"[Arbiter] Requesting {model_name} ({vram_gb}GB)...")
+        logger.info(f"[Arbiter] Acquiring {model_name} ({vram_gb:.1f}GB)")
+        log_verbose(
+            f"[Arbiter] Acquire request: model={model_name}, vram={vram_gb}GB, "
+            f"job_id={job_id}, has_cleanup={cleanup_fn is not None}, "
+            f"current_usage={self.current_usage:.1f}GB/{self.total_vram:.1f}GB"
+        )
+
         async with self._lock:
             # Check cancellation
             if token and token.is_cancelled:
+                logger.warning(f"[Arbiter] Job {job_id} already cancelled")
                 raise CancellationError(f"Job {job_id} cancelled")
 
             # Update registry - always update cleanup_fn if provided
@@ -121,43 +128,57 @@ class ResourceArbiter:
                     "last_used": time.time(),
                     "active": False,
                 }
+                log_verbose(f"[Arbiter] Registered new model: {model_name}")
             elif cleanup_fn:
                 # Update cleanup function if newly provided
                 self.registry[model_name]["unload_fn"] = cleanup_fn
+                log_verbose(f"[Arbiter] Updated cleanup_fn for: {model_name}")
 
             # Wait for VRAM availability (simple greedy approach)
             limit = self.total_vram * 0.9
 
             while self.current_usage + vram_gb > limit:
                 logger.info(
-                    f"[Arbiter] VRAM full ({self.current_usage}/{limit}), offloading..."
+                    f"[Arbiter] VRAM full ({self.current_usage:.1f}/{limit:.1f}GB), offloading..."
+                )
+                log_verbose(
+                    f"[Arbiter] VRAM pressure: need={vram_gb}GB, "
+                    f"current={self.current_usage:.1f}GB, limit={limit:.1f}GB, "
+                    f"registry={list(self.registry.keys())}"
                 )
                 # Try to offload least recent INACTIVE model
                 offloaded = await self._offload_least_recent()
                 if not offloaded:
                     logger.warning(
-                        "[Arbiter] Could not offload any models, proceeding anyway"
+                        "[Arbiter] No models to offload, proceeding anyway"
+                    )
+                    log_verbose(
+                        f"[Arbiter] Unable to offload. Active models: "
+                        f"{[k for k, v in self.registry.items() if v['active']]}"
                     )
                     break
-                logger.info("[Arbiter] Offload successful")
 
             self.current_usage += vram_gb
             self.registry[model_name]["active"] = True
             self.registry[model_name]["vram"] = vram_gb
             self.registry[model_name]["last_used"] = time.time()
+            
+            log_verbose(
+                f"[Arbiter] Allocated: model={model_name}, vram={vram_gb}GB, "
+                f"new_usage={self.current_usage:.1f}GB"
+            )
 
         try:
-            logger.info(
-                f"[Arbiter] Waiting for GPU semaphore ({model_name})..."
-            )
+            log_verbose(f"[Arbiter] Waiting for GPU semaphore: {model_name}")
             async with self._gpu_semaphore:
-                logger.info(f"[Arbiter] GPU semaphore acquired ({model_name})")
+                log_verbose(f"[Arbiter] GPU semaphore acquired: {model_name}")
                 yield token
-                logger.info(f"[Arbiter] Releasing GPU semaphore ({model_name})")
+                log_verbose(f"[Arbiter] GPU semaphore releasing: {model_name}")
         except CancellationError:
+            logger.warning(f"[Arbiter] {model_name} cancelled mid-execution")
             raise
         finally:
-            logger.info(f"[Arbiter] Cleaning up {model_name}...")
+            log_verbose(f"[Arbiter] Cleanup starting: {model_name}")
             async with self._lock:
                 # Mark as inactive AND release VRAM allocation
                 self.registry[model_name]["active"] = False
@@ -171,20 +192,26 @@ class ResourceArbiter:
                 unload_fn = self.registry[model_name].get("unload_fn")
                 if settings.lazy_unload and unload_fn:
                     try:
-                        logger.info(f"[Arbiter] Lazy unloading {model_name}...")
+                        logger.info(f"[Arbiter] Lazy unloading {model_name}")
+                        log_verbose(
+                            f"[Arbiter] Calling unload_fn for {model_name}, "
+                            f"is_async={asyncio.iscoroutinefunction(unload_fn)}"
+                        )
                         if asyncio.iscoroutinefunction(unload_fn):
                             await unload_fn()
                         else:
                             unload_fn()
                         self._cleanup_vram()
-                        logger.info(f"[Arbiter] {model_name} unloaded successfully")
+                        log_verbose(f"[Arbiter] {model_name} unloaded, VRAM cleaned")
                     except Exception as e:
                         logger.warning(f"[Arbiter] Failed to unload {model_name}: {e}")
+                        log_verbose(f"[Arbiter] Unload exception: {type(e).__name__}: {e}")
                 
-                logger.info(
-                    f"[Arbiter] Released {model_vram}GB VRAM, current usage: {self.current_usage:.1f}GB"
+                log_verbose(
+                    f"[Arbiter] Released: model={model_name}, freed={model_vram}GB, "
+                    f"new_usage={self.current_usage:.1f}GB"
                 )
-            logger.info(f"[Arbiter] Cleanup complete {model_name}")
+            logger.info(f"[Arbiter] Released {model_name} ({model_vram:.1f}GB freed)")
 
     async def _offload_least_recent(self) -> bool:
         """Finds and unloads the least recently used inactive model."""

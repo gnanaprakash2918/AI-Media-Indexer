@@ -7,7 +7,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.utils.logger import log
+from core.utils.logger import log, log_verbose
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
@@ -64,6 +64,7 @@ class VisionAnalyzer:
         log(
             "[Vision] Initialized (lazy mode). LLM will load on first analyze call."
         )
+        log_verbose(f"[Vision] Init: prompt_file={prompt_filename}, llm_provided={llm is not None}")
 
     def unload_model(self) -> None:
         """Unload the LLM to free VRAM resources."""
@@ -80,11 +81,13 @@ class VisionAnalyzer:
                 torch.cuda.empty_cache()
 
             log("[Vision] LLM unloaded to free VRAM.")
+            log_verbose("[Vision] Unload complete, gc.collect() and cuda.empty_cache() called")
 
     def _ensure_llm_loaded(self) -> None:
         """Loads the LLM and prompt template if they are not already cached."""
         if not self._llm_loaded:
             log("[Vision] Lazy loading LLM...")
+            log_verbose("[Vision] Creating LLM via LLMFactory (provider=ollama)")
             self._llm = LLMFactory.create_llm(provider="ollama")
             self._llm_loaded = True
 
@@ -94,6 +97,7 @@ class VisionAnalyzer:
                     self.prompt_filename
                 )
                 log(f"[Vision] Loaded prompt from {self.prompt_filename}")
+                log_verbose(f"[Vision] Prompt loaded, length={len(self.prompt)} chars")
             except FileNotFoundError:
                 log(
                     "[Vision] Prompt file not found, using DENSE_MULTIMODAL_PROMPT"
@@ -146,6 +150,14 @@ class VisionAnalyzer:
             log(f"[Vision] Image not found: {image_path}")
             return None
 
+        log_verbose(
+            f"[Vision] analyze_frame: path={image_path}, "
+            f"has_video_ctx={video_context is not None}, "
+            f"has_identity_ctx={identity_context is not None}, "
+            f"has_audio_ctx={audio_context is not None}, "
+            f"has_temporal_ctx={temporal_context is not None}"
+        )
+
         # Build enhanced prompt with multimodal context
         # CRITICAL: Add video context FIRST to ground VLM and prevent hallucinations
         prompt_parts = []
@@ -179,6 +191,7 @@ IMPORTANT RULES:
             )
 
         enhanced_prompt = "\n".join(prompt_parts)
+        log_verbose(f"[Vision] Enhanced prompt built, total length={len(enhanced_prompt)} chars")
 
         # Retry logic for robustness against Ollama timeouts/transient errors
         max_retries = 3
@@ -187,6 +200,7 @@ IMPORTANT RULES:
 
         for attempt in range(max_retries):
             try:
+                log_verbose(f"[Vision] Attempt {attempt + 1}/{max_retries} for {image_path.name}")
                 # Acquire VRAM -> this may trigger unloading of Whisper/other models
                 # NOTE: Don't pass cleanup_fn here - model is registered in __init__
                 async with RESOURCE_ARBITER.acquire("vision_llm", vram_gb=6.0):
@@ -198,9 +212,14 @@ IMPORTANT RULES:
                 log(
                     f"[Vision] Structured analysis: {analysis.action[:50] if analysis.action else 'no action'}..."
                 )
+                log_verbose(
+                    f"[Vision] Analysis complete: scene={analysis.scene_type if hasattr(analysis, 'scene_type') else 'N/A'}, "
+                    f"entities={len(analysis.entities) if hasattr(analysis, 'entities') and analysis.entities else 0}"
+                )
                 return analysis
             except Exception as e:
                 wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
+                log_verbose(f"[Vision] Attempt {attempt + 1} failed: {type(e).__name__}: {e}")
                 if attempt < max_retries - 1:
                     log(
                         f"[Vision] Structured analysis failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait_time}s..."

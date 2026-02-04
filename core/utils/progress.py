@@ -10,6 +10,25 @@ from typing import Any
 
 from core.ingestion.jobs import JobInfo, JobStatus, PipelineStage, job_manager
 
+STAGE_WEIGHTS = {
+    "init": 0.01,
+    "audio": 0.15,
+    "voice": 0.12,
+    "audio_events": 0.05,
+    "frames": 0.35,
+    "frames_chunk_0": 0.35,
+    "scene_captions": 0.15,
+    "scene_captions_chunk_0": 0.15,
+    "post_processing": 0.05,
+    "index": 0.10,
+    "complete": 0.02,
+}
+
+ORDERED_STAGES = [
+    "init", "audio", "voice", "audio_events",
+    "frames", "scene_captions", "post_processing", "complete"
+]
+
 
 class ProgressTracker:
     """Thread-safe progress tracking with SSE broadcasting and SQLite persistence."""
@@ -17,12 +36,16 @@ class ProgressTracker:
     def __init__(self) -> None:
         """Initialize the progress tracker."""
         self._subscribers: list[asyncio.Queue[dict[str, Any]]] = []
-        # In-memory cache for high-frequency polling/updates to avoid DB spam
         self._cache: dict[str, JobInfo] = {}
         self._last_db_update: dict[str, float] = {}
         self._lock = Lock()
 
-        # Load active jobs from DB on startup
+        self._event_id_counter = 0
+        self._recent_events: list[dict[str, Any]] = []
+        self._max_recent_events = 100
+
+        self._speed_data: dict[str, dict[str, Any]] = {}
+
         self._sync_cache()
 
     def _sync_cache(self):
@@ -34,6 +57,87 @@ class ProgressTracker:
                     self._cache[job.job_id] = job
         except Exception:
             pass
+
+    def _calculate_weighted_progress(self, job: JobInfo) -> float:
+        """Calculate weighted progress based on completed stages."""
+        total = 0.0
+        stage_stats = job.stage_stats or {}
+
+        for stage, weight in STAGE_WEIGHTS.items():
+            stats = stage_stats.get(stage, {})
+            status = stats.get("status", "pending")
+
+            if status == "completed":
+                total += weight * 100
+            elif status == "running":
+                total += weight * 50
+            elif status == "skipped":
+                total += weight * 100
+
+        return min(100.0, total)
+
+    def _update_speed(
+        self,
+        job_id: str,
+        frames_processed: int | None = None,
+        timestamp_processed: float | None = None,
+    ) -> dict[str, Any]:
+        """Track and calculate processing speed metrics."""
+        now = time.time()
+
+        if job_id not in self._speed_data:
+            self._speed_data[job_id] = {
+                "start_time": now,
+                "last_update": now,
+                "last_frames": 0,
+                "last_timestamp": 0.0,
+                "fps": 0.0,
+                "speed_ratio": 0.0,
+            }
+
+        data = self._speed_data[job_id]
+        elapsed_since_last = now - data["last_update"]
+
+        if elapsed_since_last >= 2.0:
+            if frames_processed is not None:
+                frame_delta = frames_processed - data["last_frames"]
+                if frame_delta > 0 and elapsed_since_last > 0:
+                    data["fps"] = frame_delta / elapsed_since_last
+                data["last_frames"] = frames_processed
+
+            if timestamp_processed is not None:
+                ts_delta = timestamp_processed - data["last_timestamp"]
+                if ts_delta > 0 and elapsed_since_last > 0:
+                    data["speed_ratio"] = ts_delta / elapsed_since_last
+                data["last_timestamp"] = timestamp_processed
+
+            data["last_update"] = now
+
+        return {
+            "fps": round(data["fps"], 1),
+            "speed_ratio": round(data["speed_ratio"], 2),
+        }
+
+    def _calculate_eta(self, job: JobInfo) -> float | None:
+        """Calculate estimated time remaining in seconds."""
+        if job.total_duration <= 0 or job.current_frame_timestamp <= 0:
+            return None
+
+        remaining_video = job.total_duration - job.current_frame_timestamp
+
+        speed_data = self._speed_data.get(job.job_id, {})
+        speed_ratio = speed_data.get("speed_ratio", 0)
+
+        if speed_ratio > 0:
+            return remaining_video / speed_ratio
+
+        elapsed = time.time() - job.started_at
+        if elapsed > 10 and job.current_frame_timestamp > 0:
+            estimated_ratio = job.current_frame_timestamp / elapsed
+            if estimated_ratio > 0:
+                return remaining_video / estimated_ratio
+
+        return None
 
     def start(
         self,
@@ -256,7 +360,7 @@ class ProgressTracker:
         current_timestamp: float | None = None,
         total_duration: float | None = None,
     ) -> None:
-        """Update granular progress details."""
+        """Update granular progress details and track speed."""
         with self._lock:
             if job_id not in self._cache:
                 return
@@ -271,10 +375,16 @@ class ProgressTracker:
             if total_duration is not None:
                 job.total_duration = total_duration
 
+            # Update speed tracking
+            speed = self._update_speed(
+                job_id,
+                frames_processed=processed_frames,
+                timestamp_processed=current_timestamp,
+            )
+
             # Create checkpoint data for resuming (merge with existing)
             if current_timestamp is not None:
                 existing_checkpoint = job.checkpoint_data or {}
-                # Update only what changed, keep flags like "audio_complete"
                 new_checkpoint = {
                     **existing_checkpoint,
                     "timestamp": current_timestamp,
@@ -282,7 +392,10 @@ class ProgressTracker:
                 }
                 job.checkpoint_data = new_checkpoint
 
-            # Broadcast detailed update
+            # Calculate ETA for broadcast
+            eta = self._calculate_eta(job)
+
+            # Broadcast detailed update with speed and ETA
             self._broadcast(
                 {
                     "event": "job_granular_update",
@@ -291,6 +404,8 @@ class ProgressTracker:
                     "total_frames": job.total_frames,
                     "timestamp": job.current_frame_timestamp,
                     "duration": job.total_duration,
+                    "speed": speed,
+                    "eta_seconds": eta,
                 }
             )
 
@@ -641,23 +756,92 @@ class ProgressTracker:
         self._broadcast(event)
 
     def _broadcast(self, event: dict[str, Any]) -> None:
-        """Broadcast event to all subscribers."""
+        """Broadcast event to all subscribers with event ID for reconnection."""
+        self._event_id_counter += 1
+        event["event_id"] = self._event_id_counter
         event["timestamp"] = time.time()
+
+        self._recent_events.append(event)
+        if len(self._recent_events) > self._max_recent_events:
+            self._recent_events = self._recent_events[-self._max_recent_events:]
+
         for queue in self._subscribers:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 pass
 
-    async def event_stream(self) -> AsyncGenerator[dict[str, Any], None]:
-        """Async generator for SSE events."""
+    def get_events_since(self, last_event_id: int) -> list[dict[str, Any]]:
+        """Get events since a given event ID for reconnection replay."""
+        return [e for e in self._recent_events if e.get("event_id", 0) > last_event_id]
+
+    async def event_stream(
+        self, last_event_id: int | None = None
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Async generator for SSE events with heartbeat.
+
+        Args:
+            last_event_id: If provided, replay events since this ID.
+        """
         queue = self.subscribe()
+
+        if last_event_id is not None:
+            missed = self.get_events_since(last_event_id)
+            for event in missed:
+                yield event
+
         try:
             while True:
-                event = await queue.get()
-                yield event
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield event
+                except asyncio.TimeoutError:
+                    yield {
+                        "event": "heartbeat",
+                        "event_id": self._event_id_counter,
+                        "timestamp": time.time(),
+                    }
         finally:
             self.unsubscribe(queue)
+
+    def get_job_stats(self, job_id: str) -> dict[str, Any] | None:
+        """Get full job stats including computed fields for API response."""
+        job = self.get(job_id)
+        if not job:
+            return None
+
+        weighted_progress = self._calculate_weighted_progress(job)
+        eta = self._calculate_eta(job)
+        speed = self._speed_data.get(job_id, {})
+
+        return {
+            "job_id": job.job_id,
+            "status": job.status.value if hasattr(job.status, "value") else job.status,
+            "progress": job.progress,
+            "weighted_progress": round(weighted_progress, 1),
+            "file_path": job.file_path,
+            "media_type": job.media_type,
+            "current_stage": job.current_stage,
+            "pipeline_stage": getattr(job, "pipeline_stage", "init"),
+            "message": job.message,
+            "started_at": job.started_at,
+            "completed_at": job.completed_at,
+            "error": job.error,
+            "total_frames": job.total_frames,
+            "processed_frames": job.processed_frames,
+            "current_item_index": getattr(job, "current_item_index", 0),
+            "total_items": getattr(job, "total_items", 0),
+            "timestamp": job.current_frame_timestamp,
+            "duration": job.total_duration,
+            "last_heartbeat": getattr(job, "last_heartbeat", 0.0),
+            "stage_stats": job.stage_stats or {},
+            "eta_seconds": eta,
+            "speed": {
+                "fps": speed.get("fps", 0),
+                "speed_ratio": speed.get("speed_ratio", 0),
+            },
+            "checkpoint_data": job.checkpoint_data,
+        }
 
 
 progress_tracker = ProgressTracker()

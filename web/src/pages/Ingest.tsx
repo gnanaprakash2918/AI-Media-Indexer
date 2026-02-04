@@ -47,6 +47,7 @@ import {
   triggerGrounding,
   getVideoSummary,
 } from '../api/client';
+import type { Job, StageStats } from '../api/client';
 
 type JobStatus =
   | 'pending'
@@ -55,27 +56,6 @@ type JobStatus =
   | 'failed'
   | 'cancelled'
   | 'paused';
-
-interface Job {
-  job_id: string;
-  status: JobStatus;
-  progress: number;
-  file_path: string;
-  media_type: string;
-  current_stage: string;
-  pipeline_stage: string;
-  message: string;
-  started_at: number;
-  completed_at: number | null;
-  error: string | null;
-  current_item_index?: number;
-  total_items?: number;
-  processed_frames?: number;
-  total_frames?: number;
-  timestamp?: number;
-  duration?: number;
-  stage_stats?: Record<string, { status: string; duration?: number; start?: number; end?: number; error?: string; retries?: number }>;
-}
 
 // Pipeline stage labels for human-readable display
 const STAGE_LABELS: Record<string, { label: string; icon: string; order: number }> = {
@@ -108,19 +88,26 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-// Calculate ETA based on video timestamp (more accurate than frame count)
-function calculateETA(
-  currentTimestamp: number | undefined,
-  totalDuration: number | undefined
-): string | null {
-  if (!currentTimestamp || !totalDuration || currentTimestamp < 10) return null;
-  const remaining = totalDuration - currentTimestamp;
-  if (remaining <= 0) return null;
-  // Rough estimate: processing speed is ~0.5x to 2x realtime
-  // Use 1x realtime as conservative estimate
-  if (remaining < 60) return `~${Math.ceil(remaining)}s left`;
-  if (remaining < 3600) return `~${Math.ceil(remaining / 60)}m left`;
-  return `~${Math.round(remaining / 3600)}h left`;
+// Format duration in human-readable format (e.g., "2m 30s", "1h 15m")
+function formatDuration(seconds: number | null | undefined): string {
+  if (!seconds || seconds <= 0) return '';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+// Format ETA - prefer backend calculation when available
+function formatETA(etaSeconds: number | null | undefined): string | null {
+  if (!etaSeconds || etaSeconds <= 0) return null;
+  if (etaSeconds < 60) return `~${Math.ceil(etaSeconds)}s left`;
+  if (etaSeconds < 3600) return `~${Math.ceil(etaSeconds / 60)}m left`;
+  return `~${Math.round(etaSeconds / 3600 * 10) / 10}h left`;
 }
 
 function JobCard({
@@ -151,13 +138,20 @@ function JobCard({
   const hasFrameData = job.processed_frames !== undefined && job.total_frames;
   const hasTimeData = job.timestamp !== undefined && job.duration;
 
-  // Use backend reported progress which includes stage weighting
-  // (timestamp/duration is only for the video timeline, not overall job status)
-  const progress = job.progress;
+  // Use weighted progress from backend for more accurate display
+  const progress = job.weighted_progress ?? job.progress;
 
-  // ETA calculation (based on video timestamp, not frame count)
-  const eta = hasTimeData
-    ? calculateETA(job.timestamp, job.duration)
+  // Use backend ETA (more accurate as it tracks actual processing speed)
+  const eta = formatETA(job.eta_seconds);
+
+  // Calculate elapsed time for running jobs
+  const elapsed = isRunning || isPaused
+    ? Math.floor(Date.now() / 1000 - job.started_at)
+    : null;
+
+  // Calculate total job duration for completed jobs
+  const totalJobDuration = job.completed_at && job.started_at
+    ? job.completed_at - job.started_at
     : null;
 
   return (
@@ -264,6 +258,30 @@ function JobCard({
                   fontFamily: 'monospace'
                 }}>
                   ⏱️ {formatTime(job.timestamp!)} / {formatTime(job.duration!)}
+                </Typography>
+              )}
+              {/* Speed Metrics */}
+              {job.speed && job.speed.speed_ratio > 0 && (
+                <Typography variant="caption" sx={{
+                  bgcolor: 'info.main',
+                  color: 'info.contrastText',
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: 1,
+                  fontWeight: 600
+                }}>
+                  ⚡ {job.speed.speed_ratio.toFixed(1)}x {job.speed.fps > 0 ? `(${job.speed.fps.toFixed(1)} fps)` : ''}
+                </Typography>
+              )}
+              {/* Elapsed Time */}
+              {elapsed && elapsed > 0 && (
+                <Typography variant="caption" sx={{
+                  bgcolor: 'action.hover',
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: 1,
+                }}>
+                  ⏳ {formatDuration(elapsed)}
                 </Typography>
               )}
               {/* ETA */}
@@ -386,25 +404,53 @@ function JobCard({
 
       {/* Completed State Actions */}
       {job.status === 'completed' && (
-        <Box sx={{ display: 'flex', gap: 1, mt: 1, justifyContent: 'flex-end' }}>
-          <Button
-            size="small"
-            startIcon={<GpsFixed />}
-            onClick={() => onGround(job.file_path)}
-            variant="outlined"
-            color="primary"
-          >
-            Ground
-          </Button>
-          <Button
-            size="small"
-            startIcon={<SummaryIcon />}
-            onClick={() => onShowSummary(job.file_path)}
-            variant="outlined"
-            color="secondary"
-          >
-            Recap
-          </Button>
+        <Box sx={{ mt: 1.5 }}>
+          {/* Completion Stats */}
+          <Box sx={{ display: 'flex', gap: 2, mb: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+            {totalJobDuration && (
+              <Typography variant="caption" sx={{
+                bgcolor: 'success.main',
+                color: 'success.contrastText',
+                px: 1,
+                py: 0.25,
+                borderRadius: 1,
+                fontWeight: 600
+              }}>
+                ✅ Completed in {formatDuration(totalJobDuration)}
+              </Typography>
+            )}
+            {job.completed_at && (
+              <Typography variant="caption" color="text.secondary">
+                {new Date(job.completed_at * 1000).toLocaleString()}
+              </Typography>
+            )}
+            {job.total_frames && job.total_frames > 0 && (
+              <Typography variant="caption" color="text.secondary">
+                {job.total_frames.toLocaleString()} frames indexed
+              </Typography>
+            )}
+          </Box>
+          {/* Action Buttons */}
+          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+            <Button
+              size="small"
+              startIcon={<GpsFixed />}
+              onClick={() => onGround(job.file_path)}
+              variant="outlined"
+              color="primary"
+            >
+              Ground
+            </Button>
+            <Button
+              size="small"
+              startIcon={<SummaryIcon />}
+              onClick={() => onShowSummary(job.file_path)}
+              variant="outlined"
+              color="secondary"
+            >
+              Recap
+            </Button>
+          </Box>
         </Box>
       )}
 

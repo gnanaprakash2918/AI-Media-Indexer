@@ -222,7 +222,7 @@ async def list_jobs() -> dict:
     """Lists all historical and active processing jobs with progress details.
 
     Retrieves granular data from the global progress tracker, including
-    stage messages, frame counts, and error details.
+    stage messages, frame counts, speed metrics, ETA, and error details.
 
     Returns:
         A dictionary containing a list of job state records.
@@ -230,26 +230,10 @@ async def list_jobs() -> dict:
     jobs = progress_tracker.get_all()
     return {
         "jobs": [
-            {
+            progress_tracker.get_job_stats(j.job_id) or {
                 "job_id": j.job_id,
                 "status": j.status.value,
                 "progress": j.progress,
-                "file_path": j.file_path,
-                "media_type": j.media_type,
-                "current_stage": j.current_stage,
-                "pipeline_stage": getattr(j, "pipeline_stage", "init"),
-                "message": j.message,
-                "started_at": j.started_at,
-                "completed_at": j.completed_at,
-                "error": j.error,
-                # Granular stats
-                "total_frames": j.total_frames,
-                "processed_frames": j.processed_frames,
-                "current_item_index": getattr(j, "current_item_index", 0),
-                "total_items": getattr(j, "total_items", 0),
-                "timestamp": j.current_frame_timestamp,
-                "duration": j.total_duration,
-                "last_heartbeat": getattr(j, "last_heartbeat", 0.0),
             }
             for j in jobs
         ]
@@ -268,33 +252,11 @@ async def get_job(job_id: str) -> dict:
 
     Raises:
         HTTPException: If the job_id does not exist in the tracker.
-        HTTPException: If the job_id does not exist in the tracker.
     """
-    job = progress_tracker.get(job_id)
-    if not job:
+    stats = progress_tracker.get_job_stats(job_id)
+    if not stats:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {
-        "job_id": job.job_id,
-        "status": job.status.value,
-        "progress": job.progress,
-        "file_path": job.file_path,
-        "media_type": job.media_type,
-        "current_stage": job.current_stage,
-        "pipeline_stage": getattr(job, "pipeline_stage", "init"),
-        "message": job.message,
-        "started_at": job.started_at,
-        "completed_at": job.completed_at,
-        "error": job.error,
-        # Granular stats
-        "total_frames": job.total_frames,
-        "processed_frames": job.processed_frames,
-        "current_item_index": getattr(job, "current_item_index", 0),
-        "total_items": getattr(job, "total_items", 0),
-        "timestamp": job.current_frame_timestamp,
-        "duration": job.total_duration,
-        "last_heartbeat": getattr(job, "last_heartbeat", 0.0),
-        "checkpoint_data": job.checkpoint_data,
-    }
+    return stats
 
 
 @router.post("/jobs/{job_id}/cancel")

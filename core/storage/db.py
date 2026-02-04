@@ -513,7 +513,7 @@ class VectorDB:
                 "embedding_encoder", vram_gb=vram_gb, job_id=job_id
             ):
                 self.encoder = self._load_encoder()
-            
+
             # Register cleanup for emergency unloading only
             RESOURCE_ARBITER.register_model("embedding_encoder", self.unload_encoder)
 

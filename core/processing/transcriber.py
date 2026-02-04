@@ -30,7 +30,7 @@ from huggingface_hub import login, snapshot_download
 from config import settings
 from core.errors import ModelLoadError, TranscriberError
 from core.processing.text_utils import parse_srt
-from core.utils.logger import log
+from core.utils.logger import log, log_verbose
 from core.utils.observe import observe
 
 warnings.filterwarnings("ignore")
@@ -353,6 +353,7 @@ class AudioTranscriber:
             log(
                 f"[INFO] Slicing audio (memory): {start}s -> {end if end else 'END'}s (File duration: {duration}s)"
             )
+            log_verbose(f"[Transcriber] Memory slicing: cmd={' '.join(cmd)}")
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -365,13 +366,16 @@ class AudioTranscriber:
                 if (
                     proc.returncode == 0 and len(audio_bytes) > 44
                 ):  # WAV header is 44 bytes
+                    log_verbose(f"[Transcriber] Memory slice successful: {len(audio_bytes)} bytes")
                     return audio_bytes  # Return bytes directly
                 else:
                     log(
                         "[WARN] In-memory slice failed (likely empty or internal error), falling back to file"
                     )
+                    log_verbose(f"[Transcriber] Memory slice failed: returncode={proc.returncode}, len={len(audio_bytes)}")
             except Exception as e:
                 log(f"[WARN] BytesIO slice error: {e}, falling back to file")
+                log_verbose(f"[Transcriber] BytesIO exception: {e}")
 
         # Fallback: Write to temp file (for large segments or on error)
         with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -396,15 +400,18 @@ class AudioTranscriber:
         log(
             f"[INFO] Slicing audio (file): {start}s -> {end if end else 'END'}s"
         )
+        log_verbose(f"[Transcriber] File slicing: output={output_slice}, cmd={' '.join(cmd_file)}")
         try:
             await asyncio.to_thread(
                 subprocess.run, cmd_file, check=True, stderr=subprocess.DEVNULL
             )
+            log_verbose(f"[Transcriber] File slice created: size={output_slice.stat().st_size} bytes")
             return output_slice
         except subprocess.CalledProcessError as e:
             log(
                 f"[WARN] FFmpeg slice failed (exit {e.returncode}): Start={start}, End={end}, Duration={duration}. Returning empty."
             )
+            log_verbose(f"[Transcriber] File slice failed: {e}")
             if output_slice.exists():
                 try:
                     output_slice.unlink()
@@ -416,13 +423,16 @@ class AudioTranscriber:
     def _convert_to_ct2(self, model_id: str) -> Path:
         model_name = model_id.split("/")[-1]
         ct2_output_dir = settings.model_cache_dir / f"ct2-{model_name}"
+        log_verbose(f"[Transcriber] Checking for cached model at {ct2_output_dir}")
 
         # If cache exists and looks valid (has model.bin), skip conversion
         if ct2_output_dir.exists() and (ct2_output_dir / "model.bin").exists():
             # log(f"[INFO] Using cached CTranslate2 model: {ct2_output_dir}")
+            log_verbose(f"[Transcriber] Found valid cached model at {ct2_output_dir}")
             return ct2_output_dir
 
         log(f"[INFO] Converting {model_id} to CTranslate2 format...")
+        log_verbose(f"[Transcriber] Starting conversion for {model_id} -> {ct2_output_dir}")
 
         try:
             # 1. Download original model from HF
@@ -433,12 +443,14 @@ class AudioTranscriber:
                 local_dir_use_symlinks=False,
             )
             raw_model_dir = Path(raw_model_dir)
+            log_verbose(f"[Transcriber] Raw model downloaded to {raw_model_dir}")
 
             # 2. Convert to CTranslate2
             # Handle newer transformers that don't accept dtype argument
             quantization = (
                 "int8_float16" if settings.device == "cuda" else "int8"
             )
+            log_verbose(f"[Transcriber] Converting with quantization={quantization}")
 
             try:
                 converter = ctranslate2.converters.TransformersConverter(
@@ -460,6 +472,7 @@ class AudioTranscriber:
                     log(
                         "[WARN] dtype error detected, trying low_cpu_mem_usage workaround..."
                     )
+                    log_verbose("[Transcriber] Retrying conversion with low_cpu_mem_usage=False")
                     # Force low_cpu_mem_usage=False to bypass dtype issue
                     converter = ctranslate2.converters.TransformersConverter(
                         str(raw_model_dir),
@@ -487,12 +500,14 @@ class AudioTranscriber:
                 src = raw_model_dir / file_name
                 if src.exists():
                     shutil.copy(src, ct2_output_dir / file_name)
+                    log_verbose(f"[Transcriber] Patched {file_name}")
 
             log("[SUCCESS] Model converted and patched successfully.")
             return ct2_output_dir
 
         except Exception as e:
             log(f"[ERROR] Model download/conversion failed: {e}")
+            log_verbose(f"[Transcriber] Conversion exception: {type(e).__name__}: {e}")
             raise ModelLoadError(
                 f"Could not prepare {model_id}: {e}", original_error=e
             ) from e
@@ -508,11 +523,13 @@ class AudioTranscriber:
             AudioTranscriber._SHARED_MODEL is not None
             and model_key == AudioTranscriber._SHARED_SIZE
         ):
+            log_verbose(f"[Transcriber] Model {model_key} already loaded, skipping init")
             return
 
         # Unload if different size loaded?
         # Yes, we only support one model loaded at a time for Whisper
         if AudioTranscriber._SHARED_MODEL is not None:
+            log_verbose(f"[Transcriber] Unloading existing model {AudioTranscriber._SHARED_SIZE} for new {model_key}")
             self.unload_model()
 
         # only log here, when we actually load weights
@@ -535,6 +552,7 @@ class AudioTranscriber:
         else:
             # Need to convert openai/whisper models to CTranslate2 format
             final_model_path = self._convert_and_cache_model(model_key)
+            log_verbose(f"[Transcriber] Using converted model path: {final_model_path}")
 
         # Memory-efficient settings
         cpu_threads = min(
@@ -542,6 +560,7 @@ class AudioTranscriber:
         )  # Limit CPU threads to reduce memory
 
         try:
+            log_verbose(f"[Transcriber] Initializing WhisperModel with threads={cpu_threads}")
             AudioTranscriber._SHARED_MODEL = WhisperModel(
                 str(final_model_path),
                 device=self.device,
@@ -555,10 +574,13 @@ class AudioTranscriber:
             )
             AudioTranscriber._SHARED_SIZE = model_key
             log(f"[SUCCESS] Loaded {model_key} on {self.device}")
+            log_verbose("[Transcriber] Model loaded successfully")
 
         except Exception as e:
             # Check for corruption/consistency errors
             error_msg = str(e).lower()
+            log_verbose(f"[Transcriber] Model initialization error: {e}")
+
             if (
                 "consistency check failed" in error_msg
                 or "invalid load" in error_msg
