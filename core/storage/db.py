@@ -3702,53 +3702,85 @@ class VectorDB:
         score_threshold: float | None = None,
         video_path: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search voice segments using semantic vector similarity.
+        """Search voice segments using keyword/substring matching.
+        
+        NOTE: Semantic vector search is disabled for voice segments because the
+        collection currently stores speaker embeddings (256d), not text embeddings (1024d).
+        Unlocks 'search by transcript' functionality via text matching.
 
         Args:
-            query: The search query.
+            query: The search query (text or speaker name).
             limit: Maximum number of results.
-            score_threshold: Minimum similarity score.
+            score_threshold: Ignored for keyword search (compatibility param).
             video_path: Optional filter by video path.
 
         Returns:
-            List of matching voice segments with scores.
+            List of matching voice segments.
         """
         try:
-            # Fix Async Error: Explicitly await and split
-            # "TypeError: 'coroutine' object is not subscriptable"
-            encoded_batches = await self.encode_texts(query, is_query=True)
-            if not encoded_batches:
-                return []
-            query_vec = encoded_batches[0]
+            # Build filter conditions for Keyword Search
+            should_conditions = []
+            
+            # 1. Search in transcription text
+            should_conditions.append(
+                models.FieldCondition(
+                    key="text", 
+                    match=models.MatchText(text=query)
+                )
+            )
+            should_conditions.append(
+                models.FieldCondition(
+                    key="transcription", 
+                    match=models.MatchText(text=query)
+                )
+            )
+            
+            # 2. Search in speaker name
+            should_conditions.append(
+                models.FieldCondition(
+                    key="speaker_name", 
+                    match=models.MatchText(text=query)
+                )
+            )
 
-            conditions: list[models.Condition] = []
+            # 3. Search in speaker_id (exact match or partial)
+            should_conditions.append(
+                models.FieldCondition(
+                    key="speaker_id", 
+                    match=models.MatchText(text=query)
+                )
+            )
+
+            must_conditions = []
             if video_path:
-                conditions.append(
+                must_conditions.append(
                     models.FieldCondition(
                         key="media_path",
                         match=models.MatchValue(value=video_path),
                     )
                 )
 
-            query_filter = (
-                models.Filter(must=conditions) if conditions else None
+            query_filter = models.Filter(
+                should=should_conditions,
+                must=must_conditions if must_conditions else None
             )
 
-            resp = self.client.query_points(
+            # Use Scroll (no vector scoring)
+            results, _ = self.client.scroll(
                 collection_name=self.VOICE_COLLECTION,
-                query=query_vec,
+                scroll_filter=query_filter,
                 limit=limit,
-                score_threshold=score_threshold,
-                query_filter=query_filter,
+                with_payload=True,
+                with_vectors=False,
             )
 
-            results = []
-            for hit in resp.points:
+            formatted_results = []
+            for hit in results:
                 payload = hit.payload or {}
-                results.append(
+                formatted_results.append(
                     {
                         "id": str(hit.id),
-                        "score": hit.score,
+                        "score": 1.0,  # distinct from vector score
                         "type": "voice_segment",
                         "speaker_id": payload.get("speaker_id"),
                         "speaker_name": payload.get(
@@ -3763,7 +3795,7 @@ class VectorDB:
                         **payload,
                     }
                 )
-            return results
+            return formatted_results
         except Exception as e:
             log(f"search_voice_segments failed: {e}")
             return []

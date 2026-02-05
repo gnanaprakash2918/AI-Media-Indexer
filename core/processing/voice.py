@@ -4,8 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from typing import Any, Final, cast
+
+# FIX: Add torio/lib to PATH to prevent "FileNotFoundError: Could not find module libtorio_ffmpeg6.pyd"
+# This is required for pyannote.audio/torchaudio on Windows
+try:
+    import site
+    site_packages = site.getsitepackages()
+    for sp in site_packages:
+        torio_lib = Path(sp) / "torio" / "lib"
+        if torio_lib.exists():
+            os.environ["PATH"] += os.pathsep + str(torio_lib)
+            break
+except Exception:
+    # Fallback for venv if site doesn't work as expected
+    venv_base = Path(sys.prefix)
+    torio_lib_venv = venv_base / "Lib" / "site-packages" / "torio" / "lib"
+    if torio_lib_venv.exists():
+        os.environ["PATH"] += os.pathsep + str(torio_lib_venv)
 
 import numpy as np
 import torch

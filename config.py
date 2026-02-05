@@ -269,8 +269,8 @@ class Settings(BaseSettings):
     min_speakers: int | None = None
     max_speakers: int | None = None
     voice_clustering_threshold: float = Field(
-        default=0.3,
-        description="Voice clustering cosine distance (lower=stricter, 0.3=70% similarity required for tighter clusters)",
+        default=0.7,
+        description="Voice clustering cosine similarity (higher=stricter, 0.7=70% similarity required for identity match)",
     )
 
     # HDBSCAN Tuning (used for clustering algorithms)

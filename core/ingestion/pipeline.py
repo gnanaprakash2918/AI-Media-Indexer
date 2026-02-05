@@ -2695,10 +2695,20 @@ class IngestionPipeline:
                 try:
                     # Initialize Video Node (idempotent)
                     if scenes_stored == 1:
-                        from core.schemas import MediaFile, MediaMetadata
+                        from core.schemas import MediaFile, MediaMetadata, MediaType
+                        import hashlib
+
+                        # Generate lightweight content hash (path + size + mtime)
+                        # Avoid full file read for graph node init
+                        file_stat = path.stat()
+                        hash_input = f"{path}_{file_stat.st_size}_{file_stat.st_mtime}"
+                        content_hash = hashlib.md5(hash_input.encode()).hexdigest()
+
                         mf_wrapper = MediaFile(
                             path=str(path),
                             filename=path.name,
+                            media_type=MediaType.VIDEO,
+                            content_hash=content_hash,
                             metadata=MediaMetadata(duration=self.prober.get_duration(path) if hasattr(self.prober, 'get_duration') else 0)
                         )
                         self.graph_builder.process_video_node(mf_wrapper)

@@ -123,12 +123,17 @@ class OCRProcessor:
             try:
                 from paddleocr import PaddleOCR
 
+                # FIX: Disable MKLDNN to prevent "OneDnnContext" crash on Windows
+                os.environ["FLAGS_use_mkldnn"] = "0"
+                os.environ["FLAGS_enable_mkldnn"] = "0"
+
                 log.info(f"[OCR] Loading PaddleOCR lang={self.lang}")
                 self.ocr = PaddleOCR(
                     use_angle_cls=self.enable_angle_cls,
                     lang=self.lang,
                     use_gpu=self.use_gpu,
                     show_log=False,
+                    enable_mkldnn=False,  # Explicitly disable in init args too
                 )
                 log.info("[OCR] Model loaded")
                 return True

@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from core.utils.logger import get_logger
+from transformers import AutoModelForAudioClassification, Wav2Vec2FeatureExtractor
 
 log = get_logger(__name__)
 
