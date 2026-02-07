@@ -1033,7 +1033,7 @@ class FaceManager:
         existing_clusters[nid] = emb_norm.tolist()
         return nid, existing_clusters
 
-    def resolve_identity_conflict(
+    async def resolve_identity_conflict(
         self,
         track_id: int,
         crop: NDArray[np.uint8],
@@ -1043,7 +1043,7 @@ class FaceManager:
             from core.processing.biometrics import get_biometric_arbitrator
 
             arb = get_biometric_arbitrator()
-            emb = arb.get_embedding(crop)
+            emb = await arb.get_embedding(crop)
             if emb is None:
                 return track_id
             if track_id in known and arb.verify_identity(emb, known[track_id]):

@@ -270,7 +270,6 @@ class NomicEmbedEncoder:
                 return True
 
             try:
-            try:
                 log.info("[Nomic] Loading nomic-embed-text-v1.5...")
 
                 # Use Resource Arbiter for VRAM management (approx 0.5GB)

@@ -740,16 +740,16 @@ class IndicASRPipeline:
 
             try:
 
-                def _infer_chunk():
+                def _infer_chunk(path):
                     with torch.no_grad():
                         self.model.cur_decoder = "ctc"  # type: ignore
                         return self.model.transcribe(  # type: ignore
-                            [str(chunk_path)],
+                            [str(path)],
                             batch_size=1,
                             language_id=self.lang,
                         )
 
-                transcriptions = await asyncio.to_thread(_infer_chunk)
+                transcriptions = await asyncio.to_thread(_infer_chunk, chunk_path)
 
                 chunk_text = self._extract_text(transcriptions)
                 if chunk_text:

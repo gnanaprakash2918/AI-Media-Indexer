@@ -70,6 +70,8 @@ async def get_face_thumbnail(
         return FileResponse(file_path, media_type="image/jpeg")
 
     # Generate on-demand using FFmpeg (10-50x faster than OpenCV)
+    media_path = None
+    timestamp = 0.0
     try:
         if not pipeline or not pipeline.db:
             raise HTTPException(status_code=503, detail="Database not ready")

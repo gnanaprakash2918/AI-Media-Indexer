@@ -184,7 +184,6 @@ class TransNetV2:
         # Convert predictions to scenes
         scenes = []
         start_frame = 0
-        in_scene = True
 
         for i, pred in enumerate(predictions):
             if pred > threshold:

@@ -495,7 +495,7 @@ class DeepResearchProcessor:
             import cv2
 
             cap = cv2.VideoCapture(str(video_path))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            # fps unused
             duration = end_time - start_time
             frame_interval = duration / sample_frames
 

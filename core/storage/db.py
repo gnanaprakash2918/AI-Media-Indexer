@@ -2130,7 +2130,7 @@ class VectorDB:
 
         try:
             self.client.upsert(
-                collection_name=self.FACE_COLLECTION,
+                collection_name=self.FACES_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=point_id,

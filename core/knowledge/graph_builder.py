@@ -192,7 +192,7 @@ class GraphBuilder:
              # Heuristic: Only reasonable length text
              for txt_item in text_content: # visible_text is list[str]
                 if len(txt_item) > 2:
-                     text_id = f"text_{uuid.uuid5(uuid.NAMESPACE_DNS, txt_item[:50])}"
+                     # text_id unused
                      query = """
                      MATCH (s:Scene {id: $scene_id})
                      MERGE (t:Text {content: $content})

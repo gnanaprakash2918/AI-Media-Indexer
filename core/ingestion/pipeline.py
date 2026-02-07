@@ -1702,7 +1702,7 @@ class IngestionPipeline:
                     continue
 
                 # Store events with deduplication
-                for (window_audio, window_start), events, embedding in zip(
+                for (_window_audio, window_start), events, embedding in zip(
                     clap_chunks, chunk_events, chunk_embeddings, strict=True
                 ):
                     if not events:
