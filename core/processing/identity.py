@@ -26,6 +26,7 @@ from config import settings
 from core.schemas import DetectedFace
 from core.utils.observe import observe
 from core.utils.resource_arbiter import GPU_SEMAPHORE
+from core.utils.logger import log
 
 # =========================================================================
 # SYSTEM CAPABILITY DETECTION
