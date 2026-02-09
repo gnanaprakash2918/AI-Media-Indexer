@@ -1025,24 +1025,45 @@ class SearchAgent:
             }
 
             # =================================================================
-            # TRULY DYNAMIC: UNIFORM WEIGHTS FOR ALL QUERIES
-            # No hardcoded intent classification - let vector similarity do the work
+            # LLM-INFERRED MODALITY WEIGHTS (Truly Dynamic)
+            # Weights come from query decomposition - LLM determines priorities
             # =================================================================
             
-            # Equal weights for all modalities - truly dynamic, no assumptions
-            weights = {
-                "scenes": 1.0 / 6.0,
-                "frames": 1.0 / 6.0,
-                "scenelets": 1.0 / 6.0,
-                "voice": 1.0 / 6.0,
-                "dialogue": 1.0 / 6.0,
-                "audio_events": 1.0 / 6.0,
-            }
-            detected_intents = ["UNIFORM"]
-
-            log(
-                f"[ADAPTIVE] Query weights: UNIFORM (1/6 each modality)"
-            )
+            # Check if parsed query has LLM-inferred modality weights
+            llm_weights = None
+            if parsed and hasattr(parsed, "modality_weights") and parsed.modality_weights:
+                llm_weights = parsed.modality_weights
+            elif parsed and isinstance(parsed, dict) and "modality_weights" in parsed:
+                llm_weights = parsed["modality_weights"]
+            
+            if llm_weights:
+                # Map LLM weight keys to our collection names
+                weights = {
+                    "scenes": llm_weights.get("visual", 0.2),
+                    "frames": llm_weights.get("visual", 0.2) * 0.8,  # Frames are visual
+                    "scenelets": llm_weights.get("action", 0.15),
+                    "voice": llm_weights.get("identity", 0.15),
+                    "dialogue": llm_weights.get("dialogue", 0.2),
+                    "audio_events": llm_weights.get("audio", 0.1),
+                }
+                # Normalize to sum to 1.0
+                total = sum(weights.values())
+                if total > 0:
+                    weights = {k: v / total for k, v in weights.items()}
+                detected_intents = ["LLM_INFERRED"]
+                log(f"[ADAPTIVE] Using LLM-inferred weights: {weights}")
+            else:
+                # Fallback: uniform weights when no LLM decomposition
+                weights = {
+                    "scenes": 1.0 / 6.0,
+                    "frames": 1.0 / 6.0,
+                    "scenelets": 1.0 / 6.0,
+                    "voice": 1.0 / 6.0,
+                    "dialogue": 1.0 / 6.0,
+                    "audio_events": 1.0 / 6.0,
+                }
+                detected_intents = ["UNIFORM"]
+                log("[ADAPTIVE] Query weights: UNIFORM (no LLM decomposition)")
 
             return weights
 

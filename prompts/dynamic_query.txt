@@ -43,8 +43,24 @@ OUTPUT FORMAT (valid JSON only):
         }}
     ],
     "scene_description": "<comprehensive semantic description using query words>",
+    "modality_weights": {{
+        "visual": <0.0-1.0 weight for scene/frame visual content>,
+        "dialogue": <0.0-1.0 weight for spoken words/transcripts>,
+        "audio": <0.0-1.0 weight for sounds/music/audio events>,
+        "identity": <0.0-1.0 weight for person/face identification>,
+        "action": <0.0-1.0 weight for motion/activities>,
+        "object": <0.0-1.0 weight for object detection>
+    }},
     "reasoning": [
         "Step 1: Analyzed input...",
         "Step 2: Extracted constraints..."
     ]
 }}
+
+MODALITY WEIGHT GUIDELINES (weights should sum to ~1.0):
+- "what did X say" → dialogue=0.7, identity=0.2, visual=0.1
+- "wearing blue" → visual=0.6, object=0.2, identity=0.2
+- "music playing" → audio=0.7, visual=0.2, dialogue=0.1
+- "who is present" → identity=0.7, visual=0.2, dialogue=0.1
+- "running fast" → action=0.6, visual=0.3, identity=0.1
+- Complex multi-modal → distribute proportionally

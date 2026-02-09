@@ -3,7 +3,7 @@ decompose it into structured components for retrieval.
 
 USER QUERY: {query}
 
-TASK: Break down this query into searchable components.
+TASK: Break down this query into searchable components and determine which modalities are most relevant.
 
 OUTPUT FORMAT (valid JSON only):
 {{
@@ -19,5 +19,21 @@ OUTPUT FORMAT (valid JSON only):
         "person": "<person name if specified>",
         "time_range": "<time constraints if any>",
         "video": "<specific video if mentioned>"
+    }},
+    "modality_weights": {{
+        "visual": <0.0-1.0 weight for scene/frame visual content>,
+        "dialogue": <0.0-1.0 weight for spoken words/transcripts>,
+        "audio": <0.0-1.0 weight for sounds/music/audio events>,
+        "identity": <0.0-1.0 weight for person/face identification>,
+        "action": <0.0-1.0 weight for motion/activities>,
+        "object": <0.0-1.0 weight for object detection>
     }}
 }}
+
+MODALITY WEIGHT GUIDELINES:
+- For "what did X say" queries: dialogue=0.8, visual=0.1, audio=0.1
+- For "wearing blue" queries: visual=0.7, identity=0.2, object=0.1
+- For "music playing" queries: audio=0.8, visual=0.1, dialogue=0.1
+- For "who is this person" queries: identity=0.8, visual=0.2
+- For complex queries: distribute weights proportionally
+- Weights should sum to approximately 1.0

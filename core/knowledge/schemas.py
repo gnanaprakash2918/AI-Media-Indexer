@@ -794,6 +794,12 @@ class ParsedQuery(BaseModel):
         default="", description="LLM-generated summary of what to search for"
     )
 
+    # LLM-inferred modality weights for search prioritization
+    modality_weights: dict[str, float] = Field(
+        default_factory=dict,
+        description="LLM-inferred weights: {visual, dialogue, audio, identity, action, object}",
+    )
+
     def to_search_text(self) -> str:
         """Aggregates all legacy query components into a single search string.
 
