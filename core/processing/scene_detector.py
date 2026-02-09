@@ -59,7 +59,8 @@ def _get_video_fps(video_path: Path) -> float:
             log(f"Detected video FPS: {fps:.2f}")
             return fps
     except Exception as e:
-        log(f"FPS detection failed, using 30fps fallback: {e}")
+        log(f"[WARNING] FPS detection failed, using 30fps fallback: {e}")
+        log("[WARNING] This may cause scene boundary drift on VFR videos")
 
     return 30.0  # Fallback
 

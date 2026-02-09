@@ -1310,7 +1310,12 @@ class VectorDB:
 
             payload = {
                 "video_path": video_path,
+                "media_path": video_path,  # Standardized path key
                 "text": segment.get("text"),
+                # Standardized keys (used by fusion)
+                "start_time": start_time,
+                "end_time": segment.get("end"),
+                # Legacy keys for backwards compatibility
                 "start": start_time,
                 "end": segment.get("end"),
                 "type": segment.get("type", "dialogue"),
