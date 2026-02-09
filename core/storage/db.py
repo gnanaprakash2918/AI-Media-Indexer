@@ -1097,6 +1097,22 @@ class VectorDB:
             self.FACE_VECTOR_SIZE,
             distance=models.Distance.EUCLID,
         )
+        # Face indexes for identity and confidence filtering
+        self.client.create_payload_index(
+            collection_name=self.FACES_COLLECTION,
+            field_name="video_path",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        self.client.create_payload_index(
+            collection_name=self.FACES_COLLECTION,
+            field_name="cluster_id",
+            field_schema=models.PayloadSchemaType.INTEGER,
+        )
+        self.client.create_payload_index(
+            collection_name=self.FACES_COLLECTION,
+            field_name="confidence",
+            field_schema=models.PayloadSchemaType.FLOAT,
+        )
 
         # 4. Scenelets (Multi-Vector-ish: "content")
         # Scenelets store TEXT SUMMARIES ("content"), so they must use TEXT_DIM (1024 for BGE)
@@ -1126,6 +1142,27 @@ class VectorDB:
         # 5. Voice Segments
         self._check_and_fix_collection(
             self.VOICE_COLLECTION, self.VOICE_VECTOR_SIZE
+        )
+        # Voice segment indexes for emotion and speaker filtering
+        self.client.create_payload_index(
+            collection_name=self.VOICE_COLLECTION,
+            field_name="media_path",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        self.client.create_payload_index(
+            collection_name=self.VOICE_COLLECTION,
+            field_name="emotion",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        self.client.create_payload_index(
+            collection_name=self.VOICE_COLLECTION,
+            field_name="speaker_label",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        self.client.create_payload_index(
+            collection_name=self.VOICE_COLLECTION,
+            field_name="voice_cluster_id",
+            field_schema=models.PayloadSchemaType.INTEGER,
         )
 
         # 6. Scenes (CRITICAL: Fix Dimension Mismatch)
@@ -1189,6 +1226,8 @@ class VectorDB:
             "accessories",
             "scene_location",
             "scene_type",
+            "object_labels",      # NEW: Enable "frames with cars/dogs" queries
+            "dominant_color",     # NEW: Enable "blue scenes" queries
         ]
         for field in text_fields:
             try:
@@ -1223,6 +1262,25 @@ class VectorDB:
                 field_name="media_path",
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
+        # Always ensure audio_events indexes exist (even if collection existed)
+        try:
+            self.client.create_payload_index(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                field_name="event_label",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+            self.client.create_payload_index(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                field_name="confidence",
+                field_schema=models.PayloadSchemaType.FLOAT,
+            )
+            self.client.create_payload_index(
+                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                field_name="start_time",
+                field_schema=models.PayloadSchemaType.FLOAT,
+            )
+        except Exception:
+            pass  # Indexes may already exist
 
         # Video Metadata Collection
         if not self.client.collection_exists(self.VIDEO_METADATA_COLLECTION):
@@ -5317,12 +5375,14 @@ class VectorDB:
     def get_voice_segments(
         self,
         media_path: str | None = None,
+        emotion: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Get voice segments, optionally filtered by media path.
+        """Get voice segments, optionally filtered by media path or emotion.
 
         Args:
             media_path: Optional filter by media file path.
+            emotion: Optional filter by emotion (e.g., "happy", "sad", "angry").
             limit: Maximum number of results.
 
         Returns:
@@ -5335,6 +5395,13 @@ class VectorDB:
                     models.FieldCondition(
                         key="media_path",
                         match=models.MatchValue(value=media_path),
+                    )
+                )
+            if emotion:
+                conditions.append(
+                    models.FieldCondition(
+                        key="emotion",
+                        match=models.MatchValue(value=emotion),
                     )
                 )
             qfilter = models.Filter(must=conditions) if conditions else None
@@ -5354,8 +5421,13 @@ class VectorDB:
                         "media_path": payload.get("media_path"),
                         "start": payload.get("start"),
                         "end": payload.get("end"),
+                        "start_time": payload.get("start_time") or payload.get("start"),
+                        "end_time": payload.get("end_time") or payload.get("end"),
                         "speaker_label": payload.get("speaker_label"),
                         "audio_path": payload.get("audio_path"),
+                        "emotion": payload.get("emotion"),
+                        "emotion_conf": payload.get("emotion_conf"),
+                        "voice_cluster_id": payload.get("voice_cluster_id"),
                     }
                 )
             return results

@@ -42,11 +42,15 @@ RECOMMENDATION FOR DEVELOPMENT/TESTING:
 """
 
 import os
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-from .gemini import GeminiLLM
 from .interface import LLMInterface
 from .ollama import OllamaLLM
+
+# Lazy import for Gemini to avoid triggering google-generativeai SDK errors
+# when user is not using Gemini
+if TYPE_CHECKING:
+    from .gemini import GeminiLLM
 
 # Supported providers - easily add new ones here
 SUPPORTED_PROVIDERS = ("gemini", "ollama", "openai", "anthropic")
@@ -106,6 +110,8 @@ class LLMFactory:
             # BEST FOR: Vision, frame analysis, structured extraction
             # COST: ~$0.00025/image (cheap)
             # SPEED: Fast (~1-2s for vision)
+            # Lazy import to avoid triggering google-generativeai SDK errors
+            from .gemini import GeminiLLM
             return GeminiLLM(prompt_dir=prompt_dir, **kwargs)
 
         elif provider == "ollama":

@@ -3395,6 +3395,10 @@ class IngestionPipeline:
                     if analysis.entities
                     else []
                 )
+                # NEW: Store YOLO-detected objects as dedicated searchable field
+                # Enables queries like "frames with cars" via object_labels text index
+                if detected_objects:
+                    payload["object_labels"] = list(set(detected_objects))
                 payload["scene_location"] = (
                     analysis.scene.location if analysis.scene else ""
                 )
@@ -3443,6 +3447,45 @@ class IngestionPipeline:
                     description += f". Shot type: {dr_result.shot_type}"
                 if dr_result.mood_confidence > 0.4:
                     description += f". Mood: {dr_result.mood}"
+
+            # ============================================================
+            # DOMINANT COLOR EXTRACTION: Enables "blue scenes" queries
+            # Uses lightweight k-means on downsampled frame for efficiency
+            # ============================================================
+            try:
+                if frame_img is not None:
+                    import cv2
+                    import numpy as np
+                    
+                    small_frame = cv2.resize(frame_img, (32, 32))
+                    pixels = small_frame.reshape(-1, 3).astype(np.float32)
+                    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+                    _, labels, centers = cv2.kmeans(pixels, 3, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
+                    
+                    counts = np.bincount(labels.flatten())
+                    dominant_idx = np.argmax(counts)
+                    dominant_bgr = centers[dominant_idx].astype(int)
+                    
+                    r, g, b = int(dominant_bgr[2]), int(dominant_bgr[1]), int(dominant_bgr[0])
+                    r_n, g_n, b_n = r / 255.0, g / 255.0, b / 255.0
+                    max_c, min_c = max(r_n, g_n, b_n), min(r_n, g_n, b_n)
+                    delta = max_c - min_c
+                    
+                    val = max_c * 100
+                    sat = (delta / max_c * 100) if max_c > 0 else 0
+                    hue = 0
+                    if delta > 0:
+                        if max_c == r_n:
+                            hue = 60 * (((g_n - b_n) / delta) % 6)
+                        elif max_c == g_n:
+                            hue = 60 * (((b_n - r_n) / delta) + 2)
+                        else:
+                            hue = 60 * (((r_n - g_n) / delta) + 4)
+                    
+                    payload["dominant_color_rgb"] = [r, g, b]
+                    payload["dominant_color_hsv"] = [round(hue, 1), round(sat, 1), round(val, 1)]
+            except Exception as e:
+                logger.debug(f"[DominantColor] Skipped: {e}")
 
             # 3d. Add structured face data for UI overlays (bboxes)
             # This enables drawing boxes around identified people in the UI

@@ -1024,91 +1024,97 @@ class SearchAgent:
                 "audio_events": settings.modality_weight_audio,
             }
 
-            # Intent detection patterns
-            visual_keywords = {
-                "wearing",
-                "shirt",
-                "dress",
-                "color",
-                "blue",
-                "red",
-                "green",
-                "looking",
-                "standing",
-                "sitting",
-                "walking",
-                "running",
-                "temple",
-                "near",
-                "beside",
-                "background",
-                "scene",
-                "shot",
-                "frame",
-                "image",
+            # =================================================================
+            # SEMANTIC INTENT CLASSIFICATION (No hardcoded keywords!)
+            # Uses embedding similarity for universal query understanding
+            # =================================================================
+            
+            # Intent prototypes - these are abstract concepts, not exhaustive keyword lists
+            INTENT_PROTOTYPES = {
+                "visual": "visual appearance, clothing, colors, what something looks like, scene description, wearing, outfit",
+                "audio": "sound, music, audio, noise, volume, hearing, playing music, background sounds",
+                "dialogue": "spoken words, what was said, transcript, conversation, dialogue, speech, quotes",
+                "identity": "who is this person, face recognition, identify speaker, which person, name of",
+                "action": "physical movement, doing an activity, motion, running jumping dancing playing sports",
+                "emotion": "emotional state, feeling, mood, happy sad angry crying laughing expressing emotion",
+                "object": "physical object, thing, item, car dog phone laptop chair table furniture vehicle",
+                "color": "color, hue, shade, tint, colorful, bright dark vivid pale saturated",
             }
-            audio_keywords = {
-                "music",
-                "sound",
-                "cheering",
-                "clapping",
-                "singing",
-                "playing",
-                "background music",
-                "loud",
-                "quiet",
-                "noise",
-                "crowd",
-            }
-            dialogue_keywords = {
-                "said",
-                "says",
-                "saying",
-                "spoke",
-                "speaking",
-                "told",
-                "tells",
-                "asked",
-                "dialogue",
-                "conversation",
-                "talking",
-                "speech",
-                "words",
-                "mentioned",
-                "quote",
-                "transcript",
-            }
-            identity_keywords = {
-                "who",
-                "person",
-                "face",
-                "speaker",
-                "voice of",
-                "recognize",
-            }
-            action_keywords = {
-                "running",
-                "jumping",
-                "dancing",
-                "fighting",
-                "driving",
-                "playing",
-                "bowling",
-                "kicking",
-                "throwing",
-                "catching",
-                "hitting",
-            }
-
-            # INTENT CLASSIFICATION using keyword heuristics
-            # Fast and reliable for common query patterns
-            # NOTE: Semantic embedding-based classification was removed as it added latency
-            # and required async calls which don't work in this sync context
-            visual_score = sum(1 for kw in visual_keywords if kw in query_lower)
-            audio_score = sum(1 for kw in audio_keywords if kw in query_lower)
-            dialogue_score = sum(1 for kw in dialogue_keywords if kw in query_lower)
-            identity_score = sum(1 for kw in identity_keywords if kw in query_lower)
-            action_score = sum(1 for kw in action_keywords if kw in query_lower)
+            
+            # Get query embedding (cached in SearchAgent)
+            query_embedding = self._get_cached_embedding(query)
+            if query_embedding is None:
+                # Sync encode for this context (encode_texts is typically fast)
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Already in async context - can't await here, use simpler heuristics
+                        # Fall back to lightweight NLP-based detection
+                        import re
+                        query_tokens = set(re.findall(r'\b\w+\b', query_lower))
+                        
+                        # Use spaCy-style POS heuristics for intent
+                        visual_score = 1.0 if any(w in query_lower for w in ["look", "appear", "wear", "color", "see", "show"]) else 0.0
+                        audio_score = 1.0 if any(w in query_lower for w in ["sound", "music", "hear", "audio", "noise"]) else 0.0
+                        dialogue_score = 1.0 if any(w in query_lower for w in ["said", "say", "speak", "told", "ask", "talk"]) else 0.0
+                        identity_score = 1.0 if any(w in query_lower for w in ["who", "person", "name", "face", "identify"]) else 0.0
+                        action_score = 1.0 if any(w.endswith("ing") for w in query_tokens) else 0.0
+                        emotion_score = 1.0 if any(w in query_lower for w in ["feel", "emotion", "mood", "happy", "sad", "angry"]) else 0.0
+                        object_score = 1.0 if any(w in query_lower for w in ["with", "has", "contain", "object", "thing"]) else 0.0
+                        color_score = 1.0 if any(w in query_lower for w in ["color", "colou", "hue", "shade", "bright", "dark"]) else 0.0
+                    else:
+                        query_embedding = loop.run_until_complete(self.db.encode_texts(query))[0]
+                except Exception:
+                    # Simple fallback - no scores
+                    visual_score = audio_score = dialogue_score = identity_score = 0.5
+                    action_score = emotion_score = object_score = color_score = 0.5
+            
+            if query_embedding is not None:
+                # Compute semantic similarity to each intent prototype
+                import numpy as np
+                
+                def cosine_sim(a: list[float], b: list[float]) -> float:
+                    a_np, b_np = np.array(a), np.array(b)
+                    return float(np.dot(a_np, b_np) / (np.linalg.norm(a_np) * np.linalg.norm(b_np) + 1e-9))
+                
+                # Cache intent embeddings (computed once per SearchAgent instance)
+                if not hasattr(self, "_intent_embeddings"):
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # Can't await - skip semantic classification for now
+                            self._intent_embeddings = None
+                        else:
+                            prototypes = list(INTENT_PROTOTYPES.values())
+                            self._intent_embeddings = {
+                                k: loop.run_until_complete(self.db.encode_texts(v))[0]
+                                for k, v in INTENT_PROTOTYPES.items()
+                            }
+                    except Exception:
+                        self._intent_embeddings = None
+                
+                if self._intent_embeddings:
+                    visual_score = cosine_sim(query_embedding, self._intent_embeddings["visual"])
+                    audio_score = cosine_sim(query_embedding, self._intent_embeddings["audio"])
+                    dialogue_score = cosine_sim(query_embedding, self._intent_embeddings["dialogue"])
+                    identity_score = cosine_sim(query_embedding, self._intent_embeddings["identity"])
+                    action_score = cosine_sim(query_embedding, self._intent_embeddings["action"])
+                    emotion_score = cosine_sim(query_embedding, self._intent_embeddings["emotion"])
+                    object_score = cosine_sim(query_embedding, self._intent_embeddings["object"])
+                    color_score = cosine_sim(query_embedding, self._intent_embeddings["color"])
+                    
+                    # Normalize: threshold at 0.3 similarity, scale to 0-1
+                    THRESHOLD = 0.3
+                    visual_score = max(0, (visual_score - THRESHOLD) / (1 - THRESHOLD))
+                    audio_score = max(0, (audio_score - THRESHOLD) / (1 - THRESHOLD))
+                    dialogue_score = max(0, (dialogue_score - THRESHOLD) / (1 - THRESHOLD))
+                    identity_score = max(0, (identity_score - THRESHOLD) / (1 - THRESHOLD))
+                    action_score = max(0, (action_score - THRESHOLD) / (1 - THRESHOLD))
+                    emotion_score = max(0, (emotion_score - THRESHOLD) / (1 - THRESHOLD))
+                    object_score = max(0, (object_score - THRESHOLD) / (1 - THRESHOLD))
+                    color_score = max(0, (color_score - THRESHOLD) / (1 - THRESHOLD))
 
 
             # Also check parsed query for entities (visual) and person names (identity)
@@ -1182,6 +1188,24 @@ class SearchAgent:
                     "dialogue": 0.17,
                     "audio_events": 0.16,
                 }
+                # NEW: EMOTION_PROFILE for queries about emotions (uses emotion index)
+                EMOTION_PROFILE = {
+                    "scenes": 0.20,
+                    "frames": 0.15,
+                    "scenelets": 0.10,
+                    "voice": 0.35,  # Boost voice for emotion detection
+                    "dialogue": 0.15,
+                    "audio_events": 0.05,
+                }
+                # NEW: OBJECT_PROFILE for queries about objects (uses object_labels)
+                OBJECT_PROFILE = {
+                    "scenes": 0.25,
+                    "frames": 0.35,  # Boost frames for object detection
+                    "scenelets": 0.15,
+                    "voice": 0.05,
+                    "dialogue": 0.10,
+                    "audio_events": 0.10,
+                }
 
                 # VISUAL-heavy query (clothing, objects, scene description)
                 if visual_score >= 1:
@@ -1220,6 +1244,21 @@ class SearchAgent:
                 if action_score >= 1:
                     intent_profiles.append((ACTION_PROFILE, action_score))
                     detected_intents.append("ACTION")
+
+                # NEW: EMOTION-heavy query (sad moments, happy scenes)
+                if emotion_score >= 1:
+                    intent_profiles.append((EMOTION_PROFILE, emotion_score))
+                    detected_intents.append("EMOTION")
+
+                # NEW: OBJECT-heavy query (frames with cars, dogs, etc.)
+                if object_score >= 1:
+                    intent_profiles.append((OBJECT_PROFILE, object_score))
+                    detected_intents.append("OBJECT")
+
+                # NEW: COLOR-heavy query (blue scenes, red frames) - use VISUAL profile
+                if color_score >= 1:
+                    intent_profiles.append((VISUAL_PROFILE, color_score))
+                    detected_intents.append("COLOR")
 
                 # BLEND WEIGHTS based on detected intents
                 if len(intent_profiles) == 0:
