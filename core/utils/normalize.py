@@ -7,23 +7,39 @@ from config import settings
 
 
 def normalize_timestamp(result: dict[str, Any]) -> float:
-    """Extract timestamp from result with fallback chain."""
-    return float(
-        result.get("start_time")
-        or result.get("timestamp")
-        or result.get("start")
-        or 0
-    )
+    """Extract timestamp from result with fallback chain.
+    
+    Priority: start_time > timestamp > start > 0
+    Note: Uses explicit None checks to handle valid 0.0 timestamps correctly.
+    """
+    # Try each key in priority order (explicit None check, not truthy)
+    for key in ("start_time", "timestamp", "start"):
+        val = result.get(key)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue  # Skip invalid values
+    return 0.0
 
 
 def normalize_end_time(result: dict[str, Any]) -> float:
-    """Extract end time from result, using configurable default duration."""
+    """Extract end time from result, using configurable default duration.
+    
+    Priority: end_time > end > (start + default_duration)
+    """
     start = normalize_timestamp(result)
-    return float(
-        result.get("end_time")
-        or result.get("end")
-        or (start + settings.search_default_duration)
-    )
+    
+    # Try each key in priority order (explicit None check)
+    for key in ("end_time", "end"):
+        val = result.get(key)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                continue
+    
+    return start + settings.search_default_duration
 
 
 def normalize_media_path(result: dict[str, Any]) -> str:

@@ -320,8 +320,9 @@ async def search(
         for hit in dialogue_results[:limit]:
             hit["result_type"] = "dialogue"
             hit["thumbnail_url"] = None
-            video = hit.get("video_path")
-            start_time = hit.get("start", 0)
+            from core.utils.normalize import normalize_timestamp, normalize_media_path
+            video = normalize_media_path(hit)
+            start_time = normalize_timestamp(hit)
             if video:
                 safe_path = quote(str(video))
                 hit["thumbnail_url"] = (
@@ -352,8 +353,9 @@ async def search(
         )
 
         for hit in frame_results:
-            video = hit.get("video_path")
-            ts = hit.get("timestamp", 0)
+            from core.utils.normalize import normalize_timestamp, normalize_media_path
+            video = normalize_media_path(hit)
+            ts = normalize_timestamp(hit)
 
             # Track all occurrences for stats
             if video:
@@ -703,8 +705,9 @@ async def explainable_search(
 
         # Add thumbnail URLs
         for r in results:
-            video = r.get("video_path") or r.get("media_path", "")
-            ts = r.get("timestamp", r.get("start_time", 0))
+            from core.utils.normalize import normalize_timestamp, normalize_media_path
+            video = normalize_media_path(r)
+            ts = normalize_timestamp(r)
             if video and "thumbnail_url" not in r:
                 safe_path = quote(str(video))
                 r["thumbnail_url"] = (
@@ -795,8 +798,9 @@ async def multimodal_search(
 
             # Add thumbnail/playback URLs
             for hit in result.get("results", []):
-                video = hit.get("video_path") or hit.get("media_path", "")
-                ts = hit.get("start_time", hit.get("timestamp", 0))
+                from core.utils.normalize import normalize_timestamp, normalize_media_path
+                video = normalize_media_path(hit)
+                ts = normalize_timestamp(hit)
                 if video and "thumbnail_url" not in hit:
                     safe_path = quote(str(video))
                     hit["thumbnail_url"] = (
