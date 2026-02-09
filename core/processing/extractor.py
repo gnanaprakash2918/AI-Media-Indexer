@@ -218,6 +218,12 @@ class FrameExtractor:
                             ):
                                 timestamp = frame_timestamps[frame_idx]
                             else:
+                                # ⚠️ FFprobe timestamp extraction failed
+                                # Using calculated timestamp which may drift on VFR videos
+                                log(
+                                    f"[WARN] Using calculated timestamp for frame {frame_idx} (FFprobe unavailable)",
+                                    level="WARNING",
+                                )
                                 timestamp = (start_time or 0.0) + (
                                     frame_idx * interval
                                 )

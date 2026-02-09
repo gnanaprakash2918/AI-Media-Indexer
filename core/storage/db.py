@@ -3406,6 +3406,10 @@ class VectorDB:
 
         payload = {
             "media_path": media_path,
+            # Standardized keys (best practice for cross-modal fusion)
+            "start_time": start,
+            "end_time": end,
+            # Legacy keys for backwards compatibility
             "start": start,
             "end": end,
             "speaker_label": speaker_label,
@@ -3777,6 +3781,9 @@ class VectorDB:
             formatted_results = []
             for hit in results:
                 payload = hit.payload or {}
+                # Extract timestamps with fallback for legacy data
+                ts_start = payload.get("start_time") or payload.get("start", 0)
+                ts_end = payload.get("end_time") or payload.get("end", 0)
                 formatted_results.append(
                     {
                         "id": str(hit.id),
@@ -3789,9 +3796,14 @@ class VectorDB:
                         "text": payload.get(
                             "text", payload.get("transcription", "")
                         ),
-                        "start": payload.get("start", 0),
-                        "end": payload.get("end", 0),
+                        # Standardized keys (used by fusion)
+                        "start_time": ts_start,
+                        "end_time": ts_end,
+                        # Legacy keys for backwards compatibility
+                        "start": ts_start,
+                        "end": ts_end,
                         "video_path": payload.get("media_path"),
+                        "media_path": payload.get("media_path"),  # Also standardize path
                         **payload,
                     }
                 )

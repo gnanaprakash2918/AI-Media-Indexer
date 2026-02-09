@@ -331,8 +331,8 @@ class Settings(BaseSettings):
         description="RRF k parameter. Higher = less aggressive reranking (60=default)",
     )
     timestamp_bucket_seconds: float = Field(
-        default=4.0,
-        description="Time bucket for multimodal fusion (4s balances 2-10s scenes)",
+        default=2.0,  # Reduced from 4.0 for frame-level precision
+        description="Time bucket for multimodal fusion (2s balances precision vs scene grouping)",
     )
     rerank_vector_weight: float = Field(
         default=0.3,

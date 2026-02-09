@@ -17,6 +17,8 @@ from pydantic import BaseModel
 T = TypeVar("T", bound=BaseModel)
 
 
+from config import settings
+
 class LLMInterface(ABC):
     """Base class that combines abstract generation methods and prompt helpers.
 
@@ -24,13 +26,16 @@ class LLMInterface(ABC):
     utilities for parsing JSON responses into Pydantic models.
     """
 
-    def __init__(self, prompt_dir: str | Path = "./prompts"):
+    def __init__(self, prompt_dir: str | Path | None = None):
         """Initialize prompt directory and in-memory prompt cache.
 
         Args:
             prompt_dir: Path to the directory containing prompt templates.
+                        Defaults to settings.prompt_dir.
         """
-        if isinstance(prompt_dir, str):
+        if prompt_dir is None:
+            self.prompt_dir = settings.prompt_dir
+        elif isinstance(prompt_dir, str):
             if prompt_dir.strip() == "":
                 raise ValueError("prompt_dir cannot be an empty string")
             self.prompt_dir = Path(prompt_dir)

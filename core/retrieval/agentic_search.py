@@ -1297,6 +1297,16 @@ class SearchAgent:
                     result_data[fusion_key] = result.copy()
                     result_data[fusion_key]["modality_sources"] = []
                     result_data[fusion_key]["_original_id"] = result_id
+                    result_data[fusion_key]["_best_timestamp_score"] = weighted_score
+                else:
+                    # FIX: Use timestamps from highest-scoring modality, not first
+                    existing = result_data[fusion_key]
+                    if weighted_score > existing.get("_best_timestamp_score", 0):
+                        # Higher-scoring result - update timestamps to more precise values
+                        for ts_key in ["start_time", "end_time", "start", "end", "timestamp"]:
+                            if result.get(ts_key) is not None:
+                                existing[ts_key] = result[ts_key]
+                        existing["_best_timestamp_score"] = weighted_score
 
                 # Always add modality source (might be same moment from multiple modalities)
                 if modality not in result_data[fusion_key]["modality_sources"]:
