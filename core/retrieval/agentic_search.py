@@ -2023,3 +2023,203 @@ class SearchAgent:
         fused.sort(key=lambda x: x["fused_score"], reverse=True)
 
         return fused[:limit]
+
+    # =========================================================================
+    # TEMPORAL SEQUENCE SEARCH (Fix #8)
+    # =========================================================================
+
+    @observe("temporal_sequence_search")
+    async def search_temporal_sequence(
+        self,
+        sequence_steps: list[dict[str, str]],
+        video_path: str | None = None,
+        max_gap_seconds: float = 60.0,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search for temporal sequences across scenes.
+
+        Finds ordered event chains like:
+            "Person A enters" → "fight scene" → "Person B speaks"
+
+        Each step is a dict with optional keys:
+            - person: Name to match against face_cluster_ids
+            - action: Action to match against scene actions/descriptions
+            - location: Location to match
+            - description: Free text to match against scene descriptions
+
+        Args:
+            sequence_steps: Ordered list of event descriptions to find.
+            video_path: Optional video path to restrict search.
+            max_gap_seconds: Maximum allowed gap between consecutive steps.
+            limit: Maximum results to return.
+
+        Returns:
+            Dict with matched sequence chains and metadata.
+        """
+        from core.storage.identity_graph import identity_graph
+
+        if not sequence_steps or len(sequence_steps) < 2:
+            return {
+                "error": "Temporal sequence requires at least 2 steps",
+                "results": [],
+            }
+
+        # Get all media to search
+        media_ids: list[str] = []
+        if video_path:
+            media_ids = [video_path]
+        else:
+            # Search across all indexed videos via the scene DB
+            try:
+                stats = identity_graph.get_stats()
+                # Get unique media_ids from scenes table
+                import sqlite3
+                with identity_graph._lock, sqlite3.connect(identity_graph.db_path) as conn:
+                    cursor = conn.execute(
+                        "SELECT DISTINCT media_id FROM scenes LIMIT 100"
+                    )
+                    media_ids = [row[0] for row in cursor.fetchall()]
+            except Exception as e:
+                log(f"[Temporal] Failed to get media list: {e}")
+                return {"error": str(e), "results": []}
+
+        all_chains: list[dict] = []
+
+        for media_id in media_ids:
+            scenes = identity_graph.get_scenes_for_media(media_id)
+            if len(scenes) < len(sequence_steps):
+                continue
+
+            # Resolve person names to face cluster IDs from our DB
+            person_cluster_map: dict[str, list[int]] = {}
+            for step in sequence_steps:
+                person_name = step.get("person", "").strip()
+                if person_name and person_name not in person_cluster_map:
+                    try:
+                        ids = await self.db.resolve_person_ids(person_name)
+                        person_cluster_map[person_name] = ids or []
+                    except Exception:
+                        person_cluster_map[person_name] = []
+
+            # Sliding window: try to find consecutive scenes matching sequence
+            for start_idx in range(len(scenes) - len(sequence_steps) + 1):
+                chain_matches = []
+                chain_score = 0.0
+                prev_end_time = None
+                valid_chain = True
+
+                for step_idx, step in enumerate(sequence_steps):
+                    # Try to match this step against scenes starting from current pos
+                    best_match = None
+                    best_score = 0.0
+                    search_start = start_idx + step_idx if step_idx == 0 else start_idx + len(chain_matches)
+
+                    for scene_idx in range(search_start, min(search_start + 3, len(scenes))):
+                        scene = scenes[scene_idx]
+
+                        # Check time gap constraint
+                        if prev_end_time is not None:
+                            gap = scene.start_time - prev_end_time
+                            if gap > max_gap_seconds:
+                                continue
+
+                        score = self._score_scene_step_match(
+                            scene, step, person_cluster_map
+                        )
+                        if score > best_score:
+                            best_score = score
+                            best_match = scene
+
+                    if best_match and best_score > 0.2:
+                        chain_matches.append({
+                            "step": step,
+                            "scene_id": best_match.id,
+                            "start_time": best_match.start_time,
+                            "end_time": best_match.end_time,
+                            "description": best_match.description,
+                            "location": best_match.location,
+                            "actions": best_match.actions,
+                            "score": best_score,
+                        })
+                        chain_score += best_score
+                        prev_end_time = best_match.end_time
+                    else:
+                        valid_chain = False
+                        break
+
+                if valid_chain and len(chain_matches) == len(sequence_steps):
+                    all_chains.append({
+                        "media_path": media_id,
+                        "chain": chain_matches,
+                        "total_score": chain_score / len(sequence_steps),
+                        "time_span": {
+                            "start": chain_matches[0]["start_time"],
+                            "end": chain_matches[-1]["end_time"],
+                            "duration": chain_matches[-1]["end_time"] - chain_matches[0]["start_time"],
+                        },
+                    })
+
+        # Sort by score and return top results
+        all_chains.sort(key=lambda x: x["total_score"], reverse=True)
+
+        return {
+            "query_steps": sequence_steps,
+            "results": all_chains[:limit],
+            "result_count": len(all_chains[:limit]),
+            "total_found": len(all_chains),
+        }
+
+    def _score_scene_step_match(
+        self,
+        scene: Any,
+        step: dict[str, str],
+        person_cluster_map: dict[str, list[int]],
+    ) -> float:
+        """Score how well a scene matches a temporal sequence step."""
+        score = 0.0
+        checks = 0
+
+        desc = (scene.description or "").lower()
+        actions = " ".join(scene.actions).lower() if scene.actions else ""
+        location = (scene.location or "").lower()
+        all_text = f"{desc} {actions} {location}"
+
+        # Person match
+        person_name = step.get("person", "").strip()
+        if person_name:
+            checks += 1
+            target_ids = person_cluster_map.get(person_name, [])
+            if target_ids and any(
+                cid in scene.face_cluster_ids for cid in target_ids
+            ):
+                score += 1.0
+            elif person_name.lower() in desc:
+                score += 0.5
+
+        # Action match
+        action = step.get("action", "").strip()
+        if action:
+            checks += 1
+            if action.lower() in actions:
+                score += 1.0
+            elif action.lower() in desc:
+                score += 0.7
+
+        # Location match
+        loc = step.get("location", "").strip()
+        if loc:
+            checks += 1
+            if loc.lower() in location:
+                score += 1.0
+            elif loc.lower() in desc:
+                score += 0.5
+
+        # Description match (free text)
+        desc_query = step.get("description", "").strip()
+        if desc_query:
+            checks += 1
+            words = desc_query.lower().split()
+            word_hits = sum(1 for w in words if w in all_text)
+            score += word_hits / max(len(words), 1)
+
+        return score / max(checks, 1)

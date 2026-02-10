@@ -69,6 +69,7 @@ async def list_all_names(
 async def suggest_merges(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     limit_frames: int = 5000,
+    music_percentage: float = 0.0,
 ) -> dict:
     """Generates identity merge suggestions (HITL).
 
@@ -81,6 +82,9 @@ async def suggest_merges(
     Args:
         pipeline: Ingestion pipeline instance.
         limit_frames: Number of recent frames to analyze for co-occurrence.
+        music_percentage: Audio music percentage (0-100) for the video.
+            When high (>50%), face-voice link confidence is dampened to
+            prevent lip-sync actors being linked to playback singers.
 
     Returns:
         List of suggestion objects with confidence and strict_mode flags.
@@ -146,6 +150,7 @@ async def suggest_merges(
             face_clusters=face_cluster_list,
             voice_clusters=voice_cluster_list,
             entity_occurrences=entity_co,
+            music_percentage=music_percentage,
         )
 
         return {"suggestions": suggestions, "count": len(suggestions)}

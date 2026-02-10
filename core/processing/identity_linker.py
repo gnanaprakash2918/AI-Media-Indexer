@@ -104,9 +104,28 @@ class IdentityLinker:
         self,
         face_clusters: list[dict],
         voice_clusters: list[dict],
+        music_percentage: float = 0.0,
     ) -> list[IdentitySuggestion]:
-        """Suggest links between face and voice clusters based on temporal overlap."""
+        """Suggest links between face and voice clusters based on temporal overlap.
+
+        Args:
+            face_clusters: Face cluster data with timestamps.
+            voice_clusters: Voice cluster data with timestamps.
+            music_percentage: Audio music percentage (0-100). When high (>50%),
+                confidence is dampened to prevent lip-sync actors being linked
+                to playback singers in music videos/Bollywood songs.
+        """
         suggestions = []
+
+        # Calculate music dampening factor (Fix #4)
+        # At 0% music → factor=1.0 (no change)
+        # At 50% music → factor=1.0 (threshold)
+        # At 75% music → factor=0.65
+        # At 100% music → factor=0.3
+        music_dampen = 1.0
+        if music_percentage > 50:
+            # Linear dampening: 1.0 at 50% → 0.3 at 100%
+            music_dampen = max(0.3, 1.0 - (music_percentage - 50) / 100 * 1.4)
 
         for face in face_clusters:
             face_id = face.get("cluster_id")
@@ -144,16 +163,22 @@ class IdentityLinker:
                 )
 
                 if overlap >= self.overlap_threshold:
+                    # Apply music dampening to confidence
+                    adjusted_confidence = overlap * music_dampen
+                    reason = f"High temporal overlap ({overlap:.0%})"
+                    if music_dampen < 1.0:
+                        reason += f" [music dampened: {music_percentage:.0f}% music detected]"
+
                     suggestions.append(
                         IdentitySuggestion(
                             type="merge_face_voice",
                             source=face_name,
                             target=voice_name,
-                            reason=f"High temporal overlap ({overlap:.0%})",
-                            confidence=overlap,
+                            reason=reason,
+                            confidence=adjusted_confidence,
                             source_id=face_id,
                             target_id=voice_id,
-                            strict_mode=True,  # Linking face to voice is a personal identity action
+                            strict_mode=True,
                         )
                     )
 
@@ -302,12 +327,16 @@ class IdentityLinker:
         voice_clusters: list[dict],
         tmdb_cast: list[dict] | None = None,
         entity_occurrences: dict[int, dict[str, int]] | None = None,
+        music_percentage: float = 0.0,
     ) -> list[dict]:
         """Get all identity suggestions across all types."""
         all_suggestions = []
 
         all_suggestions.extend(
-            self.suggest_face_voice_links(face_clusters, voice_clusters)
+            self.suggest_face_voice_links(
+                face_clusters, voice_clusters,
+                music_percentage=music_percentage,
+            )
         )
         all_suggestions.extend(self.suggest_face_merges(face_clusters))
 
