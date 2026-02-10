@@ -55,8 +55,9 @@ class ProgressTracker:
             with self._lock:
                 for job in jobs:
                     self._cache[job.job_id] = job
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"Failed to sync job cache: {e}")
 
     def _calculate_weighted_progress(self, job: JobInfo) -> float:
         """Calculate weighted progress based on completed stages."""
@@ -439,8 +440,9 @@ class ProgressTracker:
                     stage_stats=job.stage_stats,
                 )
                 self._last_db_update[job.job_id] = now
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug(f"Failed to persist job {job.job_id}: {e}")
 
     def update_pipeline_stage(
         self,
@@ -494,8 +496,9 @@ class ProgressTracker:
                 last_heartbeat=time.time(),
                 message=message if message else None,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"Failed to persist pipeline stage for {job_id}: {e}")
 
     def save_checkpoint(self, job_id: str, data: dict[str, Any]) -> None:
         """Explicitly save key-value pairs to the job's checkpoint data.
@@ -518,8 +521,9 @@ class ProgressTracker:
                 job_manager.update_job(
                     job_id, checkpoint_data=updated, last_heartbeat=time.time()
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug(f"Failed to persist checkpoint for {job_id}: {e}")
 
         # Optional: Broadcast if needed (usually internal state)
 
@@ -670,8 +674,9 @@ class ProgressTracker:
         try:
             job_manager.delete_job(job_id)
             found = True
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"Failed to delete job {job_id} from DB: {e}")
 
         if found:
             self._broadcast({"event": "job_deleted", "job_id": job_id})

@@ -67,34 +67,7 @@ import {
   apiClient,
   deleteFaceCluster,
 } from '../api/client';
-
-interface FaceData {
-  id: string;
-  cluster_id: number;
-  name: string | null;
-  media_path?: string;
-  timestamp?: number;
-  thumbnail_path?: string;
-}
-
-interface FaceClusterData {
-  cluster_id: number;
-  name: string | null;
-  face_count: number;
-  representative: FaceData | null;
-  faces: FaceData[];
-  is_main?: boolean;
-}
-
-interface IdentitySuggestion {
-  type: string;
-  source: string;
-  target: string;
-  reason: string;
-  confidence: number;
-  source_id?: number;
-  target_id?: number;
-}
+import type { FaceData, FaceClusterData, IdentitySuggestion } from '../types';
 
 function FaceCard({
   face,

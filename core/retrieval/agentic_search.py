@@ -145,12 +145,27 @@ class SearchAgent:
 
         cache_key = hashlib.md5(query.encode()).hexdigest()
 
+        # Proactively evict expired entries to prevent stale buildup
+        self._evict_expired_cache()
+
         # LRU eviction if cache is full - O(1) with OrderedDict
         if len(self._query_cache) >= self._cache_max_size:
             # Remove oldest (first) entry
             self._query_cache.popitem(last=False)
 
         self._query_cache[cache_key] = (vector, time.time())
+
+    def _evict_expired_cache(self) -> None:
+        """Proactively remove expired entries from the query cache."""
+        import time
+
+        now = time.time()
+        expired_keys = [
+            k for k, (_, ts) in self._query_cache.items()
+            if now - ts >= self._cache_ttl
+        ]
+        for k in expired_keys:
+            del self._query_cache[k]
 
     @observe("search_parse_query")
     async def parse_query(self, query: str) -> ParsedQuery:

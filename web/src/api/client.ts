@@ -10,6 +10,25 @@ export const apiClient = axios.create({
   timeout: 300000,  // 5 minutes - search with LLM reranking can be slow
 });
 
+// Standardized API error handling — all callers get consistent error structure
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status ?? 0;
+    const detail = error.response?.data?.detail ?? error.message ?? 'Unknown error';
+    const message =
+      status === 401 ? 'Authentication required' :
+        status === 404 ? `Not found: ${error.config?.url}` :
+          status >= 500 ? `Server error (${status}): ${detail}` :
+            status > 0 ? `Request failed (${status}): ${detail}` :
+              `Network error: ${detail}`;
+
+    // Attach structured error info for callers
+    const apiError = Object.assign(new Error(message), { status, detail });
+    return Promise.reject(apiError);
+  },
+);
+
 // Health & Status
 export interface HealthResponse {
   device: string;
