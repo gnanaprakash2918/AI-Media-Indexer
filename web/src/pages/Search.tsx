@@ -19,7 +19,7 @@ import {
 } from '@mui/material';
 import { Search as SearchIcon, PlayArrow } from '@mui/icons-material';
 
-import { searchHybrid, searchGranular, getLibrary, type SearchResult } from '../api/client';
+import { searchHybrid, getLibrary, type SearchResult } from '../api/client';
 import { MediaCard } from '../components/media/MediaCard';
 import { SearchDebugPanel } from '../components/search/SearchDebugPanel';
 
@@ -52,8 +52,9 @@ export default function SearchPage() {
   const [lastQuery, setLastQuery] = useState('');
   const [selectedVideo, setSelectedVideo] = useState<string>('');
   const [deepSearch, setDeepSearch] = useState(false);
-  const [useReranking, setUseReranking] = useState(false);  // OFF by default to prevent timeouts
-  const [useReasoning, setUseReasoning] = useState(false);  // OFF by default for speed
+  const [useReranking, setUseReranking] = useState(false);
+  const [useReasoning, setUseReasoning] = useState(false);
+  const [useVlm, setUseVlm] = useState(true);  // VLM visual verification (used when reranking is ON)
 
   // Overlay visibility toggles
   const [overlayToggles, setOverlayToggles] = useState({
@@ -77,9 +78,13 @@ export default function SearchPage() {
   const search = useMutation({
     mutationFn: async (q: string): Promise<SearchResponse> => {
       if (deepSearch) {
-        return (await searchGranular(q, selectedVideo || undefined, 10, useReranking)) as SearchResponse;
+        // Deep Search = expansion + reranking + VLM + deep reasoning
+        return (await searchHybrid(q, selectedVideo || undefined, 10, true, true, true, true)) as SearchResponse;
       }
-      const response = await searchHybrid(q, selectedVideo || undefined, 20, useReranking, useReasoning);
+      const response = await searchHybrid(
+        q, selectedVideo || undefined, 20,
+        useReranking, useReasoning, useVlm, false,
+      );
       return response as SearchResponse;
     },
   });
@@ -233,6 +238,20 @@ export default function SearchPage() {
                 variant={useReasoning ? "filled" : "outlined"}
                 size="small"
                 onClick={() => setUseReasoning(!useReasoning)}
+                sx={{ fontWeight: 700 }}
+              />
+            </Tooltip>
+          </Box>
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="body2" color="text.secondary">VLM</Typography>
+            <Tooltip title="Visual verification with Vision LLM — validates results against actual video frames">
+              <Chip
+                label={useVlm ? "ON" : "OFF"}
+                color={useVlm ? "info" : "default"}
+                variant={useVlm ? "filled" : "outlined"}
+                size="small"
+                onClick={() => setUseVlm(!useVlm)}
                 sx={{ fontWeight: 700 }}
               />
             </Tooltip>

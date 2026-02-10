@@ -552,19 +552,31 @@ class RerankingCouncil:
                     confidence=0, reason="VLM analysis failed for all frames"
                 )
 
-            # Aggregate: Use max confidence but penalize if frames disagree significantly
+            # Weighted aggregation: emphasize max while accounting for consistency
             max_conf = max(frame_scores)
-            min_conf = min(frame_scores)
             avg_conf = sum(frame_scores) / len(frame_scores)
 
-            # If frames have consistent scores, trust the max
-            # If they disagree a lot, use average to be conservative
-            if max_conf - min_conf > 30:
-                final_conf = int(avg_conf)
-                reason = f"Mixed signals across {len(frame_scores)} frames: {', '.join(frame_reasons[:2])}"
+            if len(frame_scores) > 1:
+                # Standard deviation measures frame agreement
+                std_dev = (
+                    sum((s - avg_conf) ** 2 for s in frame_scores)
+                    / len(frame_scores)
+                ) ** 0.5
+
+                # Consistency coefficient: 1.0 when all agree, drops as variance rises
+                # Uses coefficient of variation (std/mean) as a natural scale
+                consistency = max(0.0, 1.0 - (std_dev / max(avg_conf, 1.0)))
+
+                # Blend: high consistency → trust max; low consistency → lean toward avg
+                final_conf = int(max_conf * consistency + avg_conf * (1 - consistency))
+
+                if consistency > 0.8:
+                    reason = f"Consistent across {len(frame_scores)} frames (σ={std_dev:.0f}): {frame_reasons[0] if frame_reasons else 'no detail'}"
+                else:
+                    reason = f"Mixed signals across {len(frame_scores)} frames (σ={std_dev:.0f}): {', '.join(frame_reasons[:2])}"
             else:
                 final_conf = int(max_conf)
-                reason = f"Consistent across {len(frame_scores)} frames: {frame_reasons[0] if frame_reasons else 'no detail'}"
+                reason = frame_reasons[0] if frame_reasons else "Single frame analysis"
 
             return RerankScore(confidence=final_conf, reason=reason)
 

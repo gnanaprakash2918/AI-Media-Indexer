@@ -41,21 +41,25 @@ export const searchMedia = async (
   return res.data;
 };
 
-// Hybrid Search with LLM reranking for accuracy
+// Unified Search — all search flows route here with configurable toggles
 export const searchHybrid = async (
   query: string,
   videoPath?: string,
   limit = 20,
   useReranking = false,
   useReasoning = false,
+  useVlm = true,
+  useDeepReasoning = false,
 ) => {
-  const res = await apiClient.get('/search/hybrid', {
+  const res = await apiClient.get('/search/unified', {
     params: {
       q: query,
       video_path: videoPath,
       limit,
-      use_reranking: useReranking,
-      use_reasoning: useReasoning
+      enable_expansion: useReasoning,
+      enable_reranking: useReranking,
+      enable_vlm: useVlm,
+      enable_deep_reasoning: useDeepReasoning,
     },
   });
   return res.data;
@@ -319,19 +323,22 @@ export const searchByName = async (name: string, limit = 20) => {
   return res.data;
 };
 
-// Granular / Agentic Search
+// Granular / Agentic Search — unified endpoint with expansion + reranking
 export const searchGranular = async (
   query: string,
   videoPath?: string,
   limit = 10,
   enableRerank = true,
 ) => {
-  const res = await apiClient.post('/search/granular', null, {
+  const res = await apiClient.get('/search/unified', {
     params: {
-      query,
+      q: query,
       video_path: videoPath,
       limit,
-      enable_rerank: enableRerank,
+      enable_expansion: true,
+      enable_reranking: enableRerank,
+      enable_vlm: enableRerank,
+      enable_deep_reasoning: true,
     },
   });
   return res.data;
@@ -612,11 +619,18 @@ export const getVoiceOverlays = async (
   return res.data;
 };
 
-// ========== Explainable Search API ==========
+// ========== Explainable Search — unified endpoint with deep reasoning ==========
 
 export const searchExplainable = async (query: string, limit = 10) => {
-  const res = await apiClient.get('/search/explainable', {
-    params: { q: query, limit },
+  const res = await apiClient.get('/search/unified', {
+    params: {
+      q: query,
+      limit,
+      enable_expansion: true,
+      enable_reranking: true,
+      enable_vlm: true,
+      enable_deep_reasoning: true,
+    },
   });
   return res.data;
 };

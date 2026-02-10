@@ -240,8 +240,9 @@ class VectorDB:
             f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
         )
 
-        # Embedding cache for repeated queries (LRU-like)
-        self._embedding_cache: dict = {}
+        # Embedding cache for repeated queries (proper LRU with OrderedDict)
+        from collections import OrderedDict
+        self._embedding_cache: OrderedDict = OrderedDict()
         self._embedding_cache_max_size = 1000
 
         # Load Visual Encoder for cross-modal search (Text -> Visual Embedding)
@@ -608,9 +609,9 @@ class VectorDB:
 
         for i, key in enumerate(cache_keys):
             if key in self._embedding_cache:
-                # Cache hit - move to end (LRU behavior)
-                results[i] = self._embedding_cache.pop(key)
-                self._embedding_cache[key] = results[i]
+                # Cache hit - move to end (LRU: most recently used goes last)
+                self._embedding_cache.move_to_end(key)
+                results[i] = self._embedding_cache[key]
             else:
                 indices_to_compute.append(i)
 
@@ -672,13 +673,9 @@ class VectorDB:
             key = cache_keys[original_idx]
             self._embedding_cache[key] = emb
 
-            # Simple eviction
+            # LRU eviction: remove least recently used (first item)
             if len(self._embedding_cache) > self._embedding_cache_max_size:
-                # Remove first element (LRU)
-                try:
-                    self._embedding_cache.pop(next(iter(self._embedding_cache)))
-                except Exception:
-                    pass
+                self._embedding_cache.popitem(last=False)
 
         return results
 

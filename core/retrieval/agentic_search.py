@@ -1001,6 +1001,30 @@ class SearchAgent:
             log(f"[SOTA] Dialogue search failed: {e}")
             all_results["dialogue"] = []
 
+        # VIDEO METADATA SEARCH - searches video summaries, titles, context
+        try:
+            video_meta = await self.db.search_video_metadata(
+                query=search_text,
+                limit=limit,
+            )
+            all_results["video_metadata"] = video_meta if video_meta else []
+            log(f"[SOTA] Video metadata: {len(all_results['video_metadata'])} results")
+        except Exception as e:
+            log(f"[SOTA] Video metadata search failed: {e}")
+            all_results["video_metadata"] = []
+
+        # VOICE IDENTITY BOOST - if we resolved person names, boost voice results
+        # that match those speakers for better identity-based ranking
+        if person_names and all_results.get("voice"):
+            for v_result in all_results["voice"]:
+                speaker_name = str(v_result.get("speaker_name", ""))
+                if any(
+                    name.lower() in speaker_name.lower()
+                    for name in person_names
+                ):
+                    v_result["score"] = min(1.0, v_result.get("score", 0.5) * 1.5)
+                    v_result["identity_boosted"] = True
+
         from collections import defaultdict
 
         fused_scores = defaultdict(float)
@@ -1040,11 +1064,12 @@ class SearchAgent:
                 # Map LLM weight keys to our collection names
                 weights = {
                     "scenes": llm_weights.get("visual", 0.2),
-                    "frames": llm_weights.get("visual", 0.2) * 0.8,  # Frames are visual
+                    "frames": llm_weights.get("visual", 0.2) * 0.8,
                     "scenelets": llm_weights.get("action", 0.15),
                     "voice": llm_weights.get("identity", 0.15),
                     "dialogue": llm_weights.get("dialogue", 0.2),
                     "audio_events": llm_weights.get("audio", 0.1),
+                    "video_metadata": llm_weights.get("context", 0.05),
                 }
                 # Normalize to sum to 1.0
                 total = sum(weights.values())
@@ -1055,12 +1080,13 @@ class SearchAgent:
             else:
                 # Fallback: uniform weights when no LLM decomposition
                 weights = {
-                    "scenes": 1.0 / 6.0,
-                    "frames": 1.0 / 6.0,
-                    "scenelets": 1.0 / 6.0,
-                    "voice": 1.0 / 6.0,
-                    "dialogue": 1.0 / 6.0,
-                    "audio_events": 1.0 / 6.0,
+                    "scenes": 1.0 / 7.0,
+                    "frames": 1.0 / 7.0,
+                    "scenelets": 1.0 / 7.0,
+                    "voice": 1.0 / 7.0,
+                    "dialogue": 1.0 / 7.0,
+                    "audio_events": 1.0 / 7.0,
+                    "video_metadata": 1.0 / 7.0,
                 }
                 detected_intents = ["UNIFORM"]
                 log("[ADAPTIVE] Query weights: UNIFORM (no LLM decomposition)")
