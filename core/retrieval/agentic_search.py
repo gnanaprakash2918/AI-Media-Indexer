@@ -1,73 +1,41 @@
-"""Agentic Search with LLM Query Expansion and Scene-Level Search.
+"""Agentic Search — orchestrator that composes query parsing and result processing.
 
-Uses LLM to expand queries intelligently at search time,
-NOT hardcoded synonyms during ingestion. Prompts loaded from external files.
+Uses mixin inheritance to separate concerns:
+  - QueryParserMixin: parsing, caching, identity resolution
+  - ResultProcessorMixin: reranking, granular scoring, RRF fusion
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
-
 from core.knowledge.schemas import ParsedQuery
+from core.retrieval.query_parser import QueryParserMixin
 from core.retrieval.reranker import RerankingCouncil
+from core.retrieval.result_processor import ResultProcessorMixin
 from core.utils.logger import log
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
-from llm.factory import LLMFactory
 
+from llm.factory import LLMFactory
 from config import settings
+
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
     from llm.interface import LLMInterface
 
 
-# Load prompts from external files - NO HARDCODING
-DYNAMIC_QUERY_PROMPT = load_prompt("dynamic_query")
-QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT  # Legacy alias
-
-
-# Pydantic model for LLM reranking results (moved from loop to module level)
-# Pydantic model for LLM reranking results (moved from loop to module level)
-class RerankResult(BaseModel):
-    """Structured output for LLM-based reranking verification."""
-
-    match_score: float = Field(default=0.5)
-    constraints_checked: list[str] = Field(default_factory=list)
-    reasoning: str = Field(default="")
-    missing: list[str] = Field(default_factory=list)
-
-
-class SearchAgent:
-    """Agentic search with LLM-powered query expansion and scene-level search.
-
-    Supports complex paragraph-length queries with multiple constraints:
-    - Identity (face clusters)
-    - Clothing color and type
-    - Accessories
-    - Location
-    - Actions and outcomes
-    - Visible text/brands
-    """
+class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
     def __init__(
         self,
         db: VectorDB,
         llm: LLMInterface | None = None,
         enable_hybrid: bool = True,
-        enable_graph: bool = True, # Enable GraphRAG
+        enable_graph: bool = True,
     ) -> None:
-        """Initializes the search agent.
-
-        Args:
-            db: Vector database for search operations.
-            llm: Optional LLM interface for query expansion. If not provided,
-                the default LLM from factory will be used.
-            enable_hybrid: Enable hybrid BM25+vector search with RRF fusion.
-            enable_graph: Enable GraphRAG traversal (default True).
-        """
         self.db = db
         self.llm = llm or LLMFactory.create_llm()
         self._hybrid_searcher = None
@@ -75,22 +43,15 @@ class SearchAgent:
         self._enable_graph = enable_graph
         self._council = None
         self._graph_searcher = None
+        self._init_cache()
 
-        # Query embedding cache for instant repeat queries (OrderedDict for O(1) LRU)
-        from collections import OrderedDict
-        self._query_cache: OrderedDict[
-            str, tuple[list[float], float]
-        ] = OrderedDict()  # {hash: (vector, timestamp)}
-        self._cache_ttl = 3600  # 1 hour TTL
-        self._cache_max_size = 1000  # Max 1000 entries (~1MB)
+    # ----- lazy properties -----
 
     @property
     def hybrid_searcher(self):
-        """Lazy-load HybridSearcher for BM25+vector fusion."""
         if self._hybrid_searcher is None and self._enable_hybrid:
             try:
                 from core.retrieval.hybrid import HybridSearcher
-
                 self._hybrid_searcher = HybridSearcher(self.db)
                 log("[Search] HybridSearcher initialized")
             except Exception as e:
@@ -99,14 +60,12 @@ class SearchAgent:
 
     @property
     def council(self) -> RerankingCouncil:
-        """Lazy-load RerankingCouncil."""
         if self._council is None:
             self._council = RerankingCouncil()
         return self._council
 
     @property
     def graph_searcher(self):
-        """Lazy-load GraphSearcher."""
         if self._graph_searcher is None and self._enable_graph:
             try:
                 from core.retrieval.graph import GraphSearcher
@@ -116,233 +75,69 @@ class SearchAgent:
                 log(f"[Search] GraphSearcher init failed: {e}")
         return self._graph_searcher
 
-    async def _get_cached_embedding(self, query: str) -> list[float] | None:
-        """Get cached query embedding if exists and not expired.
-
-        Returns None if not cached or expired, requiring fresh encoding.
-        """
-        import hashlib
-        import time
-
-        cache_key = hashlib.md5(query.encode()).hexdigest()
-
-        if cache_key in self._query_cache:
-            vector, timestamp = self._query_cache[cache_key]
-            if time.time() - timestamp < self._cache_ttl:
-                # Move to end for LRU (most recently used)
-                self._query_cache.move_to_end(cache_key)
-                return vector
-            else:
-                # Expired, remove
-                del self._query_cache[cache_key]
-
-        return None
-
-    def _cache_embedding(self, query: str, vector: list[float]) -> None:
-        """Cache a query embedding with current timestamp."""
-        import hashlib
-        import time
-
-        cache_key = hashlib.md5(query.encode()).hexdigest()
-
-        # Proactively evict expired entries to prevent stale buildup
-        self._evict_expired_cache()
-
-        # LRU eviction if cache is full - O(1) with OrderedDict
-        if len(self._query_cache) >= self._cache_max_size:
-            # Remove oldest (first) entry
-            self._query_cache.popitem(last=False)
-
-        self._query_cache[cache_key] = (vector, time.time())
-
-    def _evict_expired_cache(self) -> None:
-        """Proactively remove expired entries from the query cache."""
-        import time
-
-        now = time.time()
-        expired_keys = [
-            k for k, (_, ts) in self._query_cache.items()
-            if now - ts >= self._cache_ttl
-        ]
-        for k in expired_keys:
-            del self._query_cache[k]
-
-    @observe("search_parse_query")
-    async def parse_query(self, query: str) -> ParsedQuery:
-        """Parses and expands a natural language search query using an LLM.
-
-        Args:
-            query: The user's natural language search query.
-
-        Returns:
-            A ParsedQuery object containing structured filters and expanded text.
-        """
-        prompt = QUERY_EXPANSION_PROMPT.format(query=query)
-
-        try:
-            # Timeout to prevent hanging if LLM is slow/stuck
-            parsed = await asyncio.wait_for(
-                self.llm.generate_structured(
-                    schema=ParsedQuery,
-                    prompt=prompt,
-                    system_prompt="You are a search query parser. Return JSON only.",
-                ),
-                timeout=12.0,  # 12s massive timeout for slow machines, but finite
-            )
-            log(f"[Search] Parsed query: {parsed.model_dump()}")
-            return parsed
-
-        except Exception as e:
-            log(f"[Search] Query parsing failed: {e}, using raw query")
-            return ParsedQuery(visual_keywords=[query])
-
-    def _resolve_identity(self, person_name: str) -> int | None:
-        """Resolves a person's name to a face cluster ID.
-
-        Performs exact and fuzzy matching against the HITL identity database.
-
-        Args:
-            person_name: The name of the person to resolve.
-
-        Returns:
-            The cluster ID if found, otherwise None.
-        """
-        try:
-            # 1. Try exact match first (fastest)
-            cluster_id = self.db.get_cluster_id_by_name(person_name)
-            if cluster_id is not None:
-                return cluster_id
-
-            # 2. Fallback to fuzzy match (handles typos, partial names)
-            cluster_id = self.db.fuzzy_get_cluster_id_by_name(person_name)
-            if cluster_id:
-                log(
-                    f"[Search] Fuzzy matched '{person_name}' → cluster {cluster_id}"
-                )
-            return cluster_id
-        except Exception:
-            return None
-
-    def _get_face_ids_for_cluster(self, cluster_id: int) -> list[str]:
-        """Retrieves all face point IDs belonging to a specific cluster.
-
-        Args:
-            cluster_id: The ID of the face cluster.
-
-        Returns:
-            A list of face point IDs (strings).
-        """
-        try:
-            return self.db.get_face_ids_by_cluster(cluster_id)
-        except Exception:
-            return []
-
-    def _get_models_for_modalities(self, modalities: list[str]) -> list[str]:
-        """Maps modality sources to the AI models that were used.
-
-        Args:
-            modalities: List of modality source names (scenes, frames, voice, etc.)
-
-        Returns:
-            List of model names that contributed to the search.
-        """
-        # Use config model map (Issue 3 fix)
-        model_map = settings.modality_model_map
-        models = set()
-        for modality in modalities:
-            models.update(model_map.get(modality, []))
-        return list(models)
+    # =========================================================================
+    # SEARCH METHODS
+    # =========================================================================
 
     @observe("search_scenes_agentic")
     async def search_scenes(
         self,
         query: str,
         limit: int = 20,
-        use_expansion: bool = False,  # Default OFF to prevent LLM hallucination
+        use_expansion: bool = False,
         video_path: str | None = None,
     ) -> dict[str, Any]:
-        """Performs a production-grade scene-level search with LLM expansion.
-
-        Resolves identities, builds comprehensive filters for clothing,
-        location, and actions, and queries the scene collection. Falls back
-        to frame-level search if scene search fails.
-
-        Args:
-            query: The natural language search query.
-            limit: Maximum number of results to return.
-            use_expansion: Whether to use LLM query expansion.
-            video_path: Optional filter for a specific video path.
-
-        Returns:
-            A dictionary containing results, parsed query, and metadata.
-        """
         log(f"[Search] Scene search: '{query[:100]}...'")
         results = []
 
-        # 1. Parse and expand query
         if use_expansion:
             parsed = await self.parse_query(query)
         else:
             parsed = ParsedQuery(visual_keywords=[query])
 
-        # 2. Resolve identity if person name found
         cluster_id: int | None = None
         face_ids: list[str] = []
         resolved_name: str | None = None
 
         if parsed.person_name:
-            # 2a. Check Face Clusters (Automatic)
             cluster_id = self._resolve_identity(parsed.person_name)
             if cluster_id is not None:
                 face_ids = self._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
                 log(f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}")
 
-            # 2b. Check Masklets (HITL / SAM 3) - The "Name Once" feature
-            # Used for non-face objects or specific people tagged via SAM 3
             masklet_hits = await self.db.search_masklets(
-                concept=parsed.person_name,
-                limit=5
+                concept=parsed.person_name, limit=5
             )
             if masklet_hits:
                 log(f"[Search] Found {len(masklet_hits)} tagged masklets for '{parsed.person_name}'")
-                # Add found masklets directly to results
                 for hit in masklet_hits:
-                    # Convert masklet hit to result format
                     results.append({
                         "id": hit.get("id"),
-                        "score": hit.get("score", 1.0) * 1.5, # Boost tracked objects
+                        "score": hit.get("score", 1.0) * 1.5,
                         "type": "object_track",
                         "text": f"Tracked Object: {parsed.person_name}",
                         "start": hit.get("start_time"),
                         "end": hit.get("end_time"),
                         "video_path": hit.get("video_path"),
-                        "thumbnail_url": f"/thumbnails/{hit.get('id')}.jpg" # Placeholder
+                        "thumbnail_url": f"/thumbnails/{hit.get('id')}.jpg"
                     })
 
-        # 3. Build search query from expanded keywords
         search_text = parsed.to_search_text()
         log(f"[Search] Expanded search text: '{search_text}'")
 
-        # 4. Execute scene search with comprehensive filters
         try:
             scene_results = await self.db.search_scenes(
                 query=search_text,
                 limit=limit,
                 person_name=resolved_name,
-                face_cluster_ids=[cluster_id]
-                if cluster_id is not None
-                else None,
+                face_cluster_ids=[cluster_id] if cluster_id is not None else None,
                 clothing_color=parsed.clothing_color,
                 clothing_type=parsed.clothing_type,
                 accessories=parsed.accessories if parsed.accessories else None,
                 location=parsed.location,
-                visible_text=parsed.text_to_find
-                if parsed.text_to_find
-                else None,
-                action_keywords=parsed.action_keywords
-                if parsed.action_keywords
-                else None,
+                visible_text=parsed.text_to_find if parsed.text_to_find else None,
+                action_keywords=parsed.action_keywords if parsed.action_keywords else None,
                 video_path=video_path,
                 mood=parsed.mood,
                 shot_type=parsed.shot_type,
@@ -352,95 +147,65 @@ class SearchAgent:
             results.extend(scene_results)
             log(f"[Search] Found {len(scene_results)} scene results")
         except Exception as e:
-            log(
-                f"[Search] Scene search failed: {e}, falling back to frame search"
-            )
-            frame_results = await self._fallback_frame_search(
-                parsed, search_text, limit
-            )
+            log(f"[Search] Scene search failed: {e}, falling back to frame search")
+            frame_results = await self._fallback_frame_search(parsed, search_text, limit)
             results.extend(frame_results)
-            _search_degraded = True
-            _degradation_reason = f"Scene search failed: {e}"
 
-
-        # Fallback if no results found (and no exception occurred previously to fill them)
         if not results:
             log("[Search] No scene results found. Triggering fallback frame search.")
             frame_results = await self._fallback_frame_search(parsed, search_text, limit)
             results.extend(frame_results)
 
-        # 4b. [NEW] Execute Graph Search (Abusing Relations)
-        # If we have Graph enabled, run it and merge results!
+        # Graph search
         if self.graph_searcher:
             try:
-                # Extract potential entity names and actions from parsed query
                 graph_entities = []
                 if parsed.person_name:
                     graph_entities.append(parsed.person_name)
-                    # Add resolved cluster ID if available
                     if cluster_id is not None:
-                         graph_entities.append(str(cluster_id))
-
-                # Use entities from parsed query if available
+                        graph_entities.append(str(cluster_id))
                 if parsed.visual_keywords:
-                     # Heuristic: treat short keywords as potential objects/actions
-                     graph_entities.extend([k for k in parsed.visual_keywords if len(k) > 3])
+                    graph_entities.extend([k for k in parsed.visual_keywords if len(k) > 3])
 
                 graph_actions = parsed.action_keywords if parsed.action_keywords else []
 
                 if graph_entities or graph_actions:
                     log(f"[Search] Executing Graph Query for entities={graph_entities}, actions={graph_actions}")
                     graph_results = await self.graph_searcher.search(
-                        query=query,
-                        entities=graph_entities,
-                        actions=graph_actions
+                        query=query, entities=graph_entities, actions=graph_actions
                     )
-
                     if graph_results:
                         log(f"[Search] Graph found {len(graph_results)} results. Merging...")
-                        # Merge strategy: Append unique Graph results to Vector results
-                        # Or boost score of vector results that match graph results?
-
                         existing_ids = {r.get("id") for r in results}
                         for gr in graph_results:
                             if gr.get("id") not in existing_ids:
-                                # Convert Graph Result to Standard Result Format
                                 gr_formatted = {
-                                    "id": gr.get("id"), # scene_id
-                                    "score": gr.get("score", 0.9), # High confidence for graph matches
+                                    "id": gr.get("id"),
+                                    "score": gr.get("score", 0.9),
                                     "type": "scene_graph_match",
                                     "text": f"Graph Match: {gr.get('description', '')}",
                                     "start_time": gr.get("start"),
                                     "end_time": gr.get("end"),
                                     "video_path": gr.get("video_path") or video_path,
                                 }
-                                # Fallback: use first existing result's video_path if still None
                                 if not gr_formatted.get("video_path") and len(results) > 0:
-                                     gr_formatted["video_path"] = results[0].get("video_path")
-
+                                    gr_formatted["video_path"] = results[0].get("video_path")
                                 results.append(gr_formatted)
             except Exception as e:
                 log(f"[Search] Graph search failed: {e}")
 
-        # 5. [NEW] Enrich results with UI Toggle Data (Face BBoxes, Voice Segments)
-
-        # 5. [NEW] Enrich results with UI Toggle Data (Face BBoxes, Voice Segments)
-        # This is strictly visual metadata for the frontend
+        # Enrich results with UI overlay data
         for res in results:
             try:
                 vid_path = res.get("video_path")
                 start = res.get("start_time")
                 end = res.get("end_time") or (start + 2.0 if start else None)
-
                 if vid_path and start is not None and end is not None:
-                    # Get Face BBoxes
                     res["face_bboxes"] = self.db.get_faces_in_range(vid_path, start, end)
-                    # Get Voice Segments
                     res["voice_segments"] = self.db.get_voice_segments_in_range(vid_path, start, end)
             except Exception as e:
                 log(f"[Search] Failed to enrich result {res.get('id')}: {e}")
 
-        # GOLD.md Compliance: Comprehensive Search Reasoning Trace
         reasoning_chain = {
             "step1_parse": f"Parsed '{query[:50]}...' into structured query",
             "step2_identity": f"Resolved identity: {resolved_name or 'None'} → cluster {cluster_id}",
@@ -461,10 +226,7 @@ class SearchAgent:
         ]
         log(f"[Search] Original: {query}")
         log(f"[Search] Expanded: {search_text}")
-        log(
-            f"[Search] Filters: faces={[cluster_id] if cluster_id else []}, "
-            f"video={video_path or 'all'}"
-        )
+        log(f"[Search] Filters: faces={[cluster_id] if cluster_id else []}, video={video_path or 'all'}")
         log(f"[Search] Scoring: {top_scores}")
         log(f"[Search] Reasoning: {reasoning_chain}")
 
@@ -485,29 +247,15 @@ class SearchAgent:
         self,
         query: str,
         limit: int = 20,
-        use_expansion: bool = False,  # Default OFF to prevent LLM hallucination
+        use_expansion: bool = False,
     ) -> dict[str, Any]:
-        """Performs a frame-level agentic search with query expansion.
-
-        This is a legacy search method. For production use, use `search_scenes`.
-
-        Args:
-            query: The natural language search query.
-            limit: Maximum number of results to return.
-            use_expansion: Whether to use LLM query expansion.
-
-        Returns:
-            A dictionary containing results, parsed query, and metadata.
-        """
         log(f"[Search] Agentic frame search: '{query}'")
 
-        # 1. Parse and expand query
         if use_expansion:
             parsed = await self.parse_query(query)
         else:
             parsed = ParsedQuery(visual_keywords=[query])
 
-        # 2. Resolve identity if person name found
         face_ids: list[str] = []
         resolved_name: str | None = None
         cluster_id: int | None = None
@@ -517,20 +265,15 @@ class SearchAgent:
             if cluster_id is not None:
                 face_ids = self._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
-                log(
-                    f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id} ({len(face_ids)} faces)"
-                )
+                log(f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id} ({len(face_ids)} faces)")
 
-        # 3. Build search query from expanded keywords
         search_text = parsed.to_search_text()
         log(f"[Search] Expanded search text: '{search_text}'")
 
-        # 4. Build HYBRID FILTERS for precise matching
         from qdrant_client.http import models
 
         filters: list[models.FieldCondition] = []
 
-        # Identity filter
         if cluster_id is not None:
             filters.append(
                 models.FieldCondition(
@@ -538,18 +281,13 @@ class SearchAgent:
                     match=models.MatchAny(any=[cluster_id]),
                 )
             )
-            log(f"[Search] Added identity filter: cluster_id={cluster_id}")
 
-        # Clothing filters (new for complex queries)
         if parsed.clothing_color:
             filters.append(
                 models.FieldCondition(
                     key="clothing_colors",
                     match=models.MatchAny(any=[parsed.clothing_color.lower()]),
                 )
-            )
-            log(
-                f"[Search] Added clothing color filter: {parsed.clothing_color}"
             )
 
         if parsed.clothing_type:
@@ -559,9 +297,7 @@ class SearchAgent:
                     match=models.MatchAny(any=[parsed.clothing_type.lower()]),
                 )
             )
-            log(f"[Search] Added clothing type filter: {parsed.clothing_type}")
 
-        # Accessories filter
         if parsed.accessories:
             filters.append(
                 models.FieldCondition(
@@ -569,9 +305,7 @@ class SearchAgent:
                     match=models.MatchAny(any=parsed.accessories),
                 )
             )
-            log(f"[Search] Added accessories filter: {parsed.accessories}")
 
-        # Brand/Text filter
         if parsed.text_to_find:
             filters.append(
                 models.FieldCondition(
@@ -579,9 +313,7 @@ class SearchAgent:
                     match=models.MatchAny(any=parsed.text_to_find),
                 )
             )
-            log(f"[Search] Added text filter: {parsed.text_to_find}")
 
-        # Location filter
         if parsed.location:
             filters.append(
                 models.FieldCondition(
@@ -589,13 +321,9 @@ class SearchAgent:
                     match=models.MatchText(text=parsed.location),
                 )
             )
-            log(f"[Search] Added location filter: {parsed.location}")
 
-        # Entity/Object filter
         if parsed.visual_keywords:
-            specific_entities = [
-                k for k in parsed.visual_keywords if len(k) > 3
-            ]
+            specific_entities = [k for k in parsed.visual_keywords if len(k) > 3]
             if specific_entities:
                 filters.append(
                     models.FieldCondition(
@@ -603,14 +331,10 @@ class SearchAgent:
                         match=models.MatchAny(any=specific_entities),
                     )
                 )
-                log(f"[Search] Added entity filter: {specific_entities}")
 
-        # 5. Execute HYBRID search (Vector + Filters)
         try:
             query_vector = (
-                await self.db.encode_texts(
-                    search_text or "scene activity", is_query=True
-                )
+                await self.db.encode_texts(search_text or "scene activity", is_query=True)
             )[0]
 
             if filters:
@@ -624,26 +348,14 @@ class SearchAgent:
                     limit=limit,
                 ).points
                 results = [
-                    {
-                        "score": hit.score,
-                        "id": str(hit.id),
-                        **(hit.payload or {}),
-                    }
+                    {"score": hit.score, "id": str(hit.id), **(hit.payload or {})}
                     for hit in results
                 ]
             else:
-                results = await self.db.search_frames(
-                    query=search_text,
-                    limit=limit,
-                )
+                results = await self.db.search_frames(query=search_text, limit=limit)
         except Exception as e:
             log(f"[Search] Hybrid search failed: {e}, falling back to simple")
-            _frame_degraded = True
-            _frame_degradation_reason = f"Hybrid search failed: {e}"
-            results = await self.db.search_frames(
-                query=search_text,
-                limit=limit,
-            )
+            results = await self.db.search_frames(query=search_text, limit=limit)
 
         return {
             "query": query,
@@ -657,36 +369,14 @@ class SearchAgent:
         }
 
     async def _fallback_frame_search(
-        self,
-        parsed: ParsedQuery,
-        search_text: str,
-        limit: int,
+        self, parsed: ParsedQuery, search_text: str, limit: int,
     ) -> list[dict]:
-        """Falls back to frame-level search if scene search is unavailable.
-
-        Args:
-            parsed: The already parsed query object.
-            search_text: The expanded search text.
-            limit: Maximum number of results to return.
-
-        Returns:
-            A list of search result dictionaries.
-        """
         try:
             return await self.db.search_frames(query=search_text, limit=limit)
         except Exception:
             return []
 
     async def search_simple(self, query: str, limit: int = 20) -> list[dict]:
-        """Performs a simple frame search without LLM expansion.
-
-        Args:
-            query: The search query string.
-            limit: Maximum number of results to return.
-
-        Returns:
-            A list of search result dictionaries.
-        """
         return await self.db.search_frames(query=query, limit=limit)
 
     async def hybrid_search(
@@ -697,140 +387,22 @@ class SearchAgent:
         keyword_weight: float = 0.3,
         video_id: str | None = None,
     ) -> list[dict]:
-        """Perform hybrid BM25+vector search with weighted RRF fusion.
-
-        Per AGENTS.MD: Use weighted RRF (0.7 vector, 0.3 BM25).
-
-        Args:
-            query: Search query string.
-            limit: Maximum results to return.
-            vector_weight: Weight for vector search (default 0.7).
-            keyword_weight: Weight for BM25 keyword search (default 0.3).
-            video_id: Optional filter by video.
-
-        Returns:
-            List of results with fused scores.
-        """
         if self.hybrid_searcher:
             try:
                 results = await self.hybrid_searcher.search(
-                    query=query,
-                    limit=limit,
-                    vector_weight=vector_weight,
-                    keyword_weight=keyword_weight,
+                    query=query, limit=limit,
+                    vector_weight=vector_weight, keyword_weight=keyword_weight,
                     video_id=video_id,
                 )
-                log(
-                    f"[Search] Hybrid search: {len(results)} results "
-                    f"(weights: {vector_weight:.1f}v/{keyword_weight:.1f}kw)"
-                )
+                log(f"[Search] Hybrid search: {len(results)} results (weights: {vector_weight:.1f}v/{keyword_weight:.1f}kw)")
                 return results
             except Exception as e:
                 log(f"[Search] Hybrid search failed, falling back: {e}")
-
-        # Fallback to vector-only search
         return await self.db.search_frames(query=query, limit=limit)
 
     # =========================================================================
-    # SOTA SEARCH METHODS
+    # SOTA SEARCH
     # =========================================================================
-
-    @observe("search_rerank_llm")
-    async def rerank_with_llm(
-        self,
-        query: str,
-        candidates: list[dict],
-        top_k: int = 10,
-    ) -> list[dict]:
-        """Re-ranks search candidates using an LLM to verify all query constraints.
-
-        Performs a second-stage verification where an LLM checks if the
-        candidate segments actually satisfy the specific entities, actions,
-        and attributes mentioned in the query.
-
-        Args:
-            query: The original user search query.
-            candidates: A list of candidate search results.
-            top_k: The number of top results to return after re-ranking.
-
-        Returns:
-            The re-ranked list of results with LLM verification metadata.
-        """
-        if not candidates:
-            return []
-
-        # Load rerank prompt from external file
-        rerank_prompt = load_prompt("rerank_verification")
-
-        reranked = []
-
-        for candidate in candidates[:top_k]:  # LLM rerank all top_k candidates
-            description = (
-                candidate.get("description", "")
-                or candidate.get("dense_caption", "")
-                or candidate.get("raw_description", "")
-            )
-
-            prompt = rerank_prompt.format(
-                query=query,
-                description=description[:500],
-                face_names=candidate.get("face_names", []),
-                location=candidate.get("location", "unknown"),
-                actions=candidate.get("actions", []),
-                visible_text=candidate.get("visible_text", []),
-            )
-
-            try:
-                # Use module-level RerankResult class (moved from loop for performance)
-                result = None
-                for attempt in range(2):
-                    try:
-                        result = await self.llm.generate_structured(
-                            schema=RerankResult,
-                            prompt=prompt,
-                            system_prompt="You are a video search result verifier. Return ONLY valid JSON with match_score, reasoning, constraints_checked, and missing fields.",
-                        )
-                        break
-                    except Exception as retry_err:
-                        if attempt == 0:
-                            log(
-                                f"[Rerank] Retry after parse error: {retry_err}"
-                            )
-                            continue
-                        raise
-
-                if result is None:
-                    raise ValueError("LLM returned no result after retries")
-
-                # Apply penalty for missing constraints
-                missing_penalty = len(result.missing) * 0.1
-                adjusted_score = max(0.0, result.match_score - missing_penalty)
-                # Merge LLM verification with candidate (avoid mutating caller's data)
-                enriched = {**candidate}
-                enriched["llm_score"] = adjusted_score
-                enriched["llm_reasoning"] = result.reasoning
-                enriched["constraints_satisfied"] = result.constraints_checked
-                enriched["constraints_missing"] = result.missing
-                # Weight: configurable vector/LLM balance from settings
-                from config import settings
-                enriched["combined_score"] = (
-                    enriched.get("score", 0) * settings.rerank_vector_weight
-                    + adjusted_score * settings.rerank_llm_weight
-                )
-                reranked.append(enriched)
-
-            except Exception as e:
-                # If LLM fails, keep original score but add small penalty
-                log(f"[Rerank] LLM verification failed: {e}")
-                candidate["combined_score"] = candidate.get("score", 0) * 0.8
-                candidate["llm_reasoning"] = (
-                    f"Verification failed: {str(e)[:50]}"
-                )
-                reranked.append(candidate)
-
-        # Sort by combined score
-        reranked.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
-        return reranked[:top_k]
 
     @observe("search_sota")
     async def sota_search(
@@ -839,18 +411,13 @@ class SearchAgent:
         limit: int = 10,
         video_path: str | None = None,
         use_reranking: bool = True,
-        use_expansion: bool = False,  # Default OFF to prevent LLM hallucination
+        use_expansion: bool = False,
         expansion_fallback: bool = True,
     ) -> dict[str, Any]:
-        """Performs a state-of-the-art search with full verification and explainability."""
         log(f"[SOTA Search] Query: '{query[:100]}...'")
-        log(
-            f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}"
-        )
+        log(f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}")
 
-        # 1. ALWAYS parse for structured constraints (Fix #9)
-        # Parsing extracts clothing/identity/action/entity constraints
-        # even when LLM query expansion text-rewriting is disabled.
+        # 1. Parse
         expansion_used = False
         try:
             parsed = await self.parse_query(query)
@@ -866,16 +433,14 @@ class SearchAgent:
             parsed = ParsedQuery(visual_keywords=[query])
             search_text = query
 
-        # 2. Resolve person identities
+        # 2. Resolve identities
         person_names = []
         face_ids = []
 
-        # Try new dynamic format first
         if hasattr(parsed, "entities") and parsed.entities:
             for entity in parsed.entities:
                 if entity.entity_type.lower() == "person" and entity.name:
                     person_names.append(entity.name)
-        # Fallback to legacy format
         elif parsed.person_name:
             person_names.append(parsed.person_name)
 
@@ -888,19 +453,17 @@ class SearchAgent:
 
         all_results = {}
 
-        # Extract ALL clothing from parsed constraints (Fix #6)
+        # Extract clothing from parsed constraints
         all_clothing_colors: list[str] = []
         all_clothing_types: list[str] = []
         all_accessories: list[str] = list(parsed.accessories) if hasattr(parsed, "accessories") else []
 
-        # From new structured clothing constraints
         if hasattr(parsed, "clothing") and parsed.clothing:
             for c in parsed.clothing:
                 if c.get("color"):
                     all_clothing_colors.append(c["color"].lower())
                 if c.get("item"):
                     all_clothing_types.append(c["item"].lower())
-        # From people → clothing_items
         if hasattr(parsed, "people") and parsed.people:
             for person in parsed.people:
                 for ci in getattr(person, "clothing_items", []):
@@ -908,12 +471,12 @@ class SearchAgent:
                         all_clothing_colors.append(ci.color.lower())
                     if hasattr(ci, "item_type") and ci.item_type:
                         all_clothing_types.append(ci.item_type.lower())
-        # Legacy single fields as fallback
         if not all_clothing_colors and parsed.clothing_color:
             all_clothing_colors.append(parsed.clothing_color.lower())
         if not all_clothing_types and parsed.clothing_type:
             all_clothing_types.append(parsed.clothing_type.lower())
 
+        # 3. Multi-modality retrieval
         try:
             scene_results = await self.db.search_scenes(
                 query=search_text,
@@ -923,15 +486,9 @@ class SearchAgent:
                 clothing_colors=all_clothing_colors or None,
                 clothing_types=all_clothing_types or None,
                 accessories=all_accessories or None,
-                location=parsed.location
-                if hasattr(parsed, "location")
-                else None,
-                visible_text=parsed.text_to_find
-                if hasattr(parsed, "text_to_find")
-                else None,
-                action_keywords=parsed.action_keywords
-                if hasattr(parsed, "action_keywords")
-                else None,
+                location=parsed.location if hasattr(parsed, "location") else None,
+                visible_text=parsed.text_to_find if hasattr(parsed, "text_to_find") else None,
+                action_keywords=parsed.action_keywords if hasattr(parsed, "action_keywords") else None,
                 video_path=video_path,
                 mood=parsed.mood,
                 shot_type=parsed.shot_type,
@@ -942,28 +499,16 @@ class SearchAgent:
             all_results["scenes"] = scene_results
             log(f"[SOTA] Scenes: {len(scene_results)} results")
 
-            # CONSTRAINT RELAXATION: If strict search failed, try loose semantic search
-            if not scene_results and (
-                person_names or all_clothing_colors or parsed.location
-            ):
-                log(
-                    "[SOTA] Strict scene search yielded 0 results. Retrying with relaxed semantic search..."
-                )
+            if not scene_results and (person_names or all_clothing_colors or parsed.location):
+                log("[SOTA] Strict scene search yielded 0 results. Retrying relaxed...")
                 try:
                     fallback_scenes = await self.db.search_scenes(
-                        query=search_text,
-                        limit=limit,
-                        search_mode="hybrid",
-                        # Intentionally omitting filters to cast a wider net
+                        query=search_text, limit=limit, search_mode="hybrid",
                     )
-                    log(
-                        f"[SOTA] Relaxed search found {len(fallback_scenes)} scenes"
-                    )
-                    # Append unique results (deduplicate by ID)
+                    log(f"[SOTA] Relaxed search found {len(fallback_scenes)} scenes")
                     existing_ids = {r["id"] for r in scene_results}
                     for r in fallback_scenes:
                         if r["id"] not in existing_ids:
-                            # Add a flag to indicate it satisfied loose constraints only
                             r["match_type"] = "relaxed"
                             scene_results.append(r)
                     all_results["scenes"] = scene_results
@@ -986,7 +531,6 @@ class SearchAgent:
             all_results["scenelets"] = []
 
         try:
-            # FIX: Use ALL face_ids, not just first one
             frame_results = await self.db.search_frames_hybrid(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
@@ -1001,9 +545,7 @@ class SearchAgent:
 
         try:
             voice_results = await self.db.search_voice_segments(
-                query=search_text,
-                limit=limit * 2,
-                video_path=video_path,
+                query=search_text, limit=limit * 2, video_path=video_path,
             )
             all_results["voice"] = voice_results if voice_results else []
             log(f"[SOTA] Voice: {len(all_results['voice'])} results")
@@ -1012,164 +554,68 @@ class SearchAgent:
             all_results["voice"] = []
 
         try:
-            # Fix #10: Use semantic CLAP search instead of text matching
             audio_results = await self.db.search_audio_events_semantic(
-                query=search_text,
-                limit=limit * 2,
-                video_path=video_path,
+                query=search_text, limit=limit * 2, video_path=video_path,
             )
             all_results["audio_events"] = audio_results if audio_results else []
-            log(
-                f"[SOTA] Audio events: {len(all_results['audio_events'])} results"
-            )
+            log(f"[SOTA] Audio events: {len(all_results['audio_events'])} results")
         except Exception as e:
             log(f"[SOTA] Audio event search failed: {e}")
             all_results["audio_events"] = []
 
-        # DIALOGUE/TRANSCRIPT SEARCH - searches media_segments for spoken text/subs
         try:
             dialogue_results = await self.db.search_dialogue(
-                query=search_text,
-                limit=limit * 2,
-                video_path=video_path,
+                query=search_text, limit=limit * 2, video_path=video_path,
             )
-            all_results["dialogue"] = (
-                dialogue_results if dialogue_results else []
-            )
+            all_results["dialogue"] = dialogue_results if dialogue_results else []
             log(f"[SOTA] Dialogue: {len(all_results['dialogue'])} results")
         except Exception as e:
             log(f"[SOTA] Dialogue search failed: {e}")
             all_results["dialogue"] = []
 
-        # VIDEO METADATA SEARCH - searches video summaries, titles, context
         try:
-            video_meta = await self.db.search_video_metadata(
-                query=search_text,
-                limit=limit,
-            )
+            video_meta = await self.db.search_video_metadata(query=search_text, limit=limit)
             all_results["video_metadata"] = video_meta if video_meta else []
             log(f"[SOTA] Video metadata: {len(all_results['video_metadata'])} results")
         except Exception as e:
             log(f"[SOTA] Video metadata search failed: {e}")
             all_results["video_metadata"] = []
 
-        # VOICE IDENTITY BOOST - if we resolved person names, boost voice results
-        # that match those speakers for better identity-based ranking
+        # Voice identity boost
         if person_names and all_results.get("voice"):
             for v_result in all_results["voice"]:
                 speaker_name = str(v_result.get("speaker_name", ""))
-                if any(
-                    name.lower() in speaker_name.lower()
-                    for name in person_names
-                ):
+                if any(name.lower() in speaker_name.lower() for name in person_names):
                     v_result["score"] = min(1.0, v_result.get("score", 0.5) * 1.5)
                     v_result["identity_boosted"] = True
 
-        from collections import defaultdict
-
+        # 4. Adaptive weighting + RRF fusion
+        weights = self._compute_adaptive_weights(search_text, parsed)
         fused_scores = defaultdict(float)
         result_data = {}
-
-        # QUERY-ADAPTIVE WEIGHTING: Detect query intent and adjust weights dynamically
-        def _compute_adaptive_weights(
-            query: str, parsed: Any
-        ) -> dict[str, float]:
-            """Compute modality weights based on detected query intent."""
-            query_lower = query.lower()
-
-            # Base weights from config (sum = 1.0)
-            from config import settings
-            weights = {
-                "scenes": settings.modality_weight_scenes,
-                "frames": settings.modality_weight_frames,
-                "scenelets": settings.modality_weight_scenelets,
-                "voice": settings.modality_weight_voice,
-                "dialogue": settings.modality_weight_dialogue,
-                "audio_events": settings.modality_weight_audio,
-            }
-
-            # =================================================================
-            # LLM-INFERRED MODALITY WEIGHTS (Truly Dynamic)
-            # Weights come from query decomposition - LLM determines priorities
-            # =================================================================
-            
-            # Check if parsed query has LLM-inferred modality weights
-            llm_weights = None
-            if parsed and hasattr(parsed, "modality_weights") and parsed.modality_weights:
-                llm_weights = parsed.modality_weights
-            elif parsed and isinstance(parsed, dict) and "modality_weights" in parsed:
-                llm_weights = parsed["modality_weights"]
-            
-            if llm_weights:
-                # Map LLM weight keys to our collection names
-                weights = {
-                    "scenes": llm_weights.get("visual", 0.2),
-                    "frames": llm_weights.get("visual", 0.2) * 0.8,
-                    "scenelets": llm_weights.get("action", 0.15),
-                    "voice": llm_weights.get("identity", 0.15),
-                    "dialogue": llm_weights.get("dialogue", 0.2),
-                    "audio_events": llm_weights.get("audio", 0.1),
-                    "video_metadata": llm_weights.get("context", 0.05),
-                }
-                # Normalize to sum to 1.0
-                total = sum(weights.values())
-                if total > 0:
-                    weights = {k: v / total for k, v in weights.items()}
-                detected_intents = ["LLM_INFERRED"]
-                log(f"[ADAPTIVE] Using LLM-inferred weights: {weights}")
-            else:
-                # Fallback: uniform weights when no LLM decomposition
-                weights = {
-                    "scenes": 1.0 / 7.0,
-                    "frames": 1.0 / 7.0,
-                    "scenelets": 1.0 / 7.0,
-                    "voice": 1.0 / 7.0,
-                    "dialogue": 1.0 / 7.0,
-                    "audio_events": 1.0 / 7.0,
-                    "video_metadata": 1.0 / 7.0,
-                }
-                detected_intents = ["UNIFORM"]
-                log("[ADAPTIVE] Query weights: UNIFORM (no LLM decomposition)")
-
-            return weights
-
-        weights = _compute_adaptive_weights(search_text, parsed)
-
-        # Use configurable RRF k from settings
-        from config import settings
         k = settings.rrf_constant
 
         for modality, results in all_results.items():
             weight = weights.get(modality, 0.1)
-
             for rank, result in enumerate(results, start=1):
                 result_id = result.get("id")
                 if not result_id:
                     continue
 
-                # Create a FUSION KEY based on video + timestamp for proper multi-modal merging
-                # This allows same moment from different modalities to combine
-                video_path = (
-                    result.get("video_path") or result.get("media_path") or ""
-                )
+                vp = result.get("video_path") or result.get("media_path") or ""
                 start_time = (
-                    result.get("start_time")
-                    or result.get("start")
-                    or result.get("timestamp")
-                    or 0
+                    result.get("start_time") or result.get("start")
+                    or result.get("timestamp") or 0
                 )
 
-                # Use configurable timestamp bucket from settings
-                # OVERLAPPING BUCKETS: Assign to primary + half-offset bucket
-                # so events near boundaries (e.g., 3.9s and 4.1s) reinforce each other
                 bucket_size = settings.timestamp_bucket_seconds
                 ts_float = float(start_time)
                 primary_bucket = int(ts_float / bucket_size) * int(bucket_size)
                 half_offset_bucket = int((ts_float + bucket_size / 2) / bucket_size) * int(bucket_size)
 
-                fusion_keys = [f"{video_path}:{primary_bucket}"]
+                fusion_keys = [f"{vp}:{primary_bucket}"]
                 if half_offset_bucket != primary_bucket:
-                    fusion_keys.append(f"{video_path}:{half_offset_bucket}")
+                    fusion_keys.append(f"{vp}:{half_offset_bucket}")
 
                 rrf_score = 1.0 / (k + rank)
                 weighted_score = rrf_score * weight
@@ -1177,47 +623,34 @@ class SearchAgent:
                 for fusion_key in fusion_keys:
                     fused_scores[fusion_key] += weighted_score
 
-                    # Keep best result for this fusion key, but track ALL modalities
                     if fusion_key not in result_data:
                         result_data[fusion_key] = result.copy()
                         result_data[fusion_key]["modality_sources"] = []
                         result_data[fusion_key]["_original_id"] = result_id
                         result_data[fusion_key]["_best_timestamp_score"] = weighted_score
                     else:
-                        # FIX: Use timestamps from highest-scoring modality, not first
                         existing = result_data[fusion_key]
                         if weighted_score > existing.get("_best_timestamp_score", 0):
-                            # Higher-scoring result - update timestamps to more precise values
                             for ts_key in ["start_time", "end_time", "start", "end", "timestamp"]:
                                 if result.get(ts_key) is not None:
                                     existing[ts_key] = result[ts_key]
                             existing["_best_timestamp_score"] = weighted_score
 
-                    # Always add modality source (might be same moment from multiple modalities)
                     if modality not in result_data[fusion_key]["modality_sources"]:
                         result_data[fusion_key]["modality_sources"].append(modality)
 
-                    # Merge richer data from other modalities
                     existing = result_data[fusion_key]
                     if not existing.get("face_names") and result.get("face_names"):
                         existing["face_names"] = result["face_names"]
-                    if not existing.get("person_names") and result.get(
-                        "person_names"
-                    ):
+                    if not existing.get("person_names") and result.get("person_names"):
                         existing["person_names"] = result["person_names"]
-                    if not existing.get("face_cluster_ids") and result.get(
-                        "face_cluster_ids"
-                    ):
+                    if not existing.get("face_cluster_ids") and result.get("face_cluster_ids"):
                         existing["face_cluster_ids"] = result["face_cluster_ids"]
-                    if not existing.get("description") and result.get(
-                        "description"
-                    ):
+                    if not existing.get("description") and result.get("description"):
                         existing["description"] = result["description"]
                     if not existing.get("entities") and result.get("entities"):
                         existing["entities"] = result["entities"]
-                    if not existing.get("scene_location") and result.get(
-                        "scene_location"
-                    ):
+                    if not existing.get("scene_location") and result.get("scene_location"):
                         existing["scene_location"] = result["scene_location"]
 
         ranked = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[
@@ -1225,31 +658,23 @@ class SearchAgent:
         ]
 
         candidates = []
-
-        # FIXED: Use Linear Max-Scaling instead of Sigmoid
-        # Sigmoid compresses RRF scores (which are small, ~0.01) into a narrow 0.5-0.6 range.
-        # Linear scaling ensures the top result is 1.0 and preserves relative differences.
         max_rrf_score = max(ranked[0][1], 1e-9) if ranked else 1.0
 
         for fusion_key, score in ranked:
             result = result_data[fusion_key]
-
-            # Linear Normalization: Top result = 1.0
             normalized_score = score / max_rrf_score
             result["score"] = normalized_score
             result["fused_score"] = score
 
-            # ENSURE face_names is always present - resolve from face_cluster_ids if needed
             face_names = result.get("face_names") or []
-            person_names = result.get("person_names") or []
+            person_names_r = result.get("person_names") or []
             face_cluster_ids = result.get("face_cluster_ids") or []
 
-            # If no face_names but we have cluster_ids, resolve them from DB
             if not face_names and face_cluster_ids:
                 resolved_names = []
-                for cluster_id in face_cluster_ids:
+                for cid in face_cluster_ids:
                     try:
-                        name = self.db.get_face_name_by_cluster(cluster_id)
+                        name = self.db.get_face_name_by_cluster(cid)
                         if name:
                             resolved_names.append(name)
                     except Exception:
@@ -1257,57 +682,42 @@ class SearchAgent:
                 if resolved_names:
                     face_names = resolved_names
 
-            # Merge person_names if still empty
-            if not face_names and person_names:
-                face_names = person_names
+            if not face_names and person_names_r:
+                face_names = person_names_r
 
             result["face_names"] = face_names
 
-            # ADD DEBUG INFO for descriptive reasoning
             sources = result.get("modality_sources", [])
             result["_debug"] = {
                 "modalities_used": sources,
                 "raw_fused_score": score,
                 "normalized_score": normalized_score,
                 "models_contributed": self._get_models_for_modalities(sources),
-                "match_type": "multimodal_fusion"
-                if len(sources) > 1
-                else "single_modality",
+                "match_type": "multimodal_fusion" if len(sources) > 1 else "single_modality",
             }
 
-            # Build descriptive match reason with actual content
             if sources:
                 source_desc = ", ".join(sources)
                 desc_preview = (
-                    result.get("description")
-                    or result.get("action")
-                    or result.get("visual_summary")
-                    or ""
+                    result.get("description") or result.get("action")
+                    or result.get("visual_summary") or ""
                 )
-
-                # Build a richer reason with people and location
                 reason_parts = []
                 if face_names:
                     reason_parts.append(f"People: {', '.join(face_names)}")
                 if result.get("scene_location"):
                     reason_parts.append(f"Location: {result['scene_location']}")
                 if result.get("entities"):
-                    entities = result["entities"][:5]  # First 5 entities
+                    entities = result["entities"][:5]
                     reason_parts.append(f"Objects: {', '.join(entities)}")
 
                 if reason_parts:
                     reason_extra = " | ".join(reason_parts)
-                    result["match_reason"] = (
-                        f"Matched via {source_desc} ({normalized_score * 100:.0f}%) - {reason_extra}"
-                    )
+                    result["match_reason"] = f"Matched via {source_desc} ({normalized_score * 100:.0f}%) - {reason_extra}"
                 elif desc_preview:
-                    result["match_reason"] = (
-                        f"Semantic match (score={normalized_score:.2f}): {desc_preview[:100]}..."
-                    )
+                    result["match_reason"] = f"Semantic match (score={normalized_score:.2f}): {desc_preview[:100]}..."
                 else:
-                    result["match_reason"] = (
-                        f"Matched via {source_desc} (score={normalized_score:.2f})"
-                    )
+                    result["match_reason"] = f"Matched via {source_desc} (score={normalized_score:.2f})"
 
             candidates.append(result)
 
@@ -1317,23 +727,18 @@ class SearchAgent:
         if not any(all_results.values()):
             fallback_used = "no_results"
 
-        # 4. Re-rank with BGE-Reranker-v2-m3 (Single SOTA Reranker)
+        # 5. BGE Reranking
         if use_reranking and candidates:
             try:
-                # Prepare pairs for reranking: [query, document_text]
                 pairs = []
                 for c in candidates:
-                    # Construct rich representation for reranker
                     desc = c.get("description") or c.get("visual_summary") or ""
-                    action = (
-                        c.get("motion_text") or c.get("action_summary") or ""
-                    )
+                    action = c.get("motion_text") or c.get("action_summary") or ""
                     content = f"{desc} {action}"
                     if c.get("dialogue_transcript"):
                         content += f" Dialogue: {c['dialogue_transcript']}"
                     pairs.append([query, content])
 
-                # Use CrossEncoder with RESOURCE_ARBITER VRAM tracking (Fix #13)
                 from sentence_transformers import CrossEncoder
                 from core.processing.resource_arbiter import RESOURCE_ARBITER
 
@@ -1355,28 +760,22 @@ class SearchAgent:
                 )
 
                 if not hasattr(self, "_reranker") or self._reranker is None:
-                    self._reranker = CrossEncoder(
-                        reranker_model_id, trust_remote_code=True
-                    )
+                    self._reranker = CrossEncoder(reranker_model_id, trust_remote_code=True)
 
                 scores = self._reranker.predict(pairs)
 
-                # Update scores
                 for i, score in enumerate(scores):
-                    candidates[i]["score"] = float(score)  # Update main score
+                    candidates[i]["score"] = float(score)
                     candidates[i]["rerank_score"] = float(score)
 
-                # Re-sort
                 candidates.sort(key=lambda x: x["score"], reverse=True)
                 candidates = candidates[:limit]
-
                 log(f"[SOTA Search] BGE Reranked to {len(candidates)} results")
 
             except Exception as e:
                 log.error(f"[SOTA Search] Reranking failed: {e}")
-                # Fallback to original order
 
-        # 5. Granular Constraint Scoring — apply whenever ANY parsed constraint exists
+        # 6. Granular scoring
         has_constraints = any([
             getattr(parsed, "identities", None),
             getattr(parsed, "clothing", None),
@@ -1389,37 +788,20 @@ class SearchAgent:
         ])
         if has_constraints:
             candidates = self._apply_granular_scoring(candidates, parsed)
-            # Re-sort after granular scoring adjustment
             candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-        # GOLD.md Compliance: Comprehensive Search Reasoning Trace with Pipeline Steps
-        # Build detailed pipeline_steps for frontend debug panel
         pipeline_steps = [
-            {
-                "step": "Query Parsing",
-                "status": "completed",
-                "detail": f"Extracted {len(parsed.entities) if hasattr(parsed, 'entities') and parsed.entities else 0} entities",
-                "data": {"original_query": query[:100]},
-            },
-            {
-                "step": "Vector Search",
-                "status": "completed",
-                "detail": f"{'Fallback: ' + str(fallback_used) if fallback_used else 'scenes'} → {len(candidates)} results",
-                "data": {
-                    "collection_searched": fallback_used or "scenes",
-                    "fallback_used": fallback_used is not None,
-                    "candidates_found": len(candidates),
-                },
-            },
-            {
-                "step": "LLM Reranking",
-                "status": "completed" if use_reranking else "skipped",
-                "detail": f"{'Applied' if use_reranking else 'Disabled'} → {len(candidates[:limit])} final results",
-                "data": {
-                    "enabled": use_reranking,
-                    "final_count": len(candidates[:limit]),
-                },
-            },
+            {"step": "Query Parsing", "status": "completed",
+             "detail": f"Extracted {len(parsed.entities) if hasattr(parsed, 'entities') and parsed.entities else 0} entities",
+             "data": {"original_query": query[:100]}},
+            {"step": "Vector Search", "status": "completed",
+             "detail": f"{'Fallback: ' + str(fallback_used) if fallback_used else 'scenes'} → {len(candidates)} results",
+             "data": {"collection_searched": fallback_used or "scenes",
+                      "fallback_used": fallback_used is not None,
+                      "candidates_found": len(candidates)}},
+            {"step": "LLM Reranking", "status": "completed" if use_reranking else "skipped",
+             "detail": f"{'Applied' if use_reranking else 'Disabled'} → {len(candidates[:limit])} final results",
+             "data": {"enabled": use_reranking, "final_count": len(candidates[:limit])}},
         ]
 
         reasoning_chain = {
@@ -1432,9 +814,7 @@ class SearchAgent:
 
         return {
             "query": query,
-            "parsed": parsed.model_dump()
-            if hasattr(parsed, "model_dump")
-            else {},
+            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
             "search_text": search_text,
             "person_names_resolved": person_names,
             "face_ids_matched": len(face_ids),
@@ -1447,237 +827,68 @@ class SearchAgent:
             "reasoning_chain": reasoning_chain,
         }
 
-    def _apply_granular_scoring(
-        self, results: list[dict], parsed: ParsedQuery
-    ) -> list[dict]:
-        """Refine scores based on granular constraint matching.
+    def _compute_adaptive_weights(self, query: str, parsed: Any) -> dict[str, float]:
+        llm_weights = None
+        if parsed and hasattr(parsed, "modality_weights") and parsed.modality_weights:
+            llm_weights = parsed.modality_weights
+        elif parsed and isinstance(parsed, dict) and "modality_weights" in parsed:
+            llm_weights = parsed["modality_weights"]
 
-        Checks every parseable constraint against every searchable payload field.
-        Applies positive boosts for matches and negative penalties for exclusions.
-        """
-        for result in results:
-            base_score = float(result.get("score", 0.5))
-            payload = (
-                result.get("base_payload", result)
-                if isinstance(result, dict)
-                else result
-            )
+        if llm_weights:
+            weights = {
+                "scenes": llm_weights.get("visual", 0.2),
+                "frames": llm_weights.get("visual", 0.2) * 0.8,
+                "scenelets": llm_weights.get("action", 0.15),
+                "voice": llm_weights.get("identity", 0.15),
+                "dialogue": llm_weights.get("dialogue", 0.2),
+                "audio_events": llm_weights.get("audio", 0.1),
+                "video_metadata": llm_weights.get("context", 0.05),
+            }
+            total = sum(weights.values())
+            if total > 0:
+                weights = {k: v / total for k, v in weights.items()}
+            log(f"[ADAPTIVE] Using LLM-inferred weights: {weights}")
+        else:
+            weights = {k: 1.0 / 7.0 for k in [
+                "scenes", "frames", "scenelets", "voice",
+                "dialogue", "audio_events", "video_metadata",
+            ]}
+            log("[ADAPTIVE] Query weights: UNIFORM (no LLM decomposition)")
 
-            # Build comprehensive searchable text from ALL payload fields
-            desc = " ".join(filter(None, [
-                str(payload.get("description", "")),
-                str(payload.get("visual_text", "")),
-                str(payload.get("visual_summary", "")),
-                str(payload.get("action", "")),
-                str(payload.get("motion_text", "")),
-                str(payload.get("action_summary", "")),
-                str(payload.get("location", "")),
-                str(payload.get("cultural_context", "")),
-                # Include per-entity details for granular matching
-                " ".join(
-                    f"{e.get('name', '')} {e.get('visual_details', '')}"
-                    for e in (payload.get("entities") or [])
-                    if isinstance(e, dict)
-                ),
-                # Include all clothing descriptions for color/type matching
-                " ".join(payload.get("clothing_descriptions", [])),
-                " ".join(payload.get("clothing_types", [])),
-                " ".join(payload.get("accessories", [])),
-            ])).lower()
+        return weights
 
-            ocr = " ".join(filter(None, [
-                str(payload.get("ocr_text", "")),
-                str(payload.get("visible_text", "")),
-            ])).lower()
-
-            dialogue = " ".join(filter(None, [
-                str(payload.get("dialogue_transcript", "")),
-                str(payload.get("dialogue_text", "")),
-            ])).lower()
-
-            audio = " ".join(
-                str(e) for e in (payload.get("audio_events") or [])
-            ).lower()
-
-            # Full haystack for broad checks
-            all_text = f"{desc} {ocr} {dialogue} {audio}"
-
-            matches = 0
-            total_checks = 0
-
-            # Check Text Constraints
-            if hasattr(parsed, "text") and parsed.text:
-                for t in parsed.text:
-                    total_checks += 1
-                    search_text = t.get("text", "").lower()
-                    if search_text in ocr:
-                        matches += 1
-                    elif search_text in desc:
-                        matches += 0.7
-                    elif search_text in dialogue:
-                        matches += 0.5
-
-            # Check Clothing Constraints
-            if hasattr(parsed, "clothing") and parsed.clothing:
-                for c in parsed.clothing:
-                    total_checks += 1
-                    c_item = c.get("item", "").lower()
-                    c_color = c.get("color", "").lower()
-                    item_found = c_item and c_item in desc
-                    color_found = c_color and c_color in desc
-                    if item_found and color_found:
-                        matches += 1  # Both match = full credit
-                    elif item_found or color_found:
-                        matches += 0.5  # Partial credit
-
-            # Check Action Constraints
-            if hasattr(parsed, "actions") and parsed.actions:
-                for a in parsed.actions:
-                    total_checks += 1
-                    action_val = a.get("action", "").lower()
-                    if action_val and action_val in desc:
-                        matches += 1
-                    result_val = a.get("result", "").lower()
-                    if result_val and result_val in desc:
-                        matches += 0.5
-
-            # Check Location Constraints
-            if hasattr(parsed, "location") and parsed.location:
-                total_checks += 1
-                if parsed.location.lower() in desc:
-                    matches += 1
-                elif parsed.location.lower() in all_text:
-                    matches += 0.5
-
-            # Check Identity Constraints
-            if hasattr(parsed, "identities") and parsed.identities:
-                person_names = [
-                    str(n).lower()
-                    for n in (payload.get("person_names") or [])
-                ]
-                for identity in parsed.identities:
-                    id_name = identity.get("name", "").lower()
-                    if id_name:
-                        total_checks += 1
-                        if id_name in person_names:
-                            matches += 1
-                        elif id_name in desc:
-                            matches += 0.5
-
-            # Check Audio Constraints
-            if hasattr(parsed, "audio") and parsed.audio:
-                for aud in parsed.audio:
-                    total_checks += 1
-                    aud_val = aud.get("event", "").lower()
-                    if aud_val and aud_val in audio:
-                        matches += 1
-                    elif aud_val and aud_val in all_text:
-                        matches += 0.3
-
-            # Check Spatial Constraints
-            if hasattr(parsed, "spatial") and parsed.spatial:
-                for sp in parsed.spatial:
-                    total_checks += 1
-                    sp_type = sp.get("measurement_type", "").lower()
-                    if sp_type and sp_type in desc:
-                        matches += 0.5
-
-            # Boost score proportional to constraint coverage
-            boost = 0.0
-            if total_checks > 0:
-                coverage = matches / total_checks
-                boost = coverage * 0.5  # Up to 50% boost when ALL constraints match
-
-            # Apply EXCLUSION penalties (negative scoring for excluded terms)
-            penalty = 0.0
-            if hasattr(parsed, "exclusions") and parsed.exclusions:
-                for exc in parsed.exclusions:
-                    exc_value = exc.get("value", "").lower()
-                    if exc_value and exc_value in all_text:
-                        penalty += 0.3  # Significant demotion per exclusion match
-
-            if isinstance(result, dict):
-                result["score"] = max(0, base_score + boost - penalty)
-                result["granular_matches"] = matches
-                result["granular_coverage"] = matches / total_checks if total_checks > 0 else 0
-                if penalty > 0:
-                    result["exclusion_penalty"] = penalty
-
-        return results
+    # =========================================================================
+    # SCENELET + MULTIMODAL + TEMPORAL
+    # =========================================================================
 
     @observe("scenelet_search")
     async def scenelet_search(
-        self,
-        query: str,
-        video_path: str | None = None,
-        limit: int = 10,
+        self, query: str, video_path: str | None = None, limit: int = 10,
     ) -> dict:
-        """Searches for action-based video segments with temporal context.
-
-        Identifies relevant moments and expands them into short windows
-        (scenelets) to capture the full context of an action or event.
-
-        Args:
-            query: The natural language search query.
-            video_path: Optional filter for a specific video.
-            limit: Maximum number of results to return.
-
-        Returns:
-            A dictionary with results containing start and end time ranges.
-        """
         log(f"[Scenelet Search] Query: '{query[:80]}...'")
-
         parsed = await self.parse_query(query)
         search_text = parsed.to_search_text() or query
 
-        # Use dedicated Scenelet search from DB with aggressive clustering
-        # gap_threshold=3.0 ensures we bridge 3s gaps (fixing "one part" issue)
-        # padding=3.0 ensures we add context before/after (fixing "didnt pad" issue)
         results = self.db.search_scenelets(
-            query=search_text,
-            limit=limit,
-            video_path=video_path,
-            gap_threshold=3.0,
-            padding=3.0,
+            query=search_text, limit=limit, video_path=video_path,
+            gap_threshold=3.0, padding=3.0,
         )
 
         formatted_results = []
         for r in results:
-            # Format for API consistency
             start = r.get("start_time", 0.0)
             end = r.get("end_time", 0.0)
             text = r.get("text", "")
-            score = r.get("score", 0.0)
-
-            formatted_results.append(
-                {
-                    **r,
-                    "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
-                    "match_explanation": f"Action sequence detected: {text[:50]}",
-                }
-            )
+            formatted_results.append({
+                **r,
+                "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
+                "match_explanation": f"Action sequence detected: {text[:50]}",
+            })
 
         return {
-            "query": query,
-            "search_type": "scenelet",
-            "results": formatted_results,
-            "result_count": len(formatted_results),
+            "query": query, "search_type": "scenelet",
+            "results": formatted_results, "result_count": len(formatted_results),
         }
-
-    def _normalize_score(self, score: float) -> float:
-        """Normalize score to 0-1 range to prevent negative values."""
-        # Simple sigmoid-like or min-max if we knew bounds.
-        # Since Cosine can be -1 to 1, or Dot Product can be large/negative.
-        # We use a logistic function to squash output to 0-1 smoothly.
-        import math
-
-        try:
-            # If score is very large negative, it goes to 0
-            # If large positive, goes to 1
-            # Scale factor 2.0 to make slope reasonable
-            return 1 / (1 + math.exp(-2.0 * score))
-        except OverflowError:
-            return 0.0 if score < 0 else 1.0
 
     @observe("comprehensive_multimodal_search")
     async def comprehensive_multimodal_search(
@@ -1687,32 +898,11 @@ class SearchAgent:
         video_path: str | None = None,
         use_reranking: bool = True,
     ) -> dict[str, Any]:
-        """Comprehensive search using ALL indexed data sources for maximum accuracy.
-
-        This method combines data from ALL Qdrant collections:
-        - scenes (visual/motion/dialogue vectors)
-        - voice_segments (speaker diarization)
-        - faces (identity clusters)
-        - co-occurrences (temporal relationships)
-
-        Uses Reciprocal Rank Fusion (RRF) to merge results from multiple modalities.
-
-        Args:
-            query: Natural language search query.
-            limit: Maximum results to return.
-            video_path: Optional filter to specific video.
-            use_reranking: Whether to use LLM reranking.
-
-        Returns:
-            Dict with fused results and detailed modality breakdowns.
-        """
         log(f"[Multimodal] Comprehensive search: '{query[:80]}...'")
 
-        # === STEP 1: PARSE QUERY ===
         parsed = await self.parse_query(query)
         search_text = parsed.to_search_text() or query
 
-        # === STEP 2: RESOLVE IDENTITIES (Face + Voice) ===
         person_names = []
         face_cluster_ids = []
         voice_cluster_ids = []
@@ -1725,28 +915,20 @@ class SearchAgent:
             person_names.append(parsed.person_name)
 
         for name in person_names:
-            # Face cluster
             face_cid = self.db.get_face_cluster_by_name(name)
             if face_cid:
                 face_cluster_ids.append(face_cid)
-
-            # Voice cluster (cross-modal linking)
             voice_cid = self.db.get_speaker_cluster_by_name(name)
             if voice_cid:
                 voice_cluster_ids.append(voice_cid)
 
-        log(
-            f"[Multimodal] Resolved identities: faces={face_cluster_ids}, voices={voice_cluster_ids}"
-        )
+        log(f"[Multimodal] Resolved identities: faces={face_cluster_ids}, voices={voice_cluster_ids}")
 
-        # === STEP 3: SEARCH ALL MODALITIES ===
         modality_results = {}
 
-        # 3a. Scene-level search (visual + motion + dialogue)
         try:
             scene_results = await self.db.search_scenes(
-                query=search_text,
-                limit=limit * 2,
+                query=search_text, limit=limit * 2,
                 person_name=person_names[0] if person_names else None,
                 face_cluster_ids=face_cluster_ids if face_cluster_ids else None,
                 clothing_color=getattr(parsed, "clothing_color", None),
@@ -1754,8 +936,7 @@ class SearchAgent:
                 location=getattr(parsed, "location", None),
                 visible_text=getattr(parsed, "text_to_find", None),
                 action_keywords=getattr(parsed, "action_keywords", None),
-                video_path=video_path,
-                search_mode="hybrid",
+                video_path=video_path, search_mode="hybrid",
             )
             modality_results["scenes"] = scene_results
             log(f"[Multimodal] Scene search: {len(scene_results)} results")
@@ -1763,191 +944,115 @@ class SearchAgent:
             log(f"[Multimodal] Scene search failed: {e}")
             modality_results["scenes"] = []
 
-        # 3b. Voice segment matching (for speaker queries)
         try:
-            if (
-                person_names
-                or "speak" in query.lower()
-                or "say" in query.lower()
-            ):
+            if person_names or "speak" in query.lower() or "say" in query.lower():
                 voice_results = []
                 if video_path:
-                    voice_segments = self.db.get_voice_segments_by_video(
-                        video_path=video_path
-                    )
+                    voice_segments = self.db.get_voice_segments_by_video(video_path=video_path)
                 else:
                     voice_segments = self.db.get_all_voice_segments(limit=500)
 
-                # Filter by speaker name if applicable
                 for seg in voice_segments:
                     speaker_name = seg.get("speaker_name", "")
-                    if any(
-                        name.lower() in str(speaker_name).lower()
-                        for name in person_names
-                    ):
-                        voice_results.append(
-                            {
-                                "id": seg.get("id"),
-                                "video_path": seg.get("media_path"),
-                                "start_time": seg.get(
-                                    "start_time", seg.get("start", 0)
-                                ),
-                                "end_time": seg.get(
-                                    "end_time", seg.get("end", 0)
-                                ),
-                                "speaker_name": speaker_name,
-                                "score": 0.9,  # High score for exact name match
-                                "modality": "voice",
-                            }
-                        )
+                    if any(name.lower() in str(speaker_name).lower() for name in person_names):
+                        voice_results.append({
+                            "id": seg.get("id"),
+                            "video_path": seg.get("media_path"),
+                            "start_time": seg.get("start_time", seg.get("start", 0)),
+                            "end_time": seg.get("end_time", seg.get("end", 0)),
+                            "speaker_name": speaker_name,
+                            "score": 0.9, "modality": "voice",
+                        })
                 modality_results["voices"] = voice_results[:limit]
                 log(f"[Multimodal] Voice search: {len(voice_results)} matches")
         except Exception as e:
             log(f"[Multimodal] Voice search failed: {e}")
             modality_results["voices"] = []
 
-        # 3c. Co-occurrence relationships (for "X with Y" queries)
         try:
-            if (
-                len(person_names) >= 2
-                or "with" in query.lower()
-                or "together" in query.lower()
-            ):
-                co_occurrences = self.db.get_person_co_occurrences(
-                    video_path=video_path
-                )
-                # Boost results where both mentioned people appear together
+            if len(person_names) >= 2 or "with" in query.lower() or "together" in query.lower():
+                co_occurrences = self.db.get_person_co_occurrences(video_path=video_path)
                 co_results = []
                 for co in co_occurrences:
                     p1_name = co.get("person1_name", "")
                     p2_name = co.get("person2_name", "")
-                    # Check if any queried person appears
-                    matched = False
-                    for name in person_names:
-                        if (
-                            name.lower() in str(p1_name).lower()
-                            or name.lower() in str(p2_name).lower()
-                        ):
-                            matched = True
-                            break
+                    matched = any(
+                        name.lower() in str(p1_name).lower() or name.lower() in str(p2_name).lower()
+                        for name in person_names
+                    )
                     if matched:
-                        co_results.append(
-                            {
-                                "video_path": co.get("video_path"),
-                                "start_time": co.get("start_time", 0),
-                                "end_time": co.get("end_time", 0),
-                                "person1": p1_name,
-                                "person2": p2_name,
-                                "interaction_count": co.get(
-                                    "interaction_count", 1
-                                ),
-                                "score": min(
-                                    1.0,
-                                    0.5 + co.get("interaction_count", 1) * 0.1,
-                                ),
-                                "modality": "co_occurrence",
-                            }
-                        )
+                        co_results.append({
+                            "video_path": co.get("video_path"),
+                            "start_time": co.get("start_time", 0),
+                            "end_time": co.get("end_time", 0),
+                            "person1": p1_name, "person2": p2_name,
+                            "interaction_count": co.get("interaction_count", 1),
+                            "score": min(1.0, 0.5 + co.get("interaction_count", 1) * 0.1),
+                            "modality": "co_occurrence",
+                        })
                 modality_results["co_occurrences"] = co_results[:limit]
-                log(
-                    f"[Multimodal] Co-occurrence search: {len(co_results)} relationships"
-                )
+                log(f"[Multimodal] Co-occurrence search: {len(co_results)} relationships")
         except Exception as e:
             log(f"[Multimodal] Co-occurrence search failed: {e}")
             modality_results["co_occurrences"] = []
 
-        # 3d. Audio events search (CLAP-detected sounds, music sections)
         try:
-            audio_events = await self.db.search_audio_events(
-                query=search_text,
-                limit=limit,
-            )
+            audio_events = await self.db.search_audio_events(query=search_text, limit=limit)
             modality_results["audio_events"] = [
-                {
-                    **event,
-                    "modality": "audio_event",
-                    "score": event.get("score", 0.7),
-                }
+                {**event, "modality": "audio_event", "score": event.get("score", 0.7)}
                 for event in audio_events
             ]
-            log(
-                f"[Multimodal] Audio events search: {len(audio_events)} matches"
-            )
+            log(f"[Multimodal] Audio events search: {len(audio_events)} matches")
         except Exception as e:
             log(f"[Multimodal] Audio events search failed: {e}")
             modality_results["audio_events"] = []
 
-        # 3e. Video metadata search (summaries, titles, context)
         try:
-            video_meta = await self.db.search_video_metadata(
-                query=search_text,
-                limit=limit,
-            )
+            video_meta = await self.db.search_video_metadata(query=search_text, limit=limit)
             modality_results["video_metadata"] = [
-                {
-                    **meta,
-                    "modality": "video_metadata",
-                    "score": meta.get("score", 0.6),
-                }
+                {**meta, "modality": "video_metadata", "score": meta.get("score", 0.6)}
                 for meta in video_meta
             ]
-            log(
-                f"[Multimodal] Video metadata search: {len(video_meta)} matches"
-            )
+            log(f"[Multimodal] Video metadata search: {len(video_meta)} matches")
         except Exception as e:
             log(f"[Multimodal] Video metadata search failed: {e}")
             modality_results["video_metadata"] = []
 
-        # === STEP 4: RRF FUSION ACROSS MODALITIES ===
+        # RRF fusion
         fused_results = self._rrf_fusion_multimodal(modality_results, limit * 2)
         log(f"[Multimodal] RRF fusion: {len(fused_results)} combined results")
 
-        # === STEP 5: LLM RERANKING (Optional) ===
+        # Reranking
         if use_reranking and fused_results:
             try:
                 from core.retrieval.reranker import SearchCandidate
-
-                sc_candidates = []
-                for r in fused_results[: limit * 2]:
-                    sc_candidates.append(
-                        SearchCandidate(
-                            video_path=str(r.get("video_path", "")),
-                            start_time=float(r.get("start_time", 0)),
-                            end_time=float(r.get("end_time", 0)),
-                            score=float(
-                                r.get("fused_score", r.get("score", 0))
-                            ),
-                            payload=r,
-                        )
+                sc_candidates = [
+                    SearchCandidate(
+                        video_path=str(r.get("video_path", "")),
+                        start_time=float(r.get("start_time", 0)),
+                        end_time=float(r.get("end_time", 0)),
+                        score=float(r.get("fused_score", r.get("score", 0))),
+                        payload=r,
                     )
-
+                    for r in fused_results[:limit * 2]
+                ]
                 ranked = await self.council.council_rerank(
-                    query=query,
-                    candidates=sc_candidates,
-                    max_candidates=limit,
-                    use_vlm=True,
+                    query=query, candidates=sc_candidates, max_candidates=limit, use_vlm=True,
                 )
-
                 fused_results = []
                 for r in ranked:
                     result = r.candidate.payload.copy()
                     result["final_score"] = r.final_score
                     result["llm_reasoning"] = r.vlm_reason or "Verified"
                     fused_results.append(result)
-
-                log(
-                    f"[Multimodal] Reranked to {len(fused_results)} final results"
-                )
+                log(f"[Multimodal] Reranked to {len(fused_results)} final results")
             except Exception as e:
                 log(f"[Multimodal] Reranking failed: {e}")
 
-        # === STEP 6: BUILD RESPONSE ===
         return {
             "query": query,
             "search_type": "comprehensive_multimodal",
-            "parsed": parsed.model_dump()
-            if hasattr(parsed, "model_dump")
-            else {},
+            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
             "identities_resolved": {
                 "names": person_names,
                 "face_clusters": face_cluster_ids,
@@ -1956,95 +1061,14 @@ class SearchAgent:
             "modality_breakdown": {
                 "scenes_searched": len(modality_results.get("scenes", [])),
                 "voices_matched": len(modality_results.get("voices", [])),
-                "co_occurrences_found": len(
-                    modality_results.get("co_occurrences", [])
-                ),
-                "audio_events_matched": len(
-                    modality_results.get("audio_events", [])
-                ),
-                "video_metadata_matched": len(
-                    modality_results.get("video_metadata", [])
-                ),
+                "co_occurrences_found": len(modality_results.get("co_occurrences", [])),
+                "audio_events_matched": len(modality_results.get("audio_events", [])),
+                "video_metadata_matched": len(modality_results.get("video_metadata", [])),
             },
             "results": fused_results[:limit],
             "result_count": len(fused_results[:limit]),
             "all_modalities_used": True,
         }
-
-    def _rrf_fusion_multimodal(
-        self,
-        modality_results: dict[str, list[dict]],
-        limit: int = 50,
-        k: int = 60,
-    ) -> list[dict]:
-        """Fuse results from multiple modalities using Reciprocal Rank Fusion.
-
-        Args:
-            modality_results: Dict mapping modality name to list of results.
-            limit: Maximum results to return.
-            k: RRF constant (default 60).
-
-        Returns:
-            Fused and sorted list of results.
-        """
-        # Build a unified score map keyed by (video_path, start_time rounded)
-        score_map: dict[tuple, dict] = {}
-
-        for modality, results in modality_results.items():
-            if not results:
-                continue
-
-            for rank, result in enumerate(results):
-                vp = result.get("video_path") or result.get("media_path") or ""
-                st = round(
-                    float(result.get("start_time", result.get("timestamp", 0))),
-                    1,
-                )
-                key = (vp, st)
-
-                # Calculate RRF score contribution
-                rrf_score = 1.0 / (k + rank + 1)
-
-                if key not in score_map:
-                    score_map[key] = {
-                        "video_path": vp,
-                        "start_time": st,
-                        "end_time": result.get("end_time", st + 5),
-                        "fused_score": 0.0,
-                        "modalities": [],
-                        "description": result.get("description", ""),
-                        "face_names": result.get("face_names", []),
-                        "speaker_name": result.get("speaker_name"),
-                    }
-
-                score_map[key]["fused_score"] += rrf_score
-                score_map[key]["modalities"].append(modality)
-
-                # Merge additional data
-                if (
-                    result.get("description")
-                    and not score_map[key]["description"]
-                ):
-                    score_map[key]["description"] = result["description"]
-                if result.get("face_names"):
-                    score_map[key]["face_names"] = list(
-                        set(
-                            score_map[key]["face_names"]
-                            + result.get("face_names", [])
-                        )
-                    )
-                if result.get("speaker_name"):
-                    score_map[key]["speaker_name"] = result["speaker_name"]
-
-        # Sort by fused score
-        fused = list(score_map.values())
-        fused.sort(key=lambda x: x["fused_score"], reverse=True)
-
-        return fused[:limit]
-
-    # =========================================================================
-    # TEMPORAL SEQUENCE SEARCH (Fix #8)
-    # =========================================================================
 
     @observe("temporal_sequence_search")
     async def search_temporal_sequence(
@@ -2054,48 +1078,19 @@ class SearchAgent:
         max_gap_seconds: float = 60.0,
         limit: int = 10,
     ) -> dict[str, Any]:
-        """Search for temporal sequences across scenes.
-
-        Finds ordered event chains like:
-            "Person A enters" → "fight scene" → "Person B speaks"
-
-        Each step is a dict with optional keys:
-            - person: Name to match against face_cluster_ids
-            - action: Action to match against scene actions/descriptions
-            - location: Location to match
-            - description: Free text to match against scene descriptions
-
-        Args:
-            sequence_steps: Ordered list of event descriptions to find.
-            video_path: Optional video path to restrict search.
-            max_gap_seconds: Maximum allowed gap between consecutive steps.
-            limit: Maximum results to return.
-
-        Returns:
-            Dict with matched sequence chains and metadata.
-        """
         from core.storage.identity_graph import identity_graph
 
         if not sequence_steps or len(sequence_steps) < 2:
-            return {
-                "error": "Temporal sequence requires at least 2 steps",
-                "results": [],
-            }
+            return {"error": "Temporal sequence requires at least 2 steps", "results": []}
 
-        # Get all media to search
         media_ids: list[str] = []
         if video_path:
             media_ids = [video_path]
         else:
-            # Search across all indexed videos via the scene DB
             try:
-                stats = identity_graph.get_stats()
-                # Get unique media_ids from scenes table
                 import sqlite3
                 with identity_graph._lock, sqlite3.connect(identity_graph.db_path) as conn:
-                    cursor = conn.execute(
-                        "SELECT DISTINCT media_id FROM scenes LIMIT 100"
-                    )
+                    cursor = conn.execute("SELECT DISTINCT media_id FROM scenes LIMIT 100")
                     media_ids = [row[0] for row in cursor.fetchall()]
             except Exception as e:
                 log(f"[Temporal] Failed to get media list: {e}")
@@ -2108,7 +1103,6 @@ class SearchAgent:
             if len(scenes) < len(sequence_steps):
                 continue
 
-            # Resolve person names to face cluster IDs from our DB
             person_cluster_map: dict[str, list[int]] = {}
             for step in sequence_steps:
                 person_name = step.get("person", "").strip()
@@ -2119,7 +1113,6 @@ class SearchAgent:
                     except Exception:
                         person_cluster_map[person_name] = []
 
-            # Sliding window: try to find consecutive scenes matching sequence
             for start_idx in range(len(scenes) - len(sequence_steps) + 1):
                 chain_matches = []
                 chain_score = 0.0
@@ -2127,23 +1120,18 @@ class SearchAgent:
                 valid_chain = True
 
                 for step_idx, step in enumerate(sequence_steps):
-                    # Try to match this step against scenes starting from current pos
                     best_match = None
                     best_score = 0.0
                     search_start = start_idx + step_idx if step_idx == 0 else start_idx + len(chain_matches)
 
                     for scene_idx in range(search_start, min(search_start + 3, len(scenes))):
                         scene = scenes[scene_idx]
-
-                        # Check time gap constraint
                         if prev_end_time is not None:
                             gap = scene.start_time - prev_end_time
                             if gap > max_gap_seconds:
                                 continue
 
-                        score = self._score_scene_step_match(
-                            scene, step, person_cluster_map
-                        )
+                        score = self._score_scene_step_match(scene, step, person_cluster_map)
                         if score > best_score:
                             best_score = score
                             best_match = scene
@@ -2177,67 +1165,10 @@ class SearchAgent:
                         },
                     })
 
-        # Sort by score and return top results
         all_chains.sort(key=lambda x: x["total_score"], reverse=True)
-
         return {
             "query_steps": sequence_steps,
             "results": all_chains[:limit],
             "result_count": len(all_chains[:limit]),
             "total_found": len(all_chains),
         }
-
-    def _score_scene_step_match(
-        self,
-        scene: Any,
-        step: dict[str, str],
-        person_cluster_map: dict[str, list[int]],
-    ) -> float:
-        """Score how well a scene matches a temporal sequence step."""
-        score = 0.0
-        checks = 0
-
-        desc = (scene.description or "").lower()
-        actions = " ".join(scene.actions).lower() if scene.actions else ""
-        location = (scene.location or "").lower()
-        all_text = f"{desc} {actions} {location}"
-
-        # Person match
-        person_name = step.get("person", "").strip()
-        if person_name:
-            checks += 1
-            target_ids = person_cluster_map.get(person_name, [])
-            if target_ids and any(
-                cid in scene.face_cluster_ids for cid in target_ids
-            ):
-                score += 1.0
-            elif person_name.lower() in desc:
-                score += 0.5
-
-        # Action match
-        action = step.get("action", "").strip()
-        if action:
-            checks += 1
-            if action.lower() in actions:
-                score += 1.0
-            elif action.lower() in desc:
-                score += 0.7
-
-        # Location match
-        loc = step.get("location", "").strip()
-        if loc:
-            checks += 1
-            if loc.lower() in location:
-                score += 1.0
-            elif loc.lower() in desc:
-                score += 0.5
-
-        # Description match (free text)
-        desc_query = step.get("description", "").strip()
-        if desc_query:
-            checks += 1
-            words = desc_query.lower().split()
-            word_hits = sum(1 for w in words if w in all_text)
-            score += word_hits / max(len(words), 1)
-
-        return score / max(checks, 1)
