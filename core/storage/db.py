@@ -298,11 +298,11 @@ class VectorDB:
         import time
 
         with self._cluster_id_lock:
-            # Get timestamp component (minutes since epoch, fits in reasonable int)
-            ts = int(time.time() // 60)  # Minutes since epoch
-            self._cluster_id_counter = (self._cluster_id_counter + 1) % 10000
-            # Combine: timestamp * 10000 + counter
-            cluster_id = (ts % 100000000) * 10000 + self._cluster_id_counter
+            # Use UUID4 for process-restart-safe uniqueness
+            # Previous approach used (minutes_since_epoch % 100M) * 10000 + counter,
+            # which could collide if the process restarted within the same minute.
+            import uuid
+            cluster_id = uuid.uuid4().int % (10**14)  # 14-digit int, time-sortable-ish
             return cluster_id
 
     def get_next_face_cluster_id(self) -> int:
@@ -503,19 +503,29 @@ class VectorDB:
 
             from core.utils.resource_arbiter import RESOURCE_ARBITER
 
-            # Load the model (Sync load for now, assuming sufficient VRAM or swap)
+            # FIXED: Acquire VRAM through arbiter BEFORE loading
+            # This prevents OOM when other models are active
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're in an async context — use ensure_loaded (tracks VRAM properly)
+                    allocated = await RESOURCE_ARBITER.ensure_loaded(
+                        "embedding_encoder",
+                        vram_gb=vram_gb,
+                        cleanup_fn=self.unload_encoder,
+                    )
+                    if not allocated:
+                        log("RESOURCE_ARBITER could not allocate VRAM for encoder, loading anyway", level="WARNING")
+                else:
+                    # Sync context fallback — just register for emergency cleanup
+                    RESOURCE_ARBITER.register_model("embedding_encoder", self.unload_encoder)
+            except Exception as e:
+                log(f"RESOURCE_ARBITER integration failed, loading anyway: {e}", level="WARNING")
+                RESOURCE_ARBITER.register_model("embedding_encoder", self.unload_encoder)
+
+            # Load the model after VRAM is reserved
             self.encoder = self._load_encoder()
-            
-            # Register with Arbiter for emergency cleanup
-            # We bypass 'acquire' bandwidth check for now because DB is critical path
-            # and often called from sync contexts where async acquire is hard.
-            # But we MUST register cleanup so force_release_all works.
-            RESOURCE_ARBITER.register_model("embedding_encoder", self.unload_encoder)
-            
-            # Manually update usage in Arbiter if possible? 
-            # Ideally we'd use ensure_loaded, but that's async.
-            # We accept that VectorDB might "hide" VRAM usage from the arbiter's strict accounting
-            # but at least it will respond to force_release_all.
 
         self._encoder_last_used = time.time()
 
@@ -688,8 +698,9 @@ class VectorDB:
                 f"Error generating embedding for '{text[:20]}...': {e}",
                 level="ERROR",
             )
-            # Return zero vector as fallback to prevent crash
-            return [0.0] * self.MEDIA_VECTOR_SIZE
+            # Return None — callers must handle this.
+            # A zero vector causes undefined cosine similarity in Qdrant.
+            return None
 
     async def encode_text(self, text: str) -> list[float]:
         """Encodes a single text string."""
@@ -1683,11 +1694,11 @@ class VectorDB:
         try:
             query_vector = await self.visual_encoder.encode_text(query)
             if not query_vector:
-                query_vector = (await self.encode_texts(query, is_query=True))[
-                    0
-                ]
+                log("Visual encoder returned empty for scenelet query, skipping vector search", level="WARNING")
+                return []
         except Exception:
-            query_vector = (await self.encode_texts(query, is_query=True))[0]
+            log("Visual encoder unavailable for scenelet search, returning empty", level="WARNING")
+            return []
 
         filters = []
         if video_path:
@@ -2311,6 +2322,9 @@ class VectorDB:
         # Auto-encode if string passed
         if isinstance(query_vector, str):
             query_vector = await self.get_embedding(query_vector)
+            if query_vector is None:
+                log("Embedding generation failed, cannot search frames", level="WARNING")
+                return []
 
         # Build filter conditions
         conditions: list[models.Condition] = []
@@ -2410,9 +2424,19 @@ class VectorDB:
             video_paths = [video_paths]
 
         # === 1. VECTOR SEARCH (Semantic Understanding) ===
+        # CRITICAL: Frames are indexed with SigLIP visual embeddings.
+        # Query MUST be encoded in the same visual space, not BGE text space.
         try:
-            await self._ensure_encoder_loaded()
-            query_vector = (await self.encode_texts(query, is_query=True))[0]
+            query_vector = None
+            try:
+                query_vector = await self.visual_encoder.encode_text(query)
+            except Exception as ve:
+                log(f"Visual encoder failed, falling back to text encoder: {ve}")
+            if not query_vector:
+                # Fallback: text encoder — may produce lower-quality results
+                # but still better than no vector search at all
+                await self._ensure_encoder_loaded()
+                query_vector = (await self.encode_texts(query, is_query=True))[0]
 
             conditions = []
             if video_paths:

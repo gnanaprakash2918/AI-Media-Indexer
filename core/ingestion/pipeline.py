@@ -883,8 +883,10 @@ class IngestionPipeline:
         # ============================================================
         try:
             # CLAP defaults to True in EnhancedPipelineConfig, so use True as fallback
-            # DUPLICATE LOGIC DISABLED: Use _process_audio_events instead
-            if False:  # self.enhanced_config and getattr(self.enhanced_config, "enable_clap", True):
+            # CLAP zero-shot classification: runs ALONGSIDE _process_audio_events (AST)
+            # AST provides open-vocabulary predictions; CLAP provides targeted classification
+            # against a curated set of semantically meaningful event classes.
+            if getattr(self, "enhanced_config", None) and getattr(self.enhanced_config, "enable_clap", True):
                 from core.processing.audio_events import get_audio_detector
 
                 log("[CLAP] Starting audio event detection...")
@@ -1905,8 +1907,8 @@ class IngestionPipeline:
 
         # InsightFace uses GPU for fast detection, but we unload it before Ollama
         self.faces = FaceManager(
-            dbscan_eps=0.55,  # HDBSCAN cluster_selection_epsilon
-            dbscan_min_samples=3,  # HDBSCAN min_samples
+            dbscan_eps=settings.hdbscan_cluster_selection_epsilon,
+            dbscan_min_samples=settings.hdbscan_min_samples,
             use_gpu=settings.device == "cuda",
             global_clusters=global_clusters,
         )

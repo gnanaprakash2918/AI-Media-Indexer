@@ -1094,56 +1094,65 @@ class SearchAgent:
                 )
 
                 # Use configurable timestamp bucket from settings
-                time_bucket = int(float(start_time) / settings.timestamp_bucket_seconds) * int(settings.timestamp_bucket_seconds)
-                fusion_key = f"{video_path}:{time_bucket}"
+                # OVERLAPPING BUCKETS: Assign to primary + half-offset bucket
+                # so events near boundaries (e.g., 3.9s and 4.1s) reinforce each other
+                bucket_size = settings.timestamp_bucket_seconds
+                ts_float = float(start_time)
+                primary_bucket = int(ts_float / bucket_size) * int(bucket_size)
+                half_offset_bucket = int((ts_float + bucket_size / 2) / bucket_size) * int(bucket_size)
+
+                fusion_keys = [f"{video_path}:{primary_bucket}"]
+                if half_offset_bucket != primary_bucket:
+                    fusion_keys.append(f"{video_path}:{half_offset_bucket}")
 
                 rrf_score = 1.0 / (k + rank)
                 weighted_score = rrf_score * weight
 
-                fused_scores[fusion_key] += weighted_score
+                for fusion_key in fusion_keys:
+                    fused_scores[fusion_key] += weighted_score
 
-                # Keep best result for this fusion key, but track ALL modalities
-                if fusion_key not in result_data:
-                    result_data[fusion_key] = result.copy()
-                    result_data[fusion_key]["modality_sources"] = []
-                    result_data[fusion_key]["_original_id"] = result_id
-                    result_data[fusion_key]["_best_timestamp_score"] = weighted_score
-                else:
-                    # FIX: Use timestamps from highest-scoring modality, not first
+                    # Keep best result for this fusion key, but track ALL modalities
+                    if fusion_key not in result_data:
+                        result_data[fusion_key] = result.copy()
+                        result_data[fusion_key]["modality_sources"] = []
+                        result_data[fusion_key]["_original_id"] = result_id
+                        result_data[fusion_key]["_best_timestamp_score"] = weighted_score
+                    else:
+                        # FIX: Use timestamps from highest-scoring modality, not first
+                        existing = result_data[fusion_key]
+                        if weighted_score > existing.get("_best_timestamp_score", 0):
+                            # Higher-scoring result - update timestamps to more precise values
+                            for ts_key in ["start_time", "end_time", "start", "end", "timestamp"]:
+                                if result.get(ts_key) is not None:
+                                    existing[ts_key] = result[ts_key]
+                            existing["_best_timestamp_score"] = weighted_score
+
+                    # Always add modality source (might be same moment from multiple modalities)
+                    if modality not in result_data[fusion_key]["modality_sources"]:
+                        result_data[fusion_key]["modality_sources"].append(modality)
+
+                    # Merge richer data from other modalities
                     existing = result_data[fusion_key]
-                    if weighted_score > existing.get("_best_timestamp_score", 0):
-                        # Higher-scoring result - update timestamps to more precise values
-                        for ts_key in ["start_time", "end_time", "start", "end", "timestamp"]:
-                            if result.get(ts_key) is not None:
-                                existing[ts_key] = result[ts_key]
-                        existing["_best_timestamp_score"] = weighted_score
-
-                # Always add modality source (might be same moment from multiple modalities)
-                if modality not in result_data[fusion_key]["modality_sources"]:
-                    result_data[fusion_key]["modality_sources"].append(modality)
-
-                # Merge richer data from other modalities
-                existing = result_data[fusion_key]
-                if not existing.get("face_names") and result.get("face_names"):
-                    existing["face_names"] = result["face_names"]
-                if not existing.get("person_names") and result.get(
-                    "person_names"
-                ):
-                    existing["person_names"] = result["person_names"]
-                if not existing.get("face_cluster_ids") and result.get(
-                    "face_cluster_ids"
-                ):
-                    existing["face_cluster_ids"] = result["face_cluster_ids"]
-                if not existing.get("description") and result.get(
-                    "description"
-                ):
-                    existing["description"] = result["description"]
-                if not existing.get("entities") and result.get("entities"):
-                    existing["entities"] = result["entities"]
-                if not existing.get("scene_location") and result.get(
-                    "scene_location"
-                ):
-                    existing["scene_location"] = result["scene_location"]
+                    if not existing.get("face_names") and result.get("face_names"):
+                        existing["face_names"] = result["face_names"]
+                    if not existing.get("person_names") and result.get(
+                        "person_names"
+                    ):
+                        existing["person_names"] = result["person_names"]
+                    if not existing.get("face_cluster_ids") and result.get(
+                        "face_cluster_ids"
+                    ):
+                        existing["face_cluster_ids"] = result["face_cluster_ids"]
+                    if not existing.get("description") and result.get(
+                        "description"
+                    ):
+                        existing["description"] = result["description"]
+                    if not existing.get("entities") and result.get("entities"):
+                        existing["entities"] = result["entities"]
+                    if not existing.get("scene_location") and result.get(
+                        "scene_location"
+                    ):
+                        existing["scene_location"] = result["scene_location"]
 
         ranked = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[
             : limit * 3 if use_reranking else limit
