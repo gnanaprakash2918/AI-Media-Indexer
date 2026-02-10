@@ -830,21 +830,21 @@ class SearchAgent:
             f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}"
         )
 
-        # 1. Parse query with dynamic entity extraction (if enabled)
+        # 1. ALWAYS parse for structured constraints (Fix #9)
+        # Parsing extracts clothing/identity/action/entity constraints
+        # even when LLM query expansion text-rewriting is disabled.
         expansion_used = False
-        if use_expansion:
-            try:
-                parsed = await self.parse_query(query)
+        try:
+            parsed = await self.parse_query(query)
+            if use_expansion:
                 search_text = parsed.to_search_text() or query
                 expansion_used = search_text != query
                 log(f"[SOTA Search] Expanded: '{search_text[:100]}...'")
-            except Exception as e:
-                log(f"[SOTA Search] Expansion failed: {e}, using raw query")
-                parsed = ParsedQuery(visual_keywords=[query])
+            else:
                 search_text = query
-        else:
-            # Skip expansion - use raw query
-            log("[SOTA Search] Expansion disabled, using raw query")
+                log("[SOTA Search] Expansion disabled, using raw query with parsed constraints")
+        except Exception as e:
+            log(f"[SOTA Search] Parse failed: {e}, using raw query")
             parsed = ParsedQuery(visual_keywords=[query])
             search_text = query
 
@@ -870,22 +870,41 @@ class SearchAgent:
 
         all_results = {}
 
+        # Extract ALL clothing from parsed constraints (Fix #6)
+        all_clothing_colors: list[str] = []
+        all_clothing_types: list[str] = []
+        all_accessories: list[str] = list(parsed.accessories) if hasattr(parsed, "accessories") else []
+
+        # From new structured clothing constraints
+        if hasattr(parsed, "clothing") and parsed.clothing:
+            for c in parsed.clothing:
+                if c.get("color"):
+                    all_clothing_colors.append(c["color"].lower())
+                if c.get("item"):
+                    all_clothing_types.append(c["item"].lower())
+        # From people → clothing_items
+        if hasattr(parsed, "people") and parsed.people:
+            for person in parsed.people:
+                for ci in getattr(person, "clothing_items", []):
+                    if hasattr(ci, "color") and ci.color:
+                        all_clothing_colors.append(ci.color.lower())
+                    if hasattr(ci, "item_type") and ci.item_type:
+                        all_clothing_types.append(ci.item_type.lower())
+        # Legacy single fields as fallback
+        if not all_clothing_colors and parsed.clothing_color:
+            all_clothing_colors.append(parsed.clothing_color.lower())
+        if not all_clothing_types and parsed.clothing_type:
+            all_clothing_types.append(parsed.clothing_type.lower())
+
         try:
             scene_results = await self.db.search_scenes(
                 query=search_text,
                 limit=limit * 3 if use_reranking else limit,
-                # FIX: Pass ALL person names, not just first
                 person_names=person_names if person_names else None,
                 face_cluster_ids=face_ids if face_ids else None,
-                clothing_color=parsed.clothing_color
-                if hasattr(parsed, "clothing_color")
-                else None,
-                clothing_type=parsed.clothing_type
-                if hasattr(parsed, "clothing_type")
-                else None,
-                accessories=parsed.accessories
-                if hasattr(parsed, "accessories")
-                else None,
+                clothing_colors=all_clothing_colors or None,
+                clothing_types=all_clothing_types or None,
+                accessories=all_accessories or None,
                 location=parsed.location
                 if hasattr(parsed, "location")
                 else None,
@@ -900,13 +919,14 @@ class SearchAgent:
                 shot_type=parsed.shot_type,
                 aesthetic_score=parsed.aesthetic_score,
                 search_mode="hybrid",
+                exclusions=parsed.exclusions if hasattr(parsed, "exclusions") else None,
             )
             all_results["scenes"] = scene_results
             log(f"[SOTA] Scenes: {len(scene_results)} results")
 
             # CONSTRAINT RELAXATION: If strict search failed, try loose semantic search
             if not scene_results and (
-                person_names or parsed.clothing_color or parsed.location
+                person_names or all_clothing_colors or parsed.location
             ):
                 log(
                     "[SOTA] Strict scene search yielded 0 results. Retrying with relaxed semantic search..."
@@ -974,9 +994,11 @@ class SearchAgent:
             all_results["voice"] = []
 
         try:
-            audio_results = await self.db.search_audio_events(
+            # Fix #10: Use semantic CLAP search instead of text matching
+            audio_results = await self.db.search_audio_events_semantic(
                 query=search_text,
                 limit=limit * 2,
+                video_path=video_path,
             )
             all_results["audio_events"] = audio_results if audio_results else []
             log(
@@ -1293,19 +1315,27 @@ class SearchAgent:
                         content += f" Dialogue: {c['dialogue_transcript']}"
                     pairs.append([query, content])
 
-                # Use CrossEncoder or FlagReranker (Lazy Load)
+                # Use CrossEncoder with RESOURCE_ARBITER VRAM tracking (Fix #13)
                 from sentence_transformers import CrossEncoder
+                from core.processing.resource_arbiter import RESOURCE_ARBITER
 
-                # We use a lightweight but powerful reranker model
                 reranker_model_id = "BAAI/bge-reranker-v2-m3"
-                # Note: In production we might want to singleton this.
-                # For now, we assume it's cached or fast enough to load,
-                # or we should use a shared instance from a factory.
-                # To avoid re-loading every request, we should ideally put this in __init__
-                # But to follow "the fix", we'll use a cached accessor or singleton if available.
-                # Here we'll instantiate for correctness of logic.
 
-                # Optimization: Check if self has reranker
+                def _cleanup_reranker():
+                    if hasattr(self, "_reranker") and self._reranker is not None:
+                        del self._reranker
+                        self._reranker = None
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        except Exception:
+                            pass
+
+                await RESOURCE_ARBITER.acquire(
+                    "bge_reranker", vram_gb=1.5, cleanup_fn=_cleanup_reranker
+                )
+
                 if not hasattr(self, "_reranker") or self._reranker is None:
                     self._reranker = CrossEncoder(
                         reranker_model_id, trust_remote_code=True
@@ -1328,11 +1358,18 @@ class SearchAgent:
                 log.error(f"[SOTA Search] Reranking failed: {e}")
                 # Fallback to original order
 
-        # 5. Granular Constraint Filtering & Scoring (if ParsedQuery has detail)
-        # Only apply if we have granular constraints, to refine the final list
-        if hasattr(parsed, "identities") and (
-            parsed.identities or parsed.clothing or parsed.text
-        ):
+        # 5. Granular Constraint Scoring — apply whenever ANY parsed constraint exists
+        has_constraints = any([
+            getattr(parsed, "identities", None),
+            getattr(parsed, "clothing", None),
+            getattr(parsed, "text", None),
+            getattr(parsed, "actions", None),
+            getattr(parsed, "location", None),
+            getattr(parsed, "audio", None),
+            getattr(parsed, "spatial", None),
+            getattr(parsed, "exclusions", None),
+        ])
+        if has_constraints:
             candidates = self._apply_granular_scoring(candidates, parsed)
             # Re-sort after granular scoring adjustment
             candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
@@ -1395,57 +1432,158 @@ class SearchAgent:
     def _apply_granular_scoring(
         self, results: list[dict], parsed: ParsedQuery
     ) -> list[dict]:
-        """Refine scores based on granular constraint matching."""
+        """Refine scores based on granular constraint matching.
+
+        Checks every parseable constraint against every searchable payload field.
+        Applies positive boosts for matches and negative penalties for exclusions.
+        """
         for result in results:
             base_score = float(result.get("score", 0.5))
-            # Fetch payload (handle if result is dict or SearchCandidate)
             payload = (
                 result.get("base_payload", result)
                 if isinstance(result, dict)
                 else result
             )
 
-            # Text/Description for matching
-            desc = (
-                str(payload.get("description", ""))
-                + " "
-                + str(payload.get("action", ""))
+            # Build comprehensive searchable text from ALL payload fields
+            desc = " ".join(filter(None, [
+                str(payload.get("description", "")),
+                str(payload.get("visual_text", "")),
+                str(payload.get("visual_summary", "")),
+                str(payload.get("action", "")),
+                str(payload.get("motion_text", "")),
+                str(payload.get("action_summary", "")),
+                str(payload.get("location", "")),
+                str(payload.get("cultural_context", "")),
+                # Include per-entity details for granular matching
+                " ".join(
+                    f"{e.get('name', '')} {e.get('visual_details', '')}"
+                    for e in (payload.get("entities") or [])
+                    if isinstance(e, dict)
+                ),
+                # Include all clothing descriptions for color/type matching
+                " ".join(payload.get("clothing_descriptions", [])),
+                " ".join(payload.get("clothing_types", [])),
+                " ".join(payload.get("accessories", [])),
+            ])).lower()
+
+            ocr = " ".join(filter(None, [
+                str(payload.get("ocr_text", "")),
+                str(payload.get("visible_text", "")),
+            ])).lower()
+
+            dialogue = " ".join(filter(None, [
+                str(payload.get("dialogue_transcript", "")),
+                str(payload.get("dialogue_text", "")),
+            ])).lower()
+
+            audio = " ".join(
+                str(e) for e in (payload.get("audio_events") or [])
             ).lower()
-            ocr = (
-                str(payload.get("ocr_text", ""))
-                + " "
-                + str(payload.get("visible_text", ""))
-            ).lower()
+
+            # Full haystack for broad checks
+            all_text = f"{desc} {ocr} {dialogue} {audio}"
 
             matches = 0
             total_checks = 0
 
             # Check Text Constraints
-            if hasattr(parsed, "text"):
+            if hasattr(parsed, "text") and parsed.text:
                 for t in parsed.text:
                     total_checks += 1
-                    if t.get("text", "").lower() in ocr:
+                    search_text = t.get("text", "").lower()
+                    if search_text in ocr:
                         matches += 1
-                    elif t.get("text", "").lower() in desc:
+                    elif search_text in desc:
+                        matches += 0.7
+                    elif search_text in dialogue:
                         matches += 0.5
 
             # Check Clothing Constraints
-            if hasattr(parsed, "clothing"):
+            if hasattr(parsed, "clothing") and parsed.clothing:
                 for c in parsed.clothing:
                     total_checks += 1
                     c_item = c.get("item", "").lower()
                     c_color = c.get("color", "").lower()
-                    if c_item and c_item in desc:
-                        matches += 0.5
-                    if c_color and c_color in desc:
+                    item_found = c_item and c_item in desc
+                    color_found = c_color and c_color in desc
+                    if item_found and color_found:
+                        matches += 1  # Both match = full credit
+                    elif item_found or color_found:
+                        matches += 0.5  # Partial credit
+
+            # Check Action Constraints
+            if hasattr(parsed, "actions") and parsed.actions:
+                for a in parsed.actions:
+                    total_checks += 1
+                    action_val = a.get("action", "").lower()
+                    if action_val and action_val in desc:
+                        matches += 1
+                    result_val = a.get("result", "").lower()
+                    if result_val and result_val in desc:
                         matches += 0.5
 
-            # Boost score if constraints match
+            # Check Location Constraints
+            if hasattr(parsed, "location") and parsed.location:
+                total_checks += 1
+                if parsed.location.lower() in desc:
+                    matches += 1
+                elif parsed.location.lower() in all_text:
+                    matches += 0.5
+
+            # Check Identity Constraints
+            if hasattr(parsed, "identities") and parsed.identities:
+                person_names = [
+                    str(n).lower()
+                    for n in (payload.get("person_names") or [])
+                ]
+                for identity in parsed.identities:
+                    id_name = identity.get("name", "").lower()
+                    if id_name:
+                        total_checks += 1
+                        if id_name in person_names:
+                            matches += 1
+                        elif id_name in desc:
+                            matches += 0.5
+
+            # Check Audio Constraints
+            if hasattr(parsed, "audio") and parsed.audio:
+                for aud in parsed.audio:
+                    total_checks += 1
+                    aud_val = aud.get("event", "").lower()
+                    if aud_val and aud_val in audio:
+                        matches += 1
+                    elif aud_val and aud_val in all_text:
+                        matches += 0.3
+
+            # Check Spatial Constraints
+            if hasattr(parsed, "spatial") and parsed.spatial:
+                for sp in parsed.spatial:
+                    total_checks += 1
+                    sp_type = sp.get("measurement_type", "").lower()
+                    if sp_type and sp_type in desc:
+                        matches += 0.5
+
+            # Boost score proportional to constraint coverage
+            boost = 0.0
             if total_checks > 0:
-                boost = (matches / total_checks) * 0.2  # Max 20% boost
-                if isinstance(result, dict):
-                    result["score"] = base_score + boost
-                    result["granular_matches"] = matches
+                coverage = matches / total_checks
+                boost = coverage * 0.5  # Up to 50% boost when ALL constraints match
+
+            # Apply EXCLUSION penalties (negative scoring for excluded terms)
+            penalty = 0.0
+            if hasattr(parsed, "exclusions") and parsed.exclusions:
+                for exc in parsed.exclusions:
+                    exc_value = exc.get("value", "").lower()
+                    if exc_value and exc_value in all_text:
+                        penalty += 0.3  # Significant demotion per exclusion match
+
+            if isinstance(result, dict):
+                result["score"] = max(0, base_score + boost - penalty)
+                result["granular_matches"] = matches
+                result["granular_coverage"] = matches / total_checks if total_checks > 0 else 0
+                if penalty > 0:
+                    result["exclusion_penalty"] = penalty
 
         return results
 

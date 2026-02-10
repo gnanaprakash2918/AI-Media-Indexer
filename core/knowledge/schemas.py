@@ -218,6 +218,11 @@ class EntityDetail(BaseModel):
         ...,
         description="Category (e.g., 'Food', 'Footwear', 'Weapon', 'Vehicle')",
     )
+    super_category: str = Field(
+        default="other",
+        description="Normalized category — EXACTLY ONE OF: clothing, accessory, "
+        "object, food, vehicle, person, location, other",
+    )
     visual_details: str = Field(
         default="",
         description="Color, texture, state (e.g., 'Steaming hot', 'Worn out', 'Bright red')",
@@ -722,6 +727,13 @@ class ParsedQuery(BaseModel):
     reasoning: list[str] = Field(
         default_factory=list,
         description="Chain of thought reasoning steps for the parsed query",
+    )
+
+    # Exclusion constraints — things to EXCLUDE from results
+    exclusions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Things to exclude: [{type: 'action', value: 'combat'}, "
+        "{type: 'location', value: 'night'}, {type: 'person', value: 'Ranbir'}]",
     )
 
     # Legacy single-person fields (for backwards compatibility)

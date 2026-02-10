@@ -153,7 +153,7 @@ class SceneAggregator:
         all_face_ids: set[int] = set()
         all_person_names: set[str] = set()
         all_visible_text: set[str] = set()
-        all_clothing: dict[int, dict] = {}
+        all_clothing: dict[int, list[dict]] = defaultdict(list)
         all_accessories: dict[int, set[str]] = defaultdict(set)
         location_votes: dict[str, int] = defaultdict(int)
         cultural_votes: dict[str, int] = defaultdict(int)
@@ -189,27 +189,23 @@ class SceneAggregator:
             if structured:
                 for entity in structured.get("entities", []):
                     if isinstance(entity, dict):
-                        category = entity.get("category", "").lower()
-                        if category in (
-                            "clothing",
-                            "apparel",
-                            "wear",
-                            "attire",
-                            "outfit",
-                        ):
+                        # Use super_category (normalized by VLM) instead of
+                        # hardcoded category string matching.  Falls back to
+                        # the free-form category field for legacy data.
+                        super_cat = entity.get("super_category", "").lower()
+                        if not super_cat or super_cat == "other":
+                            # Fallback: check free-form category
+                            super_cat = entity.get("category", "").lower()
+                        if super_cat == "clothing":
                             name = entity.get("name", "")
                             details = entity.get("visual_details", "")
                             for fid in face_ids:
-                                if fid not in all_clothing:
-                                    all_clothing[fid] = {
-                                        "type": name,
-                                        "color": self._extract_color(details),
-                                    }
-                        elif category in (
-                            "accessory",
-                            "accessories",
-                            "eyewear",
-                        ):
+                                # Accumulate ALL clothing per person
+                                all_clothing[fid].append({
+                                    "type": name,
+                                    "description": details,
+                                })
+                        elif super_cat == "accessory":
                             name = entity.get("name", "")
                             for fid in face_ids:
                                 all_accessories[fid].add(name)
@@ -238,17 +234,27 @@ class SceneAggregator:
         )
 
         person_attributes = []
+        all_clothing_types: list[str] = []
+        all_clothing_descriptions: list[str] = []
+        all_accessory_names: list[str] = []
         for face_id in all_face_ids:
-            clothing = all_clothing.get(face_id, {})
+            clothing_items = all_clothing.get(face_id, [])
+            accessories = list(all_accessories.get(face_id, []))
             attr = {
                 "face_id": str(face_id),
                 "name": None,
-                "clothing_color": clothing.get("color", ""),
-                "clothing_type": clothing.get("type", ""),
-                "accessories": list(all_accessories.get(face_id, [])),
+                "clothing_items": clothing_items,  # Full list of all garments
+                "accessories": accessories,
                 "position": "",
             }
             person_attributes.append(attr)
+            # Build flat lists for scene-level Qdrant payload filters
+            for item in clothing_items:
+                if item.get("type"):
+                    all_clothing_types.append(item["type"].lower())
+                if item.get("description"):
+                    all_clothing_descriptions.append(item["description"].lower())
+            all_accessory_names.extend(accessories)
 
         unique_actions = self._dedupe_actions(all_actions)
         action_sequence = self._build_action_sequence(unique_actions)
@@ -308,6 +314,10 @@ class SceneAggregator:
             "cultural_context": best_cultural,
             "frame_count": len(frames),
             "audio_events": list(set(all_audio_events)),
+            # Flat searchable lists built from per-person clothing data
+            "clothing_types": list(set(all_clothing_types)),
+            "clothing_descriptions": all_clothing_descriptions,
+            "accessories": list(set(a.lower() for a in all_accessory_names if a)),
         }
 
         self.global_context.add_scene(scene_data)
@@ -321,35 +331,8 @@ class SceneAggregator:
         """
         return self.global_context.to_payload()
 
-    def _extract_color(self, text: str) -> str:
-        colors = [
-            "red",
-            "blue",
-            "green",
-            "yellow",
-            "orange",
-            "purple",
-            "pink",
-            "black",
-            "white",
-            "gray",
-            "grey",
-            "brown",
-            "navy",
-            "azure",
-            "maroon",
-            "beige",
-            "cream",
-            "gold",
-            "silver",
-            "teal",
-            "cyan",
-        ]
-        text_lower = text.lower()
-        for color in colors:
-            if color in text_lower:
-                return color
-        return ""
+    # _extract_color removed — raw VLM visual_details stored as-is
+    # for full semantic search. No hardcoded color list.
 
     def _dedupe_actions(self, actions: list[str]) -> list[str]:
         if not actions:

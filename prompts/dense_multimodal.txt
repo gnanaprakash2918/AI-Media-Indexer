@@ -1,24 +1,41 @@
-Analyze this video frame and extract EVERY SINGLE DETAIL.
+Analyze this video frame. Fill EVERY field with maximum detail.
 
-This description will be used for semantic search, so be exhaustive.
+## ENTITIES (list each visible item as a separate entity)
+For EACH person, clothing item, object, food, vehicle, sign — create a SEPARATE entity.
 
-DESCRIBE:
-1. PEOPLE: Count, gender, approximate age, ethnicity, clothing (colors, types, brands if visible - categorize as 'clothing'), accessories (glasses, jewelry, hats - categorize as 'accessory'), facial expressions, body posture, actions
+Clothing: super_category="clothing", name is the garment name, visual_details has color+texture+state.
+Accessory: super_category="accessory", name is the accessory, visual_details has color+material.
+Object/Food/Vehicle/Other: super_category accordingly.
 
-2. OBJECTS: Every visible object, their colors, sizes, positions, brands/logos if visible, state (new/old, open/closed, etc.)
+List clothing items SEPARATELY per person. Example:
+- Person 1 wears a red silk saree → entity(name="saree", category="traditional clothing", super_category="clothing", visual_details="red silk with gold zari border, pallu draped over left shoulder")
+- Person 1 wears gold bangles → entity(name="bangles", category="jewelry", super_category="accessory", visual_details="gold, 6 thin bangles on right wrist")
+- Person 2 wears a white dhoti → entity(name="dhoti", category="traditional clothing", super_category="clothing", visual_details="white cotton, single fold tucked at waist")
 
-3. ENVIRONMENT: Indoor/outdoor, lighting conditions, weather if visible, time of day, architectural style, furniture, decorations
+## PEOPLE
+Count, gender, approximate age, ethnicity, body posture, facial expression.
 
-4. TEXT: Any visible text, signs, labels, brands, logos, subtitles
+## ACTION
+The SPECIFIC physical action, NOT generic.
+BAD: "people are present" / "group interacting"
+GOOD: "woman pours ghee lamp oil while man holds brass plate, camphor flame reflects off temple wall"
 
-5. ACTIONS: What is happening, movements, interactions between people/objects
+## SCENE
+- location: Specific place type (e.g., "Shiva temple inner sanctum", not "indoors")
+- cultural_context: Cultural setting IF distinct (e.g., "Tamil Hindu puja ceremony")
+- visible_text: ALL readable text, logos, brands, sign boards
+- time_of_day: Inferred from lighting (morning/afternoon/evening/night)
+- action_narrative: Physical details of the main action
 
-6. AUDIO CONTEXT (if provided): Sounds, speech, music, ambient noise
+## OBJECTS
+Every visible object with colors, sizes, brands/logos if recognizable, state.
 
-7. SPATIAL RELATIONSHIPS: Where things are relative to each other (left, right, above, below, near, far)
+## SPATIAL RELATIONSHIPS
+Where things are relative to each other (left, right, above, below, near, far).
 
-8. MOOD/ATMOSPHERE: Overall feeling of the scene
-
-FORMAT: Write a comprehensive paragraph covering all visible elements.
-Be specific about colors, positions, and quantities.
-Do NOT make assumptions about things not visible.
+RULES:
+1. Describe ONLY what you SEE. Do NOT infer off-screen events.
+2. If 3 people are visible, create 3+ clothing entities (one per garment per person).
+3. Brand identification: If you can read or recognize a brand, name it.
+4. Be specific about colors, positions, and quantities.
+5. super_category MUST be EXACTLY ONE OF: clothing, accessory, object, food, vehicle, person, location, other

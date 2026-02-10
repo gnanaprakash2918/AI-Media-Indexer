@@ -1231,6 +1231,7 @@ class VectorDB:
             "face_names",
             "clothing_colors",
             "clothing_types",
+            "clothing_descriptions",
             "accessories",
             "scene_location",
             "scene_type",
@@ -4156,9 +4157,11 @@ class VectorDB:
         person_names: list[str] | None = None,
         person_name: str | None = None,  # DEPRECATED: kept for backwards compat
         face_cluster_ids: list[int] | None = None,
-        # Clothing/appearance filters (for complex queries)
-        clothing_color: str | None = None,
-        clothing_type: str | None = None,
+        # Clothing/appearance filters — now accept LISTS (Fix #6, #11)
+        clothing_colors: list[str] | None = None,
+        clothing_types: list[str] | None = None,
+        clothing_color: str | None = None,   # DEPRECATED: kept for backwards compat
+        clothing_type: str | None = None,     # DEPRECATED: kept for backwards compat
         accessories: list[str] | None = None,
         # Content filters
         location: str | None = None,
@@ -4169,6 +4172,8 @@ class VectorDB:
         mood: str | None = None,
         shot_type: str | None = None,
         aesthetic_score: float | None = None,
+        # Exclusion filters (Fix #5)
+        exclusions: list[dict[str, Any]] | None = None,
         # Time filters
         video_path: str | None = None,
         video_paths: list[str] | None = None,
@@ -4250,20 +4255,29 @@ class VectorDB:
                 )
             )
 
-        # Clothing/appearance filters (critical for complex queries)
-        if clothing_color:
+        # Clothing/appearance filters (Fix #6, #11: accept lists)
+        # Merge deprecated single-value params into lists
+        all_clothing_colors = list(clothing_colors) if clothing_colors else []
+        if clothing_color and clothing_color.lower() not in all_clothing_colors:
+            all_clothing_colors.append(clothing_color.lower())
+        all_clothing_types = list(clothing_types) if clothing_types else []
+        if clothing_type and clothing_type.lower() not in all_clothing_types:
+            all_clothing_types.append(clothing_type.lower())
+
+        # For multi-clothing: add one condition per item (AND logic)
+        # Searches clothing_descriptions (full VLM text) via substring matching
+        for color in all_clothing_colors:
             conditions.append(
                 models.FieldCondition(
-                    key="clothing_colors",
-                    match=models.MatchAny(any=[clothing_color.lower()]),
+                    key="clothing_descriptions",
+                    match=models.MatchText(text=color),
                 )
             )
-
-        if clothing_type:
+        for ctype in all_clothing_types:
             conditions.append(
                 models.FieldCondition(
                     key="clothing_types",
-                    match=models.MatchAny(any=[clothing_type.lower()]),
+                    match=models.MatchText(text=ctype),
                 )
             )
 
@@ -4284,36 +4298,39 @@ class VectorDB:
                 )
             )
 
-        # Visible text/brand filter
+        # Visible text/brand filter — use MatchText for substring matching
         if visible_text:
-            conditions.append(
-                models.FieldCondition(
-                    key="visible_text",
-                    match=models.MatchAny(any=visible_text),
+            for vt in visible_text:
+                conditions.append(
+                    models.FieldCondition(
+                        key="visible_text",
+                        match=models.MatchText(text=vt),
+                    )
                 )
-            )
 
-        # Action filter
+        # Action filter — use MatchText for fuzzy substring matching
+        # "bowling" will match stored action "person is bowling at the alley"
         if action_keywords:
-            conditions.append(
-                models.FieldCondition(
-                    key="actions",
-                    match=models.MatchAny(any=action_keywords),
+            for action in action_keywords:
+                conditions.append(
+                    models.FieldCondition(
+                        key="actions",
+                        match=models.MatchText(text=action),
+                    )
                 )
-            )
 
-        # Deep Research Filters (Cinematography)
+        # Deep Research Filters (Cinematography) — MatchText for fuzzy matching
         if mood:
             conditions.append(
                 models.FieldCondition(
-                    key="mood", match=models.MatchAny(any=[mood])
+                    key="mood", match=models.MatchText(text=mood)
                 )
             )
 
         if shot_type:
             conditions.append(
                 models.FieldCondition(
-                    key="shot_type", match=models.MatchAny(any=[shot_type])
+                    key="shot_type", match=models.MatchText(text=shot_type)
                 )
             )
 
@@ -4325,8 +4342,38 @@ class VectorDB:
                 )
             )
 
+        # Build exclusion (must_not) conditions (Fix #5)
+        must_not_conditions: list[models.Condition] = []
+        EXCLUSION_FIELD_MAP = {
+            "action": "actions",
+            "person": "person_names",
+            "location": "location",
+            "mood": "mood",
+            "clothing": "clothing_types",
+            "audio": "audio_events",
+            "text": "visible_text",
+            "accessory": "accessories",
+        }
+        if exclusions:
+            for exc in exclusions:
+                exc_type = exc.get("type", "").lower()
+                exc_value = exc.get("value", "")
+                if not exc_value:
+                    continue
+                field_key = EXCLUSION_FIELD_MAP.get(exc_type)
+                if field_key:
+                    must_not_conditions.append(
+                        models.FieldCondition(
+                            key=field_key,
+                            match=models.MatchText(text=exc_value),
+                        )
+                    )
+
         # Build final filter
-        query_filter = models.Filter(must=conditions) if conditions else None
+        query_filter = models.Filter(
+            must=conditions if conditions else None,
+            must_not=must_not_conditions if must_not_conditions else None,
+        ) if (conditions or must_not_conditions) else None
 
         # Execute search based on mode
         results = []
@@ -7728,4 +7775,84 @@ class VectorDB:
             return masklets
         except Exception as e:
             log(f"get_masklets_for_media failed: {e}")
+            return []
+
+    # =========================================================================
+    # METHODS REQUIRED BY AGENTIC SEARCH (Fix #14)
+    # =========================================================================
+
+    async def get_faces_in_range(
+        self,
+        media_path: str,
+        start_time: float,
+        end_time: float,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Get face detections in a time range for a specific video.
+
+        Used by agentic_search to enrich search results with face data.
+        """
+        try:
+            conditions = [
+                models.FieldCondition(
+                    key="media_path",
+                    match=models.MatchValue(value=media_path),
+                ),
+                models.FieldCondition(
+                    key="timestamp",
+                    range=models.Range(gte=start_time, lte=end_time),
+                ),
+            ]
+            query_filter = models.Filter(must=conditions)
+
+            results, _ = self.client.scroll(
+                collection_name=self.FACES_COLLECTION,
+                scroll_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+            )
+
+            faces = []
+            for point in results:
+                payload = point.payload or {}
+                faces.append({
+                    "id": str(point.id),
+                    "name": payload.get("name"),
+                    "cluster_id": payload.get("cluster_id"),
+                    "timestamp": payload.get("timestamp"),
+                    "bbox": payload.get("bbox"),
+                    "bbox_size": payload.get("bbox_size"),
+                    "det_score": payload.get("det_score"),
+                    "media_path": payload.get("media_path"),
+                })
+            return faces
+        except Exception as e:
+            log(f"get_faces_in_range failed: {e}")
+            return []
+
+    async def get_voice_segments_in_range(
+        self,
+        media_path: str,
+        start_time: float,
+        end_time: float,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Get voice segments overlapping a time range for a specific video.
+
+        Used by agentic_search for voice enrichment of search results.
+        """
+        try:
+            all_segments = self.get_voice_segments_by_video(media_path)
+            filtered = []
+            for seg in all_segments:
+                seg_start = seg.get("start", 0)
+                seg_end = seg.get("end", 0)
+                # Include if any overlap with the requested range
+                if seg_start <= end_time and seg_end >= start_time:
+                    filtered.append(seg)
+                    if len(filtered) >= limit:
+                        break
+            return filtered
+        except Exception as e:
+            log(f"get_voice_segments_in_range failed: {e}")
             return []
