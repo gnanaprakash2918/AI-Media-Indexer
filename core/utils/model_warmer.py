@@ -217,22 +217,24 @@ def _print_status_report():
         log_verbose(f"[Warmer] Status: TransNet={t_status}, ArcFace={arcface_status}")
         log_verbose(f"[Warmer] Model cache contents: {list(settings.model_cache_dir.glob('*'))[:10]}")
 
-        print("\n" + "=" * 50)
-        print(f"{'MODEL STATUS REPORT':^50}")
-        print("=" * 50)
-        print(f"{'Model':<25} | {'Status':<20}")
-        print("-" * 50)
-        print(f"{'TransNet V2':<25} | {t_status:<20}")
-        print(f"{'InternVideo':<25} | {'READY (Lazy)':<20}")
-        print(f"{'LanguageBind':<25} | {'READY (Lazy)':<20}")
-        print(f"{'SigLIP':<25} | {'READY (Lazy)':<20}")
-        print(f"{'BGE-M3':<25} | {'READY':<20}")
-        print(f"{'YOLOv8':<25} | {'CHECKED':<20}")
-        print(f"{'ArcFace':<25} | {arcface_status:<20}")
-        print("=" * 50 + "\n")
-        print(
-            "Note: 'Lazy' models load on first use. Failures will be logged but won't crash the server.\n"
-        )
+        report_lines = [
+            "",
+            "=" * 50,
+            f"{'MODEL STATUS REPORT':^50}",
+            "=" * 50,
+            f"{'Model':<25} | {'Status':<20}",
+            "-" * 50,
+            f"{'TransNet V2':<25} | {t_status:<20}",
+            f"{'InternVideo':<25} | {'READY (Lazy)':<20}",
+            f"{'LanguageBind':<25} | {'READY (Lazy)':<20}",
+            f"{'SigLIP':<25} | {'READY (Lazy)':<20}",
+            f"{'BGE-M3':<25} | {'READY':<20}",
+            f"{'YOLOv8':<25} | {'CHECKED':<20}",
+            f"{'ArcFace':<25} | {arcface_status:<20}",
+            "=" * 50,
+            "Note: 'Lazy' models load on first use. Failures will be logged but won't crash the server.",
+        ]
+        log.info("\n".join(report_lines))
 
     except Exception:
         pass

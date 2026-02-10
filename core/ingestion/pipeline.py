@@ -103,8 +103,8 @@ class FrameBuffer:
 
     @property
     def total_written(self) -> int:
-        """Total frames written to database."""
-        return self._total_flushed + len(self._buffer)
+        """Total frames actually flushed to database (excludes pending buffer)."""
+        return self._total_flushed
 
 
 class IngestionPipeline:
@@ -183,6 +183,12 @@ class IngestionPipeline:
 
         # Probe cache (avoid 6x FFprobe calls per video)
         self._probe_cache: dict[str, dict] = {}
+
+    def _reset_per_video_caches(self) -> None:
+        """Reset caches that should not persist across different videos."""
+        self._cached_scenes = None
+        self._cached_scenes_path = None
+        self._probe_cache.clear()
 
     @property
     def enhanced_config(self):
@@ -331,6 +337,9 @@ class IngestionPipeline:
             else MediaType.UNKNOWN
         )
 
+        # Track trimmed file for cleanup at end of processing
+        self._trimmed_path = trimmed_path if (start_time is not None or end_time is not None) else None
+
         _ = await self.metadata_engine.identify(path, user_hint=hint_enum)
 
         try:
@@ -346,6 +355,9 @@ class IngestionPipeline:
         chunk_duration = getattr(
             settings, "chunk_duration_seconds", 600
         )  # 10 min default
+        if chunk_duration <= 0:
+            logger.warning(f"[Pipeline] Invalid chunk_duration={chunk_duration}, defaulting to 600s")
+            chunk_duration = 600
         min_length_for_chunk = getattr(
             settings, "min_media_length_for_chunking", 1800
         )  # 30 min
@@ -501,7 +513,8 @@ class IngestionPipeline:
                         f"{chunk_start / 60:.1f}m - {chunk_end / 60:.1f}m"
                     )
 
-                    # Update pipeline range context for components to see
+                    # Save original user-requested range, update for this chunk
+                    _orig_start, _orig_end = self._start_time, self._end_time
                     self._start_time = chunk_start
                     self._end_time = chunk_end
 
@@ -551,6 +564,8 @@ class IngestionPipeline:
                 if not should_chunk:
                     break
 
+                # Restore original time range before advancing
+                self._start_time, self._end_time = _orig_start, _orig_end
                 current_chunk += 1
 
                 # Check cancellation between chunks
@@ -610,9 +625,9 @@ class IngestionPipeline:
         # Check for embedded subtitles
         if not audio_segments:
             await resource_manager.throttle_if_needed("compute")
+            temp_srt = path.with_suffix(".embedded.srt")
             try:
                 with AudioTranscriber() as transcriber:
-                    temp_srt = path.with_suffix(".embedded.srt")
                     if transcriber._find_existing_subtitles(
                         path, temp_srt, None, "ta"
                     ):
@@ -621,10 +636,11 @@ class IngestionPipeline:
                             log(
                                 f"[Audio] Extracted embedded subs: {len(audio_segments)} segments"
                             )
-                        if temp_srt.exists():
-                            temp_srt.unlink()
             except Exception as e:
                 log(f"[Audio] Embedded subtitle extraction failed: {e}")
+            finally:
+                if temp_srt.exists():
+                    temp_srt.unlink()
 
         # Run ASR if no existing subtitles
         if not audio_segments:

@@ -3,6 +3,7 @@ import {
   RouterProvider,
   Outlet,
   NavLink,
+  useLocation,
 } from 'react-router-dom';
 import { useState, useMemo, lazy, Suspense } from 'react';
 import {
@@ -105,6 +106,7 @@ const navItems = [
 function Layout() {
   const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const location = useLocation();
 
   const [mode, setMode] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme-mode');

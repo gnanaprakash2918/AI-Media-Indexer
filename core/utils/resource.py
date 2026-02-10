@@ -142,8 +142,9 @@ class ResourceManager:
 
         # 5. Check GPU Temperature (NVIDIA via pynvml)
         gpu_temp = self._get_gpu_temp()
-        if gpu_temp and gpu_temp > 80:  # 80°C threshold for GPU
-            log.warning(f"GPU overheating: {gpu_temp}°C. Throttling...")
+        gpu_max = getattr(settings, 'max_gpu_temp_celsius', 80)
+        if gpu_temp and gpu_temp > gpu_max:
+            log.warning(f"GPU overheating: {gpu_temp}°C (limit: {gpu_max}°C). Throttling...")
             return False
 
         return True

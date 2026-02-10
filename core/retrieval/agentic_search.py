@@ -18,7 +18,7 @@ from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
 from llm.factory import LLMFactory
 
-from config import settings  # [FIX] Added missing import
+from config import settings
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
     from llm.interface import LLMInterface
@@ -344,6 +344,8 @@ class SearchAgent:
                 parsed, search_text, limit
             )
             results.extend(frame_results)
+            _search_degraded = True
+            _degradation_reason = f"Scene search failed: {e}"
 
 
         # Fallback if no results found (and no exception occurred previously to fill them)
@@ -395,13 +397,11 @@ class SearchAgent:
                                     "text": f"Graph Match: {gr.get('description', '')}",
                                     "start_time": gr.get("start"),
                                     "end_time": gr.get("end"),
-                                    "video_path": video_path, # Ideally graph returns video path, but we assume single video filter or need to fetch it
-                                    # TODO: Fetch video path for scene ID if missing
+                                    "video_path": gr.get("video_path") or video_path,
                                 }
-                                # Add minimal required fields
+                                # Fallback: use first existing result's video_path if still None
                                 if not gr_formatted.get("video_path") and len(results) > 0:
-                                     # Fallback: assume same video if filtering by video
-                                     gr_formatted["video_path"] = results[0]["video_path"]
+                                     gr_formatted["video_path"] = results[0].get("video_path")
 
                                 results.append(gr_formatted)
             except Exception as e:
@@ -623,6 +623,8 @@ class SearchAgent:
                 )
         except Exception as e:
             log(f"[Search] Hybrid search failed: {e}, falling back to simple")
+            _frame_degraded = True
+            _frame_degradation_reason = f"Hybrid search failed: {e}"
             results = await self.db.search_frames(
                 query=search_text,
                 limit=limit,
@@ -788,18 +790,19 @@ class SearchAgent:
                 # Apply penalty for missing constraints
                 missing_penalty = len(result.missing) * 0.1
                 adjusted_score = max(0.0, result.match_score - missing_penalty)
-                # Merge LLM verification with candidate
-                candidate["llm_score"] = adjusted_score
-                candidate["llm_reasoning"] = result.reasoning
-                candidate["constraints_satisfied"] = result.constraints_checked
-                candidate["constraints_missing"] = result.missing
+                # Merge LLM verification with candidate (avoid mutating caller's data)
+                enriched = {**candidate}
+                enriched["llm_score"] = adjusted_score
+                enriched["llm_reasoning"] = result.reasoning
+                enriched["constraints_satisfied"] = result.constraints_checked
+                enriched["constraints_missing"] = result.missing
                 # Weight: configurable vector/LLM balance from settings
                 from config import settings
-                candidate["combined_score"] = (
-                    candidate.get("score", 0) * settings.rerank_vector_weight
+                enriched["combined_score"] = (
+                    enriched.get("score", 0) * settings.rerank_vector_weight
                     + adjusted_score * settings.rerank_llm_weight
                 )
-                reranked.append(candidate)
+                reranked.append(enriched)
 
             except Exception as e:
                 # If LLM fails, keep original score but add small penalty

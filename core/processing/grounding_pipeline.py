@@ -43,13 +43,9 @@ class GroundingPipeline:
 
         # Bootstrapping concepts if not provided
         if not concepts:
-            try:
-                # Stub: In real system, we'd query DB for 'suggested_concepts' or similar
-                # For now we rely on explicit input or skip
-                # video_meta = self.db.get_video_metadata(video_path)
-                pass
-            except Exception as e:
-                logger.warning(f"Could not fetch concepts from DB: {e}")
+            # No automatic concept bootstrapping implemented yet.
+            # Concepts must be explicitly provided by caller.
+            logger.debug(f"No concepts provided, skipping bootstrapping for {video_path}")
 
             if not concepts:
                 logger.warning(f"No concepts provided for grounding: {video_path}")

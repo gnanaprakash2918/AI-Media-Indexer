@@ -289,7 +289,7 @@ class FrameExtractor:
             log(
                 f"[ERROR:{type(exc).__name__}] Unexpected error processing '{video_path}': {exc}"
             )
-            traceback.print_exc()
+            log(f"[Extractor] Trace: {traceback.format_exc()}", level="ERROR")
             raise ExtractionError(
                 f"Unexpected extraction error for {video_path}",
                 original_error=exc,

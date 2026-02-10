@@ -37,10 +37,19 @@ class ClusterManager:
     def get_next_face_cluster_id(self) -> int:
         return self.get_next_cluster_id()
 
-    def get_max_voice_cluster_id(self, collection_name: str) -> int:
-        """Get the maximum existing voice cluster ID."""
+    def _get_max_field_value(self, collection_name: str, field_name: str) -> int:
+        """Get the maximum value of a payload field across a collection.
+
+        Scrolls through all points in batches to find the max integer value.
+
+        Args:
+            collection_name: Qdrant collection to scan.
+            field_name: Payload field to find max value of.
+
+        Returns:
+            Maximum field value found, or 0 if collection is empty or on error.
+        """
         try:
-            # Scroll through voice segments to find max cluster ID
             max_id = 0
             offset = None
             while True:
@@ -48,12 +57,12 @@ class ClusterManager:
                     collection_name=collection_name,
                     limit=1000,
                     offset=offset,
-                    with_payload=["voice_cluster_id"],
+                    with_payload=[field_name],
                     with_vectors=False,
                 )
                 for point in results:
                     cid = (
-                        point.payload.get("voice_cluster_id", 0)
+                        point.payload.get(field_name, 0)
                         if point.payload
                         else 0
                     )
@@ -65,29 +74,11 @@ class ClusterManager:
         except Exception:
             return 0
 
+    def get_max_voice_cluster_id(self, collection_name: str) -> int:
+        """Get the maximum existing voice cluster ID."""
+        return self._get_max_field_value(collection_name, "voice_cluster_id")
+
     def get_max_face_cluster_id(self, collection_name: str) -> int:
         """Get the maximum existing face cluster ID."""
-        try:
-            max_id = 0
-            offset = None
-            while True:
-                results, offset = self.client.scroll(
-                    collection_name=collection_name,
-                    limit=1000,
-                    offset=offset,
-                    with_payload=["cluster_id"],
-                    with_vectors=False,
-                )
-                for point in results:
-                    cid = (
-                        point.payload.get("cluster_id", 0)
-                        if point.payload
-                        else 0
-                    )
-                    if isinstance(cid, int) and cid > max_id:
-                        max_id = cid
-                if offset is None:
-                    break
-            return max_id
-        except Exception:
-            return 0
+        return self._get_max_field_value(collection_name, "cluster_id")
+

@@ -162,7 +162,7 @@ class VectorDB:
 
     MEDIA_SEGMENTS_COLLECTION = "media_segments"
     MEDIA_COLLECTION = "media_frames"
-    FRAMES_COLLECTION = "media_frames"  # Alias for summarizer
+    FRAMES_COLLECTION = "media_frames"  # Legacy alias, prefer MEDIA_COLLECTION
     FACES_COLLECTION = "faces"
     VOICE_COLLECTION = "voice_segments"
     SCENES_COLLECTION = "scenes"  # Scene-level storage (production approach)
@@ -234,7 +234,7 @@ class VectorDB:
         # Encoder will be loaded on first encode_texts() call
         self.encoder: SentenceTransformer | None = None
         self._encoder_last_used: float = 0.0
-        self._idle_unload_seconds = 300  # Unload after 5 min idle
+        self._idle_unload_seconds = getattr(settings, 'encoder_idle_timeout', 300)
 
         log(
             f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
@@ -243,7 +243,7 @@ class VectorDB:
         # Embedding cache for repeated queries (proper LRU with OrderedDict)
         from collections import OrderedDict
         self._embedding_cache: OrderedDict = OrderedDict()
-        self._embedding_cache_max_size = 1000
+        self._embedding_cache_max_size = getattr(settings, 'embedding_cache_size', 1000)
 
         # Load Visual Encoder for cross-modal search (Text -> Visual Embedding)
         from core.processing.visual_encoder import get_default_visual_encoder
@@ -700,7 +700,12 @@ class VectorDB:
             return None
 
     async def encode_text(self, text: str) -> list[float]:
-        """Encodes a single text string."""
+        """Encode a single text string.
+
+        .. deprecated::
+            Use ``get_embedding()`` (with error handling) or
+            ``(await encode_texts(text, is_query=True))[0]`` directly.
+        """
         return (await self.encode_texts(text, is_query=True))[0]
 
 
@@ -802,12 +807,19 @@ class VectorDB:
         frames = []
         offset = None
 
-        # Build filter conditions
-        must_conditions = [
+        # Build filter conditions (check both video_path and media_path keys)
+        path_conditions = [
             models.FieldCondition(
                 key="video_path",
                 match=models.MatchValue(value=video_path),
-            )
+            ),
+            models.FieldCondition(
+                key="media_path",
+                match=models.MatchValue(value=video_path),
+            ),
+        ]
+        must_conditions = [
+            models.Filter(should=path_conditions),
         ]
 
         # Add time range filters if specified
@@ -911,7 +923,8 @@ class VectorDB:
                     }
                 )
         except Exception as e:
-            log(f"Failed to get loudness events: {e}")
+            import traceback
+            log(f"Failed to get loudness events for {video_path}: {e}\n{traceback.format_exc()}", level="ERROR")
 
         events.sort(key=lambda x: x.get("timestamp", 0))
         return events

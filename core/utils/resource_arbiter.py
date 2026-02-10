@@ -124,7 +124,8 @@ class ResourceArbiter:
             if model_name not in self.registry:
                 # TRANSIENT ALLOCATION (original behavior)
                 # Wait for VRAM availability
-                limit = self.total_vram * 0.9
+                from config import settings as _s
+                limit = self.total_vram * (_s.max_vram_percent / 100)
                 
                 while self.current_usage + vram_gb > limit:
                     logger.info(
@@ -248,7 +249,8 @@ class ResourceArbiter:
             logger.info(f"[Arbiter] ensuring loaded {model_name} ({vram_gb}GB)")
             
             # Check limits
-            limit = self.total_vram * 0.95 # Slightly permissive
+            from config import settings as _s
+            limit = self.total_vram * (_s.max_vram_percent / 100)
             
             while self.current_usage + vram_gb > limit:
                 logger.info(f"[Arbiter] VRAM full for persistent load ({self.current_usage:.1f}/{limit:.1f}GB), offloading...")
@@ -301,7 +303,9 @@ class ResourceArbiter:
 
             self._cleanup_vram()
             return True
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[Arbiter] Failed to release model: {e}")
             return False
 
     def _cleanup_vram(self) -> None:
@@ -358,4 +362,6 @@ class ResourceArbiter:
 
 # Global singleton instance
 RESOURCE_ARBITER = ResourceArbiter()
-GPU_SEMAPHORE = RESOURCE_ARBITER._gpu_semaphore  # Backward compatibility
+# DEPRECATED: Use RESOURCE_ARBITER._gpu_semaphore directly. This alias exists
+# only for backward compatibility with older code importing GPU_SEMAPHORE.
+GPU_SEMAPHORE = RESOURCE_ARBITER._gpu_semaphore

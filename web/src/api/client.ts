@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE,
@@ -32,14 +32,7 @@ export const getConfig = async () => {
   return res.data;
 };
 
-// Search
-export const searchMedia = async (
-  query: string,
-  limit = 20,
-): Promise<MediaItem[]> => {
-  const res = await apiClient.get('/search', { params: { q: query, limit } });
-  return res.data;
-};
+// Search — use searchHybrid or searchGranular instead
 
 // Unified Search — all search flows route here with configurable toggles
 export const searchHybrid = async (
@@ -430,8 +423,6 @@ export const deleteLibraryItem = async (path: string) => {
   return res.data;
 };
 
-// Alias for backward compatibility if needed
-export const deleteFromLibrary = deleteLibraryItem;
 
 // HITL: Manual Description Correction
 export const updateFrameDescription = async (

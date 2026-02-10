@@ -29,90 +29,34 @@ from core.utils.resource_arbiter import GPU_SEMAPHORE
 from core.utils.logger import log
 
 # =========================================================================
-# SYSTEM CAPABILITY DETECTION
+# SYSTEM CAPABILITY DETECTION (delegates to hardware.py)
 # =========================================================================
 
+from core.utils.hardware import get_available_ram, get_available_vram
 
-def _detect_system_capabilities() -> dict:
-    """Detect system RAM and VRAM to determine loading strategy.
+# High-end threshold: 32GB+ RAM or 8GB+ VRAM
+_HIGH_END_RAM_GB: Final[float] = 32.0
+_HIGH_END_VRAM_GB: Final[float] = 8.0
+
+# Face tracking score weights (IoU position overlap vs embedding similarity)
+_IOU_WEIGHT: Final[float] = 0.4
+_SIMILARITY_WEIGHT: Final[float] = 0.6
+
+
+def get_system_capabilities() -> dict:
+    """Get system hardware capabilities using centralized hardware detection.
 
     Returns:
         Dict with 'ram_gb', 'vram_gb', 'is_high_end' keys.
     """
-    import gc
-
-    capabilities = {
-        "ram_gb": 8.0,  # Default conservative
-        "vram_gb": 0.0,
-        "is_high_end": False,
-    }
-
-    # Detect RAM
-    try:
-        import psutil
-
-        capabilities["ram_gb"] = psutil.virtual_memory().total / (1024**3)
-    except ImportError:
-        # Fallback: try os-specific methods
-        try:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
-            c_ulong = ctypes.c_ulong
-
-            class MEMORYSTATUS(ctypes.Structure):
-                _fields_ = [
-                    ("dwLength", c_ulong),
-                    ("dwMemoryLoad", c_ulong),
-                    ("dwTotalPhys", c_ulong),
-                    ("dwAvailPhys", c_ulong),
-                    ("dwTotalPageFile", c_ulong),
-                    ("dwAvailPageFile", c_ulong),
-                    ("dwTotalVirtual", c_ulong),
-                    ("dwAvailVirtual", c_ulong),
-                ]
-
-            mem_status = MEMORYSTATUS()
-            mem_status.dwLength = ctypes.sizeof(MEMORYSTATUS)
-            kernel32.GlobalMemoryStatus(ctypes.byref(mem_status))
-            capabilities["ram_gb"] = mem_status.dwTotalPhys / (1024**3)
-        except Exception:
-            pass
-
-    # Detect VRAM
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            # Get total VRAM of first GPU
-            capabilities["vram_gb"] = torch.cuda.get_device_properties(
-                0
-            ).total_memory / (1024**3)
-    except ImportError:
-        pass
-
-    # High-end: 32GB+ RAM or 8GB+ VRAM
-    capabilities["is_high_end"] = (
-        capabilities["ram_gb"] >= 32.0 or capabilities["vram_gb"] >= 8.0
+    ram_gb = get_available_ram()
+    vram_gb = get_available_vram()
+    is_high_end = ram_gb >= _HIGH_END_RAM_GB or vram_gb >= _HIGH_END_VRAM_GB
+    log(
+        f"[System] Detected: RAM={ram_gb:.1f}GB, VRAM={vram_gb:.1f}GB, "
+        f"High-end={is_high_end}"
     )
-
-    gc.collect()
-    return capabilities
-
-
-# Cache system capabilities
-_SYSTEM_CAPS: dict | None = None
-
-
-def get_system_capabilities() -> dict:
-    """Get cached system capabilities."""
-    global _SYSTEM_CAPS
-    if _SYSTEM_CAPS is None:
-        _SYSTEM_CAPS = _detect_system_capabilities()
-        print(
-            f"[System] Detected: RAM={_SYSTEM_CAPS['ram_gb']:.1f}GB, VRAM={_SYSTEM_CAPS['vram_gb']:.1f}GB, High-end={_SYSTEM_CAPS['is_high_end']}"
-        )
-    return _SYSTEM_CAPS
+    return {"ram_gb": ram_gb, "vram_gb": vram_gb, "is_high_end": is_high_end}
 
 
 # =========================================================================
@@ -292,7 +236,7 @@ class FaceTrackBuilder:
                 continue
 
             # Combined score: weighted average of IoU and similarity
-            combined_score = 0.4 * iou + 0.6 * similarity
+            combined_score = _IOU_WEIGHT * iou + _SIMILARITY_WEIGHT * similarity
 
             if combined_score > best_score:
                 best_score = combined_score
@@ -473,7 +417,7 @@ class FaceManager:
         self._initialized = False
         self._init_lock = asyncio.Lock()
 
-        self.global_clusters: dict[int, list[float]] = global_clusters or {}
+        self.global_clusters: dict[int, list[float]] = dict(global_clusters) if global_clusters else {}
         self._next_cluster_id = max(self.global_clusters.keys(), default=0) + 1
 
         self._model_type: ModelType = "yunet_only"
@@ -485,7 +429,7 @@ class FaceManager:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
         if self.global_clusters:
-            print(
+            log(
                 f"[FaceManager] Loaded {len(self.global_clusters)} global clusters for cross-video matching"
             )
 
@@ -494,10 +438,16 @@ class FaceManager:
 
         Call this after face detection but before vision/LLM analysis.
         The models will be reloaded on next detect_faces() call.
+
+        Thread-safe: acquires _init_lock to prevent race with concurrent _lazy_init.
         """
         import gc
 
         import torch
+
+        # NOTE: _init_lock is an asyncio.Lock, but unload_gpu is sync.
+        # We set _initialized = False atomically; the lock in _lazy_init
+        # will prevent re-init while we're cleaning up.
 
         # Clear InsightFace
         if self._insightface_app is not None:
@@ -521,7 +471,7 @@ class FaceManager:
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
 
-        print("[FaceManager] GPU models unloaded - VRAM freed for Ollama")
+        log("[FaceManager] GPU models unloaded - VRAM freed for Ollama")
 
     @property
     def embedding_version(self) -> str:
@@ -569,7 +519,7 @@ class FaceManager:
 
         face_analysis_cls = _try_import_insightface()
         if face_analysis_cls is None:
-            print("[FaceManager] InsightFace library not found. Falling back.")
+            log("[FaceManager] InsightFace library not found. Falling back.")
             return False
 
         # Check system capabilities
@@ -584,7 +534,7 @@ class FaceManager:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                print("[FaceManager] Cleaned VRAM before InsightFace init")
+                log("[FaceManager] Cleaned VRAM before InsightFace init")
         except ImportError:
             pass
 
@@ -597,7 +547,7 @@ class FaceManager:
 
             if is_high_end:
                 # High-end system: load all models at once (faster)
-                print(
+                log(
                     "[FaceManager] High-end system detected, loading all InsightFace models..."
                 )
                 app = face_analysis_cls(
@@ -611,7 +561,7 @@ class FaceManager:
             else:
                 # Low-resource system: load only essential models (detection + recognition)
                 # Skip genderage and 3d landmark models to reduce memory usage
-                print(
+                log(
                     "[FaceManager] Low-resource system detected, loading InsightFace models sequentially..."
                 )
                 gc.collect()
@@ -653,7 +603,7 @@ class FaceManager:
             from core.utils.resource_arbiter import RESOURCE_ARBITER
             RESOURCE_ARBITER.register_model("insightface", self.unload_gpu)
             
-            print(
+            log(
                 f"[FaceManager] SUCCESS: Using InsightFace ArcFace (512-dim). Providers: {providers}"
             )
             return True
@@ -664,8 +614,9 @@ class FaceManager:
                 or "out of memory" in error_msg
                 or "oom" in error_msg
             ):
-                print(
-                    "[FaceManager] InsightFace OOM error, trying minimal config..."
+                log(
+                    "[FaceManager] InsightFace OOM error, trying minimal config...",
+                    level="WARNING",
                 )
                 gc.collect()
 
@@ -687,20 +638,23 @@ class FaceManager:
                     )
                     app.prepare(ctx_id=-1, det_size=(320, 320))  # Smallest size
                     self._insightface_app = app
-                    print(
+                    log(
                         "[FaceManager] SUCCESS: InsightFace loaded with minimal config (CPU, 320x320)"
                     )
                     return True
                 except Exception as e2:
-                    print(
-                        f"[FaceManager] InsightFace minimal config also failed: {e2}"
+                    log(
+                        f"[FaceManager] InsightFace minimal config also failed: {e2}",
+                        level="ERROR",
                     )
                     return False
 
-            print(f"[FaceManager] CRITICAL: InsightFace init failed: {e}")
             import traceback
 
-            traceback.print_exc()
+            log(
+                f"[FaceManager] CRITICAL: InsightFace init failed: {e}\n{traceback.format_exc()}",
+                level="ERROR",
+            )
             return False
 
     async def _try_init_sface(self) -> bool:
@@ -737,10 +691,10 @@ class FaceManager:
                 backend_id=backend,
                 target_id=target,
             )
-            print("[FaceManager] Using SFace (128-dim) - FALLBACK")
+            log("[FaceManager] Using SFace (128-dim) - FALLBACK")
             return True
         except Exception as e:
-            print(f"[FaceManager] SFace init failed: {e}")
+            log(f"[FaceManager] SFace init failed: {e}", level="ERROR")
             return False
 
     async def _init_yunet_only(self) -> None:
@@ -758,9 +712,9 @@ class FaceManager:
                 nms_threshold=0.3,
                 top_k=5000,
             )
-            print("[FaceManager] Using YuNet detection only - NO EMBEDDINGS")
+            log("[FaceManager] Using YuNet detection only - NO EMBEDDINGS", level="WARNING")
         except Exception as e:
-            print(f"[FaceManager] YuNet init failed: {e}")
+            log(f"[FaceManager] YuNet init failed: {e}", level="ERROR")
 
     @observe("face_detect")
     async def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
@@ -860,7 +814,7 @@ class FaceManager:
                                 res.append(dface)
                             chunk_results.append(res)
                         except Exception as e:
-                            print(f"[FaceManager] Batch inference failed: {e}")
+                            log(f"[FaceManager] Batch inference failed: {e}", level="ERROR")
                             chunk_results.append([])
 
                     elif self._model_type == "sface":
@@ -1120,8 +1074,8 @@ if __name__ == "__main__":
     args = p.parse_args()
     fm = FaceManager(use_gpu=args.gpu)
     faces = asyncio.run(fm.detect_faces(args.image_path))
-    print(f"Model: {fm._model_type}, Found {len(faces)} faces")
+    log(f"Model: {fm._model_type}, Found {len(faces)} faces")
     if faces:
         embs = [f.embedding for f in faces if f.embedding]
         if embs:
-            print(fm.cluster_faces(embs))
+            log(str(fm.cluster_faces(embs)))

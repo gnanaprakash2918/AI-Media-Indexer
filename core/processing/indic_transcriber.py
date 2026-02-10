@@ -421,7 +421,7 @@ class IndicASRPipeline:
             log(f"[IndicASR] Failed to patch .nemo archive: {e}")
             import traceback
 
-            traceback.print_exc()
+            log(f"[IndicASR] Patch trace: {traceback.format_exc()}", level="ERROR")
             return None
 
     async def _extract_audio(self, media_path: Path) -> Path:
