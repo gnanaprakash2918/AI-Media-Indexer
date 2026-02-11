@@ -76,13 +76,6 @@ DEFAULT_VLM_MODELS = [
         description="LLaVA 7B - balanced quality/speed",
     ),
     ModelSpec(
-        name="minicpm-v",
-        model_type=ModelType.OSS,
-        model_id="minicpm-v:8b",
-        vram_gb=4.0,
-        description="MiniCPM-V 8B - efficient vision",
-    ),
-    ModelSpec(
         name="qwen2-vl",
         model_type=ModelType.OSS,
         model_id="qwen2-vl:7b",
@@ -119,13 +112,6 @@ DEFAULT_ASR_MODELS = [
         model_id="openai/whisper-large-v3-turbo",
         vram_gb=1.5,
         description="Whisper Turbo - fast ASR",
-    ),
-    ModelSpec(
-        name="indic-conformer",
-        model_type=ModelType.OSS,
-        model_id="ai4bharat/indicconformer",
-        vram_gb=2.0,
-        description="IndicConformer - Indic languages",
     ),
     ModelSpec(
         name="seamless",

@@ -444,24 +444,10 @@ class Settings(BaseSettings):
     )
 
     # --- Antigravity Feature Flags ---
-    use_indic_asr: bool = Field(
-        default=True,
-        description="Use AI4Bharat IndicConformer for Indic languages",
-    )
-
-    use_native_nemo: bool = Field(
-        default=True,
-        description="Attempt to use Native NeMo if installed (Preferred over Docker)",
-    )
 
     auto_detect_language: bool = Field(
         default=True,
         description="Auto-detect audio language before transcription",
-    )
-
-    ai4bharat_url: str = Field(
-        default="http://localhost:8001",
-        description="URL for local AI4Bharat IndicConformer Docker service",
     )
 
     enable_sam3_tracking: bool = Field(

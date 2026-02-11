@@ -163,9 +163,6 @@ def setup_logger() -> None:
 
     noisy_ml_frameworks = (
         "speechbrain",
-        "nemo",
-        "nemo_logger",
-        "nemo.collections",
         "transformers",
         "transformers.modeling_utils",
         "accelerate",

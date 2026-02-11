@@ -16,7 +16,7 @@ allow-direct-references = true
 [project]
 name = "ai-media-indexer"
 version = "0.1.0"
-description = "AI Media Indexer with SOTA Speech Recognition (NeMo/Whisper) and Voice Intelligence"
+description = "AI Media Indexer with SOTA Speech Recognition (Whisper) and Voice Intelligence"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
@@ -31,7 +31,6 @@ dependencies = [
     "librosa>=0.10.0",
     "onnx==1.16.1",
     "ml_dtypes>=0.4.0,<0.6.0",
-    # "nemo-toolkit[asr]>=1.23.0",
     "ninja>=1.11.0",
     "ollama>=0.6.1",
     "packaging",
@@ -97,11 +96,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["black>=24.0.0", "mypy>=1.10.0", "pyright>=1.1.380"]
-indic = [
-    "nemo-toolkit[asr]>=1.23.0",
-    "protobuf",
-    "Cython>=3.0.0",
-]
 
 [tool.black]
 line-length = 80
@@ -135,4 +129,3 @@ concurrent-downloads = 5
 torch = { index = "pytorch-cu124" }
 torchaudio = { index = "pytorch-cu124" }
 torchvision = { index = "pytorch-cu124" }
-# Note: nemo-toolkit uses PyPI version. AI4Bharat models work with Whisper fallback.

@@ -18,8 +18,6 @@
     Wipe all data including Qdrant (same as option 3)
 .PARAMETER Distributed
     Enable Distributed Ingestion (Redis + Celery Worker)
-.PARAMETER InstallIndic
-    Install NeMo toolkit for Indic language ASR (Tamil, Hindi, etc.)
 .PARAMETER Full
     Full setup: Nuclear + Dev Mode + Indic ASR + Pull Images
 .PARAMETER SkipOllama
@@ -52,16 +50,9 @@
     Wipe data + start with Celery workers
 
 .EXAMPLE
-    ./start.ps1 -InstallIndic
-    Install Tamil/Hindi ASR support
-
-.EXAMPLE
     ./start.ps1 -Full
-    Full setup with all features (Nuclear + Dev + Indic + Images)
+    Full setup with all features (Nuclear + Dev + Images)
 
-.EXAMPLE
-    ./start.ps1 -Nuclear -InstallIndic
-    Wipe data + install Indic ASR
 #>
 
 param(
@@ -73,7 +64,6 @@ param(
     
     # Feature flags
     [switch]$Distributed,
-    [switch]$InstallIndic,
     
     # Granular flags
     [switch]$SkipOllama,
@@ -110,7 +100,6 @@ if ($Help) {
     Write-Host ""
     Write-Host "FEATURE FLAGS:" -ForegroundColor Yellow
     Write-Host "  -Distributed    Enable Redis + Celery workers (parallel processing)"
-    Write-Host "  -InstallIndic   Install NeMo for Tamil/Hindi transcription"
     Write-Host "  -Integrated     Run in single terminal (vs separate windows)"
     Write-Host ""
     Write-Host "GRANULAR FLAGS:" -ForegroundColor Yellow
@@ -125,7 +114,6 @@ if ($Help) {
     Write-Host "EXAMPLES:" -ForegroundColor Yellow
     Write-Host "  ./start.ps1 -Quick                    # Fastest startup"
     Write-Host "  ./start.ps1 -Nuclear -Distributed     # Fresh start + parallel workers"
-    Write-Host "  ./start.ps1 -Fresh -InstallIndic      # Clear caches + Tamil support"
     Write-Host "  ./start.ps1 -Nuclear -RecreateVenv    # Complete reset"
     Write-Host ""
     exit 0
@@ -216,7 +204,6 @@ Write-Host ""
 # Show active flags
 if ($Nuclear) { Write-Host "   Mode: NUCLEAR (wipe all data)" -ForegroundColor Red }
 if ($Distributed) { Write-Host "   Mode: Distributed (Redis + Celery)" -ForegroundColor Magenta }
-if ($InstallIndic) { Write-Host "   Mode: Indic ASR (Tamil/Hindi)" -ForegroundColor Cyan }
 if ($Full) { Write-Host "   Mode: FULL SETUP (All features)" -ForegroundColor DarkRed }
 
 # Check critical ports before starting
@@ -229,7 +216,7 @@ Check-Port-Availability -Port 6379 -ServiceName "Redis"
 Set-Location $ProjectRoot
 
 # Interactive menu (unless -NoInteractive or any flags are passed)
-$anyFlagsSet = $SkipOllama -or $SkipDocker -or $SkipClean -or $RecreateVenv -or $NukeQdrant -or $PullImages -or $Integrated -or $Distributed -or $InstallIndic -or $Quick -or $Fresh -or $Nuclear -or $Full
+$anyFlagsSet = $SkipOllama -or $SkipDocker -or $SkipClean -or $RecreateVenv -or $NukeQdrant -or $PullImages -or $Integrated -or $Distributed -or $Quick -or $Fresh -or $Nuclear -or $Full
 
 if (-not $NoInteractive -and -not $anyFlagsSet) {
     Write-Host "============================================================" -ForegroundColor Gray
@@ -284,16 +271,8 @@ if (-not $NoInteractive -and -not $anyFlagsSet) {
     Write-Host "      - Complete Data Wipe + Celery workers" -ForegroundColor Gray
     Write-Host "      - Best for restarting a large batch job from zero" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  [8] Install Indic ASR (Tamil/Hindi)" -ForegroundColor Cyan
-    Write-Host "      - Installs NeMo toolkit for SOTA Indic transcription" -ForegroundColor Gray
-    Write-Host "      - Quick start after installation" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  [9] NUCLEAR + Indic ASR" -ForegroundColor DarkCyan
-    Write-Host "      - Wipe all data + Install NeMo toolkit" -ForegroundColor Gray
-    Write-Host "      - Fresh start with Indic language support" -ForegroundColor Gray
-    Write-Host ""
     
-    $choice = Read-Host "Enter choice [1-9] or press Enter for Quick Start"
+    $choice = Read-Host "Enter choice [1-7] or press Enter for Quick Start"
     
     switch ($choice) {
         "1" { 
@@ -332,17 +311,6 @@ if (-not $NoInteractive -and -not $anyFlagsSet) {
             $Distributed = $true
             Write-Host "`n  >> NUCLEAR + Distributed selected (Wipe + Celery)" -ForegroundColor Magenta
         }
-        "8" {
-            $SkipClean = $true
-            $InstallIndic = $true
-            Write-Host "`n  >> Install Indic ASR selected (NeMo for Tamil/Hindi)" -ForegroundColor Cyan
-        }
-        "9" {
-            $SkipClean = $false
-            $NukeQdrant = $true
-            $InstallIndic = $true
-            Write-Host "`n  >> NUCLEAR + Indic ASR selected (Wipe + NeMo)" -ForegroundColor DarkCyan
-        }
         "" { 
             $SkipClean = $true
             Write-Host "`n  >> Quick Start (default)" -ForegroundColor Green
@@ -357,7 +325,7 @@ if (-not $NoInteractive -and -not $anyFlagsSet) {
 
 Write-Host "[1/8] Working directory: $ProjectRoot" -ForegroundColor Yellow
 
-# Handle virtual environment
+    # Handle virtual environment
 if ($RecreateVenv) {
     Write-Host ""
     Write-Host "[2/8] Recreating virtual environment..." -ForegroundColor Yellow
@@ -386,23 +354,6 @@ if ($RecreateVenv) {
         Write-Host "  Virtual environment created and synced!" -ForegroundColor Green
     } else {
         Write-Host "[2/8] Virtual environment exists" -ForegroundColor Gray
-    }
-}
-
-# Install Indic ASR (NeMo) if requested
-if ($InstallIndic) {
-    Write-Host ""
-    Write-Host "[2.5/8] Installing Indic ASR (NeMo toolkit)..." -ForegroundColor Cyan
-    Write-Host "  This includes NeMo + dependencies for Tamil/Hindi transcription" -ForegroundColor Gray
-    Write-Host "  Note: Using Whisper large-v3-turbo as primary (best quality)" -ForegroundColor Gray
-    
-    try {
-        uv sync --extra indic
-        Write-Host "  Indic ASR dependencies installed!" -ForegroundColor Green
-        Write-Host "  Transcription uses: Whisper large-v3-turbo (Tamil, Hindi, Telugu, Malayalam)" -ForegroundColor Gray
-    } catch {
-        Write-Host "  WARNING: Indic ASR installation failed: $_" -ForegroundColor Yellow
-        Write-Host "  Whisper fallback will still work for transcription" -ForegroundColor Yellow
     }
 }
 

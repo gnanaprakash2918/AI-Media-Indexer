@@ -49,32 +49,14 @@ if _hf_token:
 
 
 def get_transcriber(language: str | None = None):
-    """Factory to return appropriate transcriber engine based on settings.
+    """Factory to return appropriate transcriber engine.
 
     Args:
         language: Target language code (e.g., 'ta', 'hi', 'en').
 
     Returns:
-        AudioTranscriber or IndicASRPipeline instance.
+        AudioTranscriber instance.
     """
-    lang = language or settings.language or "en"
-
-    if settings.use_indic_asr and lang in [
-        "ta",
-        "hi",
-        "te",
-        "ml",
-        "kn",
-        "bn",
-        "gu",
-        "mr",
-        "or",
-        "pa",
-    ]:
-        from core.processing.indic_transcriber import IndicASRPipeline
-
-        return IndicASRPipeline(lang=lang)
-
     return AudioTranscriber()
 
 

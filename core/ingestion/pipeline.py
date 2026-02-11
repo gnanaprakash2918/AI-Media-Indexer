@@ -737,102 +737,40 @@ class IngestionPipeline:
             else:
                 detected_lang = settings.language or "en"
 
-            # Choose transcriber based on language
-            # Use config for Indic languages list (centralized)
-            if settings.use_indic_asr and detected_lang in settings.indic_languages:
-                # Use AI4Bharat for Indic languages
-                log(
-                    f"[Audio] Attempting AI4Bharat IndicConformer for '{detected_lang}'"
-                )
-                indic_transcriber = None
-                try:
-                    from core.processing.indic_transcriber import (
-                        IndicASRPipeline,
-                    )
-
-                    indic_transcriber = IndicASRPipeline(lang=detected_lang)
-                    log(
-                        f"[Audio] IndicASR backend: {indic_transcriber._backend}"
-                    )
-
-                    # Generate SRT sidecar file alongside the video
-                    srt_path = path.with_suffix(".srt")
-
-                    audio_segments = (
-                        await indic_transcriber.transcribe(
-                            path, output_srt=srt_path
+            # Use Whisper for all languages (English, Indic, etc.)
+            log(
+                f"[Audio] Using Whisper turbo for '{detected_lang}'"
+                + (" (lyrics mode)" if use_lyrics_mode else "")
+            )
+            try:
+                with AudioTranscriber() as transcriber:
+                    async with RESOURCE_ARBITER.acquire(
+                        "whisper", vram_gb=1.5
+                    ):
+                        audio_segments = (
+                            await transcriber.transcribe(
+                                path,
+                                language=detected_lang,
+                                force_lyrics=use_lyrics_mode,
+                            )
+                            or []
                         )
-                        or []
-                    )
 
-                    if audio_segments:
+                    # Auto-retry with lyrics mode if no segments and wasn't already lyrics mode
+                    if not audio_segments and not use_lyrics_mode:
                         log(
-                            f"[Audio] AI4Bharat SUCCESS: {len(audio_segments)} segments"
+                            "[Audio] No segments found, retrying with lyrics mode..."
                         )
-                        log(f"[Audio] SRT saved to: {srt_path}")
-                    else:
-                        log(
-                            "[Audio] AI4Bharat returned empty, falling back to Whisper"
+                        audio_segments = (
+                            await transcriber.transcribe(
+                                path,
+                                language=detected_lang,
+                                force_lyrics=True,
+                            )
+                            or []
                         )
-                        raise ValueError("AI4Bharat returned no segments")
-                except Exception as e:
-                    log(f"[Audio] AI4Bharat failed: {e}")
-                    log(
-                        f"[Audio] Falling back to Whisper for '{detected_lang}'"
-                    )
-                    try:
-                        with AudioTranscriber() as transcriber:
-                            # Use Arbiter to guarantee VRAM availability
-                            async with RESOURCE_ARBITER.acquire(
-                                "whisper", vram_gb=1.5
-                            ):
-                                audio_segments = (
-                                    await transcriber.transcribe(
-                                        path, language=detected_lang
-                                    )
-                                    or []
-                                )
-                    except Exception as e2:
-                        log(f"[Audio] Whisper fallback also failed: {e2}")
-                finally:
-                    # CRITICAL: Unload IndicASR to free VRAM for Ollama vision
-                    if indic_transcriber is not None:
-                        indic_transcriber.unload_model()
-            else:
-                # Use Whisper for English and other languages
-                log(
-                    f"[Audio] Using Whisper turbo for '{detected_lang}'"
-                    + (" (lyrics mode)" if use_lyrics_mode else "")
-                )
-                try:
-                    with AudioTranscriber() as transcriber:
-                        async with RESOURCE_ARBITER.acquire(
-                            "whisper", vram_gb=1.5
-                        ):
-                            audio_segments = (
-                                await transcriber.transcribe(
-                                    path,
-                                    language=detected_lang,
-                                    force_lyrics=use_lyrics_mode,
-                                )
-                                or []
-                            )
-
-                        # Auto-retry with lyrics mode if no segments and wasn't already lyrics mode
-                        if not audio_segments and not use_lyrics_mode:
-                            log(
-                                "[Audio] No segments found, retrying with lyrics mode..."
-                            )
-                            audio_segments = (
-                                await transcriber.transcribe(
-                                    path,
-                                    language=detected_lang,
-                                    force_lyrics=True,
-                                )
-                                or []
-                            )
-                except Exception as e:
-                    log(f"[Audio] Whisper failed: {e}")
+            except Exception as e:
+                log(f"[Audio] Whisper failed: {e}")
 
             if audio_segments:
                 log(

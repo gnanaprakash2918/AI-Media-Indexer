@@ -19,7 +19,6 @@ QUICK=false
 FRESH=false
 NUCLEAR=false
 DISTRIBUTED=false
-INSTALL_INDIC=false
 SKIP_OLLAMA=false
 SKIP_DOCKER=false
 SKIP_CLEAN=false
@@ -34,7 +33,6 @@ while [[ "$#" -gt 0 ]]; do
         -f|--fresh) FRESH=true ;;
         -n|--nuclear) NUCLEAR=true; SKIP_CLEAN=false ;;
         -d|--distributed) DISTRIBUTED=true ;;
-        -i|--indic) INSTALL_INDIC=true ;;
         --skip-ollama) SKIP_OLLAMA=true ;;
         --skip-docker) SKIP_DOCKER=true ;;
         --skip-clean) SKIP_CLEAN=true ;;
@@ -62,7 +60,6 @@ if [ "$SHOW_HELP" = true ]; then
     echo ""
     echo -e "${YELLOW}FEATURE FLAGS:${NC}"
     echo "  -d, --distributed  Enable Redis + Celery workers"
-    echo "  -i, --indic        Install NeMo for Tamil/Hindi transcription"
     echo ""
     echo -e "${YELLOW}GRANULAR FLAGS:${NC}"
     echo "  --recreate-venv    Delete and recreate virtual environment"
@@ -74,7 +71,6 @@ if [ "$SHOW_HELP" = true ]; then
     echo -e "${YELLOW}EXAMPLES:${NC}"
     echo "  ./start.sh -q                      # Fastest startup"
     echo "  ./start.sh -n -d                   # Fresh start + parallel workers"
-    echo "  ./start.sh -f -i                   # Clear caches + Tamil support"
     echo "  ./start.sh -n --recreate-venv      # Complete reset"
     echo ""
     exit 0
@@ -86,10 +82,9 @@ echo "================================================"
 # Show active flags
 if [ "$NUCLEAR" = true ]; then echo -e "   ${RED}Mode: NUCLEAR (wipe all data)${NC}"; fi
 if [ "$DISTRIBUTED" = true ]; then echo -e "   ${MAGENTA}Mode: Distributed (Redis + Celery)${NC}"; fi
-if [ "$INSTALL_INDIC" = true ]; then echo -e "   ${CYAN}Mode: Indic ASR (Tamil/Hindi)${NC}"; fi
 
-# 1. Virtual Environment
-echo -e "\n${YELLOW}[1/6] Checking virtual environment...${NC}"
+# 2. Virtual Environment
+echo -e "\n${YELLOW}[1/5] Checking virtual environment...${NC}"
 if [ "$RECREATE_VENV" = true ] && [ -d ".venv" ]; then
     echo "  Removing existing .venv..."
     rm -rf .venv
@@ -104,37 +99,30 @@ else
     echo -e "  ${GREEN}Virtual environment exists${NC}"
 fi
 
-# 2. Install Indic ASR
-if [ "$INSTALL_INDIC" = true ]; then
-    echo -e "\n${CYAN}[2/6] Installing Indic ASR (NeMo toolkit)...${NC}"
-    uv sync --extra indic
-    echo -e "  ${GREEN}Indic ASR installed!${NC}"
-fi
-
 # 3. Clean caches
 if [ "$SKIP_CLEAN" = false ]; then
-    echo -e "\n${YELLOW}[3/6] Cleaning caches...${NC}"
+    echo -e "\n${YELLOW}[2/5] Cleaning caches...${NC}"
     rm -rf .cache .face_cache .pytest_cache __pycache__ 2>/dev/null || true
     find . -type d -name "__pycache__" -not -path "./.venv/*" -exec rm -rf {} + 2>/dev/null || true
     rm -f logs/*.log 2>/dev/null || true
     echo -e "  ${GREEN}Cache cleanup complete!${NC}"
 else
-    echo -e "${YELLOW}[3/6] Skipping cache cleanup (--skip-clean)${NC}"
+    echo -e "${YELLOW}[2/5] Skipping cache cleanup (--skip-clean)${NC}"
 fi
 
 # 4. Nuke Qdrant data
 if [ "$NUCLEAR" = true ]; then
-    echo -e "\n${RED}[4/6] Performing complete data reset...${NC}"
+    echo -e "\n${RED}[3/5] Performing complete data reset...${NC}"
     rm -rf qdrant_data qdrant_data_embedded thumbnails jobs.db identity.db 2>/dev/null || true
     docker-compose down -v --remove-orphans 2>/dev/null || true
     echo -e "  ${GREEN}Data reset complete!${NC}"
 else
-    echo -e "${YELLOW}[4/6] Keeping Qdrant data (use -n to delete)${NC}"
+    echo -e "${YELLOW}[3/5] Keeping Qdrant data (use -n to delete)${NC}"
 fi
 
 # 5. Docker
 if [ "$SKIP_DOCKER" = false ]; then
-    echo -e "\n${YELLOW}[5/6] Starting Docker services...${NC}"
+    echo -e "\n${YELLOW}[4/5] Starting Docker services...${NC}"
     
     if [ "$PULL_IMAGES" = true ]; then
         echo "  Pulling latest images..."
@@ -149,11 +137,11 @@ if [ "$SKIP_DOCKER" = false ]; then
         echo -e "  ${GREEN}Qdrant started${NC}"
     fi
 else
-    echo -e "${YELLOW}[5/6] Skipping Docker (--skip-docker)${NC}"
+    echo -e "${YELLOW}[4/5] Skipping Docker (--skip-docker)${NC}"
 fi
 
 # 6. Start Services
-echo -e "\n${YELLOW}[6/6] Starting services...${NC}"
+echo -e "\n${YELLOW}[5/5] Starting services...${NC}"
 
 # Hardware check
 uv run python -c "import torch; print(f'  GPU: {torch.cuda.get_device_name(0)}' if torch.cuda.is_available() else '  GPU: None (CPU Mode)');" 2>/dev/null || true
