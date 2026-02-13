@@ -748,11 +748,7 @@ class Settings(BaseSettings):
         description="CLAP stride in seconds (overlap between windows)",
     )
 
-    # --- Language Support ---
-    indic_languages: list[str] = Field(
-        default=["ta", "hi", "te", "ml", "kn", "bn", "gu", "mr", "or", "pa"],
-        description="List of Indic language codes for AI4Bharat ASR",
-    )
+
 
     # --- Search Deduplication ---
     deduplication_window_seconds: float = Field(

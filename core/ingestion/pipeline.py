@@ -603,7 +603,7 @@ class IngestionPipeline:
         """Processes audio to generate transcriptions and language classification.
 
         Prioritizes sidecar SRT files, then tries to extract embedded
-        subtitles, and finally falls back to AI-based ASR (Whisper or AI4Bharat).
+        subtitles, and finally falls back to AI-based ASR (Whisper).
         Stores the resulting segments in the vector database.
 
         Args:

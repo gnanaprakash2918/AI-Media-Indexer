@@ -111,6 +111,15 @@ export interface SceneNode {
     thumbnail?: string;
 }
 
+export interface GraphStats {
+    identities: number;
+    face_tracks: number;
+    voice_tracks: number;
+    scenes: number;
+    scene_transitions: number;
+    temporal_events: number;
+}
+
 // ========== Library Endpoints ==========
 
 export const getLibrary = async () => {
@@ -240,6 +249,6 @@ export const getSceneTimeline = async (videoPath: string) => {
 };
 
 export const getGraphStats = async () => {
-    const res = await apiClient.get<{ stats: unknown }>('/graph/stats');
+    const res = await apiClient.get<{ status: string; stats: GraphStats }>('/graph/stats');
     return res.data;
 };

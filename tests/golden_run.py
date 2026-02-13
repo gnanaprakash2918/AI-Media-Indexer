@@ -20,33 +20,7 @@ from config import settings  # noqa: E402
 class TestOperationalIntegration(unittest.TestCase):
     """Tests for integration of system components."""
 
-    def test_01_hybrid_asr_switching(self):
-        """Verify ASR backend switches based on configuration."""
-        print("\nTesting Hybrid ASR Switch logic...")
-
-        # Import inside test to avoid torch import issues during collection
-        from core.processing.indic_transcriber import IndicASRPipeline
-
-        # Mock dependencies to avoid real loading
-        with patch(
-            "core.processing.indic_transcriber.IndicASRPipeline.load_model"
-        ) as _mock_load:
-            with patch(
-                "core.processing.indic_transcriber.IndicASRPipeline._transcribe_nemo"
-            ) as mock_nemo:
-                with patch("core.processing.indic_transcriber.HAS_NEMO", True):
-                    mock_nemo.return_value = [
-                        {"text": "mocked", "start": 0, "end": 1}
-                    ]
-
-                    # Case 1: Native Enabled
-                    settings.use_native_nemo = True
-                    settings.ai4bharat_url = ""
-
-                    pipeline = IndicASRPipeline(lang="ta")
-                    # Just verify pipeline initialized correctly
-                    self.assertIsNotNone(pipeline)
-                    print("✅ Hybrid ASR pipeline initialized successfully")
+    # test_01_hybrid_asr_switching removed as Nemo is deprecated
 
     def test_02_videorag_response_structure(self):
         """Verify VideoRAG returns expected fields (match_reasons)."""

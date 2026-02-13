@@ -94,13 +94,13 @@ VISION_AGENT_TOOLS = [
 AUDIO_AGENT_TOOLS = [
     AgentToolCard(
         name="transcribe_audio",
-        description="Transcribe audio to text using AI4Bharat (Indic languages) or Whisper",
+        description="Transcribe audio to text using Whisper",
         parameters=[
             ToolParameter("audio_path", "string", "Path to audio/video file"),
             ToolParameter(
                 "language",
                 "string",
-                "Language code (e.g., 'ta', 'hi', 'en')",
+                "Language code (e.g., 'en', 'fr')",
                 required=False,
             ),
         ],
@@ -205,7 +205,7 @@ def get_audio_agent_card(
         raise ImportError("a2a package not installed")
     return AgentCard(
         name="AudioAgent",
-        description="Transcribes audio using AI4Bharat/Whisper and performs speaker diarization",
+        description="Transcribes audio using Whisper and performs speaker diarization",
         version="1.0.0",
         url=f"{base_url}/a2a/audio",
         capabilities=AgentCapabilities(
@@ -217,7 +217,7 @@ def get_audio_agent_card(
             AgentSkill(
                 id="transcribe",
                 name="Transcribe",
-                description="ASR with Indic support",
+                description="ASR with Whisper",
                 tags=["audio"],
             ),
             AgentSkill(

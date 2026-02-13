@@ -100,7 +100,7 @@ export default function GraphPage() {
                 <Grid size={{ xs: 12, md: 4 }}>
                     <Paper sx={{ p: 3, textAlign: 'center' }}>
                         <Typography variant="h3" color="primary.main" fontWeight="bold">
-                            {statsQuery.data?.stats?.identities || statsQuery.data?.stats?.total_identities || 0}
+                            {statsQuery.data?.stats?.identities || 0}
                         </Typography>
                         <Typography variant="overline" color="text.secondary">
                             Tracked Identities
@@ -110,7 +110,7 @@ export default function GraphPage() {
                 <Grid size={{ xs: 12, md: 4 }}>
                     <Paper sx={{ p: 3, textAlign: 'center' }}>
                         <Typography variant="h3" color="secondary.main" fontWeight="bold">
-                            {statsQuery.data?.stats?.scenes || statsQuery.data?.stats?.total_scenes || 0}
+                            {statsQuery.data?.stats?.scenes || 0}
                         </Typography>
                         <Typography variant="overline" color="text.secondary">
                             Analyzed Scenes
@@ -120,7 +120,7 @@ export default function GraphPage() {
                 <Grid size={{ xs: 12, md: 4 }}>
                     <Paper sx={{ p: 3, textAlign: 'center' }}>
                         <Typography variant="h3" fontWeight="bold">
-                            {statsQuery.data?.stats?.scene_transitions || statsQuery.data?.stats?.total_relationships || 0}
+                            {statsQuery.data?.stats?.scene_transitions || 0}
                         </Typography>
                         <Typography variant="overline" color="text.secondary">
                             Social Links

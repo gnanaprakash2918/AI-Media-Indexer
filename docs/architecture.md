@@ -107,7 +107,7 @@ flowchart TD
     
     subgraph AudioLogic[Audio Council]
         AL[Multi-pass Lang Detect] --> AC[ASR Council: ROVER voting]
-        AC -->|Whisper v3, Indic, Seamless| AT[Final Transcript]
+        AC -->|Whisper v3| AT[Final Transcript]
         AT --> AD[Analysis: Pyannote 3.1, SER, CLAP Events]
     end
     
@@ -195,7 +195,6 @@ flowchart TD
 | `temporal_context.py` | 3-tier XMem temporal memory management |
 | `identity.py` | InsightFace 512D + temporal track building |
 | `scene_aggregator.py` | Fusing visual/dialogue into Scenelets |
-| `indic_transcriber.py` | AI4Bharat/NeMo Indic ASR wrapper |
 
 ### 3. Retrieval (`core/retrieval/`)
 | File | Purpose |
@@ -246,6 +245,6 @@ flowchart TD
 | LLM | Gemini 1.5 Pro (Reasoning), Ollama (Local) |
 | Embeddings | NV-Embed-v2 (7B), BGE-M3 (Hybrid) |
 | Vision | InternVideo2.5, SAM 2, InsightFace ArcFace |
-| ASR | Whisper v3, AI4Bharat, SeamlessM4T v2 |
+| ASR | Whisper v3 |
 | Reranking | MiniLM-L-12-v2, BGE-Reranker v2 |
 | Memory | 3-Tier XMem Memory (Sensory/Working/LT) |

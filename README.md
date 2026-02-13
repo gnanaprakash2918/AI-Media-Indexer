@@ -10,7 +10,6 @@
 
 ![InternVideo2.5](https://img.shields.io/badge/InternVideo2.5-SOTA_VLM-blue)
 ![Whisper v3](https://img.shields.io/badge/Whisper_v3-General_ASR-green)
-![IndicConformer](https://img.shields.io/badge/IndicConformer-AI4Bharat-orange)
 ![SAM 2](https://img.shields.io/badge/SAM_2-Visual_Tracking-purple)
 ![NV-Embed-v2](https://img.shields.io/badge/NV--Embed--v2-7B_SOTA-red)
 ![BGE-M3](https://img.shields.io/badge/BGE--M3-Hybrid_Retrieval-blue)
@@ -42,7 +41,7 @@ flowchart TD
     
     subgraph AudioLogic[Audio Council]
         AL[Multi-pass Lang Detect] --> AC[ASR Council: ROVER voting]
-        AC -->|Whisper v3, Indic, Seamless| AT[Final Transcript]
+        AC -->|Whisper v3| AT[Final Transcript]
         AT --> AD[Analysis: Pyannote 3.1, SER, CLAP Events]
     end
     
@@ -133,7 +132,7 @@ flowchart TD
   - Detection: YOLO-World
   - OCR: PP-OCRv5
 - **Audio Intelligence**: 
-  - ASR: Whisper v3, AI4Bharat IndicASR
+  - ASR: Whisper v3
   - Diarization: Pyannote 4.0
   - Embeddings: WeSpeaker
 - **LLM/VLM Providers**: Google Gemini 1.5, Ollama (Llama 3 / Moondream)
@@ -188,7 +187,6 @@ Settings are managed via `.env` (overrides `config.py` defaults).
 | `QDRANT_PORT` | `6333` | Vector DB port |
 | `OLLAMA_MODEL` | `moondream` | Default VLM model |
 | `GEMINI_API_KEY` | None | Google Gemini API Key |
-| `USE_INDIC_ASR` | `True` | Enable AI4Bharat for Indic langs |
 | `ENABLE_HYBRID_SEARCH`| `True` | Use weighted RRF for ranking |
 | `FACE_RECOGNITION_THRESHOLD` | `0.45` | Global face matching threshold |
 

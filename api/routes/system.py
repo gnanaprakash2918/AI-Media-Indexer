@@ -190,9 +190,6 @@ async def health_check(request: Request):
             else "disconnected",
             "stats": stats,
             "observability": observability_status,
-            "asr_mode": "Native"
-            if settings.use_native_nemo
-            else "Docker/Whisper",
         }
     except Exception as e:
         logger.exception("Health check failed")

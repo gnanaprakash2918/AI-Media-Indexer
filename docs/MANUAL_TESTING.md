@@ -6,8 +6,6 @@ This document outlines the manual verification steps to ensure the **AI Media In
 ## 1. Helper Scripts
 Use these scripts to manage the environment:
 - `start.ps1`: Starts the entire stack (Frontend, Backend, Qdrant).
-- `scripts/install_native_nemo.ps1`: Syncs Native AI4Bharat dependencies.
-- `scripts/setup_ai4bharat.ps1`: Runs the Dockerized ASR fallback.
 
 ---
 
@@ -19,13 +17,13 @@ Use these scripts to manage the environment:
 2. **Launch System**:
    ```powershell
    ./start.ps1
-   # Ensure "System Online" and "ASR Mode: NATIVE" (or Docker) is green.
+   # Ensure "System Online".
    ```
 3. **Trigger Ingest**:
    - Go to Web UI: `http://localhost:5173`.
    - Use "Upload" or drag-drop the file.
    - **Check logs** in the terminal running `start.ps1`.
-     - Look for: `[IndicASR] Using Native NeMo...` (or Fallback).
+     - Look for: `[Whisper] Transcribing...`.
      - Look for: `[Vision] Analyzed...`.
      - Look for: `[VectorDB] Upserted...`.
 
@@ -67,5 +65,4 @@ Use these scripts to manage the environment:
 
 ## Troubleshooting
 - **OOM Errors**: Check `config.py` Hardware Profile. Reduce `batch_size`.
-- **NeMo Errors**: Run `./scripts/install_native_nemo.ps1` again.
 - **Docker Fail**: Ensure Docker Desktop is running.
