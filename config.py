@@ -166,6 +166,9 @@ class Settings(BaseSettings):
     qdrant_backend: str = Field(
         default="docker", description="'memory' or 'docker'"
     )
+    qdrant_timeout: float = Field(
+        default=60.0, description="Timeout in seconds for Qdrant client operations"
+    )
 
     #  Agent & LLM
     agent_model: str = Field(

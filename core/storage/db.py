@@ -210,11 +210,11 @@ class VectorDB:
         self._closed = False
 
         if backend == "memory":
-            self.client = QdrantClient(path=path)
+            self.client = QdrantClient(path=path, timeout=settings.qdrant_timeout)
             log("Initialized embedded Qdrant", path=path, backend=backend)
         elif backend == "docker":
             try:
-                self.client = QdrantClient(host=host, port=port)
+                self.client = QdrantClient(host=host, port=port, timeout=settings.qdrant_timeout)
                 self.client.get_collections()
             except Exception as exc:
                 log(
