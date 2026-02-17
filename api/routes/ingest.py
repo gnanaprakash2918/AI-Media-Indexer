@@ -306,21 +306,60 @@ async def resume_job(job_id: str):
 
 
 @router.delete("/jobs/{job_id}")
-async def delete_job(job_id: str):
-    """Delete a job from the system.
+async def delete_job(
+    job_id: str,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+):
+    """Delete a job and ALL associated data from the system.
 
-    Removes the job from both the progress tracker cache and the SQLite database.
+    Performs comprehensive cleanup:
+    - Qdrant: Deletes from all 10 vector collections
+    - Neo4j: Removes video node and all relationships
+    - SQLite: Removes job record
+    - Cache: Clears progress tracker cache
 
     Args:
         job_id: The unique identifier of the job to delete.
 
     Returns:
-        A confirmation status dictionary.
+        A confirmation status dictionary with cleanup details.
 
     Raises:
         HTTPException: If the job cannot be found.
     """
+    # 1. Get job info to find the file path before deleting
+    job_info = progress_tracker.get(job_id)
+    file_path = job_info.file_path if job_info else None
+
+    cleanup_results = {"qdrant": False, "neo4j": False, "sqlite": False}
+
+    # 2. Clean up Qdrant (all 10 collections) and Neo4j if we have the file path
+    if file_path and pipeline:
+        try:
+            pipeline.db.delete_media_by_path(file_path)
+            cleanup_results["qdrant"] = True
+            logger.info(f"[DeleteJob] Cleaned Qdrant for {file_path}")
+        except Exception as e:
+            logger.warning(f"[DeleteJob] Qdrant cleanup failed: {e}")
+
+        try:
+            pipeline.graph_builder.delete_video(file_path)
+            cleanup_results["neo4j"] = True
+            logger.info(f"[DeleteJob] Cleaned Neo4j for {file_path}")
+        except Exception as e:
+            logger.warning(f"[DeleteJob] Neo4j cleanup failed: {e}")
+
+    # 3. Delete from progress tracker cache + SQLite
     success = progress_tracker.delete(job_id)
-    if not success:
+    if success:
+        cleanup_results["sqlite"] = True
+
+    if not success and not file_path:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"status": "deleted", "job_id": job_id}
+
+    return {
+        "status": "deleted",
+        "job_id": job_id,
+        "file_path": file_path,
+        "cleanup": cleanup_results,
+    }

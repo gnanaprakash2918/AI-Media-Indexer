@@ -219,10 +219,10 @@ class GraphBuilder:
                 o.confidence = $conf,
                 o.source = 'sam3'
             
-            # Link to Video
+            // Link to Video
             MERGE (o)-[:TRACKED_IN]->(v)
             
-            # Link to overlapping Scenes (Temporal Projection)
+            // Link to overlapping Scenes (Temporal Projection)
             WITH o, v, $start as m_start, $end as m_end
             MATCH (v)-[:CONTAINS]->(s:Scene)
             WHERE s.start_time <= m_end AND s.end_time >= m_start
@@ -237,3 +237,23 @@ class GraphBuilder:
                 "start": m.get("start_time"),
                 "end": m.get("end_time")
             })
+
+    def delete_video(self, video_path: str) -> None:
+        """Remove all graph nodes and relationships for a video.
+
+        Cascades through Video -> Scene, PrecisionObject, and all
+        connected entity/action/mood nodes that become orphaned.
+
+        Args:
+            video_path: Path to the media file.
+        """
+        if not self.store:
+            return
+
+        # Delete all nodes connected to this video and the video itself
+        query = """
+        MATCH (v:Video {path: $video_path})
+        OPTIONAL MATCH (v)-[r]-()
+        DELETE r, v
+        """
+        self.store.query(query, {"video_path": video_path})

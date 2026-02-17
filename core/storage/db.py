@@ -5619,6 +5619,12 @@ class VectorDB:
             self.MEDIA_COLLECTION,
             self.FACES_COLLECTION,
             self.VOICE_COLLECTION,
+            self.SCENES_COLLECTION,
+            self.SCENELETS_COLLECTION,
+            self.AUDIO_EVENTS_COLLECTION,
+            self.MASKLETS_COLLECTION,
+            self.SUMMARIES_COLLECTION,
+            self.VIDEO_METADATA_COLLECTION,
         ]:
             try:
                 # For faces and voices, we need to match media_path
@@ -7311,6 +7317,12 @@ class VectorDB:
             self.MEDIA_COLLECTION,
             self.FACES_COLLECTION,
             self.VOICE_COLLECTION,
+            self.SCENES_COLLECTION,
+            self.SCENELETS_COLLECTION,
+            self.AUDIO_EVENTS_COLLECTION,
+            self.MASKLETS_COLLECTION,
+            self.SUMMARIES_COLLECTION,
+            self.VIDEO_METADATA_COLLECTION,
         ]:
             try:
                 # Try with "media_path" key

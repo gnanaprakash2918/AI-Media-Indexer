@@ -748,7 +748,65 @@ class Settings(BaseSettings):
         description="CLAP stride in seconds (overlap between windows)",
     )
 
+    clap_detection_threshold: float = Field(
+        default=0.25,
+        description="CLAP event detection confidence threshold (0-1)",
+    )
 
+    ast_detection_threshold: float = Field(
+        default=0.15,
+        description="AST dynamic event prediction threshold (0-1)",
+    )
+
+    # --- OCR & Visual Processing ---
+    ocr_throttle_seconds: float = Field(
+        default=2.0,
+        description="Min seconds between OCR runs on consecutive frames",
+    )
+    perceptual_hash_threshold: int = Field(
+        default=8,
+        description="Max hamming distance for perceptual hash frame similarity (0-64, lower=stricter)",
+    )
+    yolo_confidence_threshold: float = Field(
+        default=0.3,
+        description="YOLO-World object detection confidence threshold (0-1)",
+    )
+    deep_research_confidence: float = Field(
+        default=0.4,
+        description="Min confidence for deep research shot/mood classification (0-1)",
+    )
+
+    # --- Color & Visual Analysis ---
+    dominant_color_clusters: int = Field(
+        default=3,
+        description="Number of K-means clusters for dominant color extraction",
+    )
+
+    # --- Thumbnail ---
+    thumbnail_time_seconds: float = Field(
+        default=5.0,
+        description="Timestamp in seconds for main video thumbnail extraction",
+    )
+
+    # --- Post-Processing ---
+    dialogue_segment_limit: int = Field(
+        default=50,
+        description="Max dialogue segments to include in global context",
+    )
+    segment_fallback_duration: float = Field(
+        default=2.0,
+        description="Default segment duration when end time is missing (seconds)",
+    )
+
+    # --- VLM ---
+    vlm_max_frames: int = Field(
+        default=32,
+        description="Max frames to sample for VLM video analysis",
+    )
+    vlm_max_tokens: int = Field(
+        default=128,
+        description="Max new tokens for VLM generation",
+    )
 
     # --- Search Deduplication ---
     deduplication_window_seconds: float = Field(

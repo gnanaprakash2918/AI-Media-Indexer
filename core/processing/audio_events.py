@@ -669,13 +669,19 @@ class AudioEventDetector:
             return [None for _ in audio_chunks]
 
     def cleanup(self) -> None:
-        """Release model resources."""
+        """Release all model resources (CLAP + AST)."""
         if self.model is not None:
             del self.model
             self.model = None
         if self.processor is not None:
             del self.processor
             self.processor = None
+        if self.ast_model is not None:
+            del self.ast_model
+            self.ast_model = None
+        if self.ast_processor is not None:
+            del self.ast_processor
+            self.ast_processor = None
 
         try:
             import torch
@@ -685,7 +691,7 @@ class AudioEventDetector:
         except ImportError:
             pass
 
-        log.info("[CLAP] Resources released")
+        log.info("[CLAP/AST] All resources released")
 
 
 # Singleton instance

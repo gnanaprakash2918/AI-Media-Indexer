@@ -513,10 +513,7 @@ class IngestionPipeline:
                         f"{chunk_start / 60:.1f}m - {chunk_end / 60:.1f}m"
                     )
 
-                    # Save original user-requested range, update for this chunk
-                    _orig_start, _orig_end = self._start_time, self._end_time
-                    self._start_time = chunk_start
-                    self._end_time = chunk_end
+                    # Pass chunk boundaries as explicit parameters (no instance state mutation)
 
                 # Exit condition
                 if chunk_start >= duration:
@@ -537,8 +534,9 @@ class IngestionPipeline:
                     progress_tracker.update(job_id, progress_base)
 
                     await retry(
-                        lambda: self._process_frames(
-                            path, job_id, total_duration=duration
+                        lambda cs=chunk_start, ce=chunk_end: self._process_frames(
+                            path, job_id, total_duration=duration,
+                            chunk_start=cs, chunk_end=ce,
                         ),
                         on_retry=lambda e: progress_tracker.increment_retry(
                             job_id, "frames"
@@ -556,7 +554,7 @@ class IngestionPipeline:
                     f"scene_captions_chunk_{current_chunk}",
                     "Generating scene captions",
                 ):
-                    await self._process_scene_captions(path, job_id)
+                    await self._process_scene_captions(path, job_id, chunk_start=chunk_start, chunk_end=chunk_end)
 
                 # MEMORY CLEANUP between chunks
                 self._cleanup_memory(f"chunk_{current_chunk}_complete")
@@ -564,8 +562,7 @@ class IngestionPipeline:
                 if not should_chunk:
                     break
 
-                # Restore original time range before advancing
-                self._start_time, self._end_time = _orig_start, _orig_end
+                # No state restoration needed — chunk boundaries passed as parameters
                 current_chunk += 1
 
                 # Check cancellation between chunks
@@ -831,162 +828,9 @@ class IngestionPipeline:
             except Exception:
                 pass
 
-        # ============================================================
-        # CLAP AUDIO EVENT DETECTION: Previously dead code - now wired!
-        # Detects non-speech sounds: bells, cheers, sirens, applause, etc.
-        # ============================================================
-        try:
-            # CLAP defaults to True in EnhancedPipelineConfig, so use True as fallback
-            # CLAP zero-shot classification: runs ALONGSIDE _process_audio_events (AST)
-            # AST provides open-vocabulary predictions; CLAP provides targeted classification
-            # against a curated set of semantically meaningful event classes.
-            if getattr(self, "enhanced_config", None) and getattr(self.enhanced_config, "enable_clap", True):
-                from core.processing.audio_events import get_audio_detector
-
-                log("[CLAP] Starting audio event detection...")
-                audio_detector = get_audio_detector()
-
-                # === STREAMING APPROACH (OOM FIX) ===
-                # Instead of loading entire audio file at once, we stream in chunks
-                # This prevents OOM on videos longer than 15 minutes
-                try:
-                    # Get duration via cached probe (avoids redundant FFprobe calls)
-                    probe_data = await self.get_probe_data(path)
-                    total_duration = float(probe_data.get("format", {}).get("duration", 0))
-                    log(
-                        f"[CLAP] Video duration: {total_duration:.1f}s (streaming mode)"
-                    )
-
-                    # Streaming parameters
-                    sr = 16000  # CLAP expected sample rate
-                    chunk_duration = 30.0  # 30s chunks (~1MB RAM each)
-                    stride = 25.0  # 5s overlap to catch boundary events
-
-                    # Prepare 2-second CLAP windows within each chunk
-                    clap_window_duration = 2.0
-                    clap_samples_per_window = int(clap_window_duration * sr)
-
-                    # Build list of (chunk, start_time) tuples for batch processing
-                    audio_chunks: list[tuple] = []
-
-                    # Stream each chunk using FFmpeg (NOT librosa)
-                    for chunk_start in range(
-                        0, int(total_duration), int(stride)
-                    ):
-                        chunk_end = min(
-                            chunk_start + chunk_duration, total_duration
-                        )
-
-                        # Use FFmpeg to extract just this chunk
-                        chunk_array = await self._extract_audio_segment(
-                            path, float(chunk_start), float(chunk_end), sr
-                        )
-
-                        if chunk_array is None or len(chunk_array) < sr:
-                            continue
-
-                        # Split chunk into 2-second CLAP windows
-                        for i in range(
-                            0,
-                            len(chunk_array) - clap_samples_per_window + 1,
-                            clap_samples_per_window,
-                        ):
-                            window = chunk_array[
-                                i : i + clap_samples_per_window
-                            ]
-                            if len(window) < sr:  # Skip windows < 1 second
-                                continue
-                            window_start = chunk_start + (i / sr)
-                            audio_chunks.append((window, window_start))
-
-                        # Aggressive cleanup after each chunk
-                        del chunk_array
-                        import gc
-
-                        gc.collect()
-
-                    log(
-                        f"[CLAP] Prepared {len(audio_chunks)} windows for batch processing (streaming mode)"
-                    )
-
-                    # Define target classes once
-                    target_classes = [
-                        "applause",
-                        "cheering",
-                        "laughter",
-                        "crowd",
-                        "music",
-                        "singing",
-                        "scary music",
-                        "happy music",
-                        "siren",
-                        "explosion",
-                        "gunshot",
-                        "glass breaking",
-                        "dog barking",
-                        "cat meowing",
-                        "bird chirping",
-                        "thunder",
-                        "rain",
-                        "ocean waves",
-                        "wind",
-                        "footsteps",
-                        "door slamming",
-                        "car engine",
-                    ]
-
-                    # BATCH PROCESSING: Single GPU acquisition for all chunks
-                    # Run CLAP directly (it handles GPU locking internally)
-                    # Request embeddings for storage in vector DB
-                    batch_results = await audio_detector.detect_events_batch(
-                        audio_chunks=audio_chunks,
-                        target_classes=target_classes,
-                        sample_rate=int(sr),
-                        top_k=3,
-                        threshold=0.25,
-                        return_embedding=True,  # Get CLAP embeddings for vector search
-                    )
-
-                    # Collect results with timestamps and embeddings
-                    audio_events = []
-                    for (_, start_time), (events, embedding) in zip(
-                        audio_chunks, batch_results
-                    ):
-                        for event in events:
-                            if event.get("event") not in ("speech", "silence"):
-                                audio_events.append(
-                                    {
-                                        "event": event["event"],
-                                        "confidence": event["confidence"],
-                                        "start": start_time,
-                                        "end": start_time + chunk_duration,
-                                        "embedding": embedding,  # 512-dim CLAP embedding
-                                    }
-                                )
-
-                    if audio_events:
-                        log(
-                            f"[CLAP] Detected {len(audio_events)} audio events: {[e['event'] for e in audio_events[:5]]}"
-                        )
-                        # Store audio events in database with CLAP embeddings
-                        for event in audio_events:
-                            self.db.insert_audio_event(
-                                media_path=str(path),
-                                event_type=event["event"],
-                                start_time=event["start"],
-                                end_time=event["end"],
-                                confidence=event["confidence"],
-                                clap_embedding=event.get(
-                                    "embedding"
-                                ),  # Store CLAP vector
-                            )
-                    else:
-                        log("[CLAP] No non-speech audio events detected")
-
-                except Exception as e:
-                    log(f"[CLAP] Audio loading failed: {e}")
-        except Exception as e:
-            log(f"[CLAP] Audio event detection failed: {e}")
+        # NOTE: CLAP detection removed — redundant with _process_audio_events()
+        # which uses AST dynamic prediction (527 AudioSet classes) + CLAP embeddings.
+        # See _process_audio_events() for the definitive audio event detection path.
 
         # ============================================================
         # AUDIO LOUDNESS ANALYSIS: Detect loud moments (e.g., "92dB cheer")
@@ -1822,7 +1666,8 @@ class IngestionPipeline:
 
     @observe("frame_processing")
     async def _process_frames(
-        self, path: Path, job_id: str | None = None, total_duration: float = 0.0
+        self, path: Path, job_id: str | None = None, total_duration: float = 0.0,
+        chunk_start: float | None = None, chunk_end: float | None = None,
     ) -> None:
         """Handles visual frame extraction and vision analysis.
 
@@ -1883,8 +1728,8 @@ class IngestionPipeline:
             frame_generator = self.extractor.extract(
                 path,
                 interval=self.frame_interval_seconds,
-                start_time=getattr(self, "_start_time", None),
-                end_time=getattr(self, "_end_time", None),
+                start_time=chunk_start,
+                end_time=chunk_end,
                 output_dir=frame_cache_dir,
             )
 
@@ -2266,7 +2111,8 @@ class IngestionPipeline:
 
     @observe("scene_captioning")
     async def _process_scene_captions(
-        self, path: Path, job_id: str | None = None
+        self, path: Path, job_id: str | None = None,
+        chunk_start: float | None = None, chunk_end: float | None = None,
     ) -> None:
         """Processes scene boundaries and aggregates multi-modal data.
 
@@ -2324,8 +2170,8 @@ class IngestionPipeline:
 
             # 2. CHUNK FILTERING (Critical for Memory/Efficiency)
             # Only process scenes that overlap with the current pipeline chunk context
-            start_ctx = getattr(self, "_start_time", None) or 0.0
-            end_ctx = getattr(self, "_end_time", None) or float("inf")
+            start_ctx = chunk_start if chunk_start is not None else 0.0
+            end_ctx = chunk_end if chunk_end is not None else float("inf")
 
             # Filter scenes: [Scene Start < Chunk End] AND [Scene End > Chunk Start]
             filtered_scenes = [
@@ -3788,156 +3634,10 @@ class IngestionPipeline:
                 except Exception as e:
                     logger.warning(f"[Graph] Masklet ingestion failed: {e}")
 
-            # ------------------------------------------------------------
-            # SOTA SCENE INDEXING (Adaptive Scene Segmentation)
-            # ------------------------------------------------------------
-            try:
-                from core.processing.scene_aggregator import (
-                    aggregate_frames_to_scene,
-                )
-                from core.processing.scene_detector import detect_scenes
-
-                # 1. Detect logical scenes (shots)
-                raw_scenes = await detect_scenes(media_path)
-                if not raw_scenes:
-                    # Fallback: Treat whole video as one scene if detection fails or single shot
-                    raw_scenes = []  # Will be handled by global context or we can make 1 synthetic scene
-
-                logger.info(
-                    f"Indexing {len(raw_scenes)} scenes for {path.name}"
-                )
-
-                # 2. Process each scene
-                for scene_idx, scene_info in enumerate(raw_scenes):
-                    # Find frames within this scene's time window
-                    scene_frames = [
-                        f
-                        for f in frames
-                        if scene_info.start_time
-                        <= f.get("timestamp", 0)
-                        < scene_info.end_time
-                    ]
-
-                    if not scene_frames:
-                        # Skip scenes with no analyzed frames (avoid empty noise)
-                        continue
-
-                    # Aggregate frame data into scene-level metadata
-                    scene_data = aggregate_frames_to_scene(
-                        frames=scene_frames,
-                        start_time=scene_info.start_time,
-                        end_time=scene_info.end_time,
-                        dialogue_segments=audio_segments,
-                    )
-
-                    # 3. Generate Multi-Vector Embeddings (Visual, Motion, Dialogue, Hybrid)
-                    # Visual: Summary of actions and entities
-                    visual_text = scene_data.get("visual_summary", "")
-
-                    # Motion: Sequence of actions
-                    motion_text = scene_data.get("action_sequence", "")
-
-                    # Dialogue: Transcript
-                    dialogue_text = scene_data.get("dialogue_transcript", "")
-
-                    # Hybrid: Combined rich description for general search
-                    hybrid_text = (
-                        f"{visual_text}. {motion_text}. "
-                        f"{dialogue_text}. "
-                        f"Location: {scene_data.get('location')}."
-                    )
-
-                    # Encode vectors
-                    # Note: We use the same encoder for all modalities (shared latent space) or specific ones if available
-                    # For now, using the main encoder for all text representations is standard for dense retrieval
-                    vectors = {}
-                    if visual_text:
-                        vectors["visual"] = await self.db.encode_text(
-                            visual_text
-                        )
-                    if motion_text:
-                        vectors["motion"] = await self.db.encode_text(
-                            motion_text
-                        )
-                    if dialogue_text:
-                        vectors["dialogue"] = await self.db.encode_text(
-                            dialogue_text
-                        )
-
-                    # Generate deterministic ID
-                    import uuid
-
-                    scene_id = str(
-                        uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            f"{media_path}_scene_{scene_idx}",
-                        )
-                    )
-
-                    # Upsert to SCENES collection
-                    self.db.client.upsert(
-                        collection_name=self.db.SCENES_COLLECTION,
-                        points=[
-                            models.PointStruct(
-                                id=scene_id,
-                                vector=vectors,  # Multi-vector dictionary
-                                payload={
-                                    "media_path": media_path,
-                                    "video_path": media_path,  # Alias
-                                    "start_time": scene_info.start_time,
-                                    "end_time": scene_info.end_time,
-                                    "scene_index": scene_idx,
-                                    "description": hybrid_text,  # Main display text
-                                    **scene_data,  # flattened metadata
-                                },
-                            )
-                        ],
-                    )
-
-                    # === NEO4J GRAPH INGESTION (Prod Ready Abuse) ===
-                    try:
-                        # Extract Deep Research signals (Mood/Shot) from frames
-                        # We need to peek into the raw payload if not in dict
-                        # For now, simplistic aggregation
-                        dr_mood = ""
-                        if "mood" in scene_data:
-                            dr_mood = scene_data["mood"]
-
-                        # Create synthetic analysis for Graph
-                        # We use 'graph_builder' which consumes FrameAnalysis
-                        from core.schemas import FrameAnalysis, SceneContext
-
-                        scene_ctx = SceneContext(
-                            location=scene_data.get("location", ""),
-                            mood=dr_mood,
-                            visible_text=scene_data.get("visible_text", [])
-                        )
-
-                        synth_analysis = FrameAnalysis(
-                            scene=scene_ctx,
-                            action=scene_data.get("action_sequence", ""),
-                            entities=scene_data.get("entities", []),
-                            face_cluster_ids=scene_data.get("face_cluster_ids", [])
-                        )
-
-                        self.graph_builder.process_scene(
-                            video_path=media_path,
-                            scene_id=scene_id,
-                            start_time=scene_info.start_time,
-                            end_time=scene_info.end_time,
-                            analysis=synth_analysis
-                        )
-                    except Exception:
-                        pass
-                        # logger.warning(f"[Graph] Ingestion failed for scene {scene_id}: {ge}")
-                        # logger.warning(f"[Graph] Ingestion failed for scene {scene_id}: {ge}")
-
-
-                # Add simplified global scene for context
-                # (Existing logic below can remain or be replaced by this granular loop metadata)
-
-            except Exception as e:
-                logger.error(f"Scene indexing failed: {e}")
+            # NOTE: Scene processing removed — redundant with _process_scene_captions()
+            # which runs TransNet V2, VLM captions, deep research, visual embeddings,
+            # InternVideo/LanguageBind, and full aggregation with Neo4j graph ingestion.
+            # See _process_scene_captions() for the definitive scene processing path.
 
             if frames:
                 # Collect dialogue from audio segments
