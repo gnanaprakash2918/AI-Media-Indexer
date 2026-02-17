@@ -27,29 +27,36 @@ async def get_library(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     try:
-        # Get unique video paths from frames collection
-        resp = pipeline.db.client.scroll(
-            collection_name=pipeline.db.MEDIA_COLLECTION,
-            scroll_filter=None,
-            limit=10000,
-            with_payload=["video_path", "action", "timestamp"],
-            with_vectors=False,
-        )
-
-        # Group by video_path
+        # Scroll with minimal payload to build video index
         videos: dict[str, dict] = {}
-        for point in resp[0]:
-            payload = point.payload or {}
-            path = payload.get("video_path")
-            if path and path not in videos:
-                videos[path] = {
-                    "path": path,
-                    "video_path": path,
-                    "frame_count": 0,
-                    "first_timestamp": payload.get("timestamp", 0),
-                }
-            if path:
+        offset = None
+        while True:
+            resp = pipeline.db.client.scroll(
+                collection_name=pipeline.db.MEDIA_COLLECTION,
+                scroll_filter=None,
+                limit=1000,
+                offset=offset,
+                with_payload=["video_path", "timestamp"],
+                with_vectors=False,
+            )
+            points, next_offset = resp
+            for point in points:
+                payload = point.payload or {}
+                path = payload.get("video_path")
+                if not path:
+                    continue
+                if path not in videos:
+                    videos[path] = {
+                        "path": path,
+                        "video_path": path,
+                        "frame_count": 0,
+                        "first_timestamp": payload.get("timestamp", 0),
+                    }
                 videos[path]["frame_count"] += 1
+
+            if next_offset is None:
+                break
+            offset = next_offset
 
         return {
             "media": list(videos.values()),
@@ -170,19 +177,26 @@ async def get_stats(
         except Exception:
             stats["voice_segments"] = 0
 
-        # Count unique videos
+        # Count unique videos via paginated scroll
         try:
-            resp = pipeline.db.client.scroll(
-                collection_name=pipeline.db.MEDIA_COLLECTION,
-                limit=10000,
-                with_payload=["video_path"],
-                with_vectors=False,
-            )
-            unique_videos = set()
-            for p in resp[0]:
-                vp = (p.payload or {}).get("video_path")
-                if vp:
-                    unique_videos.add(vp)
+            unique_videos: set[str] = set()
+            offset = None
+            while True:
+                resp = pipeline.db.client.scroll(
+                    collection_name=pipeline.db.MEDIA_COLLECTION,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["video_path"],
+                    with_vectors=False,
+                )
+                points, next_offset = resp
+                for p in points:
+                    vp = (p.payload or {}).get("video_path")
+                    if vp:
+                        unique_videos.add(vp)
+                if next_offset is None:
+                    break
+                offset = next_offset
             stats["videos"] = len(unique_videos)
         except Exception:
             stats["videos"] = 0

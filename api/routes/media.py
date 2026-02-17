@@ -17,27 +17,47 @@ from core.utils.logger import logger
 router = APIRouter()
 
 
-def validate_path(path_str: str) -> Path:
-    """Security check to prevent path traversal to sensitive system files.
+def validate_path(path_str: str, media_only: bool = False) -> Path:
+    """Security check to prevent path traversal to sensitive files.
 
     Allowing arbitrary paths because this is a local desktop app, but blocking
-    obviously dangerous OS files.
+    dangerous system/config files. When media_only=True, additionally enforces
+    that the file has a recognized media extension.
     """
     path = Path(path_str).resolve()
     path_str_lower = str(path).lower()
 
     # Block Windows System files
-    if (
-        "windows\\system32" in path_str_lower
-        or "windows/system32" in path_str_lower
-    ):
-        raise HTTPException(status_code=403, detail="Access to System32 denied")
+    blocked_dirs = [
+        "windows\\system32", "windows/system32",
+        "\\appdata\\", "/appdata/",
+        "\\.ssh", "/.ssh",
+        "\\.gnupg", "/.gnupg",
+    ]
+    if any(d in path_str_lower for d in blocked_dirs):
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    # Block sensitive Linux/Unix files
-    if path_str_lower.startswith(("/etc", "/var/log", "/proc", "/sys")):
-        raise HTTPException(
-            status_code=403, detail="Access to system files denied"
-        )
+    # Block sensitive Linux/Unix directories
+    if path_str_lower.startswith(("/etc", "/var/log", "/proc", "/sys", "/root")):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Block dotfiles and sensitive extensions
+    blocked_extensions = {".env", ".key", ".pem", ".crt", ".pfx", ".p12",
+                          ".sqlite", ".db", ".kdbx"}
+    if path.name.startswith(".") or path.suffix.lower() in blocked_extensions:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # When serving media, restrict to known media types
+    if media_only:
+        media_extensions = {
+            ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",  # video
+            ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma",  # audio
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", # image
+        }
+        if path.suffix.lower() not in media_extensions:
+            raise HTTPException(
+                status_code=403, detail="Only media files can be streamed"
+            )
 
     return path
 
@@ -257,7 +277,7 @@ async def stream_media(
     Raises:
         HTTPException: If the file is missing or inaccessible.
     """
-    file_path = validate_path(path)
+    file_path = validate_path(path, media_only=True)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -372,8 +392,8 @@ async def stream_segment(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     cache_key = f"{file_path.stem}_{start:.2f}_{duration:.2f}"
-    cache_hash = hashlib.md5(f"{path}_{start}_{duration}".encode()).hexdigest()[
-        :8
+    cache_hash = hashlib.sha256(f"{path}_{start}_{duration}".encode()).hexdigest()[
+        :12
     ]
     cache_file = cache_dir / f"{cache_key}_{cache_hash}.mp4"
 
@@ -450,8 +470,6 @@ async def get_media_thumbnail(
     Raises:
         HTTPException: If frame extraction via OpenCV fails.
     """
-    import asyncio
-
     import cv2
 
     file_path = Path(path)

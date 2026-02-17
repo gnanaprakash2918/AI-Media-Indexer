@@ -30,18 +30,17 @@ async def list_identities() -> dict:
     from core.storage.identity_graph import identity_graph
 
     identities = identity_graph.get_all_identities()
-    result = []
-    for ident in identities:
-        tracks = identity_graph.get_face_tracks_for_identity(ident.id)
-        result.append(
-            {
-                "id": ident.id,
-                "name": ident.name,
-                "is_verified": ident.is_verified,
-                "face_track_count": len(tracks),
-                "created_at": ident.created_at,
-            }
-        )
+    result = [
+        {
+            "id": ident.id,
+            "name": ident.name,
+            "is_verified": ident.is_verified,
+            "face_track_count": getattr(ident, "face_track_count", 0),
+            "voice_track_count": getattr(ident, "voice_track_count", 0),
+            "created_at": ident.created_at,
+        }
+        for ident in identities
+    ]
     return {"identities": result, "total": len(result)}
 
 
@@ -183,7 +182,8 @@ async def merge_identities(identity_id: str, req: IdentityMergeRequest) -> dict:
             "target": req.target_identity_id,
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        logger.error(f"[Identities] Merge failed: {e}")
+        raise HTTPException(status_code=400, detail="Identity merge failed") from e
 
 
 @router.patch("/identities/{identity_id}")
@@ -408,7 +408,7 @@ async def bulk_approve(
 
 @router.post("/faces/cluster/{cluster_id}/main")
 async def mark_main_character(
-    cluster_id: str,
+    cluster_id: int,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     is_main: bool = True,
 ):
@@ -428,14 +428,7 @@ async def mark_main_character(
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline invalid")
 
-    try:
-        cluster_int = int(cluster_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Cluster ID must be an integer"
-        ) from None
-
-    success = pipeline.db.set_face_main(cluster_int, is_main)
+    success = pipeline.db.set_face_main(cluster_id, is_main)
     if not success:
         raise HTTPException(status_code=404, detail="Cluster not found")
 

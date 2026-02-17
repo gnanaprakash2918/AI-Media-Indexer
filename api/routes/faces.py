@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from qdrant_client import models
 
 from api.deps import get_pipeline
-from api.schemas import MergeClustersRequest
+from api.schemas import ClusterNameRequest, MergeClustersRequest
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
 
@@ -311,17 +311,17 @@ async def create_new_face_cluster(
     face_ids: list[str],
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
-    """Create a new cluster from selected faces.
-
-    Args:
-        face_ids: List of face IDs to move to new cluster.
-        pipeline: Ingestion pipeline dependency.
-
-    Returns:
-        New cluster ID.
-    """
+    """Create a new cluster from selected faces."""
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    if not face_ids:
+        raise HTTPException(status_code=400, detail="face_ids cannot be empty")
+    if len(face_ids) > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many face IDs ({len(face_ids)}). Maximum is 1000.",
+        )
 
     try:
         # Use proper atomic cluster ID generation
@@ -374,10 +374,6 @@ async def move_face_to_cluster(
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
-class ClusterNameRequest(BaseModel):
-    """Request schema for naming a face cluster."""
-
-    name: str
 
 
 @router.post("/faces/cluster/{cluster_id}/name")

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from api.deps import get_pipeline
-from api.schemas import MergeClustersRequest
+from api.schemas import ClusterNameRequest, MergeClustersRequest
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
 
@@ -234,17 +234,17 @@ async def create_new_voice_cluster(
     segment_ids: list[str],
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ):
-    """Create a new cluster from selected voice segments.
-
-    Args:
-        segment_ids: List of segment IDs to move.
-        pipeline: Ingestion pipeline instance.
-
-    Returns:
-        New cluster ID.
-    """
+    """Create a new cluster from selected voice segments."""
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
+
+    if not segment_ids:
+        raise HTTPException(status_code=400, detail="segment_ids cannot be empty")
+    if len(segment_ids) > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many segment IDs ({len(segment_ids)}). Maximum is 1000.",
+        )
 
     try:
         # Use proper atomic cluster ID generation
@@ -305,10 +305,6 @@ async def move_voice_to_cluster(
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
-class ClusterNameRequest(BaseModel):
-    """Request schema for naming a voice cluster."""
-
-    name: str
 
 
 @router.post("/voices/cluster/{cluster_id}/name")
@@ -420,7 +416,7 @@ async def name_voice_cluster(
 
 @router.post("/voices/cluster/{cluster_id}/main")
 async def mark_main_speaker(
-    cluster_id: str,
+    cluster_id: int,
     segment_id: str,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
     is_main: bool = True,
@@ -429,14 +425,7 @@ async def mark_main_speaker(
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline invalid")
 
-    try:
-        cluster_int = int(cluster_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Cluster ID must be an integer"
-        ) from None
-
-    success = pipeline.db.set_speaker_main(cluster_int, segment_id, is_main)
+    success = pipeline.db.set_speaker_main(cluster_id, segment_id, is_main)
     if not success:
         raise HTTPException(
             status_code=404, detail="Cluster or segment not found"

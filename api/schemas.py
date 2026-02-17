@@ -53,6 +53,12 @@ class NameFaceRequest(BaseModel):
     name: str
 
 
+class ClusterNameRequest(BaseModel):
+    """Request body for naming a face or voice cluster."""
+
+    name: str
+
+
 class AdvancedSearchRequest(BaseModel):
     """Aggregated search request with multi-modal filters and reranking."""
 

@@ -104,7 +104,11 @@ async def set_council_mode(
             "config": COUNCIL_CONFIG.to_dict(),
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        log.warning(f"[API] Invalid council mode '{update.mode}': {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mode: must be 'oss_only', 'commercial_only', or 'combined'"
+        ) from e
 
 
 @router.patch("/{council_name}/models/{model_name}")

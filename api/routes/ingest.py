@@ -134,7 +134,7 @@ async def ingest_media(
         except Exception as e:
             logger.error(f"Failed to dispatch to Celery: {e}")
             raise HTTPException(
-                status_code=500, detail=f"Distributed dispatch failed: {e}"
+                status_code=500, detail="Distributed dispatch failed"
             ) from e
 
     async def run_pipeline():

@@ -9,12 +9,7 @@ import gc
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-import torch
-
-if TYPE_CHECKING:
-    pass
+from typing import TYPE_CHECKING  # noqa: F401 (used by type checkers)
 
 
 @dataclass
@@ -127,9 +122,17 @@ class ResourceArbiter:
                 from config import settings as _s
                 limit = self.total_vram * (_s.max_vram_percent / 100)
                 
+                max_offload_attempts = 10
+                offload_attempts = 0
                 while self.current_usage + vram_gb > limit:
+                    offload_attempts += 1
+                    if offload_attempts > max_offload_attempts:
+                        logger.warning(
+                            f"[Arbiter] Exceeded {max_offload_attempts} offload attempts, proceeding anyway"
+                        )
+                        break
                     logger.info(
-                        f"[Arbiter] VRAM full ({self.current_usage:.1f}/{limit:.1f}GB), offloading..."
+                        f"[Arbiter] VRAM full ({self.current_usage:.1f}/{limit:.1f}GB), offloading...(attempt {offload_attempts})"
                     )
                     log_verbose(
                         f"[Arbiter] VRAM pressure: need={vram_gb}GB, "
@@ -361,6 +364,19 @@ class ResourceArbiter:
 
 # Global singleton instance
 RESOURCE_ARBITER = ResourceArbiter()
-# DEPRECATED: Use RESOURCE_ARBITER._gpu_semaphore directly. This alias exists
-# only for backward compatibility with older code importing GPU_SEMAPHORE.
+
+# Expose GPU semaphore as a proper public property
+import warnings as _warnings
+
+def _get_gpu_semaphore():
+    """Get the GPU semaphore with a deprecation warning."""
+    _warnings.warn(
+        "GPU_SEMAPHORE is deprecated. Use RESOURCE_ARBITER.gpu_semaphore instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return RESOURCE_ARBITER._gpu_semaphore
+
+# DEPRECATED: Use RESOURCE_ARBITER.gpu_semaphore instead.
+# This alias exists only for backward compatibility.
 GPU_SEMAPHORE = RESOURCE_ARBITER._gpu_semaphore
