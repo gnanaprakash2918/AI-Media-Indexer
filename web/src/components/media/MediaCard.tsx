@@ -39,7 +39,7 @@ import {
   Snackbar,
 } from '@mui/material';
 import { VideoPlayer } from './VideoPlayer';
-import { updateFrameDescription, submitSearchFeedback } from '../../api/client';
+import { updateFrameDescription, submitSearchFeedback, API_BASE } from '../../api/client';
 
 interface MediaResult {
   score: number;
@@ -144,8 +144,8 @@ export const MediaCard = memo(function MediaCard({ item, searchQuery, overlayTog
 
   // Use dynamic thumbnail if available, else fallback to static or placeholder
   const thumbnailUrl = item.thumbnail_url
-    ? `http://localhost:8000${item.thumbnail_url}`
-    : `http://localhost:8000/thumbnails/${filename}.jpg`;
+    ? `${API_BASE}${item.thumbnail_url}`
+    : `${API_BASE}/thumbnails/${filename}.jpg`;
 
   // Format timestamp
   const formatTime = (s?: number) => {

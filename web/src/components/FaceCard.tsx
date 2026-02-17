@@ -13,6 +13,7 @@ import {
     MoveUp,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
+import { API_BASE } from '../api/client';
 import type { FaceData } from '../types';
 
 export default function FaceCard({
@@ -32,7 +33,7 @@ export default function FaceCard({
 }) {
     const [imageError, setImageError] = useState(false);
     const thumbUrl = face.thumbnail_path
-        ? `http://localhost:8000${face.thumbnail_path}`
+        ? `${API_BASE}${face.thumbnail_path}`
         : null;
     const hasValidImage = thumbUrl && !imageError;
     const size = compact ? 64 : 96;

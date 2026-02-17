@@ -47,6 +47,7 @@ import {
   triggerGrounding,
   getVideoSummary,
 } from '../api/client';
+import { API_BASE } from '../api/client';
 import type { Job, StageStats } from '../api/client';
 
 type JobStatus =
@@ -557,7 +558,7 @@ export default function IngestPage() {
   // SSE connection
   useEffect(() => {
     const connect = () => {
-      const es = new EventSource('http://localhost:8000/events');
+      const es = new EventSource(`${API_BASE}/events`);
       eventSourceRef.current = es;
       es.onmessage = () => queryClient.invalidateQueries({ queryKey: ['jobs'] });
       es.onerror = () => {

@@ -35,6 +35,7 @@ import {
     type RegionRequest,
     type ManipulationJob,
 } from '../api/client';
+import { API_BASE } from '../api/client';
 
 export default function EditorPage() {
     const [selectedVideo, setSelectedVideo] = useState('');
@@ -162,7 +163,7 @@ export default function EditorPage() {
                             <Box sx={{ position: 'relative' }}>
                                 <video
                                     ref={videoRef}
-                                    src={`http://localhost:8000/media?path=${encodeURIComponent(selectedVideo)}`}
+                                    src={`${API_BASE}/media?path=${encodeURIComponent(selectedVideo)}`}
                                     style={{ width: '100%', display: 'block' }}
                                     onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
                                     onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}

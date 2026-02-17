@@ -12,7 +12,7 @@ import {
 import { Close, Loop, AllInclusive } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
-import { getMasklets, getOverlays, type OverlayItem } from '../../api/client';
+import { getMasklets, getOverlays, API_BASE, type OverlayItem } from '../../api/client';
 
 export interface OverlayToggles {
   faces: boolean;
@@ -125,7 +125,7 @@ function InnerVideoPlayer({
 
   // Video URL - always use the direct media endpoint (no encoding)
   const videoUrl = useMemo(() => {
-    return `http://localhost:8000/media?path=${encodeURIComponent(videoPath)}`;
+    return `${API_BASE}/media?path=${encodeURIComponent(videoPath)}`;
   }, [videoPath]);
 
   // Handle video loaded - seek to segment start

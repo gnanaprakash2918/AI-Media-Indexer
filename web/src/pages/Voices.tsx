@@ -55,6 +55,7 @@ import {
   getAllNames,
   deleteVoiceCluster,
 } from '../api/client';
+import { API_BASE } from '../api/client';
 
 interface VoiceSegment {
   id: string;
@@ -295,7 +296,7 @@ export const Voices: React.FC = () => {
         {seg.audio_path ? (
           <audio
             controls
-            src={`http://localhost:8000${seg.audio_path}`}
+            src={`${API_BASE}${seg.audio_path}`}
             style={{ height: 28, width: 160 }}
           />
         ) : (
@@ -509,7 +510,7 @@ export const Voices: React.FC = () => {
                   return audioPath ? (
                     <audio
                       controls
-                      src={`http://localhost:8000${audioPath}`}
+                      src={`${API_BASE}${audioPath}`}
                       style={{ height: 28, width: 140, marginRight: 16 }}
                       onClick={e => e.stopPropagation()}
                     />

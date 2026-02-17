@@ -26,6 +26,7 @@ import {
 } from '@mui/icons-material';
 
 import FaceCard from './FaceCard';
+import { API_BASE } from '../api/client';
 import type { FaceData, FaceClusterData } from '../types';
 
 export default function ClusterCard({
@@ -55,7 +56,7 @@ export default function ClusterCard({
     const [imageError, setImageError] = useState(false);
     const representative = cluster.representative;
     const thumbUrl = representative?.thumbnail_path
-        ? `http://localhost:8000${representative.thumbnail_path}`
+        ? `${API_BASE}${representative.thumbnail_path}`
         : null;
     const hasValidImage = thumbUrl && !imageError;
 

@@ -11,7 +11,7 @@
  */
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE,
@@ -190,22 +190,39 @@ export function createEventSource(
   onMessage: (event: unknown) => void,
   onError?: () => void,
 ): EventSource {
-  const es = new EventSource(`${API_BASE}/events`);
+  const url = `${API_BASE}/events`;
+  let retryCount = 0;
+  const maxRetries = 5;
 
-  es.onmessage = event => {
-    try {
-      const data = JSON.parse(event.data);
-      onMessage(data);
-    } catch {
-      // Heartbeat or invalid JSON, ignore
-    }
+  const es = new EventSource(url);
+
+  const setupHandlers = (source: EventSource) => {
+    source.onmessage = event => {
+      retryCount = 0; // Reset on successful message
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch {
+        // Heartbeat or invalid JSON, ignore
+      }
+    };
+
+    source.onerror = () => {
+      source.close();
+      if (retryCount < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+        retryCount++;
+        setTimeout(() => {
+          const newSource = new EventSource(url);
+          setupHandlers(newSource);
+        }, delay);
+      } else {
+        onError?.();
+      }
+    };
   };
 
-  es.onerror = () => {
-    es.close();
-    onError?.();
-  };
-
+  setupHandlers(es);
   return es;
 }
 

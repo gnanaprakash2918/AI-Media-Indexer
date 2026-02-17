@@ -1,4 +1,4 @@
-import { mergeFaceClusters } from '../api/client';
+import { mergeFaceClusters, API_BASE } from '../api/client';
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -86,7 +86,7 @@ function FaceCard({
 }) {
   const [imageError, setImageError] = useState(false);
   const thumbUrl = face.thumbnail_path
-    ? `http://localhost:8000${face.thumbnail_path}`
+    ? `${API_BASE}${face.thumbnail_path}`
     : null;
   const hasValidImage = thumbUrl && !imageError;
   const size = compact ? 64 : 96;
@@ -215,7 +215,7 @@ function ClusterCard({
   const [imageError, setImageError] = useState(false);
   const representative = cluster.representative;
   const thumbUrl = representative?.thumbnail_path
-    ? `http://localhost:8000${representative.thumbnail_path}`
+    ? `${API_BASE}${representative.thumbnail_path}`
     : null;
   const hasValidImage = thumbUrl && !imageError;
 
@@ -468,7 +468,7 @@ function MoveDialog({
                 <Avatar
                   src={
                     c.representative?.thumbnail_path
-                      ? `http://localhost:8000${c.representative.thumbnail_path}`
+                      ? `${API_BASE}${c.representative.thumbnail_path}`
                       : undefined
                   }
                 >
@@ -1036,7 +1036,7 @@ export default function FacesPage() {
                     <Avatar
                       src={
                         c.representative?.thumbnail_path
-                          ? `http://localhost:8000${c.representative.thumbnail_path}`
+                          ? `${API_BASE}${c.representative.thumbnail_path}`
                           : undefined
                       }
                     >
@@ -1077,7 +1077,7 @@ export default function FacesPage() {
           {zoomFace?.thumbnail_path && (
             <Box
               component="img"
-              src={`http://localhost:8000${zoomFace.thumbnail_path}`}
+              src={`${API_BASE}${zoomFace.thumbnail_path}`}
               sx={{ maxWidth: '80vw', maxHeight: '70vh', borderRadius: 2 }}
             />
           )}
