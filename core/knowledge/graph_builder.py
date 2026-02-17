@@ -53,9 +53,9 @@ class GraphBuilder:
         if not self.store:
             return ""
 
-        # 1. Create Scene Node
+        # 1. Create Scene Node (MERGE on Video prevents silent failure if process_video_node wasn't called)
         scene_query = """
-        MATCH (v:Video {path: $video_path})
+        MERGE (v:Video {path: $video_path})
         MERGE (s:Scene {id: $scene_id})
         SET s.start_time = $start,
             s.end_time = $end,

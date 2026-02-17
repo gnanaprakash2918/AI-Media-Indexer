@@ -21,14 +21,9 @@ log = get_logger(__name__)
 class VideoVLM:
     """Video Understanding VLM (Qwen2-VL)."""
 
-    def __init__(self, model_id: str = "Qwen/Qwen2-VL-2B-Instruct"):
-        """Initialize Video VLM.
-
-        Args:
-            model_id: HF Model ID (default: Qwen2-VL-2B-Instruct for speed).
-                      Use 'Qwen/Qwen2-VL-7B-Instruct' for higher quality if VRAM allows.
-        """
-        self.model_id = model_id
+    def __init__(self, model_id: str | None = None):
+        from config import settings
+        self.model_id = model_id or settings.video_vlm_model_id
         self.model = None
         self.processor = None
         self._init_lock = asyncio.Lock()
@@ -45,8 +40,8 @@ class VideoVLM:
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
                 
-                # Check VRAM requirement (approx 4GB for 2B model in BF16, 14GB for 7B)
-                vram_gb = 4.0 if "2B" in self.model_id else 14.0
+                from config import settings
+                vram_gb = getattr(settings, 'video_vlm_vram_gb', 4.0)
                 
                 if not await RESOURCE_ARBITER.ensure_loaded(
                     "video_vlm", 
@@ -105,9 +100,11 @@ class VideoVLM:
         async with GPU_SEMAPHORE:
             try:
                 # Sampling: Qwen2-VL handles variable frames, but let's cap at 16 for memory
+                from config import settings
+                max_frames = settings.vlm_max_frames
                 sampled_frames = frames
-                if len(frames) > 32:
-                    indices = np.linspace(0, len(frames) - 1, 32, dtype=int)
+                if len(frames) > max_frames:
+                    indices = np.linspace(0, len(frames) - 1, max_frames, dtype=int)
                     sampled_frames = [frames[i] for i in indices]
 
                 # Prepare inputs (Qwen2-VL specific format)
@@ -155,7 +152,7 @@ class VideoVLM:
                 inputs = inputs.to(self.model.device)
 
                 generated_ids = self.model.generate(
-                    **inputs, max_new_tokens=128
+                    **inputs, max_new_tokens=settings.vlm_max_tokens
                 )
                 generated_ids_trimmed = [
                     out_ids[len(in_ids) :]

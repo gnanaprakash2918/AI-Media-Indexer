@@ -798,6 +798,20 @@ class Settings(BaseSettings):
         description="Default segment duration when end time is missing (seconds)",
     )
 
+    # --- Model IDs ---
+    clap_model_id: str = Field(
+        default="laion/clap-htsat-unfused",
+        description="HuggingFace model ID for CLAP audio embedding",
+    )
+    ast_model_id: str = Field(
+        default="mit/ast-finetuned-audioset-10-10-0.4593",
+        description="HuggingFace model ID for AST audio classification",
+    )
+    video_vlm_model_id: str = Field(
+        default="Qwen/Qwen2-VL-2B-Instruct",
+        description="HuggingFace model ID for Video VLM (Qwen2-VL)",
+    )
+
     # --- VLM ---
     vlm_max_frames: int = Field(
         default=32,

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import hashlib
+import time
 import traceback
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
-
 import numpy as np
 import torch
 from qdrant_client.http import models
@@ -153,7 +154,7 @@ class IngestionPipeline:
             dbscan_min_samples=settings.hdbscan_min_samples,
         )
         self.transnet = TransNetV2()
-        self.video_vlm = VideoVLM(model_id="Qwen/Qwen2-VL-2B-Instruct")
+        self.video_vlm = VideoVLM()
         self.voice_processor = VoiceProcessor(db=self.db)
         self.frame_interval_seconds = frame_interval_seconds
         self.vision: VisionAnalyzer | None = None
@@ -167,6 +168,7 @@ class IngestionPipeline:
         # Enhanced pipeline config for SmartFrameSampler, BiometricArbitrator, etc.
         self._enhanced_config = None
         self._face_clusters: dict[int, list[float]] = {}
+        self._face_cluster_lock = asyncio.Lock()  # Prevents race during parallel face clustering
 
         # Deep Video Understanding (SAM 3)
         self.sam3_tracker = (
@@ -1173,8 +1175,6 @@ class IngestionPipeline:
             # Prepare voice thumbnails directory
             thumb_dir = settings.cache_dir / "thumbnails" / "voices"
             thumb_dir.mkdir(parents=True, exist_ok=True)
-
-            import hashlib
             import subprocess
 
             # Create safe prefix
@@ -1577,8 +1577,6 @@ class IngestionPipeline:
             NumPy array of audio samples, or None on failure.
         """
         import subprocess
-
-        import numpy as np
 
         try:
             # Check for audio stream first
@@ -2062,52 +2060,7 @@ class IngestionPipeline:
             del self._face_track_builder
         self._cleanup_memory()
 
-    async def _process_scene_action(
-        self, video_path: Path, start: float, end: float
-    ) -> str:
-        """Generate dynamic action summary using VideoVLM (Qwen2-VL).
 
-        Extracts frames and asks VLM to describe motion.
-        """
-        try:
-            import cv2
-
-            cap = cv2.VideoCapture(str(video_path))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-
-            start_frame = int(start * fps)
-            end_frame = int(end * fps)
-
-            # Sample 16 frames uniformly
-            num_samples = 16
-            indices = np.linspace(
-                start_frame, end_frame - 1, num_samples, dtype=int
-            )
-
-            frames = []
-            for idx in indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if ret:
-                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            cap.release()
-
-            if not frames:
-                return ""
-
-            # Call VideoVLM
-            result = await self.video_vlm.generate_action_summary(
-                frames, fps=fps
-            )
-
-            # Format output
-            action = result.get("action", "")
-            mood = result.get("mood", "")
-            return f"{action} {mood}".strip()
-
-        except Exception as e:
-            logger.error(f"Action summary failed: {e}")
-            return ""
 
     @observe("scene_captioning")
     async def _process_scene_captions(
@@ -2133,8 +2086,6 @@ class IngestionPipeline:
             else:
                 # Run TransNet Logic (Once per file/trim)
                 frame_scenes = self.transnet.predict_video(str(path))
-
-                import cv2
 
                 cap = cv2.VideoCapture(str(path))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -2309,8 +2260,6 @@ class IngestionPipeline:
 
             if frame_bytes:
                 try:
-                    import cv2
-                    import numpy as np
 
                     from core.processing.deep_research import (
                         get_deep_research_processor,
@@ -2431,7 +2380,6 @@ class IngestionPipeline:
                 # Save representative thumbnail
                 thumb_path = None
                 if frame_bytes:
-                    import hashlib
 
                     thumb_dir = settings.cache_dir / "thumbnails" / "scenes"
                     thumb_dir.mkdir(parents=True, exist_ok=True)
@@ -2511,7 +2459,6 @@ class IngestionPipeline:
                     # Initialize Video Node (idempotent)
                     if scenes_stored == 1:
                         from core.schemas import MediaFile, MediaMetadata, MediaType
-                        import hashlib
 
                         # Generate lightweight content hash (path + size + mtime)
                         # Avoid full file read for graph node init
@@ -2561,7 +2508,6 @@ class IngestionPipeline:
                     # We should align ID generation.
                     # Ideally db.store_scene returns ID or we generate it here.
                     # QdrantHandler.store_scene uses uuid5(video_path + start_time).
-                    import uuid
                     graph_scene_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{str(path)}_scene_{scene.start_time:.3f}"))
 
                     self.graph_builder.process_scene(
@@ -2673,7 +2619,6 @@ class IngestionPipeline:
         thumb_dir.mkdir(parents=True, exist_ok=True)
 
         # Create a safe file prefix using hash of the filename
-        import hashlib
 
         safe_stem = hashlib.md5(video_path.stem.encode()).hexdigest()
 
@@ -2681,20 +2626,20 @@ class IngestionPipeline:
             if face.embedding is not None:
                 # GLOBAL IDENTITY: Match against DB clusters (gallery-probe)
                 # FaceManager.global_clusters loaded at _process_frames init
-                cluster_id, self.faces.global_clusters = (
-                    self.faces.match_or_create_cluster(
-                        embedding=face.embedding,
-                        existing_clusters=self.faces.global_clusters,
-                        threshold=settings.face_clustering_threshold,
+                # Lock prevents race condition when multiple frames are processed concurrently
+                async with self._face_cluster_lock:
+                    cluster_id, self.faces.global_clusters = (
+                        self.faces.match_or_create_cluster(
+                            embedding=face.embedding,
+                            existing_clusters=self.faces.global_clusters,
+                            threshold=settings.face_clustering_threshold,
+                        )
                     )
-                )
                 face_cluster_ids.append(cluster_id)
 
                 # Crop and save face thumbnail with better quality
                 thumb_path: str | None = None
                 try:
-                    import cv2
-                    import numpy as np
 
                     if not frame_path.exists():
                         logger.warning(
@@ -2808,9 +2753,6 @@ class IngestionPipeline:
         description: str | None = None
         analysis = None
 
-        # CRITICAL: Unload face models to free VRAM for Ollama
-        if self.faces:
-            self.faces.unload_gpu()
 
         # Build identity context from HITL names for VLM
         identity_parts = []
@@ -2929,8 +2871,6 @@ class IngestionPipeline:
             ocr_boxes = []
             try:
                 # Load frame as numpy array (Windows path safe)
-                import cv2
-                import numpy as np
 
                 frame_data = np.fromfile(str(frame_path), dtype=np.uint8)
                 frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
@@ -2940,7 +2880,6 @@ class IngestionPipeline:
                     skip_ocr = False
 
                     # 1. Time Throttling (Max every 2.0s)
-                    import time
 
                     now_ts = time.time()
                     if (
@@ -3085,7 +3024,6 @@ class IngestionPipeline:
                 pass
 
         if description:
-            vector = (await self.db.encode_texts(description))[0]
 
             # Build structured payload for accurate search with filterable fields
             payload: dict[str, Any] = {
@@ -3256,8 +3194,6 @@ class IngestionPipeline:
             # ============================================================
             try:
                 if frame_img is not None:
-                    import cv2
-                    import numpy as np
                     
                     small_frame = cv2.resize(frame_img, (32, 32))
                     pixels = small_frame.reshape(-1, 3).astype(np.float32)
@@ -3377,7 +3313,6 @@ class IngestionPipeline:
             vector = (await self.db.encode_texts(full_text))[0]
 
             # Generate a proper UUID for Qdrant (file paths are not valid point IDs)
-            import uuid
 
             frame_id = str(
                 uuid.uuid5(uuid.NAMESPACE_URL, f"{video_path}_{timestamp:.3f}")
@@ -3737,7 +3672,6 @@ class IngestionPipeline:
         Returns:
             The relative web path to the generated thumbnail, or None on failure.
         """
-        import hashlib
 
         try:
             thumb_dir = settings.cache_dir / "thumbnails" / "videos"
@@ -3893,7 +3827,6 @@ class IngestionPipeline:
         # Simpler: Use frame data if we have it? No, SAM3 processes all frames.
         # We will assume standard 30fps for timestamp estimation if metadata unavailable,
         # or fetch it.
-        import cv2
 
         try:
             cap = cv2.VideoCapture(str(path))

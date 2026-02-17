@@ -56,19 +56,21 @@ class AudioEventDetector:
                     ClapProcessor,
                 )
 
+                from config import settings
+
                 self.processor = ClapProcessor.from_pretrained(
-                    "laion/clap-htsat-unfused"
+                    settings.clap_model_id
                 )
                 self.model = ClapModel.from_pretrained(
-                    "laion/clap-htsat-unfused"
+                    settings.clap_model_id
                 )
 
                 # Load AST for predictive tagging (Dynamic Ontology)
                 self.ast_processor = AutoFeatureExtractor.from_pretrained(
-                    "mit/ast-finetuned-audioset-10-10-0.4593"
+                    settings.ast_model_id
                 )
                 self.ast_model = ASTForAudioClassification.from_pretrained(
-                    "mit/ast-finetuned-audioset-10-10-0.4593"
+                    settings.ast_model_id
                 )
                 self.ast_model.to(self._get_device())
 
@@ -497,13 +499,7 @@ class AudioEventDetector:
             log.error(f"[CLAP] Text encoding failed: {e}")
             return None
 
-    def should_run_clap(self, vad_result: dict) -> bool:
-        """Check if clap detection should run based on VAD."""
-        is_speech = vad_result.get("is_speech", False)
-        speech_conf = vad_result.get("speech_confidence", 0)
-        if is_speech and speech_conf > 0.9:
-            return False
-        return True
+
 
     async def predict_events_dynamic(
         self,
