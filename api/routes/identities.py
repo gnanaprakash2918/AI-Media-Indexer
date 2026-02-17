@@ -62,7 +62,7 @@ async def list_all_names(
         return {"names": sorted(names)}
     except Exception as e:
         logger.error(f"[Identities] List names failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/identities/suggestions")
@@ -156,7 +156,7 @@ async def suggest_merges(
         return {"suggestions": suggestions, "count": len(suggestions)}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("/identities/{identity_id}/merge")
@@ -226,16 +226,52 @@ async def rename_identity(
 
 
 @router.delete("/identities/{identity_id}")
-async def delete_identity(identity_id: str) -> dict:
-    """Permanently deletes an identity record and associated metadata.
-
-    Args:
-        identity_id: The ID of the identity to delete.
-
-    Returns:
-        A dictionary confirming the deletion.
-    """
+async def delete_identity(
+    identity_id: str,
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Permanently deletes an identity record and cleans up references."""
     from core.storage.identity_graph import identity_graph
+
+    identity = identity_graph.get_identity(identity_id)
+    if not identity:
+        raise HTTPException(status_code=404, detail="Identity not found")
+
+    # Clean up face/voice references in Qdrant before deleting from graph
+    if identity.name and pipeline and pipeline.db:
+        try:
+            from qdrant_client import models
+
+            # Clear name from face points
+            pipeline.db.client.set_payload(
+                collection_name=pipeline.db.FACES_COLLECTION,
+                payload={"name": None},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="name",
+                            match=models.MatchValue(value=identity.name),
+                        )
+                    ]
+                ),
+            )
+            # Clear speaker_name from voice points
+            pipeline.db.client.set_payload(
+                collection_name=pipeline.db.VOICE_COLLECTION,
+                payload={"speaker_name": None, "name": None},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="speaker_name",
+                            match=models.MatchValue(value=identity.name),
+                        )
+                    ]
+                ),
+            )
+        except Exception as e:
+            logger.warning(
+                f"[Identity] Failed to clean up Qdrant refs for {identity.name}: {e}"
+            )
 
     identity_graph.delete_identity(identity_id)
     return {"status": "deleted", "id": identity_id}
@@ -262,10 +298,10 @@ async def create_cluster(
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="DB not ready")
 
-    # Logic to create manual cluster if supported by DB
-    # Assuming DB has create_face_cluster method or similar
-    # For now, placeholder as original server.py didn't have strict logic for manual cluster creation exposed directly
-    return {"status": "created", "id": "manual_cluster_id", "name": req.name}
+    raise HTTPException(
+        status_code=501,
+        detail="Manual cluster creation is not yet implemented",
+    )
 
 
 @router.post("/faces/move")
@@ -362,39 +398,12 @@ async def bulk_approve(
         A dictionary confirming the approval status and count.
     """
     # Logic for approval
-    return {"status": "approved", "count": len(req.cluster_ids)}
+    raise HTTPException(
+        status_code=501,
+        detail="Bulk approval is not yet implemented",
+    )
 
 
-@router.post("/faces/cluster/{cluster_id}/name")
-async def name_face_cluster(
-    cluster_id: str,
-    req: NameFaceRequest,
-    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
-):
-    """Assign a name to a face cluster (Person N -> 'John Doe')."""
-    if not pipeline or not pipeline.db:
-        raise HTTPException(status_code=503, detail="Pipeline invalid")
-
-    try:
-        # Convert cluster_id to int for proper DB matching
-        cluster_int = int(cluster_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400, detail="Cluster ID must be an integer"
-        ) from None
-
-    count = pipeline.db.set_face_name(cluster_int, req.name)
-    if count == 0:
-        raise HTTPException(
-            status_code=404, detail="Cluster not found or no faces updated"
-        )
-
-    return {
-        "status": "updated",
-        "cluster_id": cluster_id,
-        "name": req.name,
-        "faces_updated": count,
-    }
 
 
 @router.post("/faces/cluster/{cluster_id}/main")

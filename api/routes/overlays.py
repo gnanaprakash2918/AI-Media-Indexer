@@ -166,7 +166,7 @@ async def get_video_overlays(
 
     except Exception as e:
         logger.error(f"[Overlays] Failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/overlays/frame/{frame_id}")
@@ -250,7 +250,7 @@ async def get_frame_overlays(
         raise
     except Exception as e:
         logger.error(f"[Overlays] Frame lookup failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/overlays/voice")
@@ -323,7 +323,7 @@ async def get_voice_overlays(
 
     except Exception as e:
         logger.error(f"[Overlays] Voice lookup failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 def _get_speaker_color(cluster_id: int) -> str:

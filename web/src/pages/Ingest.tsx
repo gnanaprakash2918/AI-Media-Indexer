@@ -556,19 +556,22 @@ export default function IngestPage() {
 
   // SSE connection
   useEffect(() => {
-    const es = new EventSource('http://localhost:8000/events');
-    eventSourceRef.current = es;
-    es.onmessage = () => queryClient.invalidateQueries({ queryKey: ['jobs'] });
-    es.onerror = () => {
-      es.close();
-      setTimeout(() => {
-        const newEs = new EventSource('http://localhost:8000/events');
-        eventSourceRef.current = newEs;
-        newEs.onmessage = () =>
-          queryClient.invalidateQueries({ queryKey: ['jobs'] });
-      }, 5000);
+    const connect = () => {
+      const es = new EventSource('http://localhost:8000/events');
+      eventSourceRef.current = es;
+      es.onmessage = () => queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      es.onerror = () => {
+        es.close();
+        setTimeout(() => {
+          connect();
+        }, 5000);
+      };
     };
-    return () => es.close();
+    connect();
+    return () => {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+    };
   }, [queryClient]);
 
   const handleSubmit = () => {

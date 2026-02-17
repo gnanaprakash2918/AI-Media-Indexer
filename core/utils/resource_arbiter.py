@@ -296,10 +296,9 @@ class ResourceArbiter:
                 unload_fn()
 
             self.current_usage = max(0, self.current_usage - vram)
-            # Remove from registry or check "loaded" flag?
-            # Ideally we keep it in registry but mark as unloaded.
-            # For now, simplistic approach: leave in registry, but usage is what matters.
-            # We assume unload_fn clears the memory.
+            # Mark as unloaded to prevent double-unload on next pressure loop
+            data["unload_fn"] = None
+            data["vram"] = 0
 
             self._cleanup_vram()
             return True

@@ -57,7 +57,7 @@ async def trigger_grounding(
         return {"status": "queued", "video_path": request.video_path}
     except Exception as e:
         log.error(f"Failed to trigger grounding: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.patch("/masklets/{masklet_id}")
@@ -104,4 +104,4 @@ async def get_masklets(
         return db.get_masklets(video_path, start_time, end_time)
     except Exception as e:
         log.error(f"Failed to get masklets: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e

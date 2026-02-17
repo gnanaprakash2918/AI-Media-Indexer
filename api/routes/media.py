@@ -144,7 +144,7 @@ async def get_face_thumbnail(
         logger.error(
             f"Debug Info: path={file_path}, media={media_path}, timestamp={timestamp}"
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/thumbnails/voices/{filename}")
@@ -211,13 +211,18 @@ async def get_voice_audio(
             "a",
             str(file_path),
         ]
-        # Use async subprocess to avoid blocking
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise HTTPException(
+                status_code=504, detail="Audio extraction timed out"
+            )
 
         if file_path.exists():
             return FileResponse(file_path, media_type="audio/mpeg")
@@ -230,7 +235,9 @@ async def get_voice_audio(
         raise
     except Exception as e:
         logger.error(f"Voice audio generation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(
+            status_code=500, detail="Voice audio generation failed"
+        ) from e
 
 
 @router.get("/media", response_model=None)
@@ -250,7 +257,7 @@ async def stream_media(
     Raises:
         HTTPException: If the file is missing or inaccessible.
     """
-    file_path = Path(path)
+    file_path = validate_path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -403,12 +410,18 @@ async def stream_segment(
         str(cache_file),
     ]
 
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        timeout=60,
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
     )
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise HTTPException(
+            status_code=504, detail="Segment encoding timed out"
+        )
 
     if cache_file.exists():
         return FileResponse(
@@ -417,7 +430,7 @@ async def stream_segment(
             headers={"Cache-Control": "public, max-age=86400"},
         )
     else:
-        logger.error(f"Segment encoding failed: {result.stderr.decode()[:500]}")
+        logger.error(f"Segment encoding failed: {stderr.decode()[:500] if stderr else 'unknown'}")
         raise HTTPException(status_code=500, detail="Segment encoding failed")
 
 
@@ -490,6 +503,21 @@ async def get_video_summary(
     """Retrieve the global summary for a video."""
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Database not ready")
+
+    try:
+        summary = pipeline.db.get_global_summary(path)
+        if not summary:
+            raise HTTPException(
+                status_code=404, detail="No summary found for this video"
+            )
+        return summary
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Media] Summary retrieval failed: {e}")
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve summary"
+        ) from e
 
 
 @router.get("/api/media/masklets")

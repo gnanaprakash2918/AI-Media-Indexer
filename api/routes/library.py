@@ -57,7 +57,7 @@ async def get_library(
         }
     except Exception as e:
         logger.error(f"[Library] Get library failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.delete("/library")
@@ -81,72 +81,48 @@ async def delete_from_library(
         from qdrant_client.http import models as qmodels
 
         deleted_counts = {}
+        errors = {}
 
-        # Delete from frames collection
-        try:
-            pipeline.db.client.delete(
-                collection_name=pipeline.db.MEDIA_COLLECTION,
-                points_selector=qmodels.FilterSelector(
-                    filter=qmodels.Filter(
-                        must=[
-                            qmodels.FieldCondition(
-                                key="video_path",
-                                match=qmodels.MatchValue(value=path),
-                            )
-                        ]
-                    )
-                ),
-            )
-            deleted_counts["frames"] = "deleted"
-        except Exception:
-            pass
+        # Collections to clean up and their path field names
+        collections = [
+            (pipeline.db.MEDIA_COLLECTION, "video_path", "frames"),
+            (pipeline.db.VOICE_COLLECTION, "media_path", "voices"),
+            (pipeline.db.FACES_COLLECTION, "media_path", "faces"),
+        ]
 
-        # Delete from voices collection
-        try:
-            pipeline.db.client.delete(
-                collection_name=pipeline.db.VOICE_COLLECTION,
-                points_selector=qmodels.FilterSelector(
-                    filter=qmodels.Filter(
-                        must=[
-                            qmodels.FieldCondition(
-                                key="media_path",
-                                match=qmodels.MatchValue(value=path),
-                            )
-                        ]
-                    )
-                ),
-            )
-            deleted_counts["voices"] = "deleted"
-        except Exception:
-            pass
+        for collection_name, path_field, label in collections:
+            try:
+                pipeline.db.client.delete(
+                    collection_name=collection_name,
+                    points_selector=qmodels.FilterSelector(
+                        filter=qmodels.Filter(
+                            must=[
+                                qmodels.FieldCondition(
+                                    key=path_field,
+                                    match=qmodels.MatchValue(value=path),
+                                )
+                            ]
+                        )
+                    ),
+                )
+                deleted_counts[label] = "deleted"
+            except Exception as e:
+                logger.error(f"[Library] Failed to delete {label} for {path}: {e}")
+                errors[label] = str(e)
 
-        # Delete from faces collection
-        try:
-            pipeline.db.client.delete(
-                collection_name=pipeline.db.FACES_COLLECTION,
-                points_selector=qmodels.FilterSelector(
-                    filter=qmodels.Filter(
-                        must=[
-                            qmodels.FieldCondition(
-                                key="media_path",
-                                match=qmodels.MatchValue(value=path),
-                            )
-                        ]
-                    )
-                ),
-            )
-            deleted_counts["faces"] = "deleted"
-        except Exception:
-            pass
-
-        return {
-            "status": "deleted",
+        status = "deleted" if not errors else "partial_failure"
+        result = {
+            "status": status,
             "path": path,
             "collections_cleaned": deleted_counts,
         }
+        if errors:
+            result["errors"] = errors
+
+        return result
     except Exception as e:
         logger.error(f"[Library] Delete failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/stats")
@@ -214,7 +190,7 @@ async def get_stats(
         return stats
     except Exception as e:
         logger.error(f"[Stats] Get stats failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/config")
@@ -272,4 +248,4 @@ async def search_by_name(
         }
     except Exception as e:
         logger.error(f"[Search] By-name failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
