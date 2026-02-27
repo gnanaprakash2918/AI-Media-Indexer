@@ -255,25 +255,8 @@ class AudioTranscriber:
 
     def _get_duration(self, input_path: Path) -> float:
         """Get the duration of the media file in seconds."""
-        try:
-            cmd = [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                str(input_path),
-            ]
-            output = (
-                subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-                .decode()
-                .strip()
-            )
-            return float(output)
-        except Exception:
-            return 0.0
+        from core.utils.media import get_duration
+        return get_duration(input_path)
 
     @observe("transcriber_slice_audio")
     async def _slice_audio(

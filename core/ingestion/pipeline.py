@@ -227,6 +227,8 @@ class IngestionPipeline:
     def clear_probe_cache(self) -> None:
         """Clear probe cache (call after video processing complete)."""
         self._probe_cache.clear()
+        from core.processing.prober import clear_probe_cache as _clear_global
+        _clear_global()
 
     @observe("process_video")
     async def process_video(
@@ -902,6 +904,7 @@ class IngestionPipeline:
                 log(
                     f"[Loudness] Overall: {estimated_spl:.0f} dB SPL ({category}) [LUFS: {lufs:.1f}]"
                 )
+
 
                 # Store overall loudness in media metadata
                 self.db.update_media_metadata(
@@ -1938,7 +1941,7 @@ class IngestionPipeline:
                             message=status_msg,
                         )
 
-                await asyncio.sleep(0.01)  # Minimal sleep for responsiveness
+                await asyncio.sleep(0)  # Yield event loop without wall-clock delay
                 # Always delete the frame file after processing
                 # Only delete if NOT in pending batch (processed frames are deleted by helper)
                 if extracted_frame not in pending_frames:
@@ -1950,15 +1953,11 @@ class IngestionPipeline:
 
                 # frame_count is already set from extracted_frame.frame_index
 
-                # Aggressive memory cleanup every 5 frames to prevent OOM
-                # This preserves timestamps and accuracy while managing VRAM
-                cleanup_interval = 5
+                # Periodic memory cleanup to prevent OOM without stalling GPU
+                # synchronize() blocks the pipeline — use empty_cache() only
+                cleanup_interval = 20
                 if frame_count % cleanup_interval == 0:
                     self._cleanup_memory(context=f"frame_{frame_count}")
-                    # Extra VRAM flush for video processing
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
 
                     # Thermal throttling - pause if system overheating
                     await resource_manager.throttle_if_needed("compute")
@@ -2091,14 +2090,21 @@ class IngestionPipeline:
 
                 cap = cv2.VideoCapture(str(path))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-                cap.release()
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
                 raw_scenes = []
                 from core.processing.scene_detector import SceneInfo
 
                 for start_frame, end_frame in frame_scenes:
-                    start_t = start_frame / fps
-                    end_t = end_frame / fps
+                    # Use PTS for accurate timestamps instead of frame/fps
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                    start_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+                    start_t = (start_msec / 1000.0) if start_msec >= 0 else (start_frame / fps)
+
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, end_frame)
+                    end_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+                    end_t = (end_msec / 1000.0) if end_msec >= 0 else (end_frame / fps)
+
                     if end_t - start_t >= 1.0:
                         raw_scenes.append(
                             SceneInfo(
@@ -2110,6 +2116,8 @@ class IngestionPipeline:
                                 mid_time=(start_t + end_t) / 2,
                             )
                         )
+
+                cap.release()
 
                 if not raw_scenes:
                     logger.warning(

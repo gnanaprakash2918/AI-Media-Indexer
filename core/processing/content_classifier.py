@@ -191,22 +191,8 @@ class ContentClassifier:
         This allows normal Whisper VAD to handle segmentation.
         """
         try:
-            import json
-            import subprocess
-
-            # Use ffprobe to get duration
-            cmd = [
-                "ffprobe",
-                "-v",
-                "quiet",
-                "-print_format",
-                "json",
-                "-show_format",
-                str(audio_path),
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            info = json.loads(result.stdout)
-            duration = float(info.get("format", {}).get("duration", 0))
+            from core.utils.media import get_duration
+            duration = get_duration(audio_path)
 
             if duration > 0:
                 log(

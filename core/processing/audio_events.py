@@ -679,6 +679,15 @@ class AudioEventDetector:
             del self.ast_processor
             self.ast_processor = None
 
+        try:
+            import torch
+            import gc
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+        except ImportError:
+            pass
+
         from core.utils.resource_arbiter import safe_cleanup_vram
         safe_cleanup_vram()
 

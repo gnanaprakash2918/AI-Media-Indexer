@@ -250,10 +250,42 @@ class GraphBuilder:
         if not self.store:
             return
 
-        # Delete all nodes connected to this video and the video itself
-        query = """
-        MATCH (v:Video {path: $video_path})
-        OPTIONAL MATCH (v)-[r]-()
-        DELETE r, v
-        """
-        self.store.query(query, {"video_path": video_path})
+        # Step 1: Delete all Scene nodes and their relationships
+        self.store.query(
+            """
+            MATCH (v:Video {path: $video_path})-[:CONTAINS]->(s:Scene)
+            DETACH DELETE s
+            """,
+            {"video_path": video_path},
+        )
+
+        # Step 2: Delete all PrecisionObject (masklet) nodes
+        self.store.query(
+            """
+            MATCH (v:Video {path: $video_path})-[:HAS_OBJECT]->(o:PrecisionObject)
+            DETACH DELETE o
+            """,
+            {"video_path": video_path},
+        )
+
+        # Step 3: Delete the Video node itself
+        self.store.query(
+            """
+            MATCH (v:Video {path: $video_path})
+            DETACH DELETE v
+            """,
+            {"video_path": video_path},
+        )
+
+        # Step 4: Clean up orphaned entity nodes (Person, Object, Action, Mood)
+        # that are no longer connected to any Scene or Video
+        for label in ("Person", "Object", "Action", "Mood", "Location"):
+            self.store.query(
+                f"""
+                MATCH (n:{label})
+                WHERE NOT (n)--()
+                DELETE n
+                """,
+            )
+
+        log.info(f"[GraphBuilder] Cascade-deleted video and orphans: {video_path}")

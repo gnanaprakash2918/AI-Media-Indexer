@@ -764,9 +764,17 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
                 scores = self._reranker.predict(pairs)
 
-                for i, score in enumerate(scores):
-                    candidates[i]["score"] = float(score)
-                    candidates[i]["rerank_score"] = float(score)
+                # Normalize BGE logits to 0..1 with sigmoid and blend with RRF score
+                import math
+                for i, raw_score in enumerate(scores):
+                    try:
+                        bge_norm = 1.0 / (1.0 + math.exp(-float(raw_score)))
+                    except OverflowError:
+                        bge_norm = 0.0 if float(raw_score) < 0 else 1.0
+                    # Blend: 50% reranker + 50% existing RRF fusion score
+                    existing_score = candidates[i].get("score", 0.5)
+                    candidates[i]["score"] = 0.5 * bge_norm + 0.5 * existing_score
+                    candidates[i]["rerank_score"] = bge_norm
 
                 candidates.sort(key=lambda x: x["score"], reverse=True)
                 candidates = candidates[:limit]

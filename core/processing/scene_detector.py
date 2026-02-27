@@ -30,33 +30,15 @@ def _get_video_fps(video_path: Path) -> float:
     Returns:
         Frames per second (defaults to 30.0 if probe fails).
     """
-    import subprocess
+    from core.utils.media import get_fps
 
     try:
-        cmd = [
-            "ffprobe",
-            "-v",
-            "quiet",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=r_frame_rate",
-            "-of",
-            "csv=p=0",
-            str(video_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-        if result.returncode == 0 and result.stdout.strip():
-            # FFprobe returns FPS as fraction like "30000/1001" or "30/1"
-            fps_str = result.stdout.strip()
-            if "/" in fps_str:
-                num, den = fps_str.split("/")
-                fps = float(num) / float(den)
-            else:
-                fps = float(fps_str)
-
+        fps = get_fps(video_path)
+        if fps > 0 and fps != 30.0:
             log(f"Detected video FPS: {fps:.2f}")
+            return fps
+        elif fps == 30.0:
+            # Maybe fallback, but return it
             return fps
     except Exception as e:
         log(f"[WARNING] FPS detection failed, using 30fps fallback: {e}")

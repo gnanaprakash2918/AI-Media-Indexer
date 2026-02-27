@@ -168,7 +168,15 @@ class OCRProcessor:
 
         try:
             # Run OCR in a thread to prevent blocking the event loop
-            result = await asyncio.to_thread(self.ocr.ocr, frame, cls=True)
+            try:
+                result = await asyncio.to_thread(self.ocr.ocr, frame, cls=True)
+            except Exception as inner_e:
+                if "OneDnnContext" in str(inner_e) or "operator <" in str(inner_e):
+                    log.warning("[OCR] PaddleOCR layout bug detected, retrying with padded frame...")
+                    padded = np.pad(frame, ((2, 2), (2, 2), (0, 0)), mode="edge")
+                    result = await asyncio.to_thread(self.ocr.ocr, padded, cls=True)
+                else:
+                    raise inner_e
 
             if not result or not result[0]:
                 return {
@@ -474,8 +482,8 @@ class EasyOCRProcessor:
 
                     if conf_val >= min_confidence:
                         lines.append(text)
-                    boxes.append(bbox)
-                    confidences.append(conf_val)
+                        boxes.append(bbox)
+                        confidences.append(conf_val)
 
                 full_text = " ".join(lines)
                 avg_conf = (

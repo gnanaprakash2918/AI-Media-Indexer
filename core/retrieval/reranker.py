@@ -308,12 +308,13 @@ class RerankingCouncil:
             }
         )
 
+        # Pre-compute ranking text once per candidate (avoids 3x recomputation)
+        candidate_texts = [self._get_text_for_ranking(c) for c in candidates]
+
         # Cross-encoder scoring
         if self._cross_encoder:
             try:
-                pairs = [
-                    (query, self._get_text_for_ranking(c)) for c in candidates
-                ]
+                pairs = [(query, candidate_texts[i]) for i in range(len(candidates))]
                 ce_scores = self._cross_encoder.predict(list(pairs))
                 for i, score in enumerate(ce_scores):
                     scores[i]["cross"] = float(score)
@@ -324,9 +325,7 @@ class RerankingCouncil:
         # BGE-Reranker scoring
         if self._bge_reranker:
             try:
-                pairs = [
-                    (query, self._get_text_for_ranking(c)) for c in candidates
-                ]
+                pairs = [(query, candidate_texts[i]) for i in range(len(candidates))]
                 bge_scores = self._bge_reranker.compute_score(pairs)
                 if bge_scores is not None:
                     if isinstance(bge_scores, (int, float)):
@@ -366,8 +365,7 @@ class RerankingCouncil:
                 q_enc = await self._colbert.encode_query(query)
                 if q_enc:
                     # Encode all candidates (batch)
-                    texts = [self._get_text_for_ranking(c) for c in candidates]
-                    d_encs = await self._colbert.encode_documents(texts)
+                    d_encs = await self._colbert.encode_documents(candidate_texts)
 
                     for i, d_enc in enumerate(d_encs):
                         # Compute MaxSim score
@@ -380,18 +378,20 @@ class RerankingCouncil:
             except Exception as e:
                 log.warning(f"[RerankCouncil] ColBERT failed: {e}")
 
+        # Sigmoid normalization for BGE scores (raw logits can be -10..+10)
+        import math
+        def _sigmoid(x: float) -> float:
+            try:
+                return 1.0 / (1.0 + math.exp(-x))
+            except OverflowError:
+                return 0.0 if x < 0 else 1.0
+
         for _i, data in scores.items():
             if data["candidate"] is None:
                 continue
 
-            # Normalize scores (approximate ranges)
-            # Cross: 0..1 (logits->sigmoid often 0..1, but here it's MiniLM raw logits? No, CrossEncoder usually returns logits or 0-1 depending on usage)
-            # BGE: often negative to positive. Need normalization?
-            # For now, we assume raw scores roughly align or use weights to compensate.
-            # ColBERT sequences are usually sums of dot products -> can be large (10-30). Need normalization.
-
             s_cross = data["cross"]
-            s_bge = data["bge"]
+            s_bge = _sigmoid(data["bge"])  # Normalize BGE to 0..1
             s_vlm = data["vlm"]
             s_colbert = data.get("colbert", 0.0)
 
@@ -399,10 +399,6 @@ class RerankingCouncil:
             s_colbert_norm = min(
                 max(s_colbert / 32.0, 0.0), 1.0
             )  # Approx range 0..32 -> 0..1
-
-            # Calculate base score from council
-            # New Weights with ColBERT: (0.25, 0.25, 0.25, 0.25) or similar
-            # If ColBERT missing, redistribute
 
             if self._colbert:
                 base_score = (

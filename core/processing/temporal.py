@@ -420,12 +420,15 @@ def extract_temporal_clips(
             break
 
         if frame_count % frame_interval == 0:
+            if not current_clip:
+                msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+                clip_start = (msec / 1000.0) if msec >= 0 else (frame_count / video_fps)
+
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             current_clip.append(rgb)
 
             if len(current_clip) >= frames_per_clip:
                 clips.append((clip_start, current_clip))
-                clip_start = frame_count / video_fps
                 current_clip = []
 
         frame_count += 1

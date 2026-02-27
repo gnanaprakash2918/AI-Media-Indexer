@@ -59,9 +59,9 @@ class GroundingPipeline:
             import cv2
             cap = cv2.VideoCapture(str(path))
             fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-            cap.release()
         except ImportError:
             fps = 25.0
+            cap = None
 
         count = 0
         # Single locking point for GPU
@@ -86,7 +86,11 @@ class GroundingPipeline:
                         if mask is None:
                             continue
 
-                        timestamp = frame_idx / fps
+                        if cap is not None:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                            timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                        else:
+                            timestamp = frame_idx / fps
 
                         # Calculate BBox
                         import numpy as np
@@ -126,5 +130,8 @@ class GroundingPipeline:
             except Exception as e:
                 logger.error(f"Grounding failed: {e}")
 
+        if cap is not None:
+            cap.release()
+            
         logger.info(f"Grounding complete. Created {count} masklets.")
         return count

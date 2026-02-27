@@ -201,9 +201,9 @@ class ColBERTRetriever:
                 log.warning("[ColBERT] Empty embeddings provided")
                 return 0.0
 
-            # Convert to torch for efficient matrix ops
-            q = torch.from_numpy(query_embeddings).to(self._device)
-            d = torch.from_numpy(doc_embeddings).to(self._device)
+            # Convert directly to device
+            q = torch.tensor(query_embeddings, device=self._device)
+            d = torch.tensor(doc_embeddings, device=self._device)
 
             # Normalize vectors if not already normalized (BGE-M3 colbert vectors are usually normalized)
             # But verifying doesn't hurt

@@ -476,34 +476,32 @@ async def get_media_thumbnail(
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
-    def _generate_thumbnail():
-        cap = cv2.VideoCapture(str(file_path))
-        if not cap.isOpened():
-            raise ValueError("Could not open video")
-
-        cap.set(cv2.CAP_PROP_POS_MSEC, time * 1000)
-        ret, frame = cap.read()
-        cap.release()
-
-        if not ret or frame is None:
-            raise ValueError("Could not read frame")
-
-        h, w = frame.shape[:2]
-        target_w = 320
-        scale = target_w / w
-        target_h = int(h * scale)
-        frame = cv2.resize(frame, (target_w, target_h))
-
-        success, buffer = cv2.imencode(
-            ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+    async def _generate_thumbnail():
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-ss", str(time),
+            "-i", str(file_path),
+            "-vframes", "1",
+            "-vf", "scale=320:-2",
+            "-q:v", "5",
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-"
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
-        if not success:
-            raise ValueError("Encoding failed")
-        return buffer.tobytes()
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0 or not stdout:
+            logger.error(f"FFmpeg thumbnail failed: {stderr.decode()[:200]}")
+            raise ValueError("Could not read frame via FFmpeg")
+        return stdout
 
     try:
-        # Run blocking CV2 operations in a separate thread
-        image_bytes = await asyncio.to_thread(_generate_thumbnail)
+        image_bytes = await _generate_thumbnail()
         return Response(content=image_bytes, media_type="image/jpeg")
 
     except Exception as e:

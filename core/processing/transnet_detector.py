@@ -147,16 +147,8 @@ class TransNetV2:
 
             # Process in batches of 100 (typical TransNet window)
             if len(frames_buffer) >= 100:
-                batch = np.array(frames_buffer, dtype=np.float32)[
-                    np.newaxis, ...
-                ]
-                batch = batch.transpose(
-                    (0, 2, 3, 4, 1)
-                )  # Possibly N, H, W, C ?? Check model spec
-
-                # TransNet V2 ONNX usually expects [1, Frames, H, W, 3]
-                # Shape: [1, 100, 27, 48, 3]
-                batch = np.array(frames_buffer, dtype=np.float32)[
+                # TransNet V2 ONNX expects [1, Frames, H, W, 3]
+                batch = np.array(frames_buffer[:100], dtype=np.float32)[
                     np.newaxis, ...
                 ]
 
@@ -165,21 +157,26 @@ class TransNetV2:
                     [self._output_name], {self._input_name: batch}
                 )[0]
 
-                # Preds: [1, 100, 1] usually (logits or probs)
-                # Sigmoid output usually comes from the model
                 predictions.extend(preds[0].flatten().tolist())
 
-                # Overlap logic (TransNet usually needs context).
-                # For simplicity here, we clear buffer.
-                # Ideally, we should keep last 20 frames for context.
-                frames_buffer = []
+                # Keep last 10 frames for context overlap
+                frames_buffer = frames_buffer[90:]
 
         cap.release()
 
-        # Process remaining buffer
-        if frames_buffer:
-            # Padding if needed
-            pass
+        # Process remaining buffer with zero-padding
+        if frames_buffer and len(frames_buffer) >= 10:
+            pad_count = 100 - len(frames_buffer)
+            padded = frames_buffer + [np.zeros((height, width, 3), dtype=np.float32)] * pad_count
+            batch = np.array(padded, dtype=np.float32)[np.newaxis, ...]
+            try:
+                preds = self._session.run(
+                    [self._output_name], {self._input_name: batch}
+                )[0]
+                # Only take predictions for real frames, not padding
+                predictions.extend(preds[0].flatten().tolist()[:len(frames_buffer)])
+            except Exception as e:
+                log.warning(f"[TransNetV2] Remaining buffer inference failed: {e}")
 
         # Convert predictions to scenes
         scenes = []

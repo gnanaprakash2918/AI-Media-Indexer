@@ -45,8 +45,8 @@ def get_ocr_engine() -> Any:
         elif engine_type == "surya":
             # Placeholder for Surya integration
             try:
-                from core.processing.ocr import SuryaOCRProcessor
-                return SuryaOCRProcessor()
+                from core.processing.ocr import SuryaOCR
+                return SuryaOCR()
             except ImportError:
                 log.warning("SuryaOCR not found, falling back to PaddleOCR")
                 from core.processing.ocr import OCRProcessor

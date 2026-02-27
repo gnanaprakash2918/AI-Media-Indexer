@@ -291,14 +291,26 @@ class ResultProcessorMixin:
                 score_map[key]["fused_score"] += rrf_score
                 score_map[key]["modalities"].append(modality)
 
-                if result.get("description") and not score_map[key]["description"]:
-                    score_map[key]["description"] = result["description"]
+                if result.get("description"):
+                    if not score_map[key]["description"]:
+                        score_map[key]["description"] = result["description"]
+                    elif len(str(result["description"])) > len(str(score_map[key]["description"])):
+                        # Prefer longer descriptions as they usually contain more detail
+                        score_map[key]["description"] = result["description"]
+                        
                 if result.get("face_names"):
-                    score_map[key]["face_names"] = list(
-                        set(score_map[key]["face_names"] + result.get("face_names", []))
-                    )
-                if result.get("speaker_name"):
+                    # Safely merge lists avoiding duplicates
+                    current_names = set(score_map[key].get("face_names", []))
+                    new_names = set(result.get("face_names", []))
+                    score_map[key]["face_names"] = list(current_names | new_names)
+                    
+                if result.get("speaker_name") and not score_map[key].get("speaker_name"):
                     score_map[key]["speaker_name"] = result["speaker_name"]
+            
+                # Also preserve OCR and other helpful metadata if present
+                for field in ["ocr_text", "visual_text", "actions", "location"]:
+                    if result.get(field) and not score_map[key].get(field):
+                        score_map[key][field] = result[field]
 
         fused = list(score_map.values())
         fused.sort(key=lambda x: x["fused_score"], reverse=True)

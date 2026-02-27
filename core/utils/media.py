@@ -7,16 +7,9 @@ from pathlib import Path
 def has_audio_stream(path: Path) -> bool:
     """Check if media file has audio stream using ffprobe."""
     try:
-        cmd = [
-            "ffprobe",
-            "-v", "error",
-            "-select_streams", "a",
-            "-show_entries", "stream=codec_type",
-            "-of", "csv=p=0",
-            str(path),
-        ]
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
-        return bool(output)
+        from core.processing.prober import get_probe_sync
+        data = get_probe_sync(path)
+        return any(s.get("codec_type") == "audio" for s in data.get("streams", []))
     except Exception:
         return False
 
@@ -24,14 +17,26 @@ def has_audio_stream(path: Path) -> bool:
 def get_duration(path: Path) -> float:
     """Get media duration in seconds using ffprobe."""
     try:
-        cmd = [
-            "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ]
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
-        return float(output)
+        from core.processing.prober import get_probe_sync
+        data = get_probe_sync(path)
+        return float(data.get("format", {}).get("duration", 0.0))
     except Exception:
         return 0.0
+
+def get_fps(path: Path) -> float:
+    """Get video FPS using ffprobe."""
+    try:
+        from core.processing.prober import get_probe_sync
+        data = get_probe_sync(path)
+        for s in data.get("streams", []):
+            if s.get("codec_type") == "video":
+                fps_str = s.get("r_frame_rate", "0/0")
+                if "/" in fps_str:
+                    num, den = fps_str.split("/")
+                    if float(den) > 0:
+                        return float(num) / float(den)
+                elif fps_str:
+                    return float(fps_str)
+    except Exception:
+        pass
+    return 30.0

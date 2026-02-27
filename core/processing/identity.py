@@ -777,6 +777,7 @@ class FaceManager:
                             chunk_results.append([])
                             continue
 
+                        import cv2
                         bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                         # Inference in thread
                         try:
