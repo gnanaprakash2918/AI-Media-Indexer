@@ -2087,6 +2087,8 @@ class IngestionPipeline:
                 # Run TransNet Logic (Once per file/trim)
                 frame_scenes = self.transnet.predict_video(str(path))
 
+                import cv2
+
                 cap = cv2.VideoCapture(str(path))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
                 cap.release()
@@ -2640,6 +2642,7 @@ class IngestionPipeline:
                 # Crop and save face thumbnail with better quality
                 thumb_path: str | None = None
                 try:
+                    import cv2
 
                     if not frame_path.exists():
                         logger.warning(
@@ -3829,6 +3832,8 @@ class IngestionPipeline:
         # or fetch it.
 
         try:
+            import cv2
+
             cap = cv2.VideoCapture(str(path))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             cap.release()

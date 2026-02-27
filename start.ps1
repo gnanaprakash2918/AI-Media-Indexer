@@ -19,7 +19,7 @@
 .PARAMETER Distributed
     Enable Distributed Ingestion (Redis + Celery Worker)
 .PARAMETER Full
-    Full setup: Nuclear + Dev Mode + Indic ASR + Pull Images
+    Full setup: Nuclear + Dev Mode + Pull Images
 .PARAMETER SkipOllama
     Skip Ollama startup
 .PARAMETER SkipDocker
@@ -96,7 +96,7 @@ if ($Help) {
     Write-Host "  -Quick          Fast start (skip cleanup, keep all data)"
     Write-Host "  -Fresh          Clear caches, keep indexed videos"
     Write-Host "  -Nuclear        Wipe ALL data (caches + Qdrant)"
-    Write-Host "  -Full           Nuclear + Venv + Images + Indic ASR"
+    Write-Host "  -Full           Nuclear + Venv + Pull Images"
     Write-Host ""
     Write-Host "FEATURE FLAGS:" -ForegroundColor Yellow
     Write-Host "  -Distributed    Enable Redis + Celery workers (parallel processing)"
@@ -141,7 +141,6 @@ if ($Full) {
     $NukeQdrant = $true
     $RecreateVenv = $true
     $PullImages = $true
-    $InstallIndic = $true
     $NoInteractive = $true
 }
 
@@ -491,7 +490,6 @@ if (Test-Path $envFile) {
 }
 
 # Nuke Qdrant data
-# Nuke Qdrant data
 if ($NukeQdrant) {
     Write-Host ""
     Write-Host "[4/8] Performing Complete Data Reset..." -ForegroundColor Red
@@ -579,8 +577,6 @@ if ($NukeQdrant) {
              $wipeItems += "postgres_data"
         }
     }
-    
-
 
     foreach ($item in $wipeItems) {
         $path = Join-Path $ProjectRoot $item

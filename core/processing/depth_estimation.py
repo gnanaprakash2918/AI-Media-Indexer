@@ -229,11 +229,6 @@ class DepthEstimator:
         if self.model:
             del self.model
             self.model = None
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        from core.utils.resource_arbiter import safe_cleanup_vram
+        safe_cleanup_vram()
         log.info("[DepthEstimator] Resources released")

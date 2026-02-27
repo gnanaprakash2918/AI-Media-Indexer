@@ -53,7 +53,7 @@ from pyannote.core import Segment  # noqa: E402
 from config import settings  # noqa: E402
 from core.schemas import SpeakerSegment  # noqa: E402
 from core.utils.logger import get_logger, log_verbose  # noqa: E402
-from core.utils.resource_arbiter import GPU_SEMAPHORE  # noqa: E402
+from core.utils.resource_arbiter import GPU_SEMAPHORE, safe_cleanup_vram  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -331,9 +331,7 @@ class VoiceProcessor:
             del self.inference
             self.inference = None
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+        safe_cleanup_vram()
 
         self._initialized = False
         log.info("Voice processor resources released")

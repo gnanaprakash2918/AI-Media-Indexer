@@ -95,7 +95,7 @@ class AudioTranscriber:
 
         # Register with Resource Arbiter for VRAM management
         try:
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.resource_arbiter import RESOURCE_ARBITER, safe_cleanup_vram
 
             RESOURCE_ARBITER.register_model("whisper", self.unload_model)
         except ImportError:
@@ -153,8 +153,7 @@ class AudioTranscriber:
         gc.collect()
 
         # 3. Force PyTorch to release cached VRAM
-        if self.device == "cuda" and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        safe_cleanup_vram()
 
         log("[SUCCESS] Whisper unloaded. VRAM should be free.")
 

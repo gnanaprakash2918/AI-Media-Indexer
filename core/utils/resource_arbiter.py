@@ -12,6 +12,23 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING  # noqa: F401 (used by type checkers)
 
 
+def safe_cleanup_vram() -> None:
+    """Safely clear GPU VRAM cache — handles missing/unavailable torch gracefully.
+
+    Use this instead of bare ``torch.cuda.empty_cache()`` in cleanup/unload
+    methods so they never crash with ``NameError: name 'torch' is not defined``.
+    """
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except (ImportError, NameError):
+        pass
+
+
 @dataclass
 class ModelVRAM:
     """Approximate VRAM usage per model in GB (fp16 where applicable)."""
@@ -45,11 +62,16 @@ class ResourceArbiter:
         Args:
             total_vram_gb: Total VRAM available. Auto-detected if None.
         """
-        if total_vram_gb is None and torch.cuda.is_available():
+        if total_vram_gb is None:
             try:
-                total_vram_gb = torch.cuda.get_device_properties(
-                    0
-                ).total_memory / (1024**3)
+                import torch
+
+                if torch.cuda.is_available():
+                    total_vram_gb = torch.cuda.get_device_properties(
+                        0
+                    ).total_memory / (1024**3)
+            except ImportError:
+                total_vram_gb = 8.0
             except Exception:
                 total_vram_gb = 8.0
 
@@ -312,10 +334,7 @@ class ResourceArbiter:
 
     def _cleanup_vram(self) -> None:
         """Force garbage collection and CUDA cache clear."""
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+        safe_cleanup_vram()
 
     async def force_release_all(self) -> None:
         """Emergency release all resources by calling all registered unload functions."""

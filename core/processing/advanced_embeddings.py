@@ -227,13 +227,8 @@ class NVEmbedEncoder:
             del self._tokenizer
             self._tokenizer = None
 
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        from core.utils.resource_arbiter import safe_cleanup_vram
+        safe_cleanup_vram()
 
         log.info("[NV-Embed-v2] Resources released")
 
