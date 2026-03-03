@@ -52,59 +52,7 @@ from core.utils.retry import retry
 VLM_SEMAPHORE = asyncio.Semaphore(settings.vlm_concurrency)
 
 
-class FrameBuffer:
-    """Buffers frame data for batch database writes.
-
-    Accumulates processed frame data and flushes to DB in batches
-    of `batch_size` for ~10x performance over individual writes.
-    """
-
-    def __init__(self, db: VectorDB, batch_size: int | None = None):
-        # Use config value if not provided (auto-tunes based on hardware)
-        from config import settings
-        self.db = db
-        self.batch_size = batch_size or settings.embedding_batch_size or 50
-        self._buffer: list[dict] = []
-        self._total_flushed = 0
-
-    def add(self, frame_data: dict) -> int:
-        """Add a frame to the buffer. Returns frames flushed (0 or batch_size).
-        
-        Validates timestamp before adding. Skips frames with invalid timestamps.
-        """
-        # Validate timestamp - skip frame if invalid
-        timestamp = frame_data.get("timestamp")
-        if timestamp is None or (isinstance(timestamp, (int, float)) and timestamp < 0):
-            video_path = frame_data.get("video_path", "unknown")
-            logger.warning(
-                f"[FrameBuffer] Skipping frame with invalid timestamp={timestamp} "
-                f"from {video_path}"
-            )
-            return 0
-        
-        self._buffer.append(frame_data)
-        if len(self._buffer) >= self.batch_size:
-            return self.flush()
-        return 0
-
-    def flush(self) -> int:
-        """Flush all buffered frames to database."""
-        if not self._buffer:
-            return 0
-        count = self.db.upsert_media_frames_batch(self._buffer)
-        self._total_flushed += count
-        self._buffer.clear()
-        return count
-
-    @property
-    def pending(self) -> int:
-        """Number of frames waiting to be flushed."""
-        return len(self._buffer)
-
-    @property
-    def total_written(self) -> int:
-        """Total frames actually flushed to database (excludes pending buffer)."""
-        return self._total_flushed
+from core.ingestion.frame_buffer import FrameBuffer
 
 
 class IngestionPipeline:
@@ -1005,37 +953,9 @@ class IngestionPipeline:
         self._cleanup_memory()
 
     async def _detect_audio_language(self, path: Path) -> str:
-        """Detects the audio language using Whisper's language detection.
-
-        Args:
-            path: Path to the media file.
-
-        Returns:
-            The detected ISO 639-1 language code (e.g., 'en', 'ta', 'hi').
-        """
-        await resource_manager.throttle_if_needed("compute")
-
-        # Run detection in a thread to not block asyncio loop
-        # (Whisper is blocking)
-        try:
-            return await asyncio.to_thread(self._run_detection, path)
-        except Exception as e:
-            from core.utils.logger import log
-
-            log(f"[Audio] Language detection failed: {e}")
-            return "en"
-
-    def _run_detection(self, path: Path) -> str:
-        """Synchronous helper for language detection.
-
-        Args:
-            path: Path to the media file.
-
-        Returns:
-            The detected language code.
-        """
-        with AudioTranscriber() as transcriber:
-            return transcriber.detect_language(path)
+        """Detect audio language. Delegates to language_detection module."""
+        from core.ingestion.language_detection import detect_audio_language
+        return await detect_audio_language(path)
 
     async def _detect_audio_language_with_confidence(
         self,
@@ -1043,123 +963,12 @@ class IngestionPipeline:
         start_offset: float = 0.0,
         duration: float = 30.0,
     ) -> tuple[str, float]:
-        """Detects audio language with confidence score for multi-pass detection.
+        """Detect audio language with confidence. Delegates to language_detection module."""
+        from core.ingestion.language_detection import detect_audio_language_with_confidence
+        return await detect_audio_language_with_confidence(
+            path, start_offset=start_offset, duration=duration
+        )
 
-        Args:
-            path: Path to the media file.
-            start_offset: Start position in seconds for audio sampling.
-            duration: Duration in seconds to sample for detection.
-
-        Returns:
-            Tuple of (language_code, confidence_score).
-        """
-        await resource_manager.throttle_if_needed("compute")
-
-        wav_path = None
-        try:
-            # Slice audio asynchronously in the main event loop
-            from core.processing.transcriber import AudioTranscriber
-
-            try:
-                # Instantiate usage because _slice_audio is an instance method
-                with AudioTranscriber() as transcriber:
-                    wav_path = await transcriber._slice_audio(
-                        path, start=start_offset, end=start_offset + duration
-                    )
-            except Exception as e:
-                from core.utils.logger import log
-
-                log(f"[Audio] Slicing failed: {e}, falling back to full file")
-                wav_path = path
-
-            # Run blocking detection in a thread
-            return await asyncio.to_thread(
-                self._run_detection_with_confidence,
-                wav_path,  # Pass the sliced audio (or original path)
-            )
-
-        except Exception as e:
-            from core.utils.logger import log
-
-            log(f"[Audio] Language detection failed: {e}")
-            return ("en", 0.0)
-
-        finally:
-            # Cleanup temp file if created
-            if (
-                wav_path
-                and isinstance(wav_path, Path)
-                and wav_path != path
-                and wav_path.exists()
-            ):
-                try:
-                    wav_path.unlink()
-                except Exception:
-                    pass
-
-    def _run_detection_with_confidence(
-        self,
-        wav_input: Path | bytes,
-    ) -> tuple[str, float]:
-        """Synchronous helper for language detection with confidence.
-
-        Args:
-            wav_input: Path to audio file or raw WAV bytes.
-
-        Returns:
-            Tuple of (language_code, confidence_score).
-        """
-        import io
-
-        from core.utils.logger import log
-
-        with AudioTranscriber() as transcriber:
-            try:
-                # Load model if needed
-                model_id = "Systran/faster-whisper-base"
-                if model_id != AudioTranscriber._SHARED_SIZE:
-                    transcriber._load_model(model_id)
-
-                if AudioTranscriber._SHARED_MODEL is None:
-                    return ("en", 0.0)
-
-                # Prepare input source
-                if isinstance(wav_input, bytes):
-                    input_file = io.BytesIO(wav_input)
-                else:
-                    input_file = str(wav_input)
-
-                # Run detection on the sliced segment
-                _, info = AudioTranscriber._SHARED_MODEL.transcribe(
-                    input_file,
-                    task="transcribe",
-                    beam_size=5,
-                )
-
-                detected_lang = info.language or "en"
-                confidence = info.language_probability or 0.0
-
-                # Special handling for Indic languages with lower threshold
-                indic_langs = [
-                    "ta",
-                    "hi",
-                    "te",
-                    "ml",
-                    "kn",
-                    "bn",
-                    "gu",
-                    "mr",
-                    "or",
-                    "pa",
-                ]
-                if detected_lang in indic_langs and confidence > 0.2:
-                    # Boost confidence for Indic languages (Whisper often underestimates)
-                    confidence = min(confidence * 1.5, 0.95)
-
-                return (detected_lang, confidence)
-            except Exception as e:
-                log(f"[Audio] Detection inner error: {e}")
-                return ("en", 0.0)
 
     @observe("voice_processing")
     async def _process_voice(self, path: Path) -> None:
