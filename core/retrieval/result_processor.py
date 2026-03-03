@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -28,6 +29,13 @@ class ResultProcessorMixin:
 
     Expects `self.llm: LLMInterface`.
     """
+
+    @staticmethod
+    def _word_match(term: str, text: str) -> bool:
+        """Word-boundary aware matching. 'blue' won't match 'blueberry'."""
+        if not term or not text:
+            return False
+        return bool(re.search(r'\b' + re.escape(term) + r'\b', text, re.IGNORECASE))
 
     llm: LLMInterface
 
@@ -156,11 +164,11 @@ class ResultProcessorMixin:
                 for t in parsed.text:
                     total_checks += 1
                     search_text = t.get("text", "").lower()
-                    if search_text in ocr:
+                    if self._word_match(search_text, ocr):
                         matches += 1
-                    elif search_text in desc:
+                    elif self._word_match(search_text, desc):
                         matches += 0.7
-                    elif search_text in dialogue:
+                    elif self._word_match(search_text, dialogue):
                         matches += 0.5
 
             # Clothing constraints
@@ -169,8 +177,8 @@ class ResultProcessorMixin:
                     total_checks += 1
                     c_item = c.get("item", "").lower()
                     c_color = c.get("color", "").lower()
-                    item_found = c_item and c_item in desc
-                    color_found = c_color and c_color in desc
+                    item_found = c_item and self._word_match(c_item, desc)
+                    color_found = c_color and self._word_match(c_color, desc)
                     if item_found and color_found:
                         matches += 1
                     elif item_found or color_found:
@@ -181,18 +189,18 @@ class ResultProcessorMixin:
                 for a in parsed.actions:
                     total_checks += 1
                     action_val = a.get("action", "").lower()
-                    if action_val and action_val in desc:
+                    if action_val and self._word_match(action_val, desc):
                         matches += 1
                     result_val = a.get("result", "").lower()
-                    if result_val and result_val in desc:
+                    if result_val and self._word_match(result_val, desc):
                         matches += 0.5
 
             # Location constraints
             if hasattr(parsed, "location") and parsed.location:
                 total_checks += 1
-                if parsed.location.lower() in desc:
+                if self._word_match(parsed.location, desc):
                     matches += 1
-                elif parsed.location.lower() in all_text:
+                elif self._word_match(parsed.location, all_text):
                     matches += 0.5
 
             # Identity constraints
@@ -207,7 +215,7 @@ class ResultProcessorMixin:
                         total_checks += 1
                         if id_name in person_names:
                             matches += 1
-                        elif id_name in desc:
+                        elif self._word_match(id_name, desc):
                             matches += 0.5
 
             # Audio constraints
@@ -215,9 +223,9 @@ class ResultProcessorMixin:
                 for aud in parsed.audio:
                     total_checks += 1
                     aud_val = aud.get("event", "").lower()
-                    if aud_val and aud_val in audio:
+                    if aud_val and self._word_match(aud_val, audio):
                         matches += 1
-                    elif aud_val and aud_val in all_text:
+                    elif aud_val and self._word_match(aud_val, all_text):
                         matches += 0.3
 
             # Spatial constraints
@@ -225,7 +233,7 @@ class ResultProcessorMixin:
                 for sp in parsed.spatial:
                     total_checks += 1
                     sp_type = sp.get("measurement_type", "").lower()
-                    if sp_type and sp_type in desc:
+                    if sp_type and self._word_match(sp_type, desc):
                         matches += 0.5
 
             boost = 0.0
@@ -237,7 +245,7 @@ class ResultProcessorMixin:
             if hasattr(parsed, "exclusions") and parsed.exclusions:
                 for exc in parsed.exclusions:
                     exc_value = exc.get("value", "").lower()
-                    if exc_value and exc_value in all_text:
+                    if exc_value and self._word_match(exc_value, all_text):
                         penalty += 0.3
 
             if isinstance(result, dict):
@@ -268,11 +276,11 @@ class ResultProcessorMixin:
                 continue
 
             for rank, result in enumerate(results):
-                vp = result.get("video_path") or result.get("media_path") or ""
-                st = round(
-                    float(result.get("start_time", result.get("timestamp", 0))),
-                    1,
-                )
+                # FIX #4: Use settings.timestamp_bucket_seconds (consistent with sota_search)
+                from config import settings
+                ts_float = float(result.get("start_time", result.get("timestamp", 0)))
+                bucket = settings.timestamp_bucket_seconds
+                st = int(ts_float / bucket) * bucket
                 key = (vp, st)
                 rrf_score = 1.0 / (k + rank + 1)
 
@@ -336,30 +344,30 @@ class ResultProcessorMixin:
             target_ids = person_cluster_map.get(person_name, [])
             if target_ids and any(cid in scene.face_cluster_ids for cid in target_ids):
                 score += 1.0
-            elif person_name.lower() in desc:
+            elif self._word_match(person_name.lower(), desc):
                 score += 0.5
 
         action = step.get("action", "").strip()
         if action:
             checks += 1
-            if action.lower() in actions:
+            if self._word_match(action.lower(), actions):
                 score += 1.0
-            elif action.lower() in desc:
+            elif self._word_match(action.lower(), desc):
                 score += 0.7
 
         loc = step.get("location", "").strip()
         if loc:
             checks += 1
-            if loc.lower() in location:
+            if self._word_match(loc.lower(), location):
                 score += 1.0
-            elif loc.lower() in desc:
+            elif self._word_match(loc.lower(), desc):
                 score += 0.5
 
         desc_query = step.get("description", "").strip()
         if desc_query:
             checks += 1
             words = desc_query.lower().split()
-            word_hits = sum(1 for w in words if w in all_text)
+            word_hits = sum(1 for w in words if self._word_match(w, all_text))
             score += word_hits / max(len(words), 1)
 
         return score / max(checks, 1)

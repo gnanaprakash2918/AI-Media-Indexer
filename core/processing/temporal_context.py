@@ -190,7 +190,7 @@ class SceneletBuilder:
             seg_end = seg.get("end", 0)
             if seg_start < end_ts and seg_end > start_ts:
                 texts.append(seg.get("text", ""))
-        return " ".join(texts)[:200]
+        return " ".join(texts)
 
     def build_scenelets(self) -> list[Scenelet]:
         """Processes buffered frames and audio into a list of fused Scenelets.
@@ -223,7 +223,35 @@ class SceneletBuilder:
                 )
             start_ts += self.stride_seconds
 
-        return scenelets
+        # FIX #7: Deduplicate overlapping scenelets with high content overlap
+        # Uses configurable threshold from settings (default 0.8)
+        try:
+            from config import settings
+            overlap_threshold = settings.scenelet_dedup_overlap
+        except Exception:
+            overlap_threshold = 0.8
+
+        deduped: list[Scenelet] = []
+        for sl in scenelets:
+            content_words = set(sl.fused_content.lower().split())
+            is_dup = False
+            for existing in deduped:
+                existing_words = set(existing.fused_content.lower().split())
+                if not content_words or not existing_words:
+                    continue
+                overlap = len(content_words & existing_words) / max(
+                    len(content_words), len(existing_words)
+                )
+                if overlap > overlap_threshold:
+                    # Keep the one with more frames (more visual coverage)
+                    if len(sl.frames) > len(existing.frames):
+                        deduped[deduped.index(existing)] = sl
+                    is_dup = True
+                    break
+            if not is_dup:
+                deduped.append(sl)
+
+        return deduped
 
     def clear(self) -> None:
         """Clears all buffered frame and audio data."""

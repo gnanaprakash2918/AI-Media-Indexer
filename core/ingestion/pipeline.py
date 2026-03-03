@@ -786,11 +786,15 @@ class IngestionPipeline:
                         probed.get("format", {}).get("duration", 0.0)
                     )
                     if duration > 0:
+                        # FIX #5: Empty text instead of "[No speech detected]"
+                        # which was being embedded and polluting dialogue searches.
+                        # Empty text → near-zero vector (Fix #1) → won't match real queries.
                         audio_segments = [
                             {
-                                "text": "[No speech detected]",
+                                "text": "",
                                 "start": 0.0,
                                 "end": duration,
+                                "_placeholder": True,
                             }
                         ]
                         log(

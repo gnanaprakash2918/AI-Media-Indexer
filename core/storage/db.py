@@ -3648,52 +3648,61 @@ class VectorDB:
         Returns:
             The generated scene ID.
         """
-        # Generate multi-vector embeddings (text-based)
-        visual_vec = (await self.encode_texts(visual_text or "scene"))[0]
-        motion_vec = (await self.encode_texts(motion_text or "activity"))[0]
-        dialogue_vec = (await self.encode_texts(dialogue_text or "silence"))[0]
+        _NEAR_ZERO = float(np.finfo(np.float32).tiny)
 
-        # Normalize empty texts
-        visual_vec = visual_vec if visual_text else [0.0] * self.TEXT_DIM
-        motion_vec = motion_vec if motion_text else [0.0] * self.TEXT_DIM
-        dialogue_vec = dialogue_vec if dialogue_text else [0.0] * self.TEXT_DIM
+        def _adapt_features(vec: list[float], expected_dim: int, name: str) -> list[float]:
+            """Pad or truncate feature vectors on dim mismatch instead of discarding."""
+            if len(vec) == expected_dim:
+                return vec
+            log(
+                f"{name} dim adapted: got {len(vec)}, expected {expected_dim}",
+                level="WARNING",
+            )
+            if len(vec) < expected_dim:
+                return vec + [_NEAR_ZERO] * (expected_dim - len(vec))
+            return vec[:expected_dim]
 
-        # Visual features (actual visual embedding) - use placeholder if not provided
+        # Generate text embeddings ONLY for non-empty text
+        if visual_text:
+            visual_vec = (await self.encode_texts(visual_text))[0]
+        else:
+            visual_vec = _safe_fill(self.TEXT_DIM)
+
+        if motion_text:
+            motion_vec = (await self.encode_texts(motion_text))[0]
+        else:
+            motion_vec = _safe_fill(self.TEXT_DIM)
+
+        if dialogue_text:
+            dialogue_vec = (await self.encode_texts(dialogue_text))[0]
+        else:
+            dialogue_vec = _safe_fill(self.TEXT_DIM)
+
+        # Visual features (actual visual embedding from CLIP/SigLIP)
         visual_features_dim = getattr(settings, "visual_features_dim", 768)
         video_embedding_dim = getattr(settings, "video_embedding_dim", 1024)
 
         if visual_features is None:
-            visual_features = [0.0] * visual_features_dim
-        elif len(visual_features) != visual_features_dim:
-            log(
-                f"Visual features dim mismatch: got {len(visual_features)}, expected {visual_features_dim}",
-                level="ERROR",
-            )
-            visual_features = [0.0] * visual_features_dim
+            visual_features = _safe_fill(visual_features_dim)
+        else:
+            visual_features = _adapt_features(visual_features, visual_features_dim, "Visual features")
 
         if internvideo_features is None:
-            internvideo_features = [0.0] * video_embedding_dim
-        elif len(internvideo_features) != video_embedding_dim:
-            log(
-                f"InternVideo features dim mismatch: got {len(internvideo_features)}, expected {video_embedding_dim}",
-                level="ERROR",
-            )
-            internvideo_features = [0.0] * video_embedding_dim
+            internvideo_features = _safe_fill(video_embedding_dim)
+        else:
+            internvideo_features = _adapt_features(internvideo_features, video_embedding_dim, "InternVideo features")
 
         if languagebind_features is None:
-            languagebind_features = [0.0] * video_embedding_dim
-        elif len(languagebind_features) != video_embedding_dim:
-            log(
-                f"LanguageBind features dim mismatch: got {len(languagebind_features)}, expected {video_embedding_dim}",
-                level="ERROR",
-            )
-            languagebind_features = [0.0] * video_embedding_dim
+            languagebind_features = _safe_fill(video_embedding_dim)
+        else:
+            languagebind_features = _adapt_features(languagebind_features, video_embedding_dim, "LanguageBind features")
 
         # Generate unique scene ID
         scene_key = f"{media_path}_{start_time:.3f}_{end_time:.3f}"
         scene_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scene_key))
 
-        # Build full payload
+        # Build full payload with modality presence flags for search filtering
+        _has_real_values = lambda v: any(abs(x) > _NEAR_ZERO for x in v[:10])
         full_payload = {
             "media_path": media_path,
             "start_time": start_time,
@@ -3702,36 +3711,26 @@ class VectorDB:
             "visual_text": visual_text,
             "motion_text": motion_text,
             "dialogue_text": dialogue_text,
-            "has_visual_features": visual_features is not None
-            and any(v != 0 for v in visual_features[:10]),
-            "has_internvideo": internvideo_features is not None
-            and any(v != 0 for v in internvideo_features[:10]),
-            "has_languagebind": languagebind_features is not None
-            and any(v != 0 for v in languagebind_features[:10]),
+            # Modality presence flags — search can skip empty modalities
+            "has_visual_text": bool(visual_text),
+            "has_motion_text": bool(motion_text),
+            "has_dialogue_text": bool(dialogue_text),
+            "has_visual_features": _has_real_values(visual_features),
+            "has_internvideo": _has_real_values(internvideo_features),
+            "has_languagebind": _has_real_values(languagebind_features),
         }
         if payload:
             full_payload.update(payload)
 
-        # Prepare the vector dictionary
+        # Prepare the vector dictionary — all vectors guaranteed correct dim
         vector_dict = {
             "visual": visual_vec,
             "motion": motion_vec,
             "dialogue": dialogue_vec,
+            "visual_features": visual_features,
             "internvideo": internvideo_features,
             "languagebind": languagebind_features,
         }
-
-        # Conditionally add visual_features to the vector_dict
-        if (
-            visual_features is not None
-            and len(visual_features) == visual_features_dim
-        ):
-            vector_dict["visual_features"] = visual_features
-        else:
-            # Fallback for missing or mismatched visual features (e.g. dependency missing)
-            # Use zero vector of correct dim to prevent DB error
-            zero_features = [0.0] * visual_features_dim
-            vector_dict["visual_features"] = zero_features
 
         self.client.upsert(
             collection_name=self.SCENES_COLLECTION,

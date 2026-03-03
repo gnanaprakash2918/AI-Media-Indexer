@@ -364,7 +364,17 @@ class Settings(BaseSettings):
     modality_weight_audio: float = Field(
         default=0.15, description="Weight for audio event search"
     )
-
+    modality_weight_video_metadata: float = Field(
+        default=0.05, description="Weight for video-level metadata search"
+    )
+    voice_identity_boost: float = Field(
+        default=1.5,
+        description="Score multiplier when voice matches resolved identity (1.0=no boost)",
+    )
+    scenelet_dedup_overlap: float = Field(
+        default=0.8,
+        description="Word overlap ratio above which scenelets are deduplicated (0-1)",
+    )
     # Search result display configuration
     search_default_duration: float = Field(
         default=5.0,

@@ -7,7 +7,7 @@ video-level global context for long-term understanding (18-hour problem).
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.utils.logger import log
 
@@ -384,6 +384,7 @@ def aggregate_frames_to_scene(
     end_time: float,
     dialogue_segments: list[dict] | None = None,
     audio_events: list[dict] | None = None,
+    llm: Any = None,
 ) -> dict:
     """Convenience functional wrapper for SceneAggregator.
 
@@ -392,11 +393,17 @@ def aggregate_frames_to_scene(
         start_time: Start of the scene window.
         end_time: End of the scene window.
         dialogue_segments: Optional audio segments.
+        audio_events: Optional audio events.
+        llm: Optional LLM interface for higher-quality global summaries.
 
     Returns:
         The aggregated scene dictionary.
     """
     aggregator = SceneAggregator()
-    return aggregator.aggregate_frames(
+    result = aggregator.aggregate_frames(
         frames, start_time, end_time, dialogue_segments, audio_events
     )
+    # FIX #12: Wire LLM to GlobalContextManager for better summaries
+    if llm:
+        result["global_summary"] = aggregator.global_context.generate_global_summary(llm=llm)
+    return result

@@ -342,9 +342,8 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 results = self.db.client.query_points(
                     collection_name=self.db.MEDIA_COLLECTION,
                     query=query_vector,
-                    query_filter=models.Filter(should=conditions)
-                    if len(conditions) > 1
-                    else models.Filter(must=conditions),
+                    # FIX #2: Always AND — these are constraint filters, not relevance signals
+                    query_filter=models.Filter(must=conditions),
                     limit=limit,
                 ).points
                 results = [
@@ -581,13 +580,31 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             log(f"[SOTA] Video metadata search failed: {e}")
             all_results["video_metadata"] = []
 
-        # Voice identity boost
+        # FIX #11: Configurable voice identity boost (not hardcoded 1.5x)
         if person_names and all_results.get("voice"):
+            voice_boost = getattr(settings, "voice_identity_boost", 1.5)
             for v_result in all_results["voice"]:
                 speaker_name = str(v_result.get("speaker_name", ""))
                 if any(name.lower() in speaker_name.lower() for name in person_names):
-                    v_result["score"] = min(1.0, v_result.get("score", 0.5) * 1.5)
+                    v_result["score"] = min(1.0, v_result.get("score", 0.5) * voice_boost)
                     v_result["identity_boosted"] = True
+
+        # FIX #3: Per-modality min-max normalization to [0, 1]
+        # Different modalities use different embedding spaces (SigLIP vs BGE)
+        # so raw scores are not comparable. Normalize before fusion.
+        for modality, results in all_results.items():
+            if not results:
+                continue
+            scores = [r.get("score", 0) for r in results if r.get("score") is not None]
+            if not scores:
+                continue
+            min_s, max_s = min(scores), max(scores)
+            score_range = max_s - min_s
+            if score_range > 0:
+                for r in results:
+                    raw = r.get("score", 0)
+                    r["_raw_score"] = raw
+                    r["score"] = (raw - min_s) / score_range
 
         # 4. Adaptive weighting + RRF fusion
         weights = self._compute_adaptive_weights(search_text, parsed)
@@ -857,11 +874,20 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 weights = {k: v / total for k, v in weights.items()}
             log(f"[ADAPTIVE] Using LLM-inferred weights: {weights}")
         else:
-            weights = {k: 1.0 / 7.0 for k in [
-                "scenes", "frames", "scenelets", "voice",
-                "dialogue", "audio_events", "video_metadata",
-            ]}
-            log("[ADAPTIVE] Query weights: UNIFORM (no LLM decomposition)")
+            # FIX #8: Use configured modality weights as fallback (not uniform 1/7)
+            weights = {
+                "scenes": settings.modality_weight_scenes,
+                "frames": settings.modality_weight_frames,
+                "scenelets": settings.modality_weight_scenelets,
+                "voice": settings.modality_weight_voice,
+                "dialogue": settings.modality_weight_dialogue,
+                "audio_events": settings.modality_weight_audio,
+                "video_metadata": settings.modality_weight_video_metadata,
+            }
+            total = sum(weights.values())
+            if total > 0:
+                weights = {k: v / total for k, v in weights.items()}
+            log(f"[ADAPTIVE] Using config-based fallback weights: {weights}")
 
         return weights
 

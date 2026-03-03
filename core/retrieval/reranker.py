@@ -162,7 +162,7 @@ class RerankingCouncil:
         if payload.get("dialogue_text"):
             parts.append(f"Dialogue: {payload['dialogue_text']}")
         if payload.get("dialogue_transcript"):
-            parts.append(f"Transcript: {payload['dialogue_transcript'][:200]}")
+            parts.append(f"Transcript: {payload['dialogue_transcript']}")
 
         # === 2. Identity information (CRITICAL for person queries) ===
         if payload.get("person_names"):
