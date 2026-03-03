@@ -494,6 +494,25 @@ class Settings(BaseSettings):
         description="Distance threshold for ArcFace identity verification",
     )
 
+    # --- Model Names (no hardcoding) ---
+    insightface_model: str = Field(
+        default="buffalo_l",
+        description="InsightFace model pack name (buffalo_l, buffalo_sc, etc.)",
+    )
+
+
+    face_nms_threshold: float = Field(
+        default=0.3,
+        description="Non-maximum suppression threshold for face detection overlap filtering",
+    )
+    music_dominance_ratio: float = Field(
+        default=0.6,
+        description="Fraction of music content above which lyrics mode is triggered (0-1)",
+    )
+
+
+
+
     # Advanced Overrides - SOTA Embeddings for 100% accuracy
     embedding_model_override: str = Field(
         default="",  # Empty = Auto-detect based on VRAM (SOTA preferred)

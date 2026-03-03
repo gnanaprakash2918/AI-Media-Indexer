@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_pipeline
 from api.schemas import AgentChatRequest
+from config import settings
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
 from core.utils.prompt_loader import load_prompt
@@ -28,7 +29,6 @@ async def get_agent_status() -> dict:
         A dictionary containing the 'active' status, Ollama connection info,
         and a list of available tool definitions.
     """
-    """Get agent system status and available tools."""
     logger.info("[Agent] Status check requested")
 
     available_tools = [
@@ -67,7 +67,7 @@ async def get_agent_status() -> dict:
         "status": "active",
         "ollama": ollama_status,
         "tools": available_tools,
-        "default_model": "llama3.2:3b",
+        "default_model": settings.agent_model,
     }
 
 
@@ -92,7 +92,6 @@ async def agent_chat(
     Raises:
         HTTPException: If the LLM interaction or tool execution fails.
     """
-    """Send a message to the AI agent and get a response with tool usage logging."""
     logger.info(f"[Agent] RECV: '{request.message[:100]}...'")
 
     try:

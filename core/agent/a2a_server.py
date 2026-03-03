@@ -45,8 +45,10 @@ def create_app() -> FastAPI:
     Returns:
         A configured FastAPI application instance.
     """
+    from config import settings as _settings
+
     base_url = os.getenv("MEDIA_AGENT_BASE_URL", "http://localhost:8000")
-    model_name = os.getenv("MEDIA_AGENT_MODEL", "llama3.1")
+    model_name = os.getenv("MEDIA_AGENT_MODEL", _settings.agent_model)
 
     check_ollama_connection(model_name)
 

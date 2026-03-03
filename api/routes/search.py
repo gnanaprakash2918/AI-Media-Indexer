@@ -1,10 +1,12 @@
 """API routes for search operations."""
 
+import asyncio
 import time
 from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from api.deps import get_pipeline, get_search_agent
 from core.ingestion.pipeline import IngestionPipeline
@@ -294,8 +296,6 @@ async def unified_search(
 
 # === HITL FEEDBACK ENDPOINT ===
 
-from pydantic import BaseModel
-
 
 class SearchFeedback(BaseModel):
     """User feedback on search result quality."""
@@ -391,31 +391,34 @@ async def get_feedback_stats() -> dict:
     import json
     from pathlib import Path
 
-    feedback_dir = Path("logs/search_feedback")
-    if not feedback_dir.exists():
-        return {"total": 0, "relevant": 0, "irrelevant": 0, "accuracy": None}
+    def _read_stats() -> dict:
+        """Synchronous file I/O — runs in a thread to avoid blocking."""
+        feedback_dir = Path("logs/search_feedback")
+        if not feedback_dir.exists():
+            return {"total": 0, "relevant": 0, "irrelevant": 0, "accuracy_percentage": None}
 
-    feedback_files = list(feedback_dir.glob("*.json"))
-    total = len(feedback_files)
-    relevant = 0
-    irrelevant = 0
+        feedback_files = list(feedback_dir.glob("*.json"))
+        total = len(feedback_files)
+        relevant = 0
+        irrelevant = 0
 
-    for f in feedback_files:
-        try:
-            with open(f) as file:
-                data = json.load(file)
-                if data.get("is_relevant"):
-                    relevant += 1
-                else:
-                    irrelevant += 1
-        except Exception:
-            pass
+        for f in feedback_files:
+            try:
+                with open(f) as file:
+                    data = json.load(file)
+                    if data.get("is_relevant"):
+                        relevant += 1
+                    else:
+                        irrelevant += 1
+            except Exception:
+                pass
 
-    accuracy = (relevant / total * 100) if total > 0 else None
+        accuracy = (relevant / total * 100) if total > 0 else None
+        return {
+            "total": total,
+            "relevant": relevant,
+            "irrelevant": irrelevant,
+            "accuracy_percentage": round(accuracy, 2) if accuracy else None,
+        }
 
-    return {
-        "total": total,
-        "relevant": relevant,
-        "irrelevant": irrelevant,
-        "accuracy_percentage": round(accuracy, 2) if accuracy else None,
-    }
+    return await asyncio.to_thread(_read_stats)

@@ -45,8 +45,8 @@ class OllamaLLM(LLMInterface):
         """Initialize the Ollama AsyncClient with dual-model support.
 
         Args:
-            model_name: Vision model for image analysis (default: llava:7b).
-            text_model_name: Text model for JSON/reranking (default: llama3.1).
+            model_name: Vision model for image analysis (from config if not set).
+            text_model_name: Text model for JSON/reranking (from config if not set).
             base_url_env: Environment variable name for the base URL.
             prompt_dir: Prompt template directory.
 
@@ -57,14 +57,16 @@ class OllamaLLM(LLMInterface):
         """
         super().__init__(prompt_dir=prompt_dir)
 
+        from config import settings as _settings
+
         # Vision model for describe_image tasks (needs multimodal capability)
         self.model = model_name or os.getenv(
-            "OLLAMA_VISION_MODEL", os.getenv("OLLAMA_MODEL", "llava:7b")
+            "OLLAMA_VISION_MODEL", os.getenv("OLLAMA_MODEL", _settings.ollama_vision_model)
         )
 
         # Text model for structured JSON output (better at following schemas)
         self.text_model = text_model_name or os.getenv(
-            "OLLAMA_TEXT_MODEL", "llama3.1"
+            "OLLAMA_TEXT_MODEL", _settings.ollama_text_model
         )
 
         base_url = os.getenv(base_url_env, "http://localhost:11434")

@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import subprocess
 from pathlib import Path
 from typing import Annotated
 
@@ -468,11 +467,9 @@ async def get_media_thumbnail(
         A Response containing the JPEG image bytes.
 
     Raises:
-        HTTPException: If frame extraction via OpenCV fails.
+        HTTPException: If frame extraction fails.
     """
-    import cv2
-
-    file_path = Path(path)
+    file_path = validate_path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 

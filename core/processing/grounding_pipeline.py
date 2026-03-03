@@ -1,28 +1,44 @@
 """Pipeline for visual grounding and segment tracking."""
 
-import logging
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from core.storage.db import VectorDB
+import numpy as np
 
-# CHANGED: Use the authoritative SAM3Tracker in core/tracking
 from core.tracking.sam3_tracker import SAM3Tracker
-from core.utils.resource_arbiter import GPU_SEMAPHORE
+from core.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from core.storage.db import VectorDB
+
+log = get_logger(__name__)
 
 
 class GroundingPipeline:
     """Post-processing pipeline for visual grounding using SAM 3.
 
-    Generates segmentation masks (masklets) for concepts description in video frames.
+    Generates segmentation masks (masklets) for concepts in video frames.
     Designed to run offline/asynchronously.
     """
 
-    def __init__(self):
-        """Initialize the grounding pipeline."""
+    def __init__(self, db: VectorDB | None = None) -> None:
+        """Initialize the grounding pipeline.
+
+        Args:
+            db: Injected VectorDB instance. Created lazily if not provided.
+        """
         self.sam = SAM3Tracker()
-        self.db = VectorDB()
+        self._db = db
+
+    @property
+    def db(self) -> VectorDB:
+        """Lazy accessor for VectorDB."""
+        if self._db is None:
+            from core.storage.db import VectorDB
+            self._db = VectorDB()
+        return self._db
 
     async def process_video(
         self, video_path: str, concepts: list[str] | None = None
@@ -38,20 +54,14 @@ class GroundingPipeline:
         """
         path = Path(video_path)
         if not path.exists():
-            logger.error(f"Video not found: {path}")
+            log.error(f"Video not found: {path}")
             return 0
 
-        # Bootstrapping concepts if not provided
         if not concepts:
-            # No automatic concept bootstrapping implemented yet.
-            # Concepts must be explicitly provided by caller.
-            logger.debug(f"No concepts provided, skipping bootstrapping for {video_path}")
+            log.warning(f"No concepts provided for grounding: {video_path}")
+            return 0
 
-            if not concepts:
-                logger.warning(f"No concepts provided for grounding: {video_path}")
-                return 0
-
-        logger.info(
+        log.info(
             f"Starting grounding for {path.name} with concepts: {concepts}"
         )
 
@@ -64,74 +74,66 @@ class GroundingPipeline:
             cap = None
 
         count = 0
-        # Single locking point for GPU
-        async with GPU_SEMAPHORE:
+        # SAM3Tracker manages its own GPU locking via ResourceArbiter.
+        # No outer GPU_SEMAPHORE needed here.
+        try:
             try:
-                # We iterate OVER CONCEPTS. SAM3Tracker.track_concept is per-concept.
-                for concept in concepts:
-                    logger.info(f"Tracking concept: {concept}")
+            for concept in concepts:
+                log.info(f"Tracking concept: {concept}")
+                segments = await self.sam.track_concept(str(path), concept)
 
-                    # SAM3Tracker.track_concept is async and handles its own GPU acquisition internally via ResourceArbiter
-                    # But since we are inside GPU_SEMAPHORE here (from old code), we should be careful.
-                    # Actually, SAM3Tracker uses ResourceArbiter which uses a semaphore.
-                    # We should rely on SAM3Tracker's internal management.
+                for seg in segments:
+                    frame_idx = seg.get("frame_idx", 0)
+                    mask = seg.get("mask")
 
-                    # Offload to avoid blocking main loop if anything is sync
-                    segments = await self.sam.track_concept(str(path), concept)
+                    if mask is None:
+                        continue
 
-                    for seg in segments:
-                        frame_idx = seg.get("frame_idx", 0)
-                        mask = seg.get("mask")
+                    if cap is not None:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                        timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                    else:
+                        timestamp = frame_idx / fps
 
-                        if mask is None:
-                            continue
+                    y_indices, x_indices = np.where(mask)
+                    if len(y_indices) == 0:
+                        continue
 
-                        if cap is not None:
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                            timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-                        else:
-                            timestamp = frame_idx / fps
+                    h, w = mask.shape
+                    y_min, y_max = y_indices.min(), y_indices.max()
+                    x_min, x_max = x_indices.min(), x_indices.max()
 
-                        # Calculate BBox
-                        import numpy as np
-                        y_indices, x_indices = np.where(mask)
-                        if len(y_indices) == 0:
-                            continue
+                    bbox_norm = [
+                        int(x_min * 1000 / w),
+                        int(y_min * 1000 / h),
+                        int(x_max * 1000 / w),
+                        int(y_max * 1000 / h),
+                    ]
 
-                        h, w = mask.shape
-                        y_min, y_max = y_indices.min(), y_indices.max()
-                        x_min, x_max = x_indices.min(), x_indices.max()
+                    visual_vector = await self.sam.extract_visual_embedding(
+                        str(path), mask, frame_idx
+                    )
 
-                        bbox_norm = [
-                            int(x_min * 1000 / w),
-                            int(y_min * 1000 / h),
-                            int(x_max * 1000 / w),
-                            int(y_max * 1000 / h)
-                        ]
+                    self.db.insert_masklet(
+                        video_path=str(path),
+                        concept=concept,
+                        start_time=timestamp,
+                        end_time=timestamp + (1.0 / fps),
+                        confidence=seg.get("score", 1.0),
+                        payload={
+                            "bbox": bbox_norm,
+                            "frame_idx": int(frame_idx),
+                            "source": "sam3_grounding",
+                        },
+                        embedding=visual_vector,
+                    )
+                    count += 1
 
-                        # Generate embedding
-                        visual_vector = await self.sam.extract_visual_embedding(str(path), mask, frame_idx)
-
-                        self.db.insert_masklet(
-                            video_path=str(path),
-                            concept=concept,
-                            start_time=timestamp,
-                            end_time=timestamp + (1.0 / fps),
-                            confidence=seg.get("score", 1.0),
-                            payload={
-                                "bbox": bbox_norm,
-                                "frame_idx": int(frame_idx),
-                                "source": "sam3_grounding"
-                            },
-                            embedding=visual_vector
-                        )
-                        count += 1
-
-            except Exception as e:
-                logger.error(f"Grounding failed: {e}")
+        except Exception as e:
+            log.error(f"Grounding failed: {e}")
 
         if cap is not None:
             cap.release()
-            
-        logger.info(f"Grounding complete. Created {count} masklets.")
+
+        log.info(f"Grounding complete. Created {count} masklets.")
         return count

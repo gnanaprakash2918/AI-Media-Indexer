@@ -30,8 +30,6 @@ async def test_hyper_granular_searcher_init():
     assert len(searcher._custom_prompt) > 100, "Prompt too short"
 
     assert searcher._get_clothing_detector() is not None
-    assert searcher._get_speed_estimator() is not None
-    assert searcher._get_depth_estimator() is not None
     assert searcher._get_clock_reader() is not None
     assert searcher._get_active_speaker() is not None
 
@@ -192,8 +190,6 @@ async def test_no_hardcoded_lists():
             "CLOTHING_PATTERNS",
         ],
         "audio_events.py": ["SOUND_CLASSES"],
-        "speed_estimation.py": ["SPEED_THRESHOLDS"],
-        "depth_estimation.py": ["DEPTH_THRESHOLDS"],
     }
 
     base = Path(__file__).parent.parent / "core" / "processing"

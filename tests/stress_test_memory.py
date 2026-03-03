@@ -80,57 +80,10 @@ async def test_temporal_analyzer() -> dict:
     }
 
 
-async def test_depth_estimator() -> dict:
-    """Test DepthAnything model load/unload."""
-    print("\n📏 Testing DepthEstimator (DepthAnything V2)...")
-
-    from core.processing.depth_estimation import DepthEstimator
-
-    before = get_vram_info()[0]
-    estimator = DepthEstimator()
-
-    frame = create_test_frames(1)[0]
-    result = await estimator.estimate_depth(frame)
-    peak = get_vram_info()[0]
-
-    if result.get("stats"):
-        print(
-            f"   Depth range: {result['stats']['min_depth']:.2f} - {result['stats']['max_depth']:.2f}"
-        )
-
-    estimator.cleanup()
-    cleanup_vram()
-    after = get_vram_info()[0]
-
-    return {
-        "module": "DepthAnything",
-        "before": before,
-        "peak": peak,
-        "after": after,
-    }
 
 
-async def test_speed_estimator() -> dict:
-    """Test RAFT optical flow model load/unload."""
-    print("\n🏃 Testing SpeedEstimator (RAFT)...")
 
-    from core.processing.speed_estimation import SpeedEstimator
 
-    before = get_vram_info()[0]
-    estimator = SpeedEstimator()
-
-    frames = create_test_frames(2, size=(256, 256))
-    result = await estimator.compute_optical_flow(frames[0], frames[1])
-    peak = get_vram_info()[0]
-
-    if result.get("mean_velocity_px"):
-        print(f"   Mean velocity: {result['mean_velocity_px']:.2f} px")
-
-    estimator.cleanup()
-    cleanup_vram()
-    after = get_vram_info()[0]
-
-    return {"module": "RAFT", "before": before, "peak": peak, "after": after}
 
 
 async def test_visual_encoder() -> dict:
@@ -221,8 +174,6 @@ async def run_stress_test(cycles: int = 2) -> None:
 
         test_funcs = [
             test_temporal_analyzer,
-            test_depth_estimator,
-            test_speed_estimator,
             test_visual_encoder,
             test_audio_events,
         ]

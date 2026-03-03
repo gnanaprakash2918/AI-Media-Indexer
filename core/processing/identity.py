@@ -277,10 +277,13 @@ class FaceTrackBuilder:
 
         return inter_area / union_area
 
+    # Default embedding dimension for zero-vector fallback
+    _EMBEDDING_DIM_DEFAULT: int = 512
+
     def _compute_track_centroid(self, track: ActiveFaceTrack) -> np.ndarray:
         """Compute normalized centroid embedding for a track."""
         if not track.embeddings:
-            return np.zeros(512, dtype=np.float64)
+            return np.zeros(self._EMBEDDING_DIM_DEFAULT, dtype=np.float64)
 
         embeddings = np.array(track.embeddings, dtype=np.float64)
         centroid = np.mean(embeddings, axis=0)
@@ -351,7 +354,7 @@ SFACE_URL: Final = (
     "face_recognition_sface/face_recognition_sface_2021dec.onnx"
 )
 
-# GPU_SEMAPHORE moved to core.utils.concurrency
+
 
 # Model type for tracking which engine is in use
 ModelType = Literal["insightface", "sface", "yunet_only"]
@@ -551,7 +554,7 @@ class FaceManager:
                     "[FaceManager] High-end system detected, loading all InsightFace models..."
                 )
                 app = face_analysis_cls(
-                    name="buffalo_l",
+                    name=settings.insightface_model,
                     root=str(MODEL_ROOT),
                     providers=providers,
                 )
@@ -579,7 +582,7 @@ class FaceManager:
                 # Only load detection and recognition models
                 # This skips: genderage.onnx, 1k3d68.onnx, 2d106det.onnx
                 app = face_analysis_cls(
-                    name="buffalo_l",
+                    name=settings.insightface_model,
                     root=str(MODEL_ROOT),
                     providers=providers,
                     allowed_modules=[
@@ -631,7 +634,7 @@ class FaceManager:
                 # Last resort: CPU only with minimal modules and smallest detection size
                 try:
                     app = face_analysis_cls(
-                        name="buffalo_l",
+                        name=settings.insightface_model,
                         root=str(MODELS_DIR),
                         providers=["CPUExecutionProvider"],  # Force CPU
                         allowed_modules=["detection", "recognition"],
@@ -680,7 +683,7 @@ class FaceManager:
                     settings.face_detection_resolution,
                 ),
                 score_threshold=settings.face_detection_threshold,
-                nms_threshold=0.3,
+                nms_threshold=settings.face_nms_threshold,
                 top_k=5000,
                 backend_id=backend,
                 target_id=target,
@@ -709,7 +712,7 @@ class FaceManager:
                     settings.face_detection_resolution,
                 ),
                 score_threshold=settings.face_detection_threshold,
-                nms_threshold=0.3,
+                nms_threshold=settings.face_nms_threshold,
                 top_k=5000,
             )
             log("[FaceManager] Using YuNet detection only - NO EMBEDDINGS", level="WARNING")
@@ -720,7 +723,6 @@ class FaceManager:
     async def detect_faces(self, image_path: Path | str) -> list[DetectedFace]:
         """Detect faces in an image with automatic model selection."""
         await self._lazy_init()
-        path = Path(image_path)
         path = Path(image_path)
         image = await self._load_image(path)
 

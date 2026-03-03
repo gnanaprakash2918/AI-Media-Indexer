@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from config import settings
+
 
 class IngestRequest(BaseModel):
     """Configuration for starting a media ingestion job."""
@@ -138,7 +140,7 @@ class AgentChatRequest(BaseModel):
 
     message: str
     use_tools: bool = True
-    model: str = "llama3.2:3b"
+    model: str = settings.agent_model
 
 
 class AgentToolRequest(BaseModel):

@@ -225,6 +225,8 @@ class ContentClassifier:
 
     def should_use_lyrics_mode(self, regions: list[AudioRegion]) -> bool:
         """Check if audio is predominantly music (needs lyrics mode)."""
+        from config import settings
+
         total = sum(r.duration for r in regions)
         if total == 0:
             return False
@@ -236,8 +238,8 @@ class ContentClassifier:
             r.duration for r in regions if r.content_type == ContentType.SPEECH
         )
 
-        # Use lyrics mode if >60% music or music > 2x speech
-        return (music_dur / total > 0.6) or (music_dur > 2 * speech_dur)
+        # Use lyrics mode if music exceeds configured dominance ratio or music > 2x speech
+        return (music_dur / total > settings.music_dominance_ratio) or (music_dur > 2 * speech_dur)
 
 
 # Singleton accessor

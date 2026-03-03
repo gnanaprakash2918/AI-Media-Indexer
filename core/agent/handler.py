@@ -44,7 +44,9 @@ from core.agent.server import (
     search_media,
 )
 
-DEFAULT_MODEL = os.getenv("MEDIA_AGENT_MODEL", "llama3.2:3b")
+from config import settings as _settings
+
+DEFAULT_MODEL = os.getenv("MEDIA_AGENT_MODEL", _settings.agent_model)
 
 
 def _build_tool_schemas() -> list[dict[str, Any]]:
@@ -230,7 +232,7 @@ class MediaAgentHandler(RequestHandler):
         Args:
             model_name: Optional override for the Ollama model name.
                 Defaults to the `MEDIA_AGENT_MODEL` environment variable
-                or ``llama3.2:3b``.
+                or the configured ``settings.agent_model``.
         """
         self.model_name = model_name or DEFAULT_MODEL
         self.tools = _build_tool_schemas()

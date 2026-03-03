@@ -273,7 +273,6 @@ async def cancel_job(job_id: str) -> dict:
 
     Raises:
         HTTPException: If the job cannot be found or is not in a cancellable state.
-        HTTPException: If the job cannot be found or is not in a cancellable state.
     """
     success = progress_tracker.cancel(job_id)
     if not success:
