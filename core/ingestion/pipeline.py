@@ -35,7 +35,7 @@ from core.processing.transcriber import AudioTranscriber
 from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
-from core.schemas import MediaType
+from core.domain.schemas import MediaType
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
 from core.tracking.sam3_tracker import SAM3Tracker

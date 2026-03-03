@@ -451,7 +451,7 @@ class SceneStageMixin:
                 try:
                     # Initialize Video Node (idempotent)
                     if scenes_stored == 1:
-                        from core.schemas import MediaFile, MediaMetadata, MediaType
+                        from core.domain.schemas import MediaFile, MediaMetadata, MediaType
 
                         # Generate lightweight content hash (path + size + mtime)
                         # Avoid full file read for graph node init
@@ -469,7 +469,7 @@ class SceneStageMixin:
                         self.graph_builder.process_video_node(mf_wrapper)
 
                     # Construct Synthetic Analysis for Graph
-                    from core.schemas import FrameAnalysis, SceneContext
+                    from core.domain.schemas import FrameAnalysis, SceneContext
 
                     # Explicitly capture Deep Research signals
                     dr_mood = dr_meta.get("mood", "") if dr_meta else ""

@@ -51,7 +51,7 @@ from pyannote.audio import Inference, Model, Pipeline  # noqa: E402
 from pyannote.core import Segment  # noqa: E402
 
 from config import settings  # noqa: E402
-from core.schemas import SpeakerSegment  # noqa: E402
+from core.domain.schemas import SpeakerSegment  # noqa: E402
 from core.utils.logger import get_logger, log_verbose  # noqa: E402
 from core.utils.resource_arbiter import GPU_SEMAPHORE, safe_cleanup_vram  # noqa: E402
 

@@ -28,7 +28,7 @@ from pydantic import Field
 from core.ingestion.pipeline import IngestionPipeline
 
 # NOTE: SearchEngine removed - use SearchAgent for all search operations
-from core.schemas import IngestResponse, SearchResponse
+from core.domain.schemas import IngestResponse, SearchResponse
 from core.storage.db import VectorDB
 from core.utils.logger import log
 

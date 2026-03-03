@@ -7,7 +7,7 @@ import uuid
 from typing import Optional
 
 from core.knowledge.graph_store import get_graph_store
-from core.schemas import FrameAnalysis, MediaFile, SceneContext
+from core.domain.schemas import FrameAnalysis, MediaFile, SceneContext
 from core.utils.logger import get_logger
 
 log = get_logger(__name__)

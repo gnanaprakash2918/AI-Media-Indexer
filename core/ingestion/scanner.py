@@ -5,7 +5,7 @@ import os
 from collections.abc import Generator, Iterable
 from pathlib import Path
 
-from core.schemas import MediaAsset, MediaType
+from core.domain.schemas import MediaAsset, MediaType
 from core.utils.logger import log
 
 
