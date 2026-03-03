@@ -301,8 +301,9 @@ class SigLIPEncoder(BaseVisualEncoder):
                     # Fallback to smaller model for low VRAM
                     self._hf_model_id = "google/siglip-base-patch16-256"
                     log.warning(f"Low VRAM detected ({vram_gb:.1f}GB). Using smaller SigLIP model: {self._hf_model_id}")
-        except:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Swallowed exception: %s", e)
 
     @property
     def embedding_dim(self) -> int:
