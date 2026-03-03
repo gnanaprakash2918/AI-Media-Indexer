@@ -19,7 +19,6 @@ from config import settings
 from core.errors import IngestionError, MediaIndexerError
 from core.llm.video_vlm import VideoVLM
 from core.llm.vlm_factory import get_vlm_client
-from core.processing.deep_research import get_deep_research_processor
 from core.processing.extractor import FrameExtractor
 from core.processing.frame_sampling import TextGatedOCR
 from core.processing.identity import FaceManager, FaceTrackBuilder
@@ -2284,14 +2283,18 @@ class IngestionPipeline:
                         img_np,
                         compute_embeddings=False,  # VectorDB does this
                         compute_saliency=False,
-                        compute_fingerprint=True,
+                        compute_fingerprint=False,  # Hash was never stored
                     )
+
+                    # Skip black/blank frames — they pollute search results
+                    if dr_result.is_black_frame:
+                        logger.debug(f"Scene {idx}: Skipping black frame")
+                        continue
 
                     dr_meta = {
                         "shot_type": dr_result.shot_type,
                         "mood": dr_result.mood,
                         "aesthetic_score": dr_result.aesthetic_score,
-                        "is_black_frame": dr_result.is_black_frame,
                     }
 
                     # Video understanding embeddings (InternVideo, LanguageBind)
@@ -2443,12 +2446,19 @@ class IngestionPipeline:
                 }
 
                 # Enhance visual text with Deep Research insights
+                # Only add shot_type and mood — these are semantic terms that help
+                # text embedding search (e.g. "close-up", "tense").
+                # aesthetic_score is NOT added here because numeric strings
+                # ("aesthetic_score: 0.75") are noise in text embeddings.
+                # The score is already stored as a filterable numeric field.
                 if dr_meta:
-                    visual_text += (
-                        f" {dr_meta.get('shot_type', '')} "
-                        f"{dr_meta.get('mood', '')} "
-                        f"aesthetic_score: {dr_meta.get('aesthetic_score', 0):.2f}"
-                    )
+                    dr_parts = []
+                    if dr_meta.get('shot_type'):
+                        dr_parts.append(dr_meta['shot_type'])
+                    if dr_meta.get('mood'):
+                        dr_parts.append(dr_meta['mood'])
+                    if dr_parts:
+                        visual_text += " " + " ".join(dr_parts)
 
                 await self.db.store_scene(
                     media_path=str(path),

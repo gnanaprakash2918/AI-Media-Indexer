@@ -1,11 +1,8 @@
 """Deep Research Integration Module.
 
-Wires all SOTA models from Deep Research into the ingestion pipeline:
-- Advanced Embeddings (NV-Embed-v2, Nomic, Ensemble)
-- Video Understanding (LanguageBind, InternVideo2, V-JEPA, DINOv2, VideoMAE, ImageBind)
+Wires SOTA models into the ingestion pipeline:
 - Cinematography (DynamicClassifier, AestheticScorer, TechnicalCueDetector)
-- Audio Analysis (AudioTempoAnalyzer, SaliencyDetector, CLAP)
-- Perceptual Hashing (Content fingerprinting)
+- Video Understanding (InternVideo2, LanguageBind) — gated by config
 
 User Priority: ACCURACY over storage/speed.
 """
@@ -27,13 +24,9 @@ log = get_logger(__name__)
 class DeepResearchResult:
     """Container for all Deep Research analysis results."""
 
-    # Advanced embeddings
-    embeddings: dict[str, np.ndarray] = field(default_factory=dict)
-
     # Video understanding
     video_features: dict[str, np.ndarray] = field(default_factory=dict)
     action_labels: list[str] = field(default_factory=list)
-    motion_prediction: np.ndarray | None = None
 
     # Cinematography
     shot_type: str = ""
@@ -45,98 +38,42 @@ class DeepResearchResult:
     # Technical cues
     is_black_frame: bool = False
     is_shot_boundary: bool = False
-    blur_score: float = 0.0
-
-    # Audio analysis
-    tempo_bpm: float = 0.0
-    beat_positions: list[float] = field(default_factory=list)
-    audio_mood: str = ""
-    is_music: bool = False
-
-    # Fingerprinting
-    perceptual_hash: str = ""
-    audio_fingerprint: str = ""
-
-    # Saliency
-    saliency_regions: list[dict] = field(default_factory=list)
 
 
 class DeepResearchProcessor:
-    """Unified processor for all Deep Research SOTA models.
+    """Unified processor for Deep Research SOTA models.
 
-    Provides a single interface to run all Deep Research models on a frame/video.
-    All models are lazy-loaded and use RESOURCE_ARBITER for GPU management.
+    Provides a single interface to run cinematography + video understanding
+    models on frames/video. All models are lazy-loaded.
 
     Usage:
         processor = DeepResearchProcessor()
-        result = await processor.analyze_frame(frame_path, ...)
+        result = await processor.analyze_frame(frame, ...)
         result = await processor.analyze_video_segment(video_path, start, end)
     """
 
     def __init__(
         self,
-        enable_advanced_embeddings: bool = True,
         enable_video_understanding: bool = True,
         enable_cinematography: bool = True,
-        enable_audio_analysis: bool = True,
-        enable_fingerprinting: bool = True,
         device: str | None = None,
     ):
-        """Initialize Deep Research processor.
-
-        Args:
-            enable_advanced_embeddings: Enable NV-Embed, Nomic ensemble.
-            enable_video_understanding: Enable LanguageBind, InternVideo, etc.
-            enable_cinematography: Enable shot type, aesthetics, mood analysis.
-            enable_audio_analysis: Enable tempo, beat, mood detection.
-            enable_fingerprinting: Enable perceptual hashing.
-            device: Device for inference. Auto-detected if None.
-        """
-        self._enable_embeddings = enable_advanced_embeddings
         self._enable_video = enable_video_understanding
         self._enable_cinematography = enable_cinematography
-        self._enable_audio = enable_audio_analysis
-        self._enable_fingerprinting = enable_fingerprinting
         self._device = device
 
         # Lazy-loaded components
-        self._embedding_ensemble = None
         self._dynamic_classifier = None
         self._aesthetic_scorer = None
         self._technical_detector = None
-        self._tempo_analyzer = None
-        self._saliency_detector = None
-        self._perceptual_hasher = None
-        self._audio_fingerprinter = None
         self._languagebind = None
         self._internvideo = None
-        self._dinov2 = None
-        self._videomae = None
 
         self._init_lock = asyncio.Lock()
 
     # =========================================================================
     # LAZY LOADERS
     # =========================================================================
-
-    async def _get_embedding_ensemble(self):
-        """Lazy load EmbeddingEnsemble."""
-        if self._embedding_ensemble is None and self._enable_embeddings:
-            try:
-                from core.processing.advanced_embeddings import (
-                    EmbeddingEnsemble,
-                )
-
-                self._embedding_ensemble = EmbeddingEnsemble(
-                    use_nv_embed=True,  # SOTA accuracy
-                    use_nomic=True,  # Long context
-                    use_bge=True,  # Hybrid
-                    device=self._device,
-                )
-                log.info("[DeepResearch] EmbeddingEnsemble loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] EmbeddingEnsemble failed: {e}")
-        return self._embedding_ensemble
 
     async def _get_dynamic_classifier(self):
         """Lazy load DynamicClassifier for shot types, moods, etc."""
@@ -176,57 +113,7 @@ class DeepResearchProcessor:
                 log.warning(f"[DeepResearch] TechnicalCueDetector failed: {e}")
         return self._technical_detector
 
-    async def _get_tempo_analyzer(self):
-        """Lazy load AudioTempoAnalyzer."""
-        if self._tempo_analyzer is None and self._enable_audio:
-            try:
-                from core.processing.audio_analysis import AudioTempoAnalyzer
-
-                self._tempo_analyzer = AudioTempoAnalyzer()
-                log.info("[DeepResearch] AudioTempoAnalyzer loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] AudioTempoAnalyzer failed: {e}")
-        return self._tempo_analyzer
-
-    async def _get_saliency_detector(self):
-        """Lazy load SaliencyDetector."""
-        if self._saliency_detector is None and self._enable_cinematography:
-            try:
-                # CHANGED: Moved from audio_analysis to saliency module
-                from core.processing.saliency import SaliencyDetector
-
-                self._saliency_detector = SaliencyDetector(use_sam3=True)
-                log.info("[DeepResearch] SaliencyDetector loaded (SAM 3 enabled)")
-            except Exception as e:
-                log.warning(f"[DeepResearch] SaliencyDetector failed: {e}")
-        return self._saliency_detector
-
-    async def _get_perceptual_hasher(self):
-        """Lazy load PerceptualHasher."""
-        if self._perceptual_hasher is None and self._enable_fingerprinting:
-            try:
-                from core.processing.fingerprinting import PerceptualHasher
-
-                self._perceptual_hasher = PerceptualHasher()
-                log.info("[DeepResearch] PerceptualHasher loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] PerceptualHasher failed: {e}")
-        return self._perceptual_hasher
-
-    async def _get_audio_fingerprinter(self):
-        """Lazy load AudioFingerprinter."""
-        if self._audio_fingerprinter is None and self._enable_fingerprinting:
-            try:
-                from core.processing.fingerprinting import AudioFingerprinter
-
-                self._audio_fingerprinter = AudioFingerprinter()
-                log.info("[DeepResearch] AudioFingerprinter loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] AudioFingerprinter failed: {e}")
-        return self._audio_fingerprinter
-
     async def _get_languagebind(self):
-        """Lazy load LanguageBindEncoder."""
         """Lazy load LanguageBindEncoder."""
         from config import settings
 
@@ -260,30 +147,6 @@ class DeepResearchProcessor:
                 log.warning(f"[DeepResearch] InternVideoEncoder failed: {e}")
         return self._internvideo
 
-    async def _get_dinov2(self):
-        """Lazy load DINOv2Encoder."""
-        if self._dinov2 is None and self._enable_video:
-            try:
-                from core.processing.academic_models import DINOv2Encoder
-
-                self._dinov2 = DINOv2Encoder(device=self._device)
-                log.info("[DeepResearch] DINOv2Encoder loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] DINOv2Encoder failed: {e}")
-        return self._dinov2
-
-    async def _get_videomae(self):
-        """Lazy load VideoMAEEncoder."""
-        if self._videomae is None and self._enable_video:
-            try:
-                from core.processing.academic_models import VideoMAEEncoder
-
-                self._videomae = VideoMAEEncoder(device=self._device)
-                log.info("[DeepResearch] VideoMAEEncoder loaded")
-            except Exception as e:
-                log.warning(f"[DeepResearch] VideoMAEEncoder failed: {e}")
-        return self._videomae
-
     # =========================================================================
     # ANALYSIS METHODS
     # =========================================================================
@@ -294,23 +157,20 @@ class DeepResearchProcessor:
         shot_concepts: list[str] | None = None,
         mood_concepts: list[str] | None = None,
         compute_embeddings: bool = True,
-        compute_saliency: bool = True,
+        compute_saliency: bool = False,
         compute_aesthetics: bool = True,
-        compute_fingerprint: bool = True,
+        compute_fingerprint: bool = False,
     ) -> DeepResearchResult:
-        """Analyze a single frame with all Deep Research models.
+        """Analyze a single frame with cinematography models.
 
         Args:
             frame: Frame as numpy array or path to image.
             shot_concepts: Custom shot type concepts for classification.
             mood_concepts: Custom mood concepts for classification.
-            compute_embeddings: Whether to compute advanced embeddings.
-            compute_saliency: Whether to compute visual saliency.
             compute_aesthetics: Whether to compute aesthetic score.
-            compute_fingerprint: Whether to compute perceptual hash.
 
         Returns:
-            DeepResearchResult with all analysis data.
+            DeepResearchResult with cinematography data.
         """
         result = DeepResearchResult()
 
@@ -372,101 +232,13 @@ class DeepResearchProcessor:
                 except Exception as e:
                     log.warning(f"[DeepResearch] Aesthetic scoring failed: {e}")
 
-        # 3. Technical cues
+        # 3. Technical cues (black frame detection)
         detector = await self._get_technical_detector()
         if detector:
             try:
-                # TechnicalCueDetector uses separate async methods
                 result.is_black_frame = await detector.detect_black_frame(frame)
-                result.blur_score = (
-                    0.0  # Blur detection requires additional implementation
-                )
             except Exception as e:
                 log.warning(f"[DeepResearch] Technical detection failed: {e}")
-
-        # 4. Saliency detection
-        if compute_saliency:
-            saliency = await self._get_saliency_detector()
-            if saliency:
-                try:
-                    regions = saliency.detect(frame)
-                    result.saliency_regions = regions
-                except Exception as e:
-                    log.warning(
-                        f"[DeepResearch] Saliency detection failed: {e}"
-                    )
-
-        # 5. Perceptual hashing
-        if compute_fingerprint:
-            hasher = await self._get_perceptual_hasher()
-            if hasher:
-                try:
-                    # hash_frame is async - must await
-                    result.perceptual_hash = (
-                        await hasher.hash_frame(frame) or ""
-                    )
-                except Exception as e:
-                    log.warning(
-                        f"[DeepResearch] Perceptual hashing failed: {e}"
-                    )
-
-        # 6. DINOv2 features (DISABLED)
-        # dinov2 = await self._get_dinov2()
-        # if dinov2:
-        #     try:
-        #         features = await dinov2.extract_features(frame)
-        #         if features is not None:
-        #             result.video_features["dinov2"] = features
-        #     except Exception as e:
-        #         log.warning(f"[DeepResearch] DINOv2 encoding failed: {e}")
-
-        return result
-
-    async def analyze_audio_segment(
-        self,
-        audio_path: Path | str,
-        start_time: float = 0.0,
-        end_time: float | None = None,
-    ) -> DeepResearchResult:
-        """Analyze audio segment for tempo, beats, mood.
-
-        Args:
-            audio_path: Path to audio/video file.
-            start_time: Start time in seconds.
-            end_time: End time in seconds (None = entire file).
-
-        Returns:
-            DeepResearchResult with audio analysis data.
-        """
-        result = DeepResearchResult()
-
-        # Tempo analysis
-        tempo = await self._get_tempo_analyzer()
-        if tempo:
-            try:
-                analysis = await tempo.analyze(
-                    str(audio_path),
-                    start_time=start_time,
-                    end_time=end_time,
-                )
-                result.tempo_bpm = analysis.get("tempo", 0.0)
-                result.beat_positions = analysis.get("beats", [])
-                result.audio_mood = analysis.get("mood", "")
-                result.is_music = analysis.get("is_music", False)
-            except Exception as e:
-                log.warning(f"[DeepResearch] Tempo analysis failed: {e}")
-
-        # Audio fingerprinting
-        fingerprinter = await self._get_audio_fingerprinter()
-        if fingerprinter:
-            try:
-                result.audio_fingerprint = await fingerprinter.fingerprint(
-                    str(audio_path),
-                    start=start_time,
-                    end=end_time,
-                )
-            except Exception as e:
-                log.warning(f"[DeepResearch] Audio fingerprinting failed: {e}")
 
         return result
 
@@ -477,7 +249,7 @@ class DeepResearchProcessor:
         end_time: float,
         sample_frames: int = 8,
     ) -> DeepResearchResult:
-        """Analyze video segment with temporal models.
+        """Analyze video segment with temporal models (InternVideo, LanguageBind).
 
         Args:
             video_path: Path to video file.
@@ -495,7 +267,6 @@ class DeepResearchProcessor:
             import cv2
 
             cap = cv2.VideoCapture(str(video_path))
-            # fps unused
             duration = end_time - start_time
             frame_interval = duration / sample_frames
 
@@ -554,24 +325,7 @@ class DeepResearchProcessor:
                     f"[DeepResearch] Shot boundary detection skipped: {e}"
                 )
 
-        # DISABLED: DINOv2 and VideoMAE as per user request to reduce bloat.
-        # Only InternVideo/LanguageBind are active for SOTA video-text search.
-
         return result
-
-    async def encode_text(self, text: str) -> dict[str, np.ndarray]:
-        """Encode text with advanced embedding ensemble.
-
-        Args:
-            text: Text to encode.
-
-        Returns:
-            Dict of {model_name: embedding}.
-        """
-        ensemble = await self._get_embedding_ensemble()
-        if ensemble:
-            return await ensemble.encode_query(text)
-        return {}
 
     async def match_query_to_frame(
         self,
@@ -598,8 +352,6 @@ class DeepResearchProcessor:
 
     def cleanup(self) -> None:
         """Release all resources."""
-        if self._embedding_ensemble:
-            self._embedding_ensemble.cleanup()
         if self._dynamic_classifier:
             self._dynamic_classifier.cleanup()
         if self._aesthetic_scorer:
@@ -608,10 +360,6 @@ class DeepResearchProcessor:
             self._languagebind.cleanup()
         if self._internvideo:
             self._internvideo.cleanup()
-        if self._dinov2:
-            self._dinov2.cleanup()
-        if self._videomae:
-            self._videomae.cleanup()
 
         log.info("[DeepResearch] All resources released")
 
