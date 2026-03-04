@@ -61,6 +61,16 @@ from core.ingestion.stages.audio_events_stage import AudioEventsStageMixin
 from core.ingestion.stages.frame_stage import FrameStageMixin
 from core.ingestion.stages.scene_stage import SceneStageMixin
 
+from core.ports.storage import StorageBackend
+from core.ports.processors import (
+    AudioProcessor as AudioProcessorProtocol,
+    FaceTracker as FaceTrackerProtocol,
+    SceneDetector as SceneDetectorProtocol,
+    VisionAnalyzer as VisionAnalyzerProtocol,
+    VoiceProcessor as VoiceProcessorProtocol,
+    VLMProcessor as VLMProcessorProtocol,
+)
+
 class IngestionPipeline(
     AudioStageMixin,
     VoiceStageMixin,
@@ -73,19 +83,29 @@ class IngestionPipeline(
     def __init__(
         self,
         *,
+        db: StorageBackend | None = None,
+        vision_analyzer: VisionAnalyzerProtocol | None = None,
+        face_manager: FaceTrackerProtocol | None = None,
+        voice_processor: VoiceProcessorProtocol | None = None,
+        video_vlm: VLMProcessorProtocol | None = None,
         qdrant_backend: str = settings.qdrant_backend,
         qdrant_host: str = settings.qdrant_host,
         qdrant_port: int = settings.qdrant_port,
         frame_interval_seconds: float = settings.frame_interval,
         tmdb_api_key: str | None = settings.tmdb_api_key,
     ) -> None:
-        """Initializes the ingestion pipeline and its sub-components.
+        """Initializes the ingestion pipeline with dependency injection.
 
         Args:
-            qdrant_backend: The storage backend ('memory' or 'docker').
-            qdrant_host: Qdrant host address for docker backend.
-            qdrant_port: Qdrant port for docker backend.
-            frame_interval_seconds: Interval between sampled frames in seconds.
+            db: Abstract storage backend. If None, concrete VectorDB is used.
+            vision_analyzer: Abstract vision processor.
+            face_manager: Abstract face tracking processor.
+            voice_processor: Abstract voice diarization processor.
+            video_vlm: Abstract VLM processor.
+            qdrant_backend: Fallback Qdrant backend type.
+            qdrant_host: Fallback Qdrant host.
+            qdrant_port: Fallback Qdrant port.
+            frame_interval_seconds: Frame sampling interval in seconds.
             tmdb_api_key: Optional API key for TMDB movie metadata.
         """
         from core.processing.dependency_check import check_model_dependencies
@@ -98,27 +118,30 @@ class IngestionPipeline(
         self.ocr_engine = get_ocr_engine()
         self.text_gate = TextGatedOCR()
         self.extractor = FrameExtractor()
-        self.db = VectorDB(
+        
+        # Inject or instantiate dependencies
+        self.db = db or VectorDB(
             backend=qdrant_backend,
             host=qdrant_host,
             port=qdrant_port,
         )
-        self.vision_analyzer = VisionAnalyzer()
+        self.vision_analyzer = vision_analyzer or VisionAnalyzer()
         self.metadata_engine = MetadataEngine(
             tmdb_key=settings.tmdb_api_key, omdb_key=settings.omdb_api_key
         )
-        self.face_manager = FaceManager(
+        self.face_manager = face_manager or FaceManager(
             db_client=self.db.client,
             dbscan_eps=settings.hdbscan_cluster_selection_epsilon,
             dbscan_min_samples=settings.hdbscan_min_samples,
         )
         self.transnet = TransNetV2()
-        self.video_vlm = VideoVLM()
-        self.voice_processor = VoiceProcessor(db=self.db)
+        self.video_vlm = video_vlm or VideoVLM()
+        self.voice_processor = voice_processor or VoiceProcessor(db=self.db)
+        
         self.frame_interval_seconds = frame_interval_seconds
-        self.vision: VisionAnalyzer | None = None
-        self.faces: FaceManager | None = None
-        self.voice: VoiceProcessor | None = None
+        self.vision: VisionAnalyzerProtocol | None = None
+        self.faces: FaceTrackerProtocol | None = None
+        self.voice: VoiceProcessorProtocol | None = None
 
         # GraphRAG Builder (Lazy load later or init here if safe)
         from core.knowledge.graph_builder import GraphBuilder

@@ -1,57 +1,56 @@
 """Processor protocols for Dependency Inversion Principle.
 
-These protocols define the expected interfaces for ML and data processing
-components, allowing the pipeline to depend on abstractions rather than
-concrete model implementations.
+These protocols define the expected interfaces for media processors,
+allowing the ingestion pipeline to depend on abstractions rather than
+concrete ML model implementations.
 """
 
-from pathlib import Path
 from typing import Any, Protocol
 
 
-class AudioTranscriberProtocol(Protocol):
-    """Protocol for speech-to-text processing."""
+class AudioProcessor(Protocol):
+    """Protocol for audio transcription and analysis."""
 
-    def process_audio(self, audio_path: str, video_path: str) -> list[dict[str, Any]]:
+    def transcribe(self, path: str) -> dict[str, Any]:
         """Transcribe audio and return segments with timestamps."""
         ...
 
 
-class VoiceDiarizerProtocol(Protocol):
-    """Protocol for speaker diarization and voice feature extraction."""
+class VoiceProcessor(Protocol):
+    """Protocol for voice diarization and speaker identification."""
 
-    def process_voice(self, audio_path: str, video_path: str) -> list[dict[str, Any]]:
-        """Identify speakers and extract embedding features."""
+    def process(self, path: str) -> dict[str, Any]:
+        """Process voice and return speaker segments."""
         ...
 
 
-class VisualEncoderProtocol(Protocol):
-    """Protocol for extracting visual embeddings from frames."""
+class VisionAnalyzer(Protocol):
+    """Protocol for visual frame analysis (object/action detection)."""
 
-    def encode_batch(self, images: list[Any]) -> Any:
-        """Extract vector embeddings from a batch of images."""
+    def analyze_frame(self, frame) -> dict[str, Any]:
+        """Analyze a single frame for visual features."""
         ...
 
 
-class FrameAnalyzerProtocol(Protocol):
-    """Protocol for visual analysis of video frames."""
-
-    def analyze_frame(self, image: Any) -> dict[str, Any]:
-        """Detect objects, text, or concepts in a single frame."""
-        ...
-
-
-class SceneDetectorProtocol(Protocol):
-    """Protocol for detecting scene boundaries in video."""
+class SceneDetector(Protocol):
+    """Protocol for video scene boundary detection."""
 
     def detect_scenes(self, video_path: str) -> list[tuple[float, float]]:
-        """Detect scene start and end times."""
+        """Detect scene boundaries and return (start, end) timestamps."""
         ...
 
 
-class VLMCaptionerProtocol(Protocol):
-    """Protocol for generating natural language descriptions using VLMs."""
+class VLMProcessor(Protocol):
+    """Protocol for Vision-Language Models (Video understanding)."""
 
-    def generate_description(self, image_paths: list[str], prompt: str) -> str:
-        """Generate a description based on images and text prompt."""
+    def caption_scene(self, video_path: str, start: float, end: float) -> str:
+        """Generate a caption for a specific video scene."""
+        ...
+
+
+class FaceTracker(Protocol):
+    """Protocol for face detection and tracking."""
+
+    def track_faces(self, video_path: str) -> list[dict[str, Any]]:
+        """Track faces across a video and return clustering data."""
         ...
