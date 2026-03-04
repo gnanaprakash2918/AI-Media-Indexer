@@ -10,7 +10,6 @@ import time
 from collections import OrderedDict
 from typing import Any
 
-import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 from sentence_transformers import SentenceTransformer

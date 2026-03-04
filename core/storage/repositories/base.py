@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
+from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
+
 import uuid
-from typing import Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
-from core.storage.constants import (
-    FACE_VECTOR_SIZE,
-    MEDIA_VECTOR_SIZE,
-    TEXT_DIM,
-    VOICE_VECTOR_SIZE,
-)
-from core.storage.qdrant_utils import paginated_scroll, sanitize_numpy_types
 from core.utils.logger import log
 
 

@@ -11,21 +11,14 @@ import uuid
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 
 from core.storage.identity_models import (
-    FaceTrack,
     Identity,
-    Scene,
-    SceneTransition,
-    TemporalEvent,
-    TrackType,
-    VoiceTrack,
 )
 from core.utils.logger import log
 
 if TYPE_CHECKING:
-    from core.storage.identity_graph import IdentityGraphManager
+    pass
 
 
 class IdentityManager:

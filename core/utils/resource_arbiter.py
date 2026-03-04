@@ -259,7 +259,7 @@ class ResourceArbiter:
             True if allocated successfully.
         """
         import time
-        from core.utils.logger import get_logger, log_verbose
+        from core.utils.logger import get_logger
         logger = get_logger(__name__)
         
         async with self._lock:

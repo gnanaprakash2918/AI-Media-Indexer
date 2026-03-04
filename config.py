@@ -11,7 +11,7 @@ import torch
 from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-import core.utils.platform_compat  # noqa: F401, E402
+
 
 
 class HardwareProfile(str, Enum):

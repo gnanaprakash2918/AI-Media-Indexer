@@ -77,7 +77,6 @@ class GroundingPipeline:
         # SAM3Tracker manages its own GPU locking via ResourceArbiter.
         # No outer GPU_SEMAPHORE needed here.
         try:
-            try:
             for concept in concepts:
                 log.info(f"Tracking concept: {concept}")
                 segments = await self.sam.track_concept(str(path), concept)

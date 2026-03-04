@@ -6,20 +6,14 @@ VectorDB inherits from VoiceRepository to compose these methods.
 
 from __future__ import annotations
 
+from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
+
 import uuid
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from qdrant_client.http import models
 
 from config import settings
-from core.storage.constants import (
-    MEDIA_COLLECTION,
-    VOICE_COLLECTION,
-    VOICE_EMBEDDINGS,
-    VOICE_VECTOR_SIZE,
-)
-from core.storage.qdrant_utils import paginated_scroll, retry_on_connection_error
 from core.utils.logger import log
 
 if TYPE_CHECKING:
@@ -67,7 +61,7 @@ class VoiceRepository:
 
     def get_voice_segments_by_video(
         self,
-        video_path: str,
+        video_path: str | VideoPath,
         start_time: float | None = None,
         end_time: float | None = None,
     ) -> list[dict]:
@@ -171,7 +165,7 @@ class VoiceRepository:
         return None
 
     def upsert_voice_cluster_centroid(
-        self, cluster_id: int, embedding: list[float]
+        self, cluster_id: int | ClusterId, embedding: list[float]
     ) -> None:
         """Stores or updates the centroid for a voice cluster.
 
@@ -206,7 +200,7 @@ class VoiceRepository:
         self,
         speaker_id: str,
         embedding: list[float],
-        media_path: str,
+        media_path: str | VideoPath,
         start: float,
         end: float,
         voice_cluster_id: int = -1,
@@ -246,7 +240,7 @@ class VoiceRepository:
     def insert_voice_segment(
         self,
         *,
-        media_path: str,
+        media_path: str | VideoPath,
         start: float,
         end: float,
         speaker_label: str,
@@ -307,7 +301,7 @@ class VoiceRepository:
             ],
         )
 
-    def set_speaker_name(self, cluster_id: int, name: str) -> int:
+    def set_speaker_name(self, cluster_id: int | ClusterId, name: str) -> int:
         """Assign a name to a voice cluster.
 
         Args:
@@ -339,7 +333,7 @@ class VoiceRepository:
             return 0
 
     def set_speaker_main(
-        self, cluster_id: int, segment_id: str, is_main: bool = True
+        self, cluster_id: int | ClusterId, segment_id: str, is_main: bool = True
     ) -> bool:
         """Mark a specific segment as the 'main' representation of a speaker.
 
@@ -641,7 +635,7 @@ class VoiceRepository:
         except Exception:
             return []
 
-    def update_voice_cluster_id(self, segment_id: str, cluster_id: int) -> bool:
+    def update_voice_cluster_id(self, segment_id: str, cluster_id: int | ClusterId) -> bool:
         """Update the voice_cluster_id for a voice segment.
 
         Args:
@@ -738,7 +732,7 @@ class VoiceRepository:
         except Exception:
             return 0
 
-    def delete_voice_cluster(self, cluster_id: int) -> int:
+    def delete_voice_cluster(self, cluster_id: int | ClusterId) -> int:
         """Delete an entire voice cluster and all its segments.
 
         Args:
@@ -985,7 +979,7 @@ class VoiceRepository:
 
         return result
 
-    def get_speaker_name_by_cluster(self, cluster_id: int) -> str | None:
+    def get_speaker_name_by_cluster(self, cluster_id: int | ClusterId) -> str | None:
         """Get HITL-assigned name for a speaker cluster.
 
         Args:
@@ -1015,7 +1009,7 @@ class VoiceRepository:
             return None
 
     def _propagate_speaker_name_to_frames(
-        self, cluster_id: int, name: str
+        self, cluster_id: int | ClusterId, name: str
     ) -> int:
         """Propagate speaker name to all frames associated with this voice cluster.
 
@@ -1110,7 +1104,7 @@ class VoiceRepository:
             return 0
 
     def re_embed_voice_cluster_frames(
-        self, cluster_id: int, new_name: str, old_name: str | None = None
+        self, cluster_id: int | ClusterId, new_name: str, old_name: str | None = None
     ) -> int:
         """Update and re-embed all frames associated with a voice cluster.
 
@@ -1262,9 +1256,9 @@ class VoiceRepository:
 
     async def get_voice_segments_in_range(
         self,
-        media_path: str,
-        start_time: float,
-        end_time: float,
+        media_path: str | VideoPath,
+        start_time: float | Timestamp,
+        end_time: float | Timestamp,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """Get voice segments overlapping a time range for a specific video.

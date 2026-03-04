@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import time
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from core.knowledge.schemas import ParsedQuery
 from core.utils.logger import log

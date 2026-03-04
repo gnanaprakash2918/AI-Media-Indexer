@@ -6,24 +6,12 @@ VectorDB inherits from SearchRepository to compose these methods.
 
 from __future__ import annotations
 
+from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
+
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from qdrant_client.http import models
 
-from config import settings
-from core.storage.constants import (
-    AUDIO_EVENTS_COLLECTION,
-    FACES_COLLECTION,
-    MASKLETS,
-    MASKLETS_COLLECTION,
-    MEDIA_COLLECTION,
-    MEDIA_FRAMES,
-    MEDIA_SEGMENTS,
-    MEDIA_SEGMENTS_COLLECTION,
-    VOICE_COLLECTION,
-)
-from core.storage.qdrant_utils import paginated_scroll, retry_on_connection_error
 from core.utils.logger import log
 
 if TYPE_CHECKING:

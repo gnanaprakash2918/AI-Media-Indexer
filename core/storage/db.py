@@ -12,13 +12,11 @@ Decomposed from the original monolithic class:
 
 from __future__ import annotations
 
-import time
-import uuid
-from pathlib import Path
-from typing import Any, cast
+from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
 
-import numpy as np
-import torch
+import uuid
+from typing import Any
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
@@ -43,7 +41,6 @@ from core.storage.constants import (
 from core.storage.encoder import TextEncoder
 from core.storage.filters import build_filter, media_path_filter
 from core.storage.qdrant_utils import (
-    paginated_scroll,
     retry_on_connection_error,
     sanitize_numpy_types,
 )
@@ -188,7 +185,6 @@ class VectorDB(
         Returns:
             Unique integer cluster ID.
         """
-        import time
 
         with self._cluster_id_lock:
             # Use UUID4 for process-restart-safe uniqueness
@@ -261,7 +257,7 @@ class VectorDB(
         return (await self.encode_texts(text, is_query=True))[0]
 
 
-    def extract_concepts_from_video(self, video_path: str, limit: int = 20) -> list[str]:
+    def extract_concepts_from_video(self, video_path: str | VideoPath, limit: int = 20) -> list[str]:
         """Extracts top frequent concepts/entities from a video's indexed metadata.
 
         Used to seed the grounding pipeline if no explicit concepts are provided.
@@ -272,7 +268,7 @@ class VectorDB(
 
         # 1. Scroll frames for this video
         try:
-            frames = self.get_frames_for_video(video_path)
+            self.get_frames_by_video(video_path)
 
             # 2. Aggregation (Naive)
             # This depends on what keys (e.g. 'yolo_objects', 'caption_nouns') exist.
@@ -312,35 +308,11 @@ class VectorDB(
                 break
         return list(video_paths)
 
-    def get_frames_for_video(self, video_path: str) -> list[dict]:
-        """Retrieves all indexed frame metadata for a specific video path.
 
-        Args:
-            video_path: The exact path string of the target video.
-
-        Returns:
-            A list of payload dictionaries containing frame metadata.
-        """
-        frames = []
-        offset = None
-        while True:
-            results, offset = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
-                scroll_filter=build_filter([media_path_filter(video_path)]),
-                limit=500,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
-            for point in results:
-                frames.append(point.payload)
-            if offset is None:
-                break
-        return frames
 
     def get_frames_by_video(
         self,
-        video_path: str,
+        video_path: str | VideoPath,
         start_time: float | None = None,
         end_time: float | None = None,
     ) -> list[dict]:
@@ -410,7 +382,7 @@ class VectorDB(
 
     def get_loudness_events(
         self,
-        video_path: str,
+        video_path: str | VideoPath,
         start_time: float | None = None,
         end_time: float | None = None,
     ) -> list[dict]:
@@ -490,7 +462,7 @@ class VectorDB(
     @observe("db_insert_media_segments")
     async def insert_media_segments(
         self,
-        video_path: str,
+        video_path: str | VideoPath,
         segments: list[dict[str, Any]],
         job_id: str | None = None,
     ) -> None:
@@ -550,8 +522,8 @@ class VectorDB(
         self,
         point_id: str,
         vector: list[float],
-        video_path: str,
-        timestamp: float,
+        video_path: str | VideoPath,
+        timestamp: float | Timestamp,
         action: str | None = None,
         dialogue: str | None = None,
         payload: dict[str, Any] | None = None,
@@ -673,7 +645,7 @@ class VectorDB(
     @observe("db_update_masklet")
 
 
-    def get_global_summary(self, video_path: str) -> dict[str, Any] | None:
+    def get_global_summary(self, video_path: str | VideoPath) -> dict[str, Any] | None:
         """Retrieves the global summary for a specific video.
 
         Args:
@@ -812,10 +784,10 @@ class VectorDB(
 
     def insert_audio_event(
         self,
-        media_path: str,
+        media_path: str | VideoPath,
         event_type: str,
-        start_time: float,
-        end_time: float,
+        start_time: float | Timestamp,
+        end_time: float | Timestamp,
         confidence: float,
         clap_embedding: list[float] | None = None,
         payload: dict[str, Any] | None = None,
@@ -860,7 +832,7 @@ class VectorDB(
             ],
         )
 
-    def update_media_metadata(self, media_path: str, metadata: dict[str, Any]):
+    def update_media_metadata(self, media_path: str | VideoPath, metadata: dict[str, Any]):
         """Update video-level metadata."""
         unique_str = f"metadata_{media_path}"
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
@@ -1047,7 +1019,7 @@ class VectorDB(
 
     @observe("db_update_video_metadata")
     def update_video_metadata(
-        self, video_path: str, metadata: dict[str, Any]
+        self, video_path: str | VideoPath, metadata: dict[str, Any]
     ) -> int:
         """Update metadata for all frames belonging to a video.
 
@@ -1177,7 +1149,7 @@ class VectorDB(
         return stats
 
     @observe("db_delete_media")
-    def delete_media(self, video_path: str) -> int:
+    def delete_media(self, video_path: str | VideoPath) -> int:
         """Delete all data associated with a media file.
 
         Args:
@@ -1652,7 +1624,7 @@ class VectorDB(
 
 
     @observe("db_delete_media")
-    def delete_media_by_path(self, media_path: str) -> None:
+    def delete_media_by_path(self, media_path: str | VideoPath) -> None:
         """Delete all data associated with a media file."""
         for collection in [
             self.MEDIA_SEGMENTS_COLLECTION,

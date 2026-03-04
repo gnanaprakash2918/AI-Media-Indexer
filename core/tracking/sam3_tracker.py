@@ -120,7 +120,7 @@ class SAM3Tracker:
         """Synchronous inference loop for Concept Tracking."""
         # logical placeholder for SAM 3 text-prompt API
         # 1. Init state
-        inference_state = self.predictor.init_state(video_path=video_path)
+        self.predictor.init_state(video_path=video_path)
 
         # 2. Prompt with text (Hypothetical SAM 3 API)
         # self.predictor.add_new_text_prompt(inference_state, frame_idx=0, text=concept)

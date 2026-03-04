@@ -6,6 +6,8 @@ VectorDB inherits from SceneRepository to compose these methods.
 
 from __future__ import annotations
 
+from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
+
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -13,19 +15,6 @@ import numpy as np
 from qdrant_client.http import models
 
 from config import settings
-from core.storage.constants import (
-    MASKLETS,
-    MASKLETS_COLLECTION,
-    MEDIA_COLLECTION,
-    MEDIA_FRAMES,
-    MEDIA_VECTOR_SIZE,
-    SCENELETS_COLLECTION,
-    SCENES_COLLECTION,
-    SCENE_EMBEDDINGS,
-    SCENE_MULTI_VECTOR_DIM,
-    TEXT_DIM,
-)
-from core.storage.qdrant_utils import paginated_scroll, retry_on_connection_error
 from core.utils.logger import log
 
 if TYPE_CHECKING:
@@ -168,7 +157,7 @@ class SceneRepository:
 
                 # Scores
                 max_score = max(c["score"] for c in cl)
-                avg_score = sum(c["score"] for c in cl) / len(cl)
+                sum(c["score"] for c in cl) / len(cl)
 
                 # Descriptions (Best score's desc)
                 best_frame = max(cl, key=lambda x: x["score"])
@@ -201,10 +190,10 @@ class SceneRepository:
 
     def insert_masklet(
         self,
-        video_path: str,
+        video_path: str | VideoPath,
         concept: str,
-        start_time: float,
-        end_time: float,
+        start_time: float | Timestamp,
+        end_time: float | Timestamp,
         confidence: float = 1.0,
         payload: dict[str, Any] | None = None,
         embedding: list[float] | None = None,
@@ -395,7 +384,7 @@ class SceneRepository:
 
     def get_masklets(
         self,
-        video_path: str,
+        video_path: str | VideoPath,
         start_time: float | None = None,
         end_time: float | None = None,
     ) -> list[dict[str, Any]]:
@@ -450,9 +439,9 @@ class SceneRepository:
 
     async def store_scene(
         self,
-        media_path: str,
-        start_time: float,
-        end_time: float,
+        media_path: str | VideoPath,
+        start_time: float | Timestamp,
+        end_time: float | Timestamp,
         visual_text: str = "",
         motion_text: str = "",
         dialogue_text: str = "",
@@ -598,9 +587,9 @@ class SceneRepository:
     async def store_scenelet(
         self,
         *,
-        media_path: str,
-        start_time: float,
-        end_time: float,
+        media_path: str | VideoPath,
+        start_time: float | Timestamp,
+        end_time: float | Timestamp,
         content_text: str,
         payload: dict[str, Any] | None = None,
     ) -> str:
@@ -1242,7 +1231,7 @@ class SceneRepository:
 
     def get_scenes_for_video(
         self,
-        video_path: str,
+        video_path: str | VideoPath,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Get all scenes for a video, ordered by start time.
@@ -1282,7 +1271,7 @@ class SceneRepository:
         except Exception:
             return []
 
-    def store_scene_metadata(self, media_path: str, scenes: list[dict]) -> None:
+    def store_scene_metadata(self, media_path: str | VideoPath, scenes: list[dict]) -> None:
         """Stores scene-level metadata for a video.
 
         Note: Current implementation only logs the receipt of scenes.
@@ -1295,7 +1284,7 @@ class SceneRepository:
             f"Received {len(scenes)} scenes for {media_path} (Storage not implemented)"
         )
 
-    def get_masklets_for_media(self, media_path: str) -> list[dict]:
+    def get_masklets_for_media(self, media_path: str | VideoPath) -> list[dict]:
         """Retrieve all masklets (SAM tracks) for a specific video."""
         try:
             resp = self.client.scroll(

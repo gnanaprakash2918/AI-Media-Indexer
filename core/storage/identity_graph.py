@@ -13,25 +13,14 @@ then link Tracks to global Identities. This prevents bad clustering from
 from __future__ import annotations
 
 import sqlite3
-import time
-import uuid
-from dataclasses import dataclass, field
-from enum import Enum
 from threading import Lock
 
-import numpy as np
 
 from core.utils.logger import log
 
 
 from core.storage.identity_models import (
-    FaceTrack,
-    Identity,
-    Scene,
-    SceneTransition,
     TemporalEvent,
-    TrackType,
-    VoiceTrack,
 )
 
 

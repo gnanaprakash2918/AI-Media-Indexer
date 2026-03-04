@@ -6,24 +6,18 @@ IngestionPipeline inherits from SceneStageMixin to compose these methods.
 
 from __future__ import annotations
 
-import asyncio
-import gc
-import json
-import time
-import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from config import settings
-from core.errors import IngestionError
 from core.storage.db import VectorDB
-from core.utils.logger import log_verbose, logger
+from core.utils.logger import logger
 from core.utils.progress import progress_tracker
 
 if TYPE_CHECKING:
-    from core.ingestion.pipeline import IngestionPipeline
+    pass
 
 
 class SceneStageMixin:
@@ -62,7 +56,7 @@ class SceneStageMixin:
 
                 cap = cv2.VideoCapture(str(path))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
                 raw_scenes = []
                 from core.processing.scene_detector import SceneInfo
@@ -145,7 +139,7 @@ class SceneStageMixin:
         audio_events = self._get_audio_events_for_video(str(path))
 
         # Get all frames for this video (for aggregation per scene)
-        all_frames = self._get_frames_for_video(str(path))
+        all_frames = self.db.get_frames_by_video(str(path))
 
         scenes_stored = 0
         for idx, scene in enumerate(scenes):

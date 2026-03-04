@@ -339,7 +339,7 @@ def log_vram_status(context: str = "") -> None:
         context: Optional string to provide context in the log message.
     """
     if torch.cuda.is_available():
-        total = get_available_vram()
+        get_available_vram()
         used = get_used_vram()
         percent = get_vram_usage_percent()
         global_percent = get_global_vram_usage_percent()

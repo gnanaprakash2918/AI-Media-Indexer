@@ -5,46 +5,34 @@ from __future__ import annotations
 import asyncio
 import gc
 import hashlib
-import time
 import traceback
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
-import numpy as np
 import torch
 from qdrant_client.http import models
 
 from config import settings
 from core.errors import IngestionError, MediaIndexerError
 from core.llm.video_vlm import VideoVLM
-from core.llm.vlm_factory import get_vlm_client
 from core.processing.extractor import FrameExtractor
 from core.processing.frame_sampling import TextGatedOCR
-from core.processing.identity import FaceManager, FaceTrackBuilder
+from core.processing.identity import FaceManager
 from core.processing.metadata import MetadataEngine
 from core.processing.ocr_factory import get_ocr_engine
 from core.processing.prober import MediaProbeError, MediaProber
-from core.processing.scene_detector import detect_scenes, extract_scene_frame
-from core.processing.temporal_context import (
-    SceneletBuilder,
-    TemporalContextManager,
-)
-from core.processing.text_utils import parse_srt
-from core.processing.transcriber import AudioTranscriber
+from core.processing.scene_detector import detect_scenes
 from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
 from core.domain.schemas import MediaType
 from core.storage.db import VectorDB
-from core.storage.identity_graph import identity_graph
 from core.tracking.sam3_tracker import SAM3Tracker
 from core.utils.frame_sampling import FrameSampler
 from core.utils.logger import bind_context, log_verbose, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
-from core.utils.resource import resource_manager
-from core.utils.resource_arbiter import RESOURCE_ARBITER
 from core.utils.retry import retry
 
 # Global semaphore for VLM parallelism (auto-scales based on hardware profile)
@@ -52,7 +40,6 @@ from core.utils.retry import retry
 VLM_SEMAPHORE = asyncio.Semaphore(settings.vlm_concurrency)
 
 
-from core.ingestion.frame_buffer import FrameBuffer
 
 
 from core.ingestion.stages.audio_stage import AudioStageMixin
@@ -63,9 +50,7 @@ from core.ingestion.stages.scene_stage import SceneStageMixin
 
 from core.ports.storage import StorageBackend
 from core.ports.processors import (
-    AudioProcessor as AudioProcessorProtocol,
     FaceTracker as FaceTrackerProtocol,
-    SceneDetector as SceneDetectorProtocol,
     VisionAnalyzer as VisionAnalyzerProtocol,
     VoiceProcessor as VoiceProcessorProtocol,
     VLMProcessor as VLMProcessorProtocol,
@@ -702,66 +687,6 @@ class IngestionPipeline(
         except Exception:
             return []
 
-    def _get_frames_for_video(self, media_path: str) -> list[dict]:
-        """Retrieves all sampled and analyzed frames for a video.
-
-        Provides a consolidated view of visual detections (faces, entities,
-        actions) across the video timeline for scene-level reasoning.
-
-        Args:
-            media_path: Path to the media file.
-
-        Returns:
-            A list of frame data dictionaries ordered by timestamp.
-        """
-        try:
-            # Query media_frames collection for this video
-            resp = self.db.client.scroll(
-                collection_name=self.db.MEDIA_COLLECTION,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="video_path",
-                            match=models.MatchValue(value=media_path),
-                        )
-                    ]
-                ),
-                limit=5000,  # Allow more frames for long videos
-                with_payload=True,
-            )
-            frames = []
-            for p in resp[0]:
-                if p.payload:
-                    frames.append(
-                        {
-                            "id": str(p.id),
-                            "timestamp": p.payload.get("timestamp", 0),
-                            "action": p.payload.get("action", ""),
-                            "description": p.payload.get("description", "")
-                            or p.payload.get("action", ""),
-                            "face_cluster_ids": p.payload.get(
-                                "face_cluster_ids", []
-                            ),
-                            "face_names": p.payload.get("face_names", []),
-                            "speaker_names": p.payload.get("speaker_names", []),
-                            "visible_text": p.payload.get("visible_text", []),
-                            "entities": p.payload.get("entities", []),
-                            "structured_data": p.payload.get(
-                                "structured_data", {}
-                            ),
-                            "scene_location": p.payload.get(
-                                "scene_location", ""
-                            ),
-                            "scene_cultural": p.payload.get(
-                                "scene_cultural", ""
-                            ),
-                        }
-                    )
-            # Sort by timestamp
-            frames.sort(key=lambda x: x.get("timestamp", 0))
-            return frames
-        except Exception:
-            return []
 
     def _prepare_segments_for_db(
         self,
@@ -818,7 +743,7 @@ class IngestionPipeline(
             from core.processing.scene_aggregator import GlobalContextManager
 
             global_ctx = GlobalContextManager()
-            frames = self._get_frames_for_video(media_path)
+            frames = self.db.get_frames_by_video(media_path)
             audio_segments = self._get_audio_segments_for_video(media_path)
 
             # Deep Video Understanding: SAM 3 Concept Tracking

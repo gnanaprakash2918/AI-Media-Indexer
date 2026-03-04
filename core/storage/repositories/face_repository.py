@@ -6,20 +6,14 @@ VectorDB inherits from FaceRepository to compose these methods.
 
 from __future__ import annotations
 
+from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
+
 import uuid
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from qdrant_client.http import models
 
 from config import settings
-from core.storage.constants import (
-    FACES_COLLECTION,
-    FACE_EMBEDDINGS,
-    MEDIA_COLLECTION,
-    VOICE_COLLECTION,
-)
-from core.storage.qdrant_utils import paginated_scroll, retry_on_connection_error
 from core.utils.logger import log
 
 if TYPE_CHECKING:
@@ -70,7 +64,7 @@ class FaceRepository:
             return 0
 
     def upsert_face_cluster_centroid(
-        self, cluster_id: int, embedding: list[float]
+        self, cluster_id: int | ClusterId, embedding: list[float]
     ) -> None:
         """Stores or updates the centroid for a face cluster.
 
@@ -195,7 +189,7 @@ class FaceRepository:
             )
             return None
 
-    def get_face_ids_by_cluster(self, cluster_id: int) -> list[str]:
+    def get_face_ids_by_cluster(self, cluster_id: int | ClusterId) -> list[str]:
         """Get all face point IDs belonging to a cluster.
 
         Args:
@@ -371,7 +365,7 @@ class FaceRepository:
         except Exception:
             return []
 
-    def update_face_name(self, cluster_id: int, name: str) -> int:
+    def update_face_name(self, cluster_id: int | ClusterId, name: str) -> int:
         """Assign a name to all faces in a cluster.
 
         Args:
@@ -415,7 +409,7 @@ class FaceRepository:
         except Exception:
             return 0
 
-    def update_face_cluster_id(self, face_id: str, cluster_id: int) -> bool:
+    def update_face_cluster_id(self, face_id: str, cluster_id: int | ClusterId) -> bool:
         """Update the cluster ID for a single face.
 
         Args:
@@ -508,7 +502,7 @@ class FaceRepository:
         except Exception:
             return 0
 
-    def set_face_main(self, cluster_id: int, is_main: bool = True) -> bool:
+    def set_face_main(self, cluster_id: int | ClusterId, is_main: bool = True) -> bool:
         """Set a face cluster as main character.
 
         This updates all faces in the cluster with is_main_character flag.
@@ -635,7 +629,7 @@ class FaceRepository:
             return False
 
     def get_faces_by_media(
-        self, media_path: str, limit: int = 1000
+        self, media_path: str | VideoPath, limit: int = 1000
     ) -> list[dict[str, Any]]:
         """Get all faces for a specific media file.
 
@@ -809,7 +803,7 @@ class FaceRepository:
             return {}
 
     def update_cluster_centroid(
-        self, cluster_id: int, new_embedding: list[float], alpha: float = 0.3
+        self, cluster_id: int | ClusterId, new_embedding: list[float], alpha: float = 0.3
     ) -> bool:
         """Update cluster centroid with exponential moving average.
 
@@ -820,7 +814,7 @@ class FaceRepository:
         """
         return True
 
-    def delete_face_cluster(self, cluster_id: int) -> int:
+    def delete_face_cluster(self, cluster_id: int | ClusterId) -> int:
         """Delete an entire face cluster and all its faces.
 
         Args:
@@ -1107,7 +1101,7 @@ class FaceRepository:
             return 0
 
     def re_embed_face_cluster_frames(
-        self, cluster_id: int, new_name: str
+        self, cluster_id: int | ClusterId, new_name: str
     ) -> int:
         """Update and re-embed all frames containing a face cluster after HITL naming."""
         try:
@@ -1133,7 +1127,7 @@ class FaceRepository:
             return 0
 
     def get_frames_by_face_cluster(
-        self, cluster_id: int, limit: int = 1000
+        self, cluster_id: int | ClusterId, limit: int = 1000
     ) -> list[dict]:
         """Get all frames containing a specific face cluster.
 
@@ -1476,9 +1470,9 @@ class FaceRepository:
 
     async def get_faces_in_range(
         self,
-        media_path: str,
-        start_time: float,
-        end_time: float,
+        media_path: str | VideoPath,
+        start_time: float | Timestamp,
+        end_time: float | Timestamp,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Get face detections in a time range for a specific video.

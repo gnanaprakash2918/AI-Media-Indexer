@@ -7,23 +7,15 @@ IngestionPipeline inherits from AudioStageMixin to compose these methods.
 from __future__ import annotations
 
 import asyncio
-import gc
-import json
-import time
-import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 
 from config import settings
-from core.errors import IngestionError
 from core.storage.db import VectorDB
-from core.utils.logger import log_verbose, logger
-from core.utils.progress import progress_tracker
 
 if TYPE_CHECKING:
-    from core.ingestion.pipeline import IngestionPipeline
+    pass
 
 
 class AudioStageMixin:

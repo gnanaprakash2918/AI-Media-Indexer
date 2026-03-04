@@ -7,7 +7,6 @@ Uses mixin inheritance to separate concerns:
 
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +16,6 @@ from core.retrieval.reranker import RerankingCouncil
 from core.retrieval.result_processor import ResultProcessorMixin
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.utils.prompt_loader import load_prompt
 
 from llm.factory import LLMFactory
 from config import settings
@@ -417,12 +415,10 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         log(f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}")
 
         # 1. Parse
-        expansion_used = False
         try:
             parsed = await self.parse_query(query)
             if use_expansion:
                 search_text = parsed.to_search_text() or query
-                expansion_used = search_text != query
                 log(f"[SOTA Search] Expanded: '{search_text[:100]}...'")
             else:
                 search_text = query

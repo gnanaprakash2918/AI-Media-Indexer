@@ -24,7 +24,7 @@ class AudioProcessor:
 
         try:
             # Transcriber methods are already async and handle their own thread pools
-            async with AudioTranscriber() as transcriber:
+            async with AudioTranscriber():
                 # detect_language is synchronous in AudioTranscriber?
                 # Let's check AudioTranscriber.detect_language definition.
                 # If it's missing from my previous view, it might be sync!

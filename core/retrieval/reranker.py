@@ -664,3 +664,4 @@ class RerankingCouncil:
 
 
 # Backwards compatibility alias
+VLMReranker = RerankingCouncil
