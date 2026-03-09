@@ -278,6 +278,7 @@ class ResultProcessorMixin:
             for rank, result in enumerate(results):
                 # FIX #4: Use settings.timestamp_bucket_seconds (consistent with sota_search)
                 from config import settings
+                vp = result.get("video_path", result.get("media_path", ""))
                 ts_float = float(result.get("start_time", result.get("timestamp", 0)))
                 bucket = settings.timestamp_bucket_seconds
                 st = int(ts_float / bucket) * bucket
