@@ -171,6 +171,7 @@ class VoiceRepository:
 
         Uses a deterministic ID based on cluster_id to allow easy retrieval/update.
         """
+        import time
         import uuid
 
         # Deterministic UUID for the centroid

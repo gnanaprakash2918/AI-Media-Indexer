@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
 
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 

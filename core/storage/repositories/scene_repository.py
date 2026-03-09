@@ -9,12 +9,15 @@ from __future__ import annotations
 from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from qdrant_client.http import models
 
 from config import settings
+from core.storage.filters import build_filter, media_path_filter
+from core.storage.qdrant_utils import sanitize_numpy_types
 from core.utils.logger import log
 
 if TYPE_CHECKING:
