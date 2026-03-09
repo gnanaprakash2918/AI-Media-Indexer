@@ -6,12 +6,17 @@ IngestionPipeline inherits from SceneStageMixin to compose these methods.
 
 from __future__ import annotations
 
+import hashlib
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import cv2
 import numpy as np
 
 from config import settings
+from core.llm.vlm_factory import get_vlm_client
+from core.processing.scene_detector import detect_scenes, extract_scene_frame
 from core.storage.db import VectorDB
 from core.utils.logger import logger
 from core.utils.progress import progress_tracker
@@ -52,7 +57,7 @@ class SceneStageMixin:
                 # Run TransNet Logic (Once per file/trim)
                 frame_scenes = self.transnet.predict_video(str(path))
 
-                import cv2
+
 
                 cap = cv2.VideoCapture(str(path))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0

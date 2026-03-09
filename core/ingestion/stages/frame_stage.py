@@ -8,16 +8,24 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import hashlib
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from config import settings
+from core.processing.deep_research import get_deep_research_processor
+from core.processing.identity import FaceManager, FaceTrackBuilder
+from core.processing.temporal_context import SceneletBuilder, TemporalContextManager
+from core.processing.vision import VisionAnalyzer
 from core.storage.db import VectorDB
+from core.storage.identity_graph import identity_graph
 from core.utils.logger import logger
 from core.utils.progress import progress_tracker
+from core.utils.resource import resource_manager
 
 if TYPE_CHECKING:
     pass
@@ -764,6 +772,7 @@ class FrameStageMixin:
             ocr_boxes = []
             try:
                 # Load frame as numpy array (Windows path safe)
+                import cv2  # Ensure cv2 is in scope (was only imported in face loop)
 
                 frame_data = np.fromfile(str(frame_path), dtype=np.uint8)
                 frame_img = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
@@ -775,9 +784,10 @@ class FrameStageMixin:
                     # 1. Time Throttling (Max every 2.0s)
 
                     now_ts = time.time()
+                    last_ocr = getattr(self, "_last_ocr_time", None)
                     if (
-                        hasattr(self, "_last_ocr_time")
-                        and (now_ts - self._last_ocr_time) < 2.0
+                        last_ocr is not None
+                        and (now_ts - last_ocr) < 2.0
                     ):
                         skip_ocr = True
 
@@ -859,7 +869,8 @@ class FrameStageMixin:
                     pass
 
             except Exception as e:
-                logger.warning(f"[OCR] Failed: {e}")
+                import traceback as _tb
+                logger.warning(f"[OCR] Failed: {e}\n{_tb.format_exc()}")
 
             # ============================================================
             # OBJECT DETECTION: YOLO-World for general objects (lazy-loaded)
@@ -891,6 +902,7 @@ class FrameStageMixin:
                 logger.debug(f"[ObjectDetection] Skipped: {e}")
 
             # Run structured vision analysis
+            from core.ingestion.pipeline import VLM_SEMAPHORE
             async with VLM_SEMAPHORE:
                 analysis = await self.vision.analyze_frame(
                     frame_path,
@@ -909,6 +921,7 @@ class FrameStageMixin:
         # Fallback to unstructured description
         if not description:
             try:
+                from core.ingestion.pipeline import VLM_SEMAPHORE  # noqa: F811
                 async with VLM_SEMAPHORE:
                     description = await self.vision.describe(
                         frame_path, context=context
