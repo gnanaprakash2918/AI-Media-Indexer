@@ -6,13 +6,17 @@ IngestionPipeline inherits from VoiceStageMixin to compose these methods.
 
 from __future__ import annotations
 
+import hashlib
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 
 from config import settings
+from core.processing.voice import VoiceProcessor
 from core.storage.db import VectorDB
 from core.utils.logger import logger
+from core.utils.resource import resource_manager
 
 if TYPE_CHECKING:
     pass
@@ -187,24 +191,32 @@ class VoiceStageMixin:
                 emotion_meta = {}
                 try:
                     if not hasattr(self, "_ser_analyzer"):
-                        from core.processing.speech_emotion import (
-                            SpeechEmotionAnalyzer,
-                        )
+                        self._ser_failed = False
+                        try:
+                            from core.processing.speech_emotion import (
+                                SpeechEmotionAnalyzer,
+                            )
+                            self._ser_analyzer = SpeechEmotionAnalyzer()
+                        except Exception as init_err:
+                            logger.warning(f"[Voice] SER init failed (disabling): {init_err}")
+                            self._ser_analyzer = None
+                            self._ser_failed = True
 
-                        self._ser_analyzer = SpeechEmotionAnalyzer()
+                    if self._ser_analyzer is not None:
+                        import librosa
 
-                    import librosa
-
-                    # Load the clip we just made (resample to 16k for Wav2Vec2)
-                    y, sr = librosa.load(str(clip_file), sr=16000)
-                    emotion_res = await self._ser_analyzer.analyze(y, sr)
-                    if emotion_res:
-                        emotion_meta = {
-                            "emotion": emotion_res.get("emotion"),
-                            "emotion_conf": emotion_res.get("confidence"),
-                        }
+                        # Load the clip we just made (resample to 16k for Wav2Vec2)
+                        y, sr = librosa.load(str(clip_file), sr=16000)
+                        emotion_res = await self._ser_analyzer.analyze(y, sr)
+                        if emotion_res:
+                            emotion_meta = {
+                                "emotion": emotion_res.get("emotion"),
+                                "emotion_conf": emotion_res.get("confidence"),
+                            }
                 except Exception as e:
-                    logger.warning(f"[Voice] SER failed: {e}")
+                    if not getattr(self, "_ser_failed", False):
+                        logger.warning(f"[Voice] SER failed: {e}")
+                        self._ser_failed = True
 
                 if seg.embedding is not None and audio_extraction_success:
                     # Ensure voice_cluster_id is always valid (never -1 or 0)
