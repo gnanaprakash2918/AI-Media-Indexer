@@ -153,6 +153,7 @@ class AudioTranscriber:
         gc.collect()
 
         # 3. Force PyTorch to release cached VRAM
+        from core.utils.resource_arbiter import safe_cleanup_vram
         safe_cleanup_vram()
 
         log("[SUCCESS] Whisper unloaded. VRAM should be free.")

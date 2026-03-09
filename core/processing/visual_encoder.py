@@ -402,3 +402,13 @@ class SigLIPEncoder(BaseVisualEncoder):
 
 
 
+
+_DEFAULT_ENCODER = None
+
+def get_default_visual_encoder():
+    global _DEFAULT_ENCODER
+    if _DEFAULT_ENCODER is None:
+        from config import settings
+        # We default to SigLIP 
+        _DEFAULT_ENCODER = SigLIPEncoder(settings.siglip_model)
+    return _DEFAULT_ENCODER

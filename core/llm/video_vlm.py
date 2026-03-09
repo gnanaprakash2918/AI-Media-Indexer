@@ -9,8 +9,6 @@ from __future__ import annotations
 import asyncio
 
 import numpy as np
-import torch
-from transformers import AutoModelForCausalLM, AutoProcessor
 
 from core.utils.logger import get_logger
 from core.utils.resource_arbiter import GPU_SEMAPHORE
@@ -27,6 +25,7 @@ class VideoVLM:
         self.model = None
         self.processor = None
         self._init_lock = asyncio.Lock()
+        import torch
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
     async def _lazy_load(self) -> bool:
@@ -54,6 +53,9 @@ class VideoVLM:
                 log.info(f"[VideoVLM] Loading {self.model_id}...")
 
                 # Check for Flash Attention 2
+                import torch
+                from transformers import AutoModelForCausalLM, AutoProcessor
+                
                 attn_impl = (
                     "flash_attention_2"
                     if torch.cuda.get_device_capability()[0] >= 8
@@ -187,5 +189,9 @@ class VideoVLM:
         if self.processor:
             del self.processor
             self.processor = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        
+        import sys
+        if "torch" in sys.modules:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()

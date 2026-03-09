@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import time
 from collections import OrderedDict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
-from huggingface_hub import snapshot_download
-from sentence_transformers import SentenceTransformer
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 from config import settings
 from core.storage.constants import SELECTED_MODEL
@@ -41,7 +40,8 @@ class TextEncoder:
         local_model_dir = models_dir / self.model_name
         target_device = settings.device or "cpu"
 
-        def _create(path_or_name: str, device: str) -> SentenceTransformer:
+        def _create(path_or_name: str, device: str) -> "SentenceTransformer":
+            from sentence_transformers import SentenceTransformer
             log(
                 "Creating SentenceTransformer",
                 path_or_name=path_or_name,
@@ -71,6 +71,7 @@ class TextEncoder:
         log("Local model missing/corrupt, downloading from Hub", model=self.model_name)
 
         try:
+            from huggingface_hub import snapshot_download
             snapshot_download(
                 repo_id=self.model_name,
                 local_dir=str(local_model_dir),
@@ -89,6 +90,7 @@ class TextEncoder:
         """Move encoder to CPU to free GPU VRAM."""
         if self.encoder is not None:
             try:
+                import torch
                 self.encoder = self.encoder.to("cpu")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -224,6 +226,7 @@ class TextEncoder:
                 processed_texts = [prefix + t for t in texts_to_compute]
 
         try:
+            import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:

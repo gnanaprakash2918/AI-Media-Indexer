@@ -6,8 +6,12 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Any, Final, cast
 
+from typing import TYPE_CHECKING, Any, Final, cast
+
+if TYPE_CHECKING:
+    from pyannote.audio import Inference, Model, Pipeline
+    from pyannote.core import Segment
 # FIX: Add torio/lib to PATH to prevent "FileNotFoundError: Could not find module libtorio_ffmpeg6.pyd"
 # This is required for pyannote.audio/torchaudio on Windows
 try:
@@ -26,29 +30,8 @@ except Exception:
         os.environ["PATH"] += os.pathsep + str(torio_lib_venv)
 
 import numpy as np
-import torch
-
-# torch.load to disable weights_only enforcement for pyannote/speechbrain compatibility
-_original_load = torch.load
 
 
-def safe_load(*args: Any, **kwargs: Any) -> Any:
-    """Wraps torch.load to force weights_only=False for older models.
-
-    This is necessary for compatibility with pyannote and speechbrain
-    models which may still use pickle-based serialization.
-    """
-    # FORCE weights_only=False even if True was passed
-    if "weights_only" in kwargs:
-        kwargs["weights_only"] = False
-    return _original_load(*args, **kwargs)
-
-
-torch.load = safe_load
-
-from huggingface_hub import snapshot_download  # noqa: E402
-from pyannote.audio import Inference, Model, Pipeline  # noqa: E402
-from pyannote.core import Segment  # noqa: E402
 
 from config import settings  # noqa: E402
 from core.domain.schemas import SpeakerSegment  # noqa: E402
@@ -119,7 +102,7 @@ class VoiceProcessor:
         """
         self.db = db
         self.enabled = bool(settings.enable_voice_analysis)
-        self.device = torch.device(settings.device)
+        self.device = settings.device
         self.hf_token = settings.hf_token if settings.hf_token else None
 
         self.pipeline: Pipeline | None = None
@@ -223,6 +206,20 @@ class VoiceProcessor:
         if not self.enabled or self._initialized:
             return
 
+        import torch
+        from huggingface_hub import snapshot_download
+        from pyannote.audio import Inference, Model, Pipeline
+
+        # Monkey-patch torch.load for pyannote compatibility
+        if not hasattr(torch, '_original_load'):
+            torch._original_load = torch.load
+            def safe_load(*args: Any, **kwargs: Any) -> Any:
+                if 'weights_only' in kwargs:
+                    kwargs['weights_only'] = False
+                return torch._original_load(*args, **kwargs)
+            torch.load = safe_load
+
+
         async with self._init_lock:
             if self._initialized:
                 return
@@ -265,7 +262,8 @@ class VoiceProcessor:
                             )
                             raise pipe_err from dl_err
 
-                    self.pipeline.to(self.device)
+                    import torch
+                    self.pipeline.to(torch.device(self.device))
                     log_verbose(f"[Voice] Pipeline moved to {self.device}")
 
                     try:
@@ -299,7 +297,7 @@ class VoiceProcessor:
                     self.inference = Inference(
                         self.embedding_model,
                         window="whole",
-                        device=self.device,
+                        device=torch.device(self.device),
                     )
                     log_verbose("[Voice] Inference engine initialized")
 
@@ -550,6 +548,9 @@ class VoiceProcessor:
         start: float,
         end: float,
     ) -> list[float] | None:
+        import torch
+        from pyannote.core import Segment
+
         """Extracts a voice embedding for a specific segment of audio.
 
         Args:
