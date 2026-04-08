@@ -139,6 +139,11 @@ def ensure_all_collections(client: QdrantClient) -> None:
         field_name="scan_id",
         field_schema=models.PayloadSchemaType.KEYWORD,
     )
+    client.create_payload_index(
+        collection_name=MEDIA_COLLECTION,
+        field_name="parent_scene_id",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+    )
     _create_text_index(
         client,
         MEDIA_COLLECTION,
@@ -197,6 +202,7 @@ def ensure_all_collections(client: QdrantClient) -> None:
         ("emotion", models.PayloadSchemaType.KEYWORD),
         ("speaker_label", models.PayloadSchemaType.KEYWORD),
         ("voice_cluster_id", models.PayloadSchemaType.INTEGER),
+        ("parent_scene_id", models.PayloadSchemaType.KEYWORD),
     ]:
         client.create_payload_index(
             collection_name=VOICE_COLLECTION,

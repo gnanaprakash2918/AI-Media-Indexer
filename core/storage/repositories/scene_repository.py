@@ -612,10 +612,61 @@ class SceneRepository:
             ],
         )
 
+        # HIERARCHICAL TREE: Link Children (Frames, Audio, OCR) to this Parent Scene
+        try:
+            self._link_children_to_scene(scene_id, media_path, start_time, end_time)
+        except Exception as e:
+            log(f"Failed to link children to parent scene {scene_id}: {e}", level="WARNING")
+
         log(
             f"Stored scene {start_time:.1f}-{end_time:.1f}s for {Path(media_path).name}"
         )
         return scene_id
+
+    def _link_children_to_scene(
+        self, scene_id: str, media_path: str, start_time: float, end_time: float
+    ) -> None:
+        """Dynamically link leaf nodes (Frames, Audio, Transcripts) to their parent scene in the DB Tree."""
+        collections = [
+            self.MEDIA_COLLECTION,
+            self.VOICE_COLLECTION,
+            self.MEDIA_SEGMENTS_COLLECTION,
+        ]
+        for collection in collections:
+            try:
+                # 1. Fetch points that belong to this media and fall within the scene time
+                resp, next_page = self.client.scroll(
+                    collection_name=collection,
+                    scroll_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="media_path" if collection != self.MEDIA_COLLECTION else "video_path",
+                                match=models.MatchValue(value=media_path),
+                            )
+                        ]
+                    ),
+                    limit=1000,
+                    with_payload=True,
+                )
+                
+                point_ids = []
+                for point in resp:
+                    if not point.payload:
+                        continue
+                    # Handle both time keys gracefully
+                    ts = float(point.payload.get("timestamp", point.payload.get("start", -1.0)))
+                    if start_time <= ts <= end_time:
+                        point_ids.append(point.id)
+                
+                if point_ids:
+                    # 2. Bulk update payload for exactly these children
+                    self.client.set_payload(
+                        collection_name=collection,
+                        payload={"parent_scene_id": scene_id},
+                        points=point_ids,
+                    )
+            except Exception as e:
+                log(f"[HierarchicalTree] Warning processing collection {collection}: {e}", level="WARNING")
 
     async def store_scenelet(
         self,

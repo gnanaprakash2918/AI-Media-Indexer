@@ -103,6 +103,10 @@ class OCRProcessor:
         self.enable_angle_cls = enable_angle_cls
         self.ocr = None
         self._init_lock = asyncio.Lock()
+        
+        # State for deduplication (IoU + Levenshtein)
+        self._last_boxes = []
+        self._last_texts = []
 
         # For multilingual mode, we'll use Chinese model which includes English
         if lang == "multilingual":
@@ -158,8 +162,28 @@ class OCRProcessor:
             min_confidence: Minimum confidence threshold.
 
         Returns:
-            Dict with 'text', 'boxes', 'lines', and 'confidence'.
+            Dict with 'text', 'boxes', 'lines', and 'confidence', exclusively containing newly tracked text (deduplicated).
         """
+        import difflib
+
+        def calculate_iou(box1, box2):
+            """Calculate Intersection over Union for two polygon boxes."""
+            try:
+                b1_x = [pt[0] for pt in box1]; b1_y = [pt[1] for pt in box1]
+                b2_x = [pt[0] for pt in box2]; b2_y = [pt[1] for pt in box2]
+                rect1 = (min(b1_x), min(b1_y), max(b1_x), max(b1_y))
+                rect2 = (min(b2_x), min(b2_y), max(b2_x), max(b2_y))
+                x_left = max(rect1[0], rect2[0]); y_top = max(rect1[1], rect2[1])
+                x_right = min(rect1[2], rect2[2]); y_bottom = min(rect1[3], rect2[3])
+                if x_right < x_left or y_bottom < y_top: return 0.0
+                intersection_area = (x_right - x_left) * (y_bottom - y_top)
+                rect1_area = (rect1[2] - rect1[0]) * (rect1[3] - rect1[1])
+                rect2_area = (rect2[2] - rect2[0]) * (rect2[3] - rect2[1])
+                union_area = rect1_area + rect2_area - intersection_area
+                return intersection_area / union_area if union_area > 0 else 0.0
+            except Exception:
+                return 0.0
+
         if not await self._lazy_load():
             return {"text": "", "boxes": [], "lines": [], "confidence": 0.0}
 
@@ -198,29 +222,48 @@ class OCRProcessor:
             boxes = []
             confidences = []
 
+            new_lines = []
+            new_boxes = []
+            new_confidences = []
+
             for line in result[0]:
                 box = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
                 text = line[1][0]
                 if not text or len(text) < 2:
                     continue
-                # Cast confidence to float for comparison
                 try:
                     conf = float(line[1][1])
                 except (ValueError, IndexError, TypeError):
                     conf = 0.0
 
                 if conf >= min_confidence:
-                    lines.append(text)
-                    boxes.append(box)
-                    confidences.append(conf)
+                    # Deduplication Logic (IoU + String Similarity)
+                    is_duplicate = False
+                    for last_box, last_text in zip(self._last_boxes, self._last_texts):
+                        iou = calculate_iou(box, last_box)
+                        if iou > 0.4:
+                            # High overlap. Check text similarity
+                            ratio = difflib.SequenceMatcher(None, text.lower(), last_text.lower()).ratio()
+                            if ratio >= 0.8: # >80% similar text
+                                is_duplicate = True
+                                break
+                    
+                    if not is_duplicate:
+                        new_lines.append(text)
+                        new_boxes.append(box)
+                        new_confidences.append(conf)
 
-            full_text = " ".join(lines)
-            avg_conf = sum(confidences) / len(confidences) if confidences else 0
+            # Update tracker state
+            self._last_boxes = [line[0] for line in result[0]]
+            self._last_texts = [line[1][0] for line in result[0]]
+
+            full_text = " ".join(new_lines)
+            avg_conf = sum(new_confidences) / len(new_confidences) if new_confidences else 0
 
             return {
                 "text": full_text,
-                "boxes": boxes,
-                "lines": lines,
+                "boxes": new_boxes,
+                "lines": new_lines,
                 "confidence": round(avg_conf, 3),
             }
 
