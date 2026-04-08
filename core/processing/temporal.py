@@ -264,6 +264,7 @@ class TemporalAnalyzer:
             self.processor = None
 
         from core.utils.resource_arbiter import safe_cleanup_vram
+
         safe_cleanup_vram()
 
         log.info("[Temporal] Resources released")
@@ -422,7 +423,9 @@ def extract_temporal_clips(
         if frame_count % frame_interval == 0:
             if not current_clip:
                 msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-                clip_start = (msec / 1000.0) if msec >= 0 else (frame_count / video_fps)
+                clip_start = (
+                    (msec / 1000.0) if msec >= 0 else (frame_count / video_fps)
+                )
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             current_clip.append(rgb)

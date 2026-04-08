@@ -12,8 +12,6 @@ from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-
-
 class HardwareProfile(str, Enum):
     """Hardware profile for throughput tuning.
 
@@ -167,7 +165,8 @@ class Settings(BaseSettings):
         default="docker", description="'memory' or 'docker'"
     )
     qdrant_timeout: float = Field(
-        default=60.0, description="Timeout in seconds for Qdrant client operations"
+        default=60.0,
+        description="Timeout in seconds for Qdrant client operations",
     )
 
     #  Agent & LLM
@@ -510,7 +509,6 @@ class Settings(BaseSettings):
         description="InsightFace model pack name (buffalo_l, buffalo_sc, etc.)",
     )
 
-
     face_nms_threshold: float = Field(
         default=0.3,
         description="Non-maximum suppression threshold for face detection overlap filtering",
@@ -519,9 +517,6 @@ class Settings(BaseSettings):
         default=0.6,
         description="Fraction of music content above which lyrics mode is triggered (0-1)",
     )
-
-
-
 
     # Advanced Overrides - SOTA Embeddings for 100% accuracy
     embedding_model_override: str = Field(
@@ -744,7 +739,8 @@ class Settings(BaseSettings):
     )
 
     vlm_concurrency: int = Field(
-        default=_HW_PROFILE["worker_count"] * 2,  # Auto-scale: 2 for laptop, 4 for workstation, 8 for server
+        default=_HW_PROFILE["worker_count"]
+        * 2,  # Auto-scale: 2 for laptop, 4 for workstation, 8 for server
         description="Max concurrent VLM calls. Higher = faster captioning but more VRAM usage.",
     )
 
@@ -1011,6 +1007,7 @@ settings = Settings()
 # Centralize ALL model downloads to project's models/ directory
 # Must be set BEFORE any HuggingFace/Transformers imports elsewhere
 import os
+
 _hf_cache = str(settings.model_cache_dir / "huggingface")
 os.environ["HF_HOME"] = _hf_cache
 os.environ["HF_HUB_CACHE"] = _hf_cache  # Explicit hub cache location
@@ -1019,4 +1016,3 @@ os.environ["TORCH_HOME"] = str(settings.model_cache_dir / "torch")
 os.environ["XDG_CACHE_HOME"] = str(settings.model_cache_dir)
 
 sys.pycache_prefix = str(settings.cache_dir / "pycache")
-

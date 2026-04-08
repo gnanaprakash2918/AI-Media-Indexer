@@ -201,10 +201,12 @@ class SceneAggregator:
                             details = entity.get("visual_details", "")
                             for fid in face_ids:
                                 # Accumulate ALL clothing per person
-                                all_clothing[fid].append({
-                                    "type": name,
-                                    "description": details,
-                                })
+                                all_clothing[fid].append(
+                                    {
+                                        "type": name,
+                                        "description": details,
+                                    }
+                                )
                         elif super_cat == "accessory":
                             name = entity.get("name", "")
                             for fid in face_ids:
@@ -253,7 +255,9 @@ class SceneAggregator:
                 if item.get("type"):
                     all_clothing_types.append(item["type"].lower())
                 if item.get("description"):
-                    all_clothing_descriptions.append(item["description"].lower())
+                    all_clothing_descriptions.append(
+                        item["description"].lower()
+                    )
             all_accessory_names.extend(accessories)
 
         unique_actions = self._dedupe_actions(all_actions)
@@ -317,7 +321,9 @@ class SceneAggregator:
             # Flat searchable lists built from per-person clothing data
             "clothing_types": list(set(all_clothing_types)),
             "clothing_descriptions": all_clothing_descriptions,
-            "accessories": list(set(a.lower() for a in all_accessory_names if a)),
+            "accessories": list(
+                {a.lower() for a in all_accessory_names if a}
+            ),
         }
 
         self.global_context.add_scene(scene_data)
@@ -405,5 +411,7 @@ def aggregate_frames_to_scene(
     )
     # FIX #12: Wire LLM to GlobalContextManager for better summaries
     if llm:
-        result["global_summary"] = aggregator.global_context.generate_global_summary(llm=llm)
+        result["global_summary"] = (
+            aggregator.global_context.generate_global_summary(llm=llm)
+        )
     return result

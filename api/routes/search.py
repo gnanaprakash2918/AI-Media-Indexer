@@ -8,7 +8,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from api.deps import get_pipeline, get_search_agent
+from api.deps import get_pipeline
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
 
@@ -28,6 +28,7 @@ router = APIRouter()
 def _normalize_results(results: list[dict]) -> list[dict]:
     """Normalize search results using centralized utility."""
     from core.utils.normalize import normalize_result
+
     return [normalize_result(r) for r in results]
 
 
@@ -378,7 +379,9 @@ async def submit_search_feedback(
 
     except Exception as e:
         logger.error(f"[HITL] Feedback submission failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/search/feedback/stats")
@@ -395,7 +398,12 @@ async def get_feedback_stats() -> dict:
         """Synchronous file I/O — runs in a thread to avoid blocking."""
         feedback_dir = Path("logs/search_feedback")
         if not feedback_dir.exists():
-            return {"total": 0, "relevant": 0, "irrelevant": 0, "accuracy_percentage": None}
+            return {
+                "total": 0,
+                "relevant": 0,
+                "irrelevant": 0,
+                "accuracy_percentage": None,
+            }
 
         feedback_files = list(feedback_dir.glob("*.json"))
         total = len(feedback_files)

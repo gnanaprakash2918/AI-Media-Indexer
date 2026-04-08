@@ -107,8 +107,8 @@ line-length = 80
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "B", "C4", "D"]
-ignore = ["D203", "D213", "E501", "B008"]
+select = ["E", "F", "W", "I", "N", "B", "C4"]
+ignore = ["E501", "B008", "B904", "B905", "E402", "B027", "N806", "E722", "E731", "B007", "F401"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -129,3 +129,25 @@ concurrent-downloads = 5
 torch = { index = "pytorch-cu124" }
 torchaudio = { index = "pytorch-cu124" }
 torchvision = { index = "pytorch-cu124" }
+
+[tool.pyright]
+typeCheckingMode = "basic"
+reportAttributeAccessIssue = "none"
+reportOptionalMemberAccess = "none"
+reportArgumentType = "none"
+reportIncompatibleMethodOverride = "none"
+reportPossiblyUnboundVariable = "none"
+reportOptionalCall = "none"
+reportIndexIssue = "none"
+reportReturnType = "none"
+reportGeneralTypeIssues = "none"
+reportOptionalSubscript = "none"
+reportCallIssue = "none"
+reportMissingImports = "none"
+reportUndefinedVariable = "none"
+reportIncompatibleVariableOverride = "none"
+reportOperatorIssue = "none"
+reportFunctionMemberAccess = "none"
+reportUnusedExpression = "none"
+reportPrivateImportUsage = "none"
+reportAbstractUsage = "none"

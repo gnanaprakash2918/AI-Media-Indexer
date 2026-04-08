@@ -192,6 +192,7 @@ class ContentClassifier:
         """
         try:
             from core.utils.media import get_duration
+
             duration = get_duration(audio_path)
 
             if duration > 0:
@@ -239,7 +240,9 @@ class ContentClassifier:
         )
 
         # Use lyrics mode if music exceeds configured dominance ratio or music > 2x speech
-        return (music_dur / total > settings.music_dominance_ratio) or (music_dur > 2 * speech_dur)
+        return (music_dur / total > settings.music_dominance_ratio) or (
+            music_dur > 2 * speech_dur
+        )
 
 
 # Singleton accessor

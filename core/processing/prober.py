@@ -11,19 +11,29 @@ from core.utils.logger import log
 
 _PROBE_CACHE: dict[str, dict[str, Any]] = {}
 
+
 def get_probe_sync(file_path: str | Path) -> dict[str, Any]:
     """Synchronous version of probe, with caching."""
     path_str = str(Path(file_path).resolve())
     if path_str in _PROBE_CACHE:
         return _PROBE_CACHE[path_str]
-        
+
     import subprocess
+
     args = [
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_format", "-show_streams", str(file_path)
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        str(file_path),
     ]
     try:
-        out = subprocess.check_output(args, stderr=subprocess.PIPE).decode("utf-8", "replace")
+        out = subprocess.check_output(args, stderr=subprocess.PIPE).decode(
+            "utf-8", "replace"
+        )
         res = json.loads(out)
         _PROBE_CACHE[path_str] = res
         return res
@@ -31,9 +41,11 @@ def get_probe_sync(file_path: str | Path) -> dict[str, Any]:
         log(f"[Prober] sync probe failed: {e}")
         return {}
 
+
 def clear_probe_cache() -> None:
     """Clear the global probe cache."""
     _PROBE_CACHE.clear()
+
 
 def requires_ffprobe(func):
     """Ensure that the `ffprobe` executable is available.
@@ -144,7 +156,7 @@ class MediaProber:
                 code="file_not_found",
                 details={"path": str(file_path)},
             )
-            
+
         path_str = str(path_obj.resolve())
         if path_str in _PROBE_CACHE:
             return _PROBE_CACHE[path_str]

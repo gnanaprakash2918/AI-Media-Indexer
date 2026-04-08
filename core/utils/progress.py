@@ -25,8 +25,14 @@ STAGE_WEIGHTS = {
 }
 
 ORDERED_STAGES = [
-    "init", "audio", "voice", "audio_events",
-    "frames", "scene_captions", "post_processing", "complete"
+    "init",
+    "audio",
+    "voice",
+    "audio_events",
+    "frames",
+    "scene_captions",
+    "post_processing",
+    "complete",
 ]
 
 
@@ -57,6 +63,7 @@ class ProgressTracker:
                     self._cache[job.job_id] = job
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).debug(f"Failed to sync job cache: {e}")
 
     def _calculate_weighted_progress(self, job: JobInfo) -> float:
@@ -442,7 +449,10 @@ class ProgressTracker:
                 self._last_db_update[job.job_id] = now
             except Exception as e:
                 import logging
-                logging.getLogger(__name__).debug(f"Failed to persist job {job.job_id}: {e}")
+
+                logging.getLogger(__name__).debug(
+                    f"Failed to persist job {job.job_id}: {e}"
+                )
 
     def update_pipeline_stage(
         self,
@@ -498,7 +508,10 @@ class ProgressTracker:
             )
         except Exception as e:
             import logging
-            logging.getLogger(__name__).debug(f"Failed to persist pipeline stage for {job_id}: {e}")
+
+            logging.getLogger(__name__).debug(
+                f"Failed to persist pipeline stage for {job_id}: {e}"
+            )
 
     def save_checkpoint(self, job_id: str, data: dict[str, Any]) -> None:
         """Explicitly save key-value pairs to the job's checkpoint data.
@@ -523,7 +536,10 @@ class ProgressTracker:
                 )
             except Exception as e:
                 import logging
-                logging.getLogger(__name__).debug(f"Failed to persist checkpoint for {job_id}: {e}")
+
+                logging.getLogger(__name__).debug(
+                    f"Failed to persist checkpoint for {job_id}: {e}"
+                )
 
         # Optional: Broadcast if needed (usually internal state)
 
@@ -676,7 +692,10 @@ class ProgressTracker:
             found = True
         except Exception as e:
             import logging
-            logging.getLogger(__name__).debug(f"Failed to delete job {job_id} from DB: {e}")
+
+            logging.getLogger(__name__).debug(
+                f"Failed to delete job {job_id} from DB: {e}"
+            )
 
         if found:
             self._broadcast({"event": "job_deleted", "job_id": job_id})
@@ -768,7 +787,9 @@ class ProgressTracker:
 
         self._recent_events.append(event)
         if len(self._recent_events) > self._max_recent_events:
-            self._recent_events = self._recent_events[-self._max_recent_events:]
+            self._recent_events = self._recent_events[
+                -self._max_recent_events :
+            ]
 
         for queue in self._subscribers:
             try:
@@ -778,7 +799,11 @@ class ProgressTracker:
 
     def get_events_since(self, last_event_id: int) -> list[dict[str, Any]]:
         """Get events since a given event ID for reconnection replay."""
-        return [e for e in self._recent_events if e.get("event_id", 0) > last_event_id]
+        return [
+            e
+            for e in self._recent_events
+            if e.get("event_id", 0) > last_event_id
+        ]
 
     async def event_stream(
         self, last_event_id: int | None = None
@@ -821,7 +846,9 @@ class ProgressTracker:
 
         return {
             "job_id": job.job_id,
-            "status": job.status.value if hasattr(job.status, "value") else job.status,
+            "status": job.status.value
+            if hasattr(job.status, "value")
+            else job.status,
             "progress": job.progress,
             "weighted_progress": round(weighted_progress, 1),
             "file_path": job.file_path,

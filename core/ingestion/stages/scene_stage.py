@@ -30,12 +30,16 @@ class SceneStageMixin:
 
     # These will be available via IngestionPipeline inheritance
     db: VectorDB
+
     # Type stub for type checkers (allows accessing self.* in mixin)
     def __getattr__(self, name: str) -> Any: ...
 
     async def _process_scene_captions(
-        self, path: Path, job_id: str | None = None,
-        chunk_start: float | None = None, chunk_end: float | None = None,
+        self,
+        path: Path,
+        job_id: str | None = None,
+        chunk_start: float | None = None,
+        chunk_end: float | None = None,
     ) -> None:
         """Processes scene boundaries and aggregates multi-modal data.
 
@@ -57,8 +61,6 @@ class SceneStageMixin:
                 # Run TransNet Logic (Once per file/trim)
                 frame_scenes = self.transnet.predict_video(str(path))
 
-
-
                 cap = cv2.VideoCapture(str(path))
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
                 int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -70,11 +72,19 @@ class SceneStageMixin:
                     # Use PTS for accurate timestamps instead of frame/fps
                     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
                     start_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-                    start_t = (start_msec / 1000.0) if start_msec >= 0 else (start_frame / fps)
+                    start_t = (
+                        (start_msec / 1000.0)
+                        if start_msec >= 0
+                        else (start_frame / fps)
+                    )
 
                     cap.set(cv2.CAP_PROP_POS_FRAMES, end_frame)
                     end_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-                    end_t = (end_msec / 1000.0) if end_msec >= 0 else (end_frame / fps)
+                    end_t = (
+                        (end_msec / 1000.0)
+                        if end_msec >= 0
+                        else (end_frame / fps)
+                    )
 
                     if end_t - start_t >= 1.0:
                         raw_scenes.append(
@@ -241,7 +251,6 @@ class SceneStageMixin:
 
             if frame_bytes:
                 try:
-
                     from core.processing.deep_research import (
                         get_deep_research_processor,
                     )
@@ -293,12 +302,20 @@ class SceneStageMixin:
                                 # Merge specialized motion labels with VLM general actions
                                 if video_result.action_labels:
                                     # Add to aggregated actions for payload
-                                    current_actions = set(aggregated.get("actions", []))
-                                    current_actions.update(video_result.action_labels)
-                                    aggregated["actions"] = list(current_actions)
+                                    current_actions = set(
+                                        aggregated.get("actions", [])
+                                    )
+                                    current_actions.update(
+                                        video_result.action_labels
+                                    )
+                                    aggregated["actions"] = list(
+                                        current_actions
+                                    )
 
                                     # Add to motion text for vector search
-                                    motion_text += " " + " ".join(video_result.action_labels)
+                                    motion_text += " " + " ".join(
+                                        video_result.action_labels
+                                    )
 
                             if "languagebind" in video_result.video_features:
                                 languagebind_features = (
@@ -365,7 +382,6 @@ class SceneStageMixin:
                 # Save representative thumbnail
                 thumb_path = None
                 if frame_bytes:
-
                     thumb_dir = settings.cache_dir / "thumbnails" / "scenes"
                     thumb_dir.mkdir(parents=True, exist_ok=True)
                     safe_stem = hashlib.md5(path.stem.encode()).hexdigest()
@@ -425,10 +441,10 @@ class SceneStageMixin:
                 # The score is already stored as a filterable numeric field.
                 if dr_meta:
                     dr_parts = []
-                    if dr_meta.get('shot_type'):
-                        dr_parts.append(dr_meta['shot_type'])
-                    if dr_meta.get('mood'):
-                        dr_parts.append(dr_meta['mood'])
+                    if dr_meta.get("shot_type"):
+                        dr_parts.append(dr_meta["shot_type"])
+                    if dr_meta.get("mood"):
+                        dr_parts.append(dr_meta["mood"])
                     if dr_parts:
                         visual_text += " " + " ".join(dr_parts)
 
@@ -450,20 +466,32 @@ class SceneStageMixin:
                 try:
                     # Initialize Video Node (idempotent)
                     if scenes_stored == 1:
-                        from core.domain.schemas import MediaFile, MediaMetadata, MediaType
+                        from core.domain.schemas import (
+                            MediaFile,
+                            MediaMetadata,
+                            MediaType,
+                        )
 
                         # Generate lightweight content hash (path + size + mtime)
                         # Avoid full file read for graph node init
                         file_stat = path.stat()
-                        hash_input = f"{path}_{file_stat.st_size}_{file_stat.st_mtime}"
-                        content_hash = hashlib.md5(hash_input.encode()).hexdigest()
+                        hash_input = (
+                            f"{path}_{file_stat.st_size}_{file_stat.st_mtime}"
+                        )
+                        content_hash = hashlib.md5(
+                            hash_input.encode()
+                        ).hexdigest()
 
                         mf_wrapper = MediaFile(
                             path=str(path),
                             filename=path.name,
                             media_type=MediaType.VIDEO,
                             content_hash=content_hash,
-                            metadata=MediaMetadata(duration=self.prober.get_duration(path) if hasattr(self.prober, 'get_duration') else 0)
+                            metadata=MediaMetadata(
+                                duration=self.prober.get_duration(path)
+                                if hasattr(self.prober, "get_duration")
+                                else 0
+                            ),
                         )
                         self.graph_builder.process_video_node(mf_wrapper)
 
@@ -478,11 +506,13 @@ class SceneStageMixin:
                         location=aggregated.get("location", ""),
                         visible_text=aggregated.get("visible_text", []),
                         cultural_context=aggregated.get("cultural_context", ""),
-                        mood=dr_mood # <--- CRITICAL: Graph gets the DR Mood
+                        mood=dr_mood,  # <--- CRITICAL: Graph gets the DR Mood
                     )
 
                     # Merge DR Shot info into action/description if needed
-                    action_desc = aggregated.get("action_sequence", "") or aggregated.get("action", "")
+                    action_desc = aggregated.get(
+                        "action_sequence", ""
+                    ) or aggregated.get("action", "")
                     if dr_shot:
                         action_desc += f" ({dr_shot})"
 
@@ -491,7 +521,7 @@ class SceneStageMixin:
                         action=action_desc,
                         entities=aggregated.get("entities", []),
                         scene=scene_ctx,
-                        face_cluster_ids=aggregated.get("face_cluster_ids", [])
+                        face_cluster_ids=aggregated.get("face_cluster_ids", []),
                     )
 
                     # Qdrant Scene ID (re-generated to match store_scene logic if needed, but db.store_scene handles it)
@@ -500,7 +530,12 @@ class SceneStageMixin:
                     # We should align ID generation.
                     # Ideally db.store_scene returns ID or we generate it here.
                     # QdrantHandler.store_scene uses uuid5(video_path + start_time).
-                    graph_scene_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{str(path)}_scene_{scene.start_time:.3f}"))
+                    graph_scene_id = str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"{str(path)}_scene_{scene.start_time:.3f}",
+                        )
+                    )
 
                     self.graph_builder.process_scene(
                         video_path=str(path),
@@ -508,13 +543,16 @@ class SceneStageMixin:
                         start_time=scene.start_time,
                         end_time=scene.end_time,
                         analysis=synth_analysis,
-                        prev_scene_id=None # GraphBuilder handles temporal linking internally via query/TimeGap
+                        prev_scene_id=None,  # GraphBuilder handles temporal linking internally via query/TimeGap
                     )
-                    logger.debug(f"[Graph] Ingested Scene {idx} (Mood: {dr_mood})")
+                    logger.debug(
+                        f"[Graph] Ingested Scene {idx} (Mood: {dr_mood})"
+                    )
 
                 except Exception as ge:
-                    logger.warning(f"[Graph] Ingestion failed for scene {idx}: {ge}")
-
+                    logger.warning(
+                        f"[Graph] Ingestion failed for scene {idx}: {ge}"
+                    )
 
             except Exception as e:
                 logger.warning(f"Failed to store scene {idx}: {e}")
@@ -522,4 +560,3 @@ class SceneStageMixin:
         logger.info(
             f"Stored {scenes_stored}/{len(scenes)} scenes for {path.name}"
         )
-

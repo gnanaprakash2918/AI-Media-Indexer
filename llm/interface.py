@@ -19,6 +19,7 @@ T = TypeVar("T", bound=BaseModel)
 
 from config import settings
 
+
 class LLMInterface(ABC):
     """Base class that combines abstract generation methods and prompt helpers.
 
@@ -227,7 +228,7 @@ class LLMInterface(ABC):
 
     async def unload_model(self) -> None:
         """Explicitly unload the model from memory/VRAM.
-        
+
         Useful for local LLMs (Ollama) to force release VRAM.
         Cloud providers (Gemini/OpenAI) can implement as no-op.
         """

@@ -142,8 +142,9 @@ class ResourceArbiter:
                 # TRANSIENT ALLOCATION (original behavior)
                 # Wait for VRAM availability
                 from config import settings as _s
+
                 limit = self.total_vram * (_s.max_vram_percent / 100)
-                
+
                 max_offload_attempts = 10
                 offload_attempts = 0
                 while self.current_usage + vram_gb > limit:
@@ -174,19 +175,21 @@ class ResourceArbiter:
                     "unload_fn": cleanup_fn,
                     "last_used": time.time(),
                     "active": True,
-                    "is_persistent": False 
+                    "is_persistent": False,
                 }
                 log_verbose(f"[Arbiter] Allocated transient: {model_name}")
             else:
                 # PERSISTENT/EXISTING ALLOCATION
-                # Model already allocated (e.g. by ensure_loaded). 
+                # Model already allocated (e.g. by ensure_loaded).
                 # We just mark it active without changing current_usage.
-                log_verbose(f"[Arbiter] Using existing allocation: {model_name}")
+                log_verbose(
+                    f"[Arbiter] Using existing allocation: {model_name}"
+                )
                 if cleanup_fn:
-                     self.registry[model_name]["unload_fn"] = cleanup_fn
+                    self.registry[model_name]["unload_fn"] = cleanup_fn
                 self.registry[model_name]["active"] = True
                 self.registry[model_name]["last_used"] = time.time()
-                # Ensure VRAM info is up to date if changed? 
+                # Ensure VRAM info is up to date if changed?
                 # For now assume it's consistent.
 
         try:
@@ -204,36 +207,52 @@ class ResourceArbiter:
                 # Mark as inactive AND release VRAM allocation
                 self.registry[model_name]["active"] = False
                 self.registry[model_name]["last_used"] = time.time()
-                
+
                 # CRITICAL: Only decrement usage if this was a TRANSIENT acquisition
-                # If the model is marked as persistent (managed via ensure_loaded), 
+                # If the model is marked as persistent (managed via ensure_loaded),
                 # we do NOT free the VRAM budget here. It stays allocated until unload_fn is called.
-                is_persistent = self.registry[model_name].get("is_persistent", False)
-                
+                is_persistent = self.registry[model_name].get(
+                    "is_persistent", False
+                )
+
                 if not is_persistent:
                     model_vram = self.registry[model_name].get("vram", vram_gb)
                     self.current_usage = max(0, self.current_usage - model_vram)
-                
+
                     # LAZY UNLOAD: Actually unload the model if setting enabled
                     from config import settings
+
                     unload_fn = self.registry[model_name].get("unload_fn")
                     if settings.lazy_unload and unload_fn:
                         try:
-                            logger.info(f"[Arbiter] Lazy unloading {model_name}")
+                            logger.info(
+                                f"[Arbiter] Lazy unloading {model_name}"
+                            )
                             log_verbose(
                                 f"[Arbiter] Calling unload_fn for {model_name}, "
                                 f"is_async={asyncio.iscoroutinefunction(unload_fn)}"
                             )
-                            if asyncio.iscoroutinefunction(unload_fn) or (hasattr(unload_fn, '__call__') and asyncio.iscoroutinefunction(unload_fn.__call__)):
+                            if asyncio.iscoroutinefunction(unload_fn) or (
+                                callable(unload_fn)
+                                and asyncio.iscoroutinefunction(
+                                    unload_fn.__call__
+                                )
+                            ):
                                 await unload_fn()
                             else:
                                 unload_fn()
                             self._cleanup_vram()
-                            log_verbose(f"[Arbiter] {model_name} unloaded, VRAM cleaned")
+                            log_verbose(
+                                f"[Arbiter] {model_name} unloaded, VRAM cleaned"
+                            )
                         except Exception as e:
-                            logger.warning(f"[Arbiter] Failed to unload {model_name}: {e}")
-                            log_verbose(f"[Arbiter] Unload exception: {type(e).__name__}: {e}")
-                    
+                            logger.warning(
+                                f"[Arbiter] Failed to unload {model_name}: {e}"
+                            )
+                            log_verbose(
+                                f"[Arbiter] Unload exception: {type(e).__name__}: {e}"
+                            )
+
                     log_verbose(
                         f"[Arbiter] Released: model={model_name}, freed={model_vram}GB, "
                         f"new_usage={self.current_usage:.1f}GB"
@@ -246,51 +265,60 @@ class ResourceArbiter:
         cleanup_fn: Callable,
     ) -> bool:
         """Register and allocate VRAM for a persistent model (lazy loaded).
-        
-        This keeps the VRAM declared as 'used' even when the model is not 
+
+        This keeps the VRAM declared as 'used' even when the model is not
         actively running inference, preventing overcommitment.
-        
+
         Args:
             model_name: Unique name.
             vram_gb: VRAM requirement.
             cleanup_fn: Function to unload the model.
-            
+
         Returns:
             True if allocated successfully.
         """
         import time
+
         from core.utils.logger import get_logger
+
         logger = get_logger(__name__)
-        
+
         async with self._lock:
             # If already loaded and allocated, just return True
             if model_name in self.registry:
-                 # Update metadata
+                # Update metadata
                 self.registry[model_name]["last_used"] = time.time()
                 self.registry[model_name]["unload_fn"] = cleanup_fn
-                self.registry[model_name]["is_persistent"] = True # Mark as persistent
+                self.registry[model_name]["is_persistent"] = (
+                    True  # Mark as persistent
+                )
                 return True
-                
+
             logger.info(f"[Arbiter] ensuring loaded {model_name} ({vram_gb}GB)")
-            
+
             # Check limits
             from config import settings as _s
+
             limit = self.total_vram * (_s.max_vram_percent / 100)
-            
+
             while self.current_usage + vram_gb > limit:
-                logger.info(f"[Arbiter] VRAM full for persistent load ({self.current_usage:.1f}/{limit:.1f}GB), offloading...")
+                logger.info(
+                    f"[Arbiter] VRAM full for persistent load ({self.current_usage:.1f}/{limit:.1f}GB), offloading..."
+                )
                 if not await self._offload_least_recent():
-                    logger.warning("[Arbiter] Failed to make space for persistent model")
+                    logger.warning(
+                        "[Arbiter] Failed to make space for persistent model"
+                    )
                     return False
-            
+
             # Allocate
             self.current_usage += vram_gb
             self.registry[model_name] = {
                 "vram": vram_gb,
                 "unload_fn": cleanup_fn,
                 "last_used": time.time(),
-                "active": False, # Idle but loaded
-                "is_persistent": True
+                "active": False,  # Idle but loaded
+                "is_persistent": True,
             }
             return True
 
@@ -315,7 +343,11 @@ class ResourceArbiter:
         try:
             # Call the unload callback
             import inspect
-            if inspect.iscoroutinefunction(unload_fn) or (hasattr(unload_fn, '__call__') and inspect.iscoroutinefunction(unload_fn.__call__)):
+
+            if inspect.iscoroutinefunction(unload_fn) or (
+                callable(unload_fn)
+                and inspect.iscoroutinefunction(unload_fn.__call__)
+            ):
                 await unload_fn()
             else:
                 unload_fn()
@@ -329,7 +361,10 @@ class ResourceArbiter:
             return True
         except Exception as e:
             import logging
-            logging.getLogger(__name__).warning(f"[Arbiter] Failed to release model: {e}")
+
+            logging.getLogger(__name__).warning(
+                f"[Arbiter] Failed to release model: {e}"
+            )
             return False
 
     def _cleanup_vram(self) -> None:
@@ -338,33 +373,37 @@ class ResourceArbiter:
 
     async def force_release_all(self) -> None:
         """Emergency release all resources by calling all registered unload functions."""
-        import logging
         import inspect
+        import logging
+
         logger = logging.getLogger(__name__)
-        
+
         unloaded_count = 0
-        
+
         # Snapshot registry items to avoid concurrent modification issues
         for name, data in list(self.registry.items()):
             unload_fn = data.get("unload_fn")
             if unload_fn:
                 try:
                     logger.info(f"[Arbiter] Force unloading {name}...")
-                    
-                    if inspect.iscoroutinefunction(unload_fn) or (hasattr(unload_fn, '__call__') and inspect.iscoroutinefunction(unload_fn.__call__)):
-                         await unload_fn()
+
+                    if inspect.iscoroutinefunction(unload_fn) or (
+                        callable(unload_fn)
+                        and inspect.iscoroutinefunction(unload_fn.__call__)
+                    ):
+                        await unload_fn()
                     else:
                         unload_fn()
-                        
+
                     unloaded_count += 1
                 except Exception as e:
                     logger.warning(f"[Arbiter] Failed to unload {name}: {e}")
-        
+
         # Reset tracking
         self.current_usage = 0
         self.registry.clear()  # Clear registry since models are unloaded
         self._cleanup_vram()
-        
+
         if unloaded_count > 0:
             logger.info(f"[Arbiter] Force released {unloaded_count} models")
 
@@ -387,6 +426,7 @@ RESOURCE_ARBITER = ResourceArbiter()
 # Expose GPU semaphore as a proper public property
 import warnings as _warnings
 
+
 def _get_gpu_semaphore():
     """Get the GPU semaphore with a deprecation warning."""
     _warnings.warn(
@@ -395,6 +435,7 @@ def _get_gpu_semaphore():
         stacklevel=2,
     )
     return RESOURCE_ARBITER._gpu_semaphore
+
 
 # DEPRECATED: Use RESOURCE_ARBITER.gpu_semaphore instead.
 # This alias exists only for backward compatibility.

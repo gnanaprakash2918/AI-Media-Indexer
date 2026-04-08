@@ -33,5 +33,5 @@ async def cluster_voices(db: "VectorDB") -> dict[str, Any]:
         "status": "not_implemented",
         "num_clusters": 0,
         "message": "Voice clustering not yet implemented. "
-                   "Use identity-based speaker diarization via /voices endpoints instead.",
+        "Use identity-based speaker diarization via /voices endpoints instead.",
     }

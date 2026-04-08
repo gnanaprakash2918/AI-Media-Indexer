@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -28,11 +29,15 @@ log = get_logger(__name__)
 try:
     # 1. Try SAM 3 (Official / Fork)
     from sam3.model_builder import build_sam3_video_predictor
+
     _SAM_NAMESPACE = "sam3"
 except ImportError:
     try:
         # 2. Key Fallback: SAM 2 (Meta Official)
-        from sam2.build_sam import build_sam2_video_predictor as build_sam3_video_predictor
+        from sam2.build_sam import (
+            build_sam2_video_predictor as build_sam3_video_predictor,
+        )
+
         _SAM_NAMESPACE = "sam2"
     except ImportError:
         # Fallback for dev/mocking if neither exists
@@ -102,7 +107,7 @@ class SAM3Tracker:
         end_time: float | None = None,
     ) -> list[dict]:
         """Zero-Shot tracking of a concept (e.g., "red bag").
-        
+
         SAM 3 supports text prompts to initialize masks.
         """
         await self._lazy_load()
@@ -111,7 +116,11 @@ class SAM3Tracker:
 
         async with GPU_SEMAPHORE:
             return await asyncio.to_thread(
-                self._run_inference_concept, video_path, concept, start_time, end_time
+                self._run_inference_concept,
+                video_path,
+                concept,
+                start_time,
+                end_time,
             )
 
     def _run_inference_concept(
@@ -144,7 +153,11 @@ class SAM3Tracker:
 
         async with GPU_SEMAPHORE:
             return await asyncio.to_thread(
-                self._run_inference_points, video_path, points, labels, start_frame_idx
+                self._run_inference_points,
+                video_path,
+                points,
+                labels,
+                start_frame_idx,
             )
 
     def _run_inference_points(
@@ -164,7 +177,11 @@ class SAM3Tracker:
 
         # Propagate
         segments = []
-        for out_frame_idx, out_obj_ids, out_mask_logits in self.predictor.propagate_in_video(state):
+        for (
+            _out_frame_idx,
+            _out_obj_ids,
+            _out_mask_logits,
+        ) in self.predictor.propagate_in_video(state):
             # Convert mask to bbox/polygon for storage
             # Calculate consistency/confidence
             pass
@@ -175,12 +192,12 @@ class SAM3Tracker:
         self, video_path: str, mask: np.ndarray, frame_idx: int
     ) -> list[float]:
         """Refines object embedding: Crop object using mask -> SigLIP.
-        
+
         Args:
             video_path: Path to video file.
             mask: Binary mask (H, W) where Object=1.
             frame_idx: Index of the frame to extract.
-            
+
         Returns:
             Visual embedding vector (1152d for SigLIP).
         """
@@ -189,13 +206,16 @@ class SAM3Tracker:
         # Check if we have decord (preferred) or cv2.
         try:
             import cv2
+
             cap = cv2.VideoCapture(video_path)
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             cap.release()
             if not ret:
-                log.error(f"[SAM3] Failed to read frame {frame_idx} from {video_path}")
-                return [0.0] * 1152 # Fallback
+                log.error(
+                    f"[SAM3] Failed to read frame {frame_idx} from {video_path}"
+                )
+                return [0.0] * 1152  # Fallback
 
             # Convert BGR to RGB
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -207,7 +227,11 @@ class SAM3Tracker:
         # Ensure mask is boolean or 0/1, same size as frame
         if mask.shape != frame.shape[:2]:
             # Resize mask to frame if needed
-            mask = cv2.resize(mask.astype(np.uint8), (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
+            mask = cv2.resize(
+                mask.astype(np.uint8),
+                (frame.shape[1], frame.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
 
         # Expand dims for broadcasting
         # mask is (H, W), frame is (H, W, 3)
@@ -223,7 +247,7 @@ class SAM3Tracker:
         x_min, x_max = x_indices.min(), x_indices.max()
 
         # Add slight padding? No, pure object is better for SigLIP matching
-        crop = masked_frame[y_min:y_max+1, x_min:x_max+1]
+        crop = masked_frame[y_min : y_max + 1, x_min : x_max + 1]
 
         # Convert to PIL for Encoder
         pil_image = Image.fromarray(crop)
@@ -236,8 +260,63 @@ class SAM3Tracker:
 
             # Encode single image
             embedding = await encoder.encode_image(pil_image)
-            return embedding.tolist() if isinstance(embedding, np.ndarray) else embedding
+            return (
+                embedding.tolist()
+                if isinstance(embedding, np.ndarray)
+                else embedding
+            )
 
         except Exception as e:
             log.error(f"[SAM3] Embedding extraction failed: {e}")
             return [0.0] * 1152
+
+    def process_video_concepts(
+        self, video_path: Path, concepts: list[str]
+    ) -> list[dict]:
+        """Process multiple concepts for tracking across a video.
+
+        This is the batch interface used by the ingestion pipeline to
+        track multiple visual concepts (e.g., 'red bag', 'car') in a
+        single pass.
+
+        Args:
+            video_path: Path to the video file.
+            concepts: List of concept strings to track.
+
+        Yields:
+            Dicts with keys: frame_idx, object_ids (list of ints
+            indexing into the concepts list).
+        """
+        if not self.predictor or _SAM_NAMESPACE == "mock":
+            log.warning(
+                "[SAM3] Cannot track concepts — model not loaded or mocked."
+            )
+            return []
+
+        results = []
+        try:
+            state = self.predictor.init_state(video_path=str(video_path))
+
+            # Add each concept as a text prompt (indexed by position)
+            for idx, concept in enumerate(concepts):
+                log.info(f"[SAM3] Adding concept {idx}: '{concept}'")
+                # SAM3 text prompt API (hypothetical — actual API may differ)
+                # self.predictor.add_new_text_prompt(state, frame_idx=0, obj_id=idx, text=concept)
+
+            # Propagate tracking across video
+            for (
+                out_frame_idx,
+                out_obj_ids,
+                _out_mask_logits,
+            ) in self.predictor.propagate_in_video(state):
+                results.append(
+                    {
+                        "frame_idx": out_frame_idx,
+                        "object_ids": list(out_obj_ids),
+                    }
+                )
+
+        except Exception as e:
+            log.error(f"[SAM3] process_video_concepts failed: {e}")
+
+        return results

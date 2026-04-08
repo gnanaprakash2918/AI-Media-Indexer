@@ -11,7 +11,6 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-
 from config import settings
 from core.processing.voice import VoiceProcessor
 from core.storage.db import VectorDB
@@ -27,6 +26,7 @@ class VoiceStageMixin:
 
     # These will be available via IngestionPipeline inheritance
     db: VectorDB
+
     # Type stub for type checkers (allows accessing self.* in mixin)
     def __getattr__(self, name: str) -> Any: ...
 
@@ -68,7 +68,7 @@ class VoiceStageMixin:
             from core.processing.voice import compute_speaker_centroid
 
             local_speaker_segments = defaultdict(list)
-            for seg in (voice_segments or []):
+            for seg in voice_segments or []:
                 local_speaker_segments[seg.speaker_label].append(seg)
 
             # Resolve global identity for each local speaker
@@ -82,7 +82,9 @@ class VoiceStageMixin:
                     continue
 
                 # Compute centroid for this local speaker
-                valid_embeddings = [s.embedding for s in segments if s.embedding is not None]
+                valid_embeddings = [
+                    s.embedding for s in segments if s.embedding is not None
+                ]
                 centroid = compute_speaker_centroid(valid_embeddings)
 
                 global_id = f"unknown_{uuid.uuid4().hex[:8]}"
@@ -107,14 +109,16 @@ class VoiceStageMixin:
                         # We use the centroid as the representative vector
                         self.db.upsert_speaker_embedding(
                             speaker_id=global_id,
-                            embedding=centroid, # Use centroid as reference
-                            media_path=str(path), # Representative path
+                            embedding=centroid,  # Use centroid as reference
+                            media_path=str(path),  # Representative path
                             start=segments[0].start_time,
                             end=segments[0].end_time,
                             voice_cluster_id=cluster_id,
                         )
                         # Also upsert the centroid specifically if we have a collection for it
-                        self.db.upsert_voice_cluster_centroid(cluster_id, centroid)
+                        self.db.upsert_voice_cluster_centroid(
+                            cluster_id, centroid
+                        )
 
                 local_to_global_map[local_label] = global_id
                 local_to_cluster_map[local_label] = cluster_id
@@ -123,12 +127,16 @@ class VoiceStageMixin:
                 audio_path: str | None = None
 
                 # Apply resolved global identity
-                global_speaker_id = local_to_global_map.get(seg.speaker_label, "unknown")
-                voice_cluster_id = local_to_cluster_map.get(seg.speaker_label, -1)
+                global_speaker_id = local_to_global_map.get(
+                    seg.speaker_label, "unknown"
+                )
+                voice_cluster_id = local_to_cluster_map.get(
+                    seg.speaker_label, -1
+                )
 
                 # Store individual segment embedding linked to the cluster
                 if seg.embedding is not None and global_speaker_id != "SILENCE":
-                     self.db.upsert_speaker_embedding(
+                    self.db.upsert_speaker_embedding(
                         speaker_id=global_speaker_id,
                         embedding=seg.embedding,
                         media_path=str(path),
@@ -196,9 +204,12 @@ class VoiceStageMixin:
                             from core.processing.speech_emotion import (
                                 SpeechEmotionAnalyzer,
                             )
+
                             self._ser_analyzer = SpeechEmotionAnalyzer()
                         except Exception as init_err:
-                            logger.warning(f"[Voice] SER init failed (disabling): {init_err}")
+                            logger.warning(
+                                f"[Voice] SER init failed (disabling): {init_err}"
+                            )
                             self._ser_analyzer = None
                             self._ser_failed = True
 
@@ -276,4 +287,3 @@ class VoiceStageMixin:
             del self.voice
             self.voice = None
             self._cleanup_memory()
-

@@ -28,30 +28,63 @@ def validate_path(path_str: str, media_only: bool = False) -> Path:
 
     # Block Windows System files
     blocked_dirs = [
-        "windows\\system32", "windows/system32",
-        "\\appdata\\", "/appdata/",
-        "\\.ssh", "/.ssh",
-        "\\.gnupg", "/.gnupg",
+        "windows\\system32",
+        "windows/system32",
+        "\\appdata\\",
+        "/appdata/",
+        "\\.ssh",
+        "/.ssh",
+        "\\.gnupg",
+        "/.gnupg",
     ]
     if any(d in path_str_lower for d in blocked_dirs):
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Block sensitive Linux/Unix directories
-    if path_str_lower.startswith(("/etc", "/var/log", "/proc", "/sys", "/root")):
+    if path_str_lower.startswith(
+        ("/etc", "/var/log", "/proc", "/sys", "/root")
+    ):
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Block dotfiles and sensitive extensions
-    blocked_extensions = {".env", ".key", ".pem", ".crt", ".pfx", ".p12",
-                          ".sqlite", ".db", ".kdbx"}
+    blocked_extensions = {
+        ".env",
+        ".key",
+        ".pem",
+        ".crt",
+        ".pfx",
+        ".p12",
+        ".sqlite",
+        ".db",
+        ".kdbx",
+    }
     if path.name.startswith(".") or path.suffix.lower() in blocked_extensions:
         raise HTTPException(status_code=403, detail="Access denied")
 
     # When serving media, restrict to known media types
     if media_only:
         media_extensions = {
-            ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",  # video
-            ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma",  # audio
-            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", # image
+            ".mp4",
+            ".mkv",
+            ".avi",
+            ".mov",
+            ".wmv",
+            ".flv",
+            ".webm",  # video
+            ".mp3",
+            ".wav",
+            ".flac",
+            ".aac",
+            ".ogg",
+            ".m4a",
+            ".wma",  # audio
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".bmp",
+            ".webp",
+            ".tiff",  # image
         }
         if path.suffix.lower() not in media_extensions:
             raise HTTPException(
@@ -163,7 +196,9 @@ async def get_face_thumbnail(
         logger.error(
             f"Debug Info: path={file_path}, media={media_path}, timestamp={timestamp}"
         )
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/thumbnails/voices/{filename}")
@@ -391,9 +426,9 @@ async def stream_segment(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     cache_key = f"{file_path.stem}_{start:.2f}_{duration:.2f}"
-    cache_hash = hashlib.sha256(f"{path}_{start}_{duration}".encode()).hexdigest()[
-        :12
-    ]
+    cache_hash = hashlib.sha256(
+        f"{path}_{start}_{duration}".encode()
+    ).hexdigest()[:12]
     cache_file = cache_dir / f"{cache_key}_{cache_hash}.mp4"
 
     if cache_file.exists():
@@ -449,7 +484,9 @@ async def stream_segment(
             headers={"Cache-Control": "public, max-age=86400"},
         )
     else:
-        logger.error(f"Segment encoding failed: {stderr.decode()[:500] if stderr else 'unknown'}")
+        logger.error(
+            f"Segment encoding failed: {stderr.decode()[:500] if stderr else 'unknown'}"
+        )
         raise HTTPException(status_code=500, detail="Segment encoding failed")
 
 
@@ -477,19 +514,24 @@ async def get_media_thumbnail(
         cmd = [
             "ffmpeg",
             "-y",
-            "-ss", str(time),
-            "-i", str(file_path),
-            "-vframes", "1",
-            "-vf", "scale=320:-2",
-            "-q:v", "5",
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "-"
+            "-ss",
+            str(time),
+            "-i",
+            str(file_path),
+            "-vframes",
+            "1",
+            "-vf",
+            "scale=320:-2",
+            "-q:v",
+            "5",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-",
         ]
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0 or not stdout:

@@ -10,9 +10,12 @@ from typing import Any
 
 import numpy as np
 import torch
+from transformers import (
+    AutoModelForAudioClassification,
+    Wav2Vec2FeatureExtractor,
+)
 
 from core.utils.logger import get_logger
-from transformers import AutoModelForAudioClassification, Wav2Vec2FeatureExtractor
 
 log = get_logger(__name__)
 
@@ -42,8 +45,11 @@ class SpeechEmotionAnalyzer:
 
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
+
                 # Wav2Vec2 fits in 1GB easily
-                if not await RESOURCE_ARBITER.ensure_loaded("speech_emotion", vram_gb=1.0, cleanup_fn=self.cleanup):
+                if not await RESOURCE_ARBITER.ensure_loaded(
+                    "speech_emotion", vram_gb=1.0, cleanup_fn=self.cleanup
+                ):
                     log.error("[SER] VRAM full, cannot load model")
                     return False
 

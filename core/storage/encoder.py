@@ -26,7 +26,9 @@ class TextEncoder:
         self.model_name = SELECTED_MODEL
         self.encoder: SentenceTransformer | None = None
         self._encoder_last_used: float = 0.0
-        self._idle_unload_seconds = getattr(settings, "encoder_idle_timeout", 300)
+        self._idle_unload_seconds = getattr(
+            settings, "encoder_idle_timeout", 300
+        )
 
         self._embedding_cache: OrderedDict = OrderedDict()
         self._embedding_cache_max_size = getattr(
@@ -42,6 +44,7 @@ class TextEncoder:
 
         def _create(path_or_name: str, device: str) -> "SentenceTransformer":
             from sentence_transformers import SentenceTransformer
+
             log(
                 "Creating SentenceTransformer",
                 path_or_name=path_or_name,
@@ -62,16 +65,23 @@ class TextEncoder:
             try:
                 return _create(str(local_model_dir), device=target_device)
             except Exception as exc:
-                log(f"GPU Load Failed: {exc}. Retrying on CPU...", level="warning")
+                log(
+                    f"GPU Load Failed: {exc}. Retrying on CPU...",
+                    level="warning",
+                )
                 try:
                     return _create(str(local_model_dir), device="cpu")
                 except Exception:
                     pass  # Fall through to re-download
 
-        log("Local model missing/corrupt, downloading from Hub", model=self.model_name)
+        log(
+            "Local model missing/corrupt, downloading from Hub",
+            model=self.model_name,
+        )
 
         try:
             from huggingface_hub import snapshot_download
+
             snapshot_download(
                 repo_id=self.model_name,
                 local_dir=str(local_model_dir),
@@ -91,6 +101,7 @@ class TextEncoder:
         if self.encoder is not None:
             try:
                 import torch
+
                 self.encoder = self.encoder.to("cpu")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -147,7 +158,9 @@ class TextEncoder:
                     f"RESOURCE_ARBITER integration failed, loading anyway: {e}",
                     level="WARNING",
                 )
-                RESOURCE_ARBITER.register_model("embedding_encoder", self.unload)
+                RESOURCE_ARBITER.register_model(
+                    "embedding_encoder", self.unload
+                )
 
             self.encoder = self._load_model()
 
@@ -222,11 +235,14 @@ class TextEncoder:
                 processed_texts = [prefix + t for t in texts_to_compute]
         elif "mxbai" in model_lower:
             if is_query:
-                prefix = "Represent this sentence for searching relevant passages: "
+                prefix = (
+                    "Represent this sentence for searching relevant passages: "
+                )
                 processed_texts = [prefix + t for t in texts_to_compute]
 
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:

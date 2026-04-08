@@ -35,6 +35,7 @@ from a2a.types import (
 from a2a.utils.errors import ServerError
 from loguru import logger
 
+from config import settings as _settings
 from core.agent.server import (
     agentic_search,
     get_video_summary,
@@ -43,8 +44,6 @@ from core.agent.server import (
     scenelet_search,
     search_media,
 )
-
-from config import settings as _settings
 
 DEFAULT_MODEL = os.getenv("MEDIA_AGENT_MODEL", _settings.agent_model)
 

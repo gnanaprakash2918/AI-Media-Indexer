@@ -334,7 +334,8 @@ class IdentityLinker:
 
         all_suggestions.extend(
             self.suggest_face_voice_links(
-                face_clusters, voice_clusters,
+                face_clusters,
+                voice_clusters,
                 music_percentage=music_percentage,
             )
         )

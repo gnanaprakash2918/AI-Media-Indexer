@@ -167,16 +167,23 @@ class TransNetV2:
         # Process remaining buffer with zero-padding
         if frames_buffer and len(frames_buffer) >= 10:
             pad_count = 100 - len(frames_buffer)
-            padded = frames_buffer + [np.zeros((height, width, 3), dtype=np.float32)] * pad_count
+            padded = (
+                frames_buffer
+                + [np.zeros((height, width, 3), dtype=np.float32)] * pad_count
+            )
             batch = np.array(padded, dtype=np.float32)[np.newaxis, ...]
             try:
                 preds = self._session.run(
                     [self._output_name], {self._input_name: batch}
                 )[0]
                 # Only take predictions for real frames, not padding
-                predictions.extend(preds[0].flatten().tolist()[:len(frames_buffer)])
+                predictions.extend(
+                    preds[0].flatten().tolist()[: len(frames_buffer)]
+                )
             except Exception as e:
-                log.warning(f"[TransNetV2] Remaining buffer inference failed: {e}")
+                log.warning(
+                    f"[TransNetV2] Remaining buffer inference failed: {e}"
+                )
 
         # Convert predictions to scenes
         scenes = []

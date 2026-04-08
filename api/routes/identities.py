@@ -12,7 +12,6 @@ from api.schemas import (
     IdentityRenameRequest,
     MergeClustersRequest,
     MoveFacesRequest,
-    NameFaceRequest,
 )
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import logger
@@ -61,7 +60,9 @@ async def list_all_names(
         return {"names": sorted(names)}
     except Exception as e:
         logger.error(f"[Identities] List names failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/identities/suggestions")
@@ -155,7 +156,9 @@ async def suggest_merges(
         return {"suggestions": suggestions, "count": len(suggestions)}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/identities/{identity_id}/merge")
@@ -183,7 +186,9 @@ async def merge_identities(identity_id: str, req: IdentityMergeRequest) -> dict:
         }
     except Exception as e:
         logger.error(f"[Identities] Merge failed: {e}")
-        raise HTTPException(status_code=400, detail="Identity merge failed") from e
+        raise HTTPException(
+            status_code=400, detail="Identity merge failed"
+        ) from e
 
 
 @router.patch("/identities/{identity_id}")
@@ -214,13 +219,17 @@ async def rename_identity(
     # Also update SAM 3 Masklets (The "Track Everywhere" promise)
     try:
         if pipeline and pipeline.db:
-             # We need the OLD name to find masklets. identity object has it.
-             old_name = identity.name
-             count = pipeline.db.update_masklet_concept(old_name, req.name)
-             if count > 0:
-                 logger.info(f"[Identity] Also renamed {count} masklets for {req.name}")
+            # We need the OLD name to find masklets. identity object has it.
+            old_name = identity.name
+            count = pipeline.db.update_masklet_concept(old_name, req.name)
+            if count > 0:
+                logger.info(
+                    f"[Identity] Also renamed {count} masklets for {req.name}"
+                )
     except Exception as e:
-        logger.warning(f"[Identity] Failed to propagate rename to masklets: {e}")
+        logger.warning(
+            f"[Identity] Failed to propagate rename to masklets: {e}"
+        )
 
     return {"status": "renamed", "id": identity_id, "name": req.name}
 
@@ -402,8 +411,6 @@ async def bulk_approve(
         status_code=501,
         detail="Bulk approval is not yet implemented",
     )
-
-
 
 
 @router.post("/faces/cluster/{cluster_id}/main")

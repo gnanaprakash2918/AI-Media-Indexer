@@ -8,14 +8,14 @@ from qdrant_client.http import models
 from config import settings
 from core.storage.constants import (
     AUDIO_EVENTS_COLLECTION,
+    FACE_VECTOR_SIZE,
     FACES_COLLECTION,
     MASKLETS_COLLECTION,
     MEDIA_COLLECTION,
     MEDIA_SEGMENTS_COLLECTION,
     MEDIA_VECTOR_SIZE,
-    FACE_VECTOR_SIZE,
-    SCENES_COLLECTION,
     SCENELETS_COLLECTION,
+    SCENES_COLLECTION,
     SUMMARIES_COLLECTION,
     TEXT_DIM,
     VIDEO_METADATA_COLLECTION,
@@ -77,7 +77,9 @@ def _check_and_fix_collection(
                 else:
                     return  # Exists and correct
     except Exception as e:
-        log(f"Error checking collection {collection_name}: {e}", level="WARNING")
+        log(
+            f"Error checking collection {collection_name}: {e}", level="WARNING"
+        )
 
     # Create collection
     if is_multi_vector and multi_vector_config:
@@ -121,7 +123,6 @@ def _create_text_index(
 
 def ensure_all_collections(client: QdrantClient) -> None:
     """Create/verify ALL Qdrant collections and payload indexes."""
-
     # 1. Media Segments (Text Only)
     _check_and_fix_collection(client, MEDIA_SEGMENTS_COLLECTION, TEXT_DIM)
 
@@ -139,13 +140,19 @@ def ensure_all_collections(client: QdrantClient) -> None:
         field_schema=models.PayloadSchemaType.KEYWORD,
     )
     _create_text_index(
-        client, MEDIA_COLLECTION, "ocr_text",
-        min_token_len=2, max_token_len=20, lowercase=True,
+        client,
+        MEDIA_COLLECTION,
+        "ocr_text",
+        min_token_len=2,
+        max_token_len=20,
+        lowercase=True,
     )
 
     # 3. Faces (Euclidean Distance)
     _check_and_fix_collection(
-        client, FACES_COLLECTION, FACE_VECTOR_SIZE,
+        client,
+        FACES_COLLECTION,
+        FACE_VECTOR_SIZE,
         distance=models.Distance.EUCLID,
     )
     for field, schema in [
@@ -161,11 +168,14 @@ def ensure_all_collections(client: QdrantClient) -> None:
 
     # 4. Scenelets
     _check_and_fix_collection(
-        client, SCENELETS_COLLECTION, TEXT_DIM,
+        client,
+        SCENELETS_COLLECTION,
+        TEXT_DIM,
         is_multi_vector=True,
         multi_vector_config={
             "content": models.VectorParams(
-                size=TEXT_DIM, distance=models.Distance.COSINE,
+                size=TEXT_DIM,
+                distance=models.Distance.COSINE,
             ),
         },
     )
@@ -198,15 +208,29 @@ def ensure_all_collections(client: QdrantClient) -> None:
     visual_features_dim = getattr(settings, "visual_features_dim", 1152)
     video_embedding_dim = getattr(settings, "video_embedding_dim", 1024)
     _check_and_fix_collection(
-        client, SCENES_COLLECTION, MEDIA_VECTOR_SIZE,
+        client,
+        SCENES_COLLECTION,
+        MEDIA_VECTOR_SIZE,
         is_multi_vector=True,
         multi_vector_config={
-            "visual": models.VectorParams(size=TEXT_DIM, distance=models.Distance.COSINE),
-            "motion": models.VectorParams(size=TEXT_DIM, distance=models.Distance.COSINE),
-            "dialogue": models.VectorParams(size=TEXT_DIM, distance=models.Distance.COSINE),
-            "visual_features": models.VectorParams(size=visual_features_dim, distance=models.Distance.COSINE),
-            "internvideo": models.VectorParams(size=video_embedding_dim, distance=models.Distance.COSINE),
-            "languagebind": models.VectorParams(size=video_embedding_dim, distance=models.Distance.COSINE),
+            "visual": models.VectorParams(
+                size=TEXT_DIM, distance=models.Distance.COSINE
+            ),
+            "motion": models.VectorParams(
+                size=TEXT_DIM, distance=models.Distance.COSINE
+            ),
+            "dialogue": models.VectorParams(
+                size=TEXT_DIM, distance=models.Distance.COSINE
+            ),
+            "visual_features": models.VectorParams(
+                size=visual_features_dim, distance=models.Distance.COSINE
+            ),
+            "internvideo": models.VectorParams(
+                size=video_embedding_dim, distance=models.Distance.COSINE
+            ),
+            "languagebind": models.VectorParams(
+                size=video_embedding_dim, distance=models.Distance.COSINE
+            ),
         },
     )
 
@@ -215,17 +239,29 @@ def ensure_all_collections(client: QdrantClient) -> None:
 
     # 8. Text indexes for hybrid search on frames
     text_fields = [
-        "action", "dialogue", "description", "entities",
-        "visible_text", "face_names",
-        "clothing_colors", "clothing_types", "clothing_descriptions",
-        "accessories", "scene_location", "scene_type",
-        "object_labels", "dominant_color",
+        "action",
+        "dialogue",
+        "description",
+        "entities",
+        "visible_text",
+        "face_names",
+        "clothing_colors",
+        "clothing_types",
+        "clothing_descriptions",
+        "accessories",
+        "scene_location",
+        "scene_type",
+        "object_labels",
+        "dominant_color",
     ]
     for field in text_fields:
         try:
             _create_text_index(
-                client, MEDIA_COLLECTION, field,
-                min_token_len=2, lowercase=True,
+                client,
+                MEDIA_COLLECTION,
+                field,
+                min_token_len=2,
+                lowercase=True,
             )
         except Exception:
             pass  # Index may already exist
@@ -236,7 +272,8 @@ def ensure_all_collections(client: QdrantClient) -> None:
         client.create_collection(
             collection_name=AUDIO_EVENTS_COLLECTION,
             vectors_config=models.VectorParams(
-                size=CLAP_DIM, distance=models.Distance.COSINE,
+                size=CLAP_DIM,
+                distance=models.Distance.COSINE,
             ),
         )
         client.create_payload_index(
@@ -263,7 +300,8 @@ def ensure_all_collections(client: QdrantClient) -> None:
         client.create_collection(
             collection_name=VIDEO_METADATA_COLLECTION,
             vectors_config=models.VectorParams(
-                size=1, distance=models.Distance.COSINE,
+                size=1,
+                distance=models.Distance.COSINE,
             ),
         )
         client.create_payload_index(
@@ -274,7 +312,9 @@ def ensure_all_collections(client: QdrantClient) -> None:
 
     # 11. Masklets
     _check_and_fix_collection(
-        client, MASKLETS_COLLECTION, MEDIA_VECTOR_SIZE,
+        client,
+        MASKLETS_COLLECTION,
+        MEDIA_VECTOR_SIZE,
         distance=models.Distance.COSINE,
     )
     client.create_payload_index(

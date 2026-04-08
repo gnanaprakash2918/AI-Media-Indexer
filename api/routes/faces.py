@@ -3,7 +3,6 @@
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from qdrant_client import models
 
 from api.deps import get_pipeline
@@ -55,7 +54,9 @@ async def get_face_clusters(
                         }
                     )
         except Exception as e:
-            logger.warning(f"[Faces] Failed to fetch named faces for clusters: {e}")
+            logger.warning(
+                f"[Faces] Failed to fetch named faces for clusters: {e}"
+            )
 
         # Group by cluster_id
         clusters: dict[int, list] = {}
@@ -97,7 +98,9 @@ async def get_face_clusters(
         }
     except Exception as e:
         logger.error(f"[Faces] Get clusters failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/faces/unresolved")
@@ -177,7 +180,9 @@ async def get_named_faces(
         }
     except Exception as e:
         logger.error(f"[Faces] Get named failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/faces/merge")
@@ -240,7 +245,9 @@ async def delete_face(
         return {"status": "deleted", "face_id": face_id}
     except Exception as e:
         logger.error(f"[Faces] Delete failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.delete("/faces/cluster/{cluster_id}")
@@ -275,7 +282,9 @@ async def delete_face_cluster(
         raise
     except Exception as e:
         logger.error(f"[Faces] Delete cluster failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/faces/cluster")
@@ -303,7 +312,9 @@ async def trigger_face_clustering(
         }
     except Exception as e:
         logger.error(f"[Faces] Clustering failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/faces/new-cluster")
@@ -340,7 +351,9 @@ async def create_new_face_cluster(
         }
     except Exception as e:
         logger.error(f"[Faces] New cluster failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.put("/faces/{face_id}/cluster")
@@ -371,9 +384,9 @@ async def move_face_to_cluster(
         return {"status": "moved", "face_id": face_id, "cluster_id": cluster_id}
     except Exception as e:
         logger.error(f"[Faces] Move failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
-
-
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/faces/cluster/{cluster_id}/name")
@@ -464,7 +477,9 @@ async def name_face_cluster(
         }
     except Exception as e:
         logger.error(f"[Faces] App naming failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/faces/cluster/{cluster_id}/identify")
@@ -574,4 +589,6 @@ async def identify_face_cluster(
 
     except Exception as e:
         logger.error(f"[Faces] Identification failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e

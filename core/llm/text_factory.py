@@ -137,7 +137,9 @@ class GeminiText(TextLLMClient):
                     },
                 )
             except ImportError:
-                log("[GeminiText] google-generativeai not installed, Gemini disabled")
+                log(
+                    "[GeminiText] google-generativeai not installed, Gemini disabled"
+                )
                 return None
             except Exception as e:
                 log(f"[GeminiText] Failed to initialize: {e}")

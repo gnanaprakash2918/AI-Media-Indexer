@@ -9,10 +9,13 @@ analysis, vector embedding, and Qdrant indexing.
 
 Usage:
     uv run python main.py <path_to_video>
+    uv run python main.py <path_to_video> --skip-warmup
+    uv run python main.py <path_to_video> --media-type movie
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import difflib
 import sys
@@ -45,7 +48,13 @@ def _ask_media_type() -> str:
     return "unknown"
 
 
-async def _run(video_path: Path, media_type: str) -> None:
+async def _run(
+    video_path: Path,
+    media_type: str,
+    *,
+    skip_warmup: bool = False,
+    skip_startup_checks: bool = False,
+) -> None:
     """Run the ingestion pipeline for a single video.
 
     Args:
@@ -53,14 +62,22 @@ async def _run(video_path: Path, media_type: str) -> None:
         media_type: Media type hint string to be forwarded to the ingestion
             pipeline. Should align with values in :class:`MediaType`, such
             as ``"movie"``, ``"tv"``, ``"personal"``, or ``"unknown"``.
+        skip_warmup: If True, skip model pre-download/warming.
+        skip_startup_checks: If True, skip pre-flight dependency checks.
     """
-    # Configured frame interval
-    # frame_interval_seconds uses config.frame_interval (default 0.5s = 2fps)
+    # === STARTUP CHECKS ===
+    if not skip_startup_checks:
+        from core.utils.startup_checks import run_startup_checks
 
-    # === STARTUP: Warmup Models ===
-    from core.utils.model_warmer import warmup_models
+        run_startup_checks()
 
-    await warmup_models()
+    # === MODEL WARMUP ===
+    if not skip_warmup:
+        from core.utils.model_warmer import warmup_models
+
+        await warmup_models()
+    else:
+        print("[INFO] Skipping model warmup (--skip-warmup)")
 
     pipeline = IngestionPipeline(
         qdrant_backend="docker",
@@ -142,24 +159,64 @@ def _interactive_resolve(raw_path: str) -> Path:
 
 
 def main() -> None:
-    """CLI entrypoint for the media ingestion pipeline.
+    """CLI entrypoint for the media ingestion pipeline."""
+    parser = argparse.ArgumentParser(
+        description="AI Media Indexer — Ingest a video into the search index.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  uv run python main.py video.mp4\n"
+            "  uv run python main.py video.mp4 --skip-warmup\n"
+            "  uv run python main.py video.mp4 --media-type movie\n"
+        ),
+    )
+    parser.add_argument(
+        "video",
+        nargs="?",
+        help="Path to the video file to ingest.",
+    )
+    parser.add_argument(
+        "--skip-warmup",
+        action="store_true",
+        help="Skip model pre-download/warming for faster startup.",
+    )
+    parser.add_argument(
+        "--skip-checks",
+        action="store_true",
+        help="Skip pre-flight dependency checks.",
+    )
+    parser.add_argument(
+        "--media-type",
+        choices=["movie", "tv", "personal", "unknown"],
+        default=None,
+        help="Media type hint. If omitted, prompts interactively.",
+    )
 
-    Usage:
-        uv run python main.py <path_to_video>
-    """
-    if len(sys.argv) < 2:
-        print("Usage: uv run python main.py <path_to_video>")
-        raise SystemExit(1)
+    args = parser.parse_args()
 
-    raw_input = " ".join(sys.argv[1:])
-    video_path = _interactive_resolve(raw_input)
+    if not args.video:
+        parser.print_help()
+        sys.exit(1)
 
-    media_type_str = _ask_media_type()
+    video_path = _interactive_resolve(args.video)
+
+    # Determine media type
+    if args.media_type:
+        media_type_str = args.media_type
+    else:
+        media_type_str = _ask_media_type()
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    asyncio.run(_run(video_path, media_type_str))
+    asyncio.run(
+        _run(
+            video_path,
+            media_type_str,
+            skip_warmup=args.skip_warmup,
+            skip_startup_checks=args.skip_checks,
+        )
+    )
 
 
 if __name__ == "__main__":

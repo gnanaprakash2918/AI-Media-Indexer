@@ -15,21 +15,17 @@ from __future__ import annotations
 import sqlite3
 from threading import Lock
 
-
-from core.utils.logger import log
-
-
+from core.storage.graph.face_track_manager import FaceTrackManager
+from core.storage.graph.identity_manager import IdentityManager
+from core.storage.graph.query_manager import IdentityQueryManager
+from core.storage.graph.scene_manager import SceneManager
+from core.storage.graph.temporal_event_manager import TemporalEventManager
+from core.storage.graph.voice_track_manager import VoiceTrackManager
 from core.storage.identity_models import (
     TemporalEvent,
 )
+from core.utils.logger import log
 
-
-from core.storage.graph.identity_manager import IdentityManager
-from core.storage.graph.face_track_manager import FaceTrackManager
-from core.storage.graph.voice_track_manager import VoiceTrackManager
-from core.storage.graph.scene_manager import SceneManager
-from core.storage.graph.temporal_event_manager import TemporalEventManager
-from core.storage.graph.query_manager import IdentityQueryManager
 
 class IdentityGraphManager(
     IdentityManager,
@@ -228,54 +224,25 @@ class IdentityGraphManager(
     # IDENTITY OPERATIONS
     # =========================================================================
 
-
-
-
-
-
-
-
-
-
-
     # =========================================================================
     # FACE TRACK OPERATIONS
     # =========================================================================
-
-
-
-
-
-
 
     # =========================================================================
     # VOICE TRACK OPERATIONS
     # =========================================================================
 
-
-
-
-
-
     # =========================================================================
     # SEARCH & QUERY OPERATIONS
     # =========================================================================
-
-
 
     # =========================================================================
     # HELPERS
     # =========================================================================
 
-
-
-
     # =========================================================================
     # GRAPHRAG: SCENE OPERATIONS
     # =========================================================================
-
-
-
 
     def get_scene_timeline(self, media_id: str) -> list[dict]:
         """Get the complete scene timeline with transitions for a video.
@@ -294,7 +261,7 @@ class IdentityGraphManager(
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 f"""
-                SELECT * FROM scene_transitions 
+                SELECT * FROM scene_transitions
                 WHERE from_scene_id IN ({placeholders}) OR to_scene_id IN ({placeholders})
                 """,
                 scene_ids + scene_ids,
@@ -305,7 +272,7 @@ class IdentityGraphManager(
 
         # Build timeline
         timeline = []
-        for i, scene in enumerate(scenes):
+        for _i, scene in enumerate(scenes):
             entry = {
                 "scene": {
                     "id": scene.id,
@@ -335,7 +302,6 @@ class IdentityGraphManager(
     # =========================================================================
     # GRAPHRAG: TEMPORAL EVENT OPERATIONS
     # =========================================================================
-
 
     def link_events_sequence(self, event_ids: list[str]) -> int:
         """Link a sequence of events in order (A→B→C).
@@ -470,8 +436,8 @@ class IdentityGraphManager(
             if media_id:
                 cursor = conn.execute(
                     """
-                    SELECT * FROM temporal_events 
-                    WHERE identity_id = ? 
+                    SELECT * FROM temporal_events
+                    WHERE identity_id = ?
                     AND scene_id IN (SELECT id FROM scenes WHERE media_id = ?)
                     ORDER BY timestamp
                     LIMIT ?
@@ -481,7 +447,7 @@ class IdentityGraphManager(
             else:
                 cursor = conn.execute(
                     """
-                    SELECT * FROM temporal_events 
+                    SELECT * FROM temporal_events
                     WHERE identity_id = ?
                     ORDER BY timestamp
                     LIMIT ?

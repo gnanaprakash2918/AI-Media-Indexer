@@ -17,9 +17,13 @@ log = get_logger(__name__)
 class GraphStore:
     """Interface for Neo4j Graph Database."""
 
-    def __init__(self, uri: str = "bolt://localhost:7687", auth: tuple = ("neo4j", "password")):
+    def __init__(
+        self,
+        uri: str = "bolt://localhost:7687",
+        auth: tuple = ("neo4j", "password"),
+    ):
         """Initialize Neo4j driver.
-        
+
         Args:
             uri: Bolt URI (e.g. bolt://localhost:7687)
             auth: Tuple of (username, password)
@@ -48,7 +52,9 @@ class GraphStore:
             self.driver.close()
             log.info("[GraphStore] Connection closed.")
 
-    def query(self, cypher: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def query(
+        self, cypher: str, params: Dict[str, Any] = None
+    ) -> List[Dict[str, Any]]:
         """Execute a Cypher query and return list of dict results."""
         if not self.driver:
             log.warning("[GraphStore] Driver not initialized, skipping query.")
@@ -82,8 +88,10 @@ class GraphStore:
         for idx in indices:
             self.query(idx)
 
+
 # Singleton global instance
 _GRAPH_STORE = None
+
 
 def get_graph_store() -> Optional[GraphStore]:
     """Get or create singleton GraphStore."""

@@ -3,7 +3,6 @@
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 
 from api.deps import get_pipeline
 from api.schemas import ClusterNameRequest, MergeClustersRequest
@@ -42,7 +41,9 @@ async def get_voice_segments(
         return {"segments": segments, "count": len(segments)}
     except Exception as e:
         logger.error(f"[Voices] Get segments failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/voices/clusters")
@@ -96,7 +97,9 @@ async def get_voice_clusters(
         }
     except Exception as e:
         logger.error(f"[Voices] Get clusters failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/voices/merge")
@@ -161,7 +164,9 @@ async def delete_voice_segment(
         return {"status": "deleted", "segment_id": segment_id}
     except Exception as e:
         logger.error(f"[Voices] Delete failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.delete("/voices/cluster/{cluster_id}")
@@ -196,7 +201,9 @@ async def delete_voice_cluster(
         raise
     except Exception as e:
         logger.error(f"[Voices] Delete cluster failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/voices/cluster")
@@ -226,7 +233,9 @@ async def trigger_voice_clustering(
         }
     except Exception as e:
         logger.error(f"[Voices] Clustering failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/voices/new-cluster")
@@ -239,7 +248,9 @@ async def create_new_voice_cluster(
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     if not segment_ids:
-        raise HTTPException(status_code=400, detail="segment_ids cannot be empty")
+        raise HTTPException(
+            status_code=400, detail="segment_ids cannot be empty"
+        )
     if len(segment_ids) > 1000:
         raise HTTPException(
             status_code=400,
@@ -265,7 +276,9 @@ async def create_new_voice_cluster(
         }
     except Exception as e:
         logger.error(f"[Voices] New cluster failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.put("/voices/{segment_id}/cluster")
@@ -302,9 +315,9 @@ async def move_voice_to_cluster(
         }
     except Exception as e:
         logger.error(f"[Voices] Move failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
-
-
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/voices/cluster/{cluster_id}/name")
@@ -411,7 +424,9 @@ async def name_voice_cluster(
         }
     except Exception as e:
         logger.error(f"[Voices] App naming failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.post("/voices/cluster/{cluster_id}/main")

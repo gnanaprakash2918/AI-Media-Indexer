@@ -4,6 +4,7 @@ from typing import Any
 
 from core.ports.storage import StorageBackend
 
+
 class MockStorageBackend(StorageBackend):
     """In-memory mock database that conforms to StorageBackend protocol."""
 
@@ -19,7 +20,10 @@ class MockStorageBackend(StorageBackend):
         return self.faces
 
     async def store_face_cluster(
-        self, cluster_id: int, embeddings: list[list[float]], metadata: dict[str, Any]
+        self,
+        cluster_id: int,
+        embeddings: list[list[float]],
+        metadata: dict[str, Any],
     ) -> None:
         self.faces.append({"cluster_id": cluster_id, "metadata": metadata})
 
@@ -53,13 +57,24 @@ class MockStorageBackend(StorageBackend):
             }
         )
 
-    def insert_masklet(self, video_path: str, concept: str, start_time: float, end_time: float, confidence: float, payload: dict, embedding: list[float]) -> None:
-        self.masklets.append({
-            "video_path": video_path,
-            "concept": concept,
-            "start_time": start_time,
-            "end_time": end_time,
-        })
+    def insert_masklet(
+        self,
+        video_path: str,
+        concept: str,
+        start_time: float,
+        end_time: float,
+        confidence: float,
+        payload: dict,
+        embedding: list[float],
+    ) -> None:
+        self.masklets.append(
+            {
+                "video_path": video_path,
+                "concept": concept,
+                "start_time": start_time,
+                "end_time": end_time,
+            }
+        )
 
     def get_masklets_for_media(self, video_path: str) -> list[dict]:
         return [m for m in self.masklets if m["video_path"] == video_path]

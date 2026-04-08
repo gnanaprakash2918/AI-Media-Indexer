@@ -1,6 +1,5 @@
 """Mock implementations of processor protocols for isolated unit testing."""
 
-from pathlib import Path
 from typing import Any
 
 from core.ports.processors import (
@@ -22,7 +21,9 @@ class MockVisionAnalyzer(VisionAnalyzer):
 
 
 class MockFaceTracker(FaceTracker):
-    async def prepare_batches(self, video_path: str, frames_to_extract: list[dict]) -> tuple[Any, int, list]:
+    async def prepare_batches(
+        self, video_path: str, frames_to_extract: list[dict]
+    ) -> tuple[Any, int, list]:
         return [], 0, []
 
     async def get_face_batches(self) -> Any:

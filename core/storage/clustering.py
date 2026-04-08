@@ -37,7 +37,9 @@ class ClusterManager:
     def get_next_face_cluster_id(self) -> int:
         return self.get_next_cluster_id()
 
-    def _get_max_field_value(self, collection_name: str, field_name: str) -> int:
+    def _get_max_field_value(
+        self, collection_name: str, field_name: str
+    ) -> int:
         """Get the maximum value of a payload field across a collection.
 
         Scrolls through all points in batches to find the max integer value.
@@ -62,9 +64,7 @@ class ClusterManager:
                 )
                 for point in results:
                     cid = (
-                        point.payload.get(field_name, 0)
-                        if point.payload
-                        else 0
+                        point.payload.get(field_name, 0) if point.payload else 0
                     )
                     if isinstance(cid, int) and cid > max_id:
                         max_id = cid
@@ -81,4 +81,3 @@ class ClusterManager:
     def get_max_face_cluster_id(self, collection_name: str) -> int:
         """Get the maximum existing face cluster ID."""
         return self._get_max_field_value(collection_name, "cluster_id")
-

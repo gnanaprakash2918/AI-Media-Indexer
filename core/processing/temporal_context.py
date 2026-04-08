@@ -227,6 +227,7 @@ class SceneletBuilder:
         # Uses configurable threshold from settings (default 0.8)
         try:
             from config import settings
+
             overlap_threshold = settings.scenelet_dedup_overlap
         except Exception:
             overlap_threshold = 0.8

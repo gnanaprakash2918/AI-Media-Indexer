@@ -75,6 +75,9 @@ class SceneContext(BaseModel):
     cultural_context: str | None = Field(
         default=None, description="Inferred cultural setting"
     )
+    mood: str = Field(
+        default="", description="Emotional tone/mood of the scene"
+    )
     visible_text: list = Field(
         default_factory=list, description="Readable text/brands"
     )
@@ -381,8 +384,10 @@ class SearchResultDetail(BaseModel):
     dense_context: str = ""
     matched_identities: list[str] = Field(default_factory=list)
     face_bboxes: list[tuple[int, int, int, int]] = Field(
-        default_factory=list, description="List of [x, y, w, h] for faces in this result"
+        default_factory=list,
+        description="List of [x, y, w, h] for faces in this result",
     )
     voice_segments: list[dict[str, Any]] = Field(
-        default_factory=list, description="List of voice segments {start, end, label}"
+        default_factory=list,
+        description="List of voice segments {start, end, label}",
     )

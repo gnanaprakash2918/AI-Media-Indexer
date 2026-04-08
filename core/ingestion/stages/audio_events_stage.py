@@ -26,6 +26,7 @@ class AudioEventsStageMixin:
 
     # These will be available via IngestionPipeline inheritance
     db: VectorDB
+
     # Type stub for type checkers (allows accessing self.* in mixin)
     def __getattr__(self, name: str) -> Any: ...
 
@@ -46,7 +47,6 @@ class AudioEventsStageMixin:
         logger.info(f"Starting audio event detection for {path.name}")
 
         try:
-
             from core.processing.audio_events import get_audio_detector
 
             # Model-based AST Prediction enabled. No hardcoded lists.
@@ -56,7 +56,9 @@ class AudioEventsStageMixin:
             # Get duration via cached probe (avoids redundant FFprobe calls)
             try:
                 probe_data = await self.get_probe_data(path)
-                duration = float(probe_data.get("format", {}).get("duration", 0))
+                duration = float(
+                    probe_data.get("format", {}).get("duration", 0)
+                )
             except Exception as e:
                 logger.warning(
                     f"Probe failed, falling back to librosa for duration: {e}"
@@ -294,4 +296,3 @@ class AudioEventsStageMixin:
             ):
                 return True
         return False
-

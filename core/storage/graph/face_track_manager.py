@@ -26,6 +26,7 @@ class FaceTrackManager:
     # These will be available via IdentityGraphManager inheritance
     db_path: str
     _lock: Lock
+
     # Type stub for type checkers
     def __getattr__(self, name: str) -> Any: ...
 
@@ -153,4 +154,3 @@ class FaceTrackManager:
             avg_confidence=row["avg_confidence"],
             frame_count=row["frame_count"],
         )
-

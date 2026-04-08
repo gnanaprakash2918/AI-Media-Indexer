@@ -6,8 +6,6 @@ VectorDB inherits from SceneRepository to compose these methods.
 
 from __future__ import annotations
 
-from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
-
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -16,6 +14,7 @@ import numpy as np
 from qdrant_client.http import models
 
 from config import settings
+from core.domain.values import Timestamp, VideoPath
 from core.storage.filters import build_filter, media_path_filter
 from core.storage.qdrant_utils import sanitize_numpy_types
 from core.utils.logger import log
@@ -61,10 +60,16 @@ class SceneRepository:
         try:
             query_vector = await self.visual_encoder.encode_text(query)
             if not query_vector:
-                log("Visual encoder returned empty for scenelet query, skipping vector search", level="WARNING")
+                log(
+                    "Visual encoder returned empty for scenelet query, skipping vector search",
+                    level="WARNING",
+                )
                 return []
         except Exception:
-            log("Visual encoder unavailable for scenelet search, returning empty", level="WARNING")
+            log(
+                "Visual encoder unavailable for scenelet search, returning empty",
+                level="WARNING",
+            )
             return []
 
         filters = []
@@ -304,7 +309,11 @@ class SceneRepository:
                 )
                 # Mock result objects for consistency
                 results = [
-                    type("Point", (), {"id": p.id, "score": 1.0, "payload": p.payload})
+                    type(
+                        "Point",
+                        (),
+                        {"id": p.id, "score": 1.0, "payload": p.payload},
+                    )
                     for p in resp
                 ]
 
@@ -312,10 +321,13 @@ class SceneRepository:
                 {
                     "id": str(r.id),
                     "score": r.score,
-                    "video_path": r.payload.get("video_path") or r.payload.get("media_path", ""),
+                    "video_path": r.payload.get("video_path")
+                    or r.payload.get("media_path", ""),
                     "concept": r.payload.get("concept", ""),
-                    "start_time": r.payload.get("start_time") or r.payload.get("start", 0),
-                    "end_time": r.payload.get("end_time") or r.payload.get("end", 0),
+                    "start_time": r.payload.get("start_time")
+                    or r.payload.get("start", 0),
+                    "end_time": r.payload.get("end_time")
+                    or r.payload.get("end", 0),
                     "confidence": r.payload.get("confidence", 1.0),
                     **r.payload,
                 }
@@ -337,7 +349,9 @@ class SceneRepository:
         """
         try:
             # 1. Find all masklets with old_concept (Scroll)
-            masklets = await self.search_masklets(concept=old_concept, limit=1000)
+            masklets = await self.search_masklets(
+                concept=old_concept, limit=1000
+            )
             if not masklets:
                 return 0
 
@@ -352,7 +366,9 @@ class SceneRepository:
                 )
                 count += 1
 
-            log(f"Renamed {count} masklets from '{old_concept}' to '{new_concept}'")
+            log(
+                f"Renamed {count} masklets from '{old_concept}' to '{new_concept}'"
+            )
             return count
 
         except Exception as e:
@@ -483,13 +499,16 @@ class SceneRepository:
             The generated scene ID.
         """
         import numpy as np
+
         _NEAR_ZERO = float(np.finfo(np.float32).tiny)
 
         def _safe_fill(dim: int) -> list[float]:
             """Near-zero vector that avoids NaN cosine similarity."""
             return [_NEAR_ZERO] * dim
 
-        def _adapt_features(vec: list[float], expected_dim: int, name: str) -> list[float]:
+        def _adapt_features(
+            vec: list[float], expected_dim: int, name: str
+        ) -> list[float]:
             """Pad or truncate feature vectors on dim mismatch instead of discarding."""
             if len(vec) == expected_dim:
                 return vec
@@ -524,24 +543,35 @@ class SceneRepository:
         if visual_features is None:
             visual_features = _safe_fill(visual_features_dim)
         else:
-            visual_features = _adapt_features(visual_features, visual_features_dim, "Visual features")
+            visual_features = _adapt_features(
+                visual_features, visual_features_dim, "Visual features"
+            )
 
         if internvideo_features is None:
             internvideo_features = _safe_fill(video_embedding_dim)
         else:
-            internvideo_features = _adapt_features(internvideo_features, video_embedding_dim, "InternVideo features")
+            internvideo_features = _adapt_features(
+                internvideo_features,
+                video_embedding_dim,
+                "InternVideo features",
+            )
 
         if languagebind_features is None:
             languagebind_features = _safe_fill(video_embedding_dim)
         else:
-            languagebind_features = _adapt_features(languagebind_features, video_embedding_dim, "LanguageBind features")
+            languagebind_features = _adapt_features(
+                languagebind_features,
+                video_embedding_dim,
+                "LanguageBind features",
+            )
 
         # Generate unique scene ID
         scene_key = f"{media_path}_{start_time:.3f}_{end_time:.3f}"
         scene_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scene_key))
 
         # Build full payload with modality presence flags for search filtering
-        _has_real_values = lambda v: any(abs(x) > _NEAR_ZERO for x in v[:10])
+        def _has_real_values(v):
+            return any(abs(x) > _NEAR_ZERO for x in v[:10])
         full_payload = {
             "media_path": media_path,
             "start_time": start_time,
@@ -645,8 +675,10 @@ class SceneRepository:
         # Clothing/appearance filters — now accept LISTS (Fix #6, #11)
         clothing_colors: list[str] | None = None,
         clothing_types: list[str] | None = None,
-        clothing_color: str | None = None,   # DEPRECATED: kept for backwards compat
-        clothing_type: str | None = None,     # DEPRECATED: kept for backwards compat
+        clothing_color: str
+        | None = None,  # DEPRECATED: kept for backwards compat
+        clothing_type: str
+        | None = None,  # DEPRECATED: kept for backwards compat
         accessories: list[str] | None = None,
         # Content filters
         location: str | None = None,
@@ -855,10 +887,14 @@ class SceneRepository:
                     )
 
         # Build final filter
-        query_filter = models.Filter(
-            must=conditions if conditions else None,
-            must_not=must_not_conditions if must_not_conditions else None,
-        ) if (conditions or must_not_conditions) else None
+        query_filter = (
+            models.Filter(
+                must=conditions if conditions else None,
+                must_not=must_not_conditions if must_not_conditions else None,
+            )
+            if (conditions or must_not_conditions)
+            else None
+        )
 
         # Execute search based on mode
         results = []
@@ -1274,7 +1310,9 @@ class SceneRepository:
         except Exception:
             return []
 
-    def store_scene_metadata(self, media_path: str | VideoPath, scenes: list[dict]) -> None:
+    def store_scene_metadata(
+        self, media_path: str | VideoPath, scenes: list[dict]
+    ) -> None:
         """Stores scene-level metadata for a video.
 
         Note: Current implementation only logs the receipt of scenes.
@@ -1307,17 +1345,18 @@ class SceneRepository:
             masklets = []
             for p in resp[0]:
                 payload = p.payload or {}
-                masklets.append({
-                    "id": p.id,
-                    "concept": payload.get("concept"),
-                    "start_time": payload.get("start_time"),
-                    "end_time": payload.get("end_time"),
-                    "confidence": payload.get("confidence", 1.0),
-                    "bbox": payload.get("bbox"),
-                    "frame_idx": payload.get("frame_idx")
-                })
+                masklets.append(
+                    {
+                        "id": p.id,
+                        "concept": payload.get("concept"),
+                        "start_time": payload.get("start_time"),
+                        "end_time": payload.get("end_time"),
+                        "confidence": payload.get("confidence", 1.0),
+                        "bbox": payload.get("bbox"),
+                        "frame_idx": payload.get("frame_idx"),
+                    }
+                )
             return masklets
         except Exception as e:
             log(f"get_masklets_for_media failed: {e}")
             return []
-

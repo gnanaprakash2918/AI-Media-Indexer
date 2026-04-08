@@ -34,10 +34,12 @@ def get_ocr_engine() -> Any:
     try:
         if engine_type == "paddle":
             from core.processing.ocr import OCRProcessor
+
             return OCRProcessor(lang=lang, use_gpu=True)
 
         elif engine_type == "easy":
             from core.processing.ocr import EasyOCRProcessor
+
             # EasyOCR expects list of languages
             langs = [lang] if lang != "multilingual" else ["en"]
             return EasyOCRProcessor(langs=langs, use_gpu=True)
@@ -46,15 +48,20 @@ def get_ocr_engine() -> Any:
             # Placeholder for Surya integration
             try:
                 from core.processing.ocr import SuryaOCR
+
                 return SuryaOCR()
             except ImportError:
                 log.warning("SuryaOCR not found, falling back to PaddleOCR")
                 from core.processing.ocr import OCRProcessor
+
                 return OCRProcessor(lang=lang, use_gpu=True)
 
         else:
-            log.warning(f"Unknown OCR engine '{engine_type}', defaulting to PaddleOCR")
+            log.warning(
+                f"Unknown OCR engine '{engine_type}', defaulting to PaddleOCR"
+            )
             from core.processing.ocr import OCRProcessor
+
             return OCRProcessor(lang=lang, use_gpu=True)
 
     except Exception as e:
@@ -64,6 +71,7 @@ def get_ocr_engine() -> Any:
             log.info("[OCR] Falling back to EasyOCR")
             try:
                 from core.processing.ocr import EasyOCRProcessor
+
                 return EasyOCRProcessor(langs=["en"], use_gpu=True)
             except Exception:
                 pass

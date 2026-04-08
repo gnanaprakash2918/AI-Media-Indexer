@@ -12,8 +12,6 @@ Decomposed from the original monolithic class:
 
 from __future__ import annotations
 
-from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
-
 import uuid
 from typing import Any
 
@@ -21,16 +19,17 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
 from config import settings
+from core.domain.values import Timestamp, VideoPath
 from core.storage.constants import (
     AUDIO_EVENTS_COLLECTION,
+    FACE_VECTOR_SIZE,
     FACES_COLLECTION,
     MASKLETS_COLLECTION,
     MEDIA_COLLECTION,
     MEDIA_SEGMENTS_COLLECTION,
     MEDIA_VECTOR_SIZE,
-    FACE_VECTOR_SIZE,
-    SCENES_COLLECTION,
     SCENELETS_COLLECTION,
+    SCENES_COLLECTION,
     SELECTED_MODEL,
     SUMMARIES_COLLECTION,
     TEXT_DIM,
@@ -44,13 +43,13 @@ from core.storage.qdrant_utils import (
     retry_on_connection_error,
     sanitize_numpy_types,
 )
+from core.storage.repositories.face_repository import FaceRepository
+from core.storage.repositories.scene_repository import SceneRepository
+from core.storage.repositories.search_repository import SearchRepository
+from core.storage.repositories.voice_repository import VoiceRepository
 from core.storage.schema import ensure_all_collections
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.storage.repositories.face_repository import FaceRepository
-from core.storage.repositories.voice_repository import VoiceRepository
-from core.storage.repositories.scene_repository import SceneRepository
-from core.storage.repositories.search_repository import SearchRepository
 
 
 class VectorDB(
@@ -107,11 +106,15 @@ class VectorDB(
         self._closed = False
 
         if backend == "memory":
-            self.client = QdrantClient(path=path, timeout=settings.qdrant_timeout)
+            self.client = QdrantClient(
+                path=path, timeout=settings.qdrant_timeout
+            )
             log("Initialized embedded Qdrant", path=path, backend=backend)
         elif backend == "docker":
             try:
-                self.client = QdrantClient(host=host, port=port, timeout=settings.qdrant_timeout)
+                self.client = QdrantClient(
+                    host=host, port=port, timeout=settings.qdrant_timeout
+                )
                 self.client.get_collections()
             except Exception as exc:
                 log(
@@ -136,6 +139,7 @@ class VectorDB(
 
         # Load Visual Encoder for cross-modal search (Text -> Visual Embedding)
         from core.processing.visual_encoder import get_default_visual_encoder
+
         self.visual_encoder = get_default_visual_encoder()
 
         # Initialize all Qdrant collections via schema module
@@ -143,6 +147,7 @@ class VectorDB(
 
         # Thread-safe cluster ID counter
         import threading
+
         self._cluster_id_lock = threading.Lock()
         self._cluster_id_counter = 0
 
@@ -155,9 +160,11 @@ class VectorDB(
             VOICE_COLLECTION: VOICE_VECTOR_SIZE,
         }
 
-    def _validate_vector_dim(self, vector: list | None, collection: str, context: str = "") -> bool:
+    def _validate_vector_dim(
+        self, vector: list | None, collection: str, context: str = ""
+    ) -> bool:
         """Validate vector dimension before insert (Issue 9).
-        
+
         Returns True if valid, False if invalid. Logs warning on mismatch.
         """
         if vector is None:
@@ -171,7 +178,7 @@ class VectorDB(
         if actual != expected:
             log(
                 f"[DIM MISMATCH] {collection}: expected {expected}d, got {actual}d. {context}",
-                level="ERROR"
+                level="ERROR",
             )
             return False
         return True
@@ -185,17 +192,16 @@ class VectorDB(
         Returns:
             Unique integer cluster ID.
         """
-
         with self._cluster_id_lock:
             # Use UUID4 for process-restart-safe uniqueness
             # Previous approach used (minutes_since_epoch % 100M) * 10000 + counter,
             # which could collide if the process restarted within the same minute.
             import uuid
-            cluster_id = uuid.uuid4().int % (10**14)  # 14-digit int, time-sortable-ish
+
+            cluster_id = uuid.uuid4().int % (
+                10**14
+            )  # 14-digit int, time-sortable-ish
             return cluster_id
-
-
-
 
     # =====================================================================
     # ENCODER DELEGATION — All encoder logic lives in TextEncoder
@@ -256,8 +262,9 @@ class VectorDB(
         """Encode a single text string (deprecated)."""
         return (await self.encode_texts(text, is_query=True))[0]
 
-
-    def extract_concepts_from_video(self, video_path: str | VideoPath, limit: int = 20) -> list[str]:
+    def extract_concepts_from_video(
+        self, video_path: str | VideoPath, limit: int = 20
+    ) -> list[str]:
         """Extracts top frequent concepts/entities from a video's indexed metadata.
 
         Used to seed the grounding pipeline if no explicit concepts are provided.
@@ -307,8 +314,6 @@ class VectorDB(
             if offset is None:
                 break
         return list(video_paths)
-
-
 
     def get_frames_by_video(
         self,
@@ -448,12 +453,14 @@ class VectorDB(
                 )
         except Exception as e:
             import traceback
-            log(f"Failed to get loudness events for {video_path}: {e}\n{traceback.format_exc()}", level="ERROR")
+
+            log(
+                f"Failed to get loudness events for {video_path}: {e}\n{traceback.format_exc()}",
+                level="ERROR",
+            )
 
         events.sort(key=lambda x: x.get("timestamp", 0))
         return events
-
-
 
     def list_collections(self) -> models.CollectionsResponse:
         """List all collections in the Qdrant instance."""
@@ -513,9 +520,7 @@ class VectorDB(
         )
 
     @observe("db_search_media")
-
     @observe("db_search_media")
-
     @observe("db_upsert_media_frame")
     @retry_on_connection_error()
     def upsert_media_frame(
@@ -600,7 +605,9 @@ class VectorDB(
             payload = frame.get("payload", {}) or {}
             ts = frame.get("timestamp", 0.0)
             # Add end_time and duration for proper clip playback
-            end_time = frame.get("end_time") or ts + settings.search_default_duration
+            end_time = (
+                frame.get("end_time") or ts + settings.search_default_duration
+            )
             duration = frame.get("duration") or settings.search_default_duration
             payload.update(
                 {
@@ -636,16 +643,13 @@ class VectorDB(
         )
         return len(points)
 
-
     @observe("db_insert_masklet")
-
     @observe("db_search_masklets")
     @observe("db_update_masklet_concept")
-
     @observe("db_update_masklet")
-
-
-    def get_global_summary(self, video_path: str | VideoPath) -> dict[str, Any] | None:
+    def get_global_summary(
+        self, video_path: str | VideoPath
+    ) -> dict[str, Any] | None:
         """Retrieves the global summary for a specific video.
 
         Args:
@@ -674,7 +678,6 @@ class VectorDB(
         except Exception as e:
             log(f"Failed to fetch summary: {e}", level="ERROR")
             return None
-
 
     async def search_global_summaries(
         self,
@@ -724,12 +727,7 @@ class VectorDB(
             return []
 
     @observe("db_match_speaker")
-
-
-
-
     @observe("db_search_frames_filtered")
-
     def get_recent_frames_search(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get most recently indexed frames as fallback for empty search results.
 
@@ -763,10 +761,6 @@ class VectorDB(
             return []
 
     @observe("db_search_frames_hybrid")
-
-
-
-
     @observe("db_get_masklets")
     def get_frame_by_id(self, frame_id: str) -> dict[str, Any] | None:
         """Retrieve a specific frame by ID."""
@@ -832,7 +826,9 @@ class VectorDB(
             ],
         )
 
-    def update_media_metadata(self, media_path: str | VideoPath, metadata: dict[str, Any]):
+    def update_media_metadata(
+        self, media_path: str | VideoPath, metadata: dict[str, Any]
+    ):
         """Update video-level metadata."""
         unique_str = f"metadata_{media_path}"
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
@@ -846,28 +842,18 @@ class VectorDB(
             ],
         )
 
-
     @observe("db_insert_face")
-
     @observe("db_search_face")
-
     @observe("db_insert_voice_segment")
-
-
-
     # =========================================================================
     # SCENE-LEVEL STORAGE (Production architecture like Twelve Labs)
     # =========================================================================
 
     @observe("db_store_scene")
-
     @observe("db_store_scenelet")
-
     @observe("db_search_scenelets")
     @observe("db_search_voice_segments")
-
     @observe("db_search_audio_events")
-
     @observe("db_search_dialogue")
     async def search_dialogue(
         self,
@@ -943,7 +929,6 @@ class VectorDB(
             return []
 
     @observe("db_search_audio_events_semantic")
-
     @observe("db_search_video_metadata")
     async def search_video_metadata(
         self,
@@ -990,15 +975,9 @@ class VectorDB(
             return []
 
     @observe("db_search_scenes")
-
     @observe("db_search_scenes_by_image")
-
     @observe("db_search_scenes_by_action")
-
     @observe("db_explainable_search")
-
-
-
     def close(self) -> None:
         """Close the database client connection."""
         if self._closed:
@@ -1010,13 +989,9 @@ class VectorDB(
             pass
 
     @observe("db_get_unresolved_faces")
-
     @observe("db_update_face_name")
-
     @observe("db_update_face_cluster_id")
-
     @observe("db_merge_face_clusters")
-
     @observe("db_update_video_metadata")
     def update_video_metadata(
         self, video_path: str | VideoPath, metadata: dict[str, Any]
@@ -1064,14 +1039,9 @@ class VectorDB(
             log.error(f"Failed to update video metadata: {e}")
             return 0
 
-
     @observe("db_get_named_faces")
-
     @observe("db_delete_face")
-
     @observe("db_update_single_face_name")
-
-
     @observe("db_get_indexed_media")
     def get_indexed_media(self, limit: int = 1000) -> list[dict[str, Any]]:
         """Get list of ALL indexed media files.
@@ -1121,7 +1091,6 @@ class VectorDB(
             return []
 
     @observe("db_get_voice_segments")
-
     @observe("db_get_collection_stats")
     def get_collection_stats(self) -> dict[str, Any]:
         """Get statistics about all collections.
@@ -1261,32 +1230,17 @@ class VectorDB(
         return deleted
 
     @observe("db_delete_voice_segment")
-
     @observe("db_get_all_face_embeddings")
-
     @observe("db_get_faces_grouped_by_cluster")
-
     @observe("db_get_all_cluster_centroids")
-
     @observe("db_update_cluster_centroid")
-
     @observe("db_update_voice_speaker_name")
-
     @observe("db_get_all_voice_embeddings")
-
     @observe("db_update_voice_cluster_id")
-
     @observe("db_get_voices_grouped_by_cluster")
-
     @observe("db_merge_voice_clusters")
-
     @observe("db_delete_voice_cluster")
-
     @observe("db_delete_face_cluster")
-
-
-
-
     @observe("db_get_recent_frames")
     def get_recent_frames(self, limit: int = 20) -> list[dict[str, Any]]:
         """Get the most recently indexed frames.
@@ -1376,10 +1330,6 @@ class VectorDB(
             pass
 
         return list(names)
-
-
-
-
 
     def get_person_co_occurrences(
         self,
@@ -1481,14 +1431,8 @@ class VectorDB(
             log(f"get_person_co_occurrences error: {e}")
             return []
 
-
-
-
-
-
     @observe("db_search_voice")
     @observe("db_search_hybrid_legacy")
-
     @observe("db_update_frame_description")
     async def update_frame_description(
         self, frame_id: str, description: str
@@ -1622,7 +1566,6 @@ class VectorDB(
             log(f"Failed to update frame identity: {e}")
             return False
 
-
     @observe("db_delete_media")
     def delete_media_by_path(self, media_path: str | VideoPath) -> None:
         """Delete all data associated with a media file."""
@@ -1669,14 +1612,6 @@ class VectorDB(
                 )
             except Exception as e:
                 log(f"Failed to delete from {collection}: {e}")
-
-
-
-
-
-
-
-
 
     def get_entity_co_occurrences(
         self, limit_frames: int = 5000
@@ -1726,11 +1661,6 @@ class VectorDB(
             log(f"get_entity_co_occurrences failed: {e}")
             return {}
 
-
-
-
     # =========================================================================
     # METHODS REQUIRED BY AGENTIC SEARCH (Fix #14)
     # =========================================================================
-
-

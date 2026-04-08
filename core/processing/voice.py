@@ -6,16 +6,15 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-
 from typing import TYPE_CHECKING, Any, Final, cast
 
 if TYPE_CHECKING:
     from pyannote.audio import Inference, Model, Pipeline
-    from pyannote.core import Segment
 # FIX: Add torio/lib to PATH to prevent "FileNotFoundError: Could not find module libtorio_ffmpeg6.pyd"
 # This is required for pyannote.audio/torchaudio on Windows
 try:
     import site
+
     site_packages = site.getsitepackages()
     for sp in site_packages:
         torio_lib = Path(sp) / "torio" / "lib"
@@ -31,12 +30,13 @@ except Exception:
 
 import numpy as np
 
-
-
 from config import settings  # noqa: E402
 from core.domain.schemas import SpeakerSegment  # noqa: E402
 from core.utils.logger import get_logger, log_verbose  # noqa: E402
-from core.utils.resource_arbiter import GPU_SEMAPHORE, safe_cleanup_vram  # noqa: E402
+from core.utils.resource_arbiter import (  # noqa: E402
+    GPU_SEMAPHORE,
+    safe_cleanup_vram,
+)
 
 log = get_logger(__name__)
 
@@ -70,9 +70,11 @@ def is_audio_silent(
     return rms_db < threshold_db
 
 
-def compute_speaker_centroid(embeddings: list[list[float]]) -> np.ndarray | None:
+def compute_speaker_centroid(
+    embeddings: list[list[float]],
+) -> np.ndarray | None:
     """Compute centroid (mean) of speaker embeddings for cluster matching.
-    
+
     Used to match new segments against existing speaker centroids
     instead of comparing against all individual segments.
     """
@@ -126,6 +128,7 @@ class VoiceProcessor:
     def _has_audio_stream(self, input_path: Path) -> bool:
         """Check if file has audio stream (delegated to utility)."""
         from core.utils.media import has_audio_stream
+
         return has_audio_stream(input_path)
 
     def _get_cached_audio(self, path: Path) -> tuple[np.ndarray, int] | None:
@@ -211,40 +214,49 @@ class VoiceProcessor:
         from pyannote.audio import Inference, Model, Pipeline
 
         # Monkey-patch torch.load for pyannote compatibility
-        if not hasattr(torch, '_original_load'):
+        if not hasattr(torch, "_original_load"):
             torch._original_load = torch.load
-            def safe_load(*args: Any, **kwargs: Any) -> Any:
-                if 'weights_only' in kwargs:
-                    kwargs['weights_only'] = False
-                return torch._original_load(*args, **kwargs)
-            torch.load = safe_load
 
+            def safe_load(*args: Any, **kwargs: Any) -> Any:
+                if "weights_only" in kwargs:
+                    kwargs["weights_only"] = False
+                return torch._original_load(*args, **kwargs)
+
+            torch.load = safe_load
 
         async with self._init_lock:
             if self._initialized:
                 return
 
             try:
-                log_verbose(f"[Voice] Initializing models on device={self.device}. HF_TOKEN_PRESENT={bool(self.hf_token)}")
+                log_verbose(
+                    f"[Voice] Initializing models on device={self.device}. HF_TOKEN_PRESENT={bool(self.hf_token)}"
+                )
                 async with GPU_SEMAPHORE:
                     log.info(
                         f"Loading pyannote pipeline={settings.pyannote_model} "
                         f"embedder={settings.voice_embedding_model} "
                         f"device={self.device}"
                     )
-                    log_verbose(f"[Voice] Loading Pipeline: {settings.pyannote_model}")
+                    log_verbose(
+                        f"[Voice] Loading Pipeline: {settings.pyannote_model}"
+                    )
 
                     try:
                         self.pipeline = Pipeline.from_pretrained(
                             settings.pyannote_model,
                             use_auth_token=self.hf_token,
                         )
-                        log_verbose("[Voice] Pipeline loaded via from_pretrained")
+                        log_verbose(
+                            "[Voice] Pipeline loaded via from_pretrained"
+                        )
                     except Exception as pipe_err:
                         log.warning(
                             f"Pyannote Pipeline load failed: {pipe_err}. Attempting snapshot_download..."
                         )
-                        log_verbose(f"[Voice] Pipeline load error detail: {type(pipe_err).__name__}: {pipe_err}")
+                        log_verbose(
+                            f"[Voice] Pipeline load error detail: {type(pipe_err).__name__}: {pipe_err}"
+                        )
                         try:
                             snapshot_download(
                                 repo_id=settings.pyannote_model,
@@ -255,7 +267,9 @@ class VoiceProcessor:
                                 settings.pyannote_model,
                                 use_auth_token=self.hf_token,
                             )
-                            log_verbose("[Voice] Pipeline loaded after snapshot_download")
+                            log_verbose(
+                                "[Voice] Pipeline loaded after snapshot_download"
+                            )
                         except Exception as dl_err:
                             log.error(
                                 f"Failed to download/reload Pyannote pipeline: {dl_err}"
@@ -263,11 +277,14 @@ class VoiceProcessor:
                             raise pipe_err from dl_err
 
                     import torch
+
                     self.pipeline.to(torch.device(self.device))
                     log_verbose(f"[Voice] Pipeline moved to {self.device}")
 
                     try:
-                        log_verbose(f"[Voice] Loading Embedding Model: {settings.voice_embedding_model}")
+                        log_verbose(
+                            f"[Voice] Loading Embedding Model: {settings.voice_embedding_model}"
+                        )
                         self.embedding_model = Model.from_pretrained(
                             settings.voice_embedding_model,
                             use_auth_token=self.hf_token,
@@ -276,7 +293,9 @@ class VoiceProcessor:
                         log.warning(
                             f"Voice embedding model load failed: {model_err}. Attempting snapshot_download..."
                         )
-                        log_verbose(f"[Voice] Embedding model error detail: {type(model_err).__name__}: {model_err}")
+                        log_verbose(
+                            f"[Voice] Embedding model error detail: {type(model_err).__name__}: {model_err}"
+                        )
                         try:
                             snapshot_download(
                                 repo_id=settings.voice_embedding_model,
@@ -287,7 +306,9 @@ class VoiceProcessor:
                                 settings.voice_embedding_model,
                                 use_auth_token=self.hf_token,
                             )
-                            log_verbose("[Voice] Embedding model loaded after snapshot_download")
+                            log_verbose(
+                                "[Voice] Embedding model loaded after snapshot_download"
+                            )
                         except Exception as dl_err:
                             log.error(
                                 f"Failed to download/reload embedding model: {dl_err}"
@@ -305,7 +326,9 @@ class VoiceProcessor:
 
             except Exception as e:
                 log.error(f"Voice model initialization failed: {e}")
-                log_verbose(f"[Voice] Critical initialization failure: {type(e).__name__}: {e}")
+                log_verbose(
+                    f"[Voice] Critical initialization failure: {type(e).__name__}: {e}"
+                )
                 self.enabled = False
                 self.pipeline = None
                 self.embedding_model = None
@@ -362,7 +385,9 @@ class VoiceProcessor:
                 log.warning(
                     f"[Voice] SKIPPED - No audio stream detected in {audio_path.name}"
                 )
-                log_verbose(f"[Voice] No audio stream validation failed for {audio_path}")
+                log_verbose(
+                    f"[Voice] No audio stream validation failed for {audio_path}"
+                )
                 return []
 
             log.info(f"[Voice] Processing: {audio_path.name}")
@@ -373,7 +398,9 @@ class VoiceProcessor:
                 )
                 return []
             processing_path = temp_wav
-            log_verbose(f"[Voice] WAV conversion successful: {temp_wav} (size={temp_wav.stat().st_size} bytes)")
+            log_verbose(
+                f"[Voice] WAV conversion successful: {temp_wav} (size={temp_wav.stat().st_size} bytes)"
+            )
 
             async with GPU_SEMAPHORE:
                 log_verbose("[Voice] Running diarization pipeline...")
@@ -385,11 +412,15 @@ class VoiceProcessor:
 
             track_count = 0
             segments_with_placeholder = 0
-            
+
             # Log raw diarization stats
             try:
-                raw_segments_count = len(list(diarization.itertracks(yield_label=True)))
-                log_verbose(f"[Voice] Diarization raw segments found: {raw_segments_count}")
+                raw_segments_count = len(
+                    list(diarization.itertracks(yield_label=True))
+                )
+                log_verbose(
+                    f"[Voice] Diarization raw segments found: {raw_segments_count}"
+                )
             except Exception:
                 pass
 
@@ -431,7 +462,9 @@ class VoiceProcessor:
                             is_silence_segment = True
                 except Exception as e:
                     log.warning(f"[Voice] Silence check failed: {e}")
-                    log_verbose(f"[Voice] Silence exception for segment {start}-{end}: {e}")
+                    log_verbose(
+                        f"[Voice] Silence exception for segment {start}-{end}: {e}"
+                    )
 
                 embedding = None
                 if not is_silence_segment:
@@ -471,7 +504,9 @@ class VoiceProcessor:
 
         except Exception as e:
             log.error(f"Voice processing failed for {audio_path.name}: {e}")
-            log_verbose(f"[Voice] Processing exception: {type(e).__name__}: {e}")
+            log_verbose(
+                f"[Voice] Processing exception: {type(e).__name__}: {e}"
+            )
             return []
 
         finally:
@@ -515,7 +550,7 @@ class VoiceProcessor:
             "1",  # Mono
             str(temp_path),
         ]
-        
+
         log_verbose(f"[Voice] FFmpeg command: {' '.join(cmd)}")
 
         try:

@@ -11,7 +11,6 @@ import uuid
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-
 from core.storage.identity_models import (
     Identity,
 )
@@ -27,6 +26,7 @@ class IdentityManager:
     # These will be available via IdentityGraphManager inheritance
     db_path: str
     _lock: Lock
+
     # Type stub for type checkers
     def __getattr__(self, name: str) -> Any: ...
 
@@ -213,4 +213,3 @@ class IdentityManager:
             is_verified=bool(row["is_verified"]),
             created_at=row["created_at"],
         )
-

@@ -35,7 +35,9 @@ class ResultProcessorMixin:
         """Word-boundary aware matching. 'blue' won't match 'blueberry'."""
         if not term or not text:
             return False
-        return bool(re.search(r'\b' + re.escape(term) + r'\b', text, re.IGNORECASE))
+        return bool(
+            re.search(r"\b" + re.escape(term) + r"\b", text, re.IGNORECASE)
+        )
 
     llm: LLMInterface
 
@@ -80,7 +82,9 @@ class ResultProcessorMixin:
                         break
                     except Exception as retry_err:
                         if attempt == 0:
-                            log(f"[Rerank] Retry after parse error: {retry_err}")
+                            log(
+                                f"[Rerank] Retry after parse error: {retry_err}"
+                            )
                             continue
                         raise
 
@@ -95,6 +99,7 @@ class ResultProcessorMixin:
                 enriched["constraints_satisfied"] = result.constraints_checked
                 enriched["constraints_missing"] = result.missing
                 from config import settings
+
                 enriched["combined_score"] = (
                     enriched.get("score", 0) * settings.rerank_vector_weight
                     + adjusted_score * settings.rerank_llm_weight
@@ -104,7 +109,9 @@ class ResultProcessorMixin:
             except Exception as e:
                 log(f"[Rerank] LLM verification failed: {e}")
                 candidate["combined_score"] = candidate.get("score", 0) * 0.8
-                candidate["llm_reasoning"] = f"Verification failed: {str(e)[:50]}"
+                candidate["llm_reasoning"] = (
+                    f"Verification failed: {str(e)[:50]}"
+                )
                 reranked.append(candidate)
 
         reranked.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
@@ -121,34 +128,49 @@ class ResultProcessorMixin:
                 else result
             )
 
-            desc = " ".join(filter(None, [
-                str(payload.get("description", "")),
-                str(payload.get("visual_text", "")),
-                str(payload.get("visual_summary", "")),
-                str(payload.get("action", "")),
-                str(payload.get("motion_text", "")),
-                str(payload.get("action_summary", "")),
-                str(payload.get("location", "")),
-                str(payload.get("cultural_context", "")),
-                " ".join(
-                    f"{e.get('name', '')} {e.get('visual_details', '')}"
-                    for e in (payload.get("entities") or [])
-                    if isinstance(e, dict)
-                ),
-                " ".join(payload.get("clothing_descriptions", [])),
-                " ".join(payload.get("clothing_types", [])),
-                " ".join(payload.get("accessories", [])),
-            ])).lower()
+            desc = " ".join(
+                filter(
+                    None,
+                    [
+                        str(payload.get("description", "")),
+                        str(payload.get("visual_text", "")),
+                        str(payload.get("visual_summary", "")),
+                        str(payload.get("action", "")),
+                        str(payload.get("motion_text", "")),
+                        str(payload.get("action_summary", "")),
+                        str(payload.get("location", "")),
+                        str(payload.get("cultural_context", "")),
+                        " ".join(
+                            f"{e.get('name', '')} {e.get('visual_details', '')}"
+                            for e in (payload.get("entities") or [])
+                            if isinstance(e, dict)
+                        ),
+                        " ".join(payload.get("clothing_descriptions", [])),
+                        " ".join(payload.get("clothing_types", [])),
+                        " ".join(payload.get("accessories", [])),
+                    ],
+                )
+            ).lower()
 
-            ocr = " ".join(filter(None, [
-                str(payload.get("ocr_text", "")),
-                str(payload.get("visible_text", "")),
-            ])).lower()
+            ocr = " ".join(
+                filter(
+                    None,
+                    [
+                        str(payload.get("ocr_text", "")),
+                        str(payload.get("visible_text", "")),
+                    ],
+                )
+            ).lower()
 
-            dialogue = " ".join(filter(None, [
-                str(payload.get("dialogue_transcript", "")),
-                str(payload.get("dialogue_text", "")),
-            ])).lower()
+            dialogue = " ".join(
+                filter(
+                    None,
+                    [
+                        str(payload.get("dialogue_transcript", "")),
+                        str(payload.get("dialogue_text", "")),
+                    ],
+                )
+            ).lower()
 
             audio = " ".join(
                 str(e) for e in (payload.get("audio_events") or [])
@@ -206,8 +228,7 @@ class ResultProcessorMixin:
             # Identity constraints
             if hasattr(parsed, "identities") and parsed.identities:
                 person_names = [
-                    str(n).lower()
-                    for n in (payload.get("person_names") or [])
+                    str(n).lower() for n in (payload.get("person_names") or [])
                 ]
                 for identity in parsed.identities:
                     id_name = identity.get("name", "").lower()
@@ -251,7 +272,9 @@ class ResultProcessorMixin:
             if isinstance(result, dict):
                 result["score"] = max(0, base_score + boost - penalty)
                 result["granular_matches"] = matches
-                result["granular_coverage"] = matches / total_checks if total_checks > 0 else 0
+                result["granular_coverage"] = (
+                    matches / total_checks if total_checks > 0 else 0
+                )
                 if penalty > 0:
                     result["exclusion_penalty"] = penalty
 
@@ -278,8 +301,11 @@ class ResultProcessorMixin:
             for rank, result in enumerate(results):
                 # FIX #4: Use settings.timestamp_bucket_seconds (consistent with sota_search)
                 from config import settings
+
                 vp = result.get("video_path", result.get("media_path", ""))
-                ts_float = float(result.get("start_time", result.get("timestamp", 0)))
+                ts_float = float(
+                    result.get("start_time", result.get("timestamp", 0))
+                )
                 bucket = settings.timestamp_bucket_seconds
                 st = int(ts_float / bucket) * bucket
                 key = (vp, st)
@@ -303,19 +329,25 @@ class ResultProcessorMixin:
                 if result.get("description"):
                     if not score_map[key]["description"]:
                         score_map[key]["description"] = result["description"]
-                    elif len(str(result["description"])) > len(str(score_map[key]["description"])):
+                    elif len(str(result["description"])) > len(
+                        str(score_map[key]["description"])
+                    ):
                         # Prefer longer descriptions as they usually contain more detail
                         score_map[key]["description"] = result["description"]
-                        
+
                 if result.get("face_names"):
                     # Safely merge lists avoiding duplicates
                     current_names = set(score_map[key].get("face_names", []))
                     new_names = set(result.get("face_names", []))
-                    score_map[key]["face_names"] = list(current_names | new_names)
-                    
-                if result.get("speaker_name") and not score_map[key].get("speaker_name"):
+                    score_map[key]["face_names"] = list(
+                        current_names | new_names
+                    )
+
+                if result.get("speaker_name") and not score_map[key].get(
+                    "speaker_name"
+                ):
                     score_map[key]["speaker_name"] = result["speaker_name"]
-            
+
                 # Also preserve OCR and other helpful metadata if present
                 for field in ["ocr_text", "visual_text", "actions", "location"]:
                     if result.get(field) and not score_map[key].get(field):
@@ -343,7 +375,9 @@ class ResultProcessorMixin:
         if person_name:
             checks += 1
             target_ids = person_cluster_map.get(person_name, [])
-            if target_ids and any(cid in scene.face_cluster_ids for cid in target_ids):
+            if target_ids and any(
+                cid in scene.face_cluster_ids for cid in target_ids
+            ):
                 score += 1.0
             elif self._word_match(person_name.lower(), desc):
                 score += 0.5

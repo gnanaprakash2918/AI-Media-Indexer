@@ -21,11 +21,13 @@ class VideoVLM:
 
     def __init__(self, model_id: str | None = None):
         from config import settings
+
         self.model_id = model_id or settings.video_vlm_model_id
         self.model = None
         self.processor = None
         self._init_lock = asyncio.Lock()
         import torch
+
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
     async def _lazy_load(self) -> bool:
@@ -37,25 +39,23 @@ class VideoVLM:
             if self.model is not None:
                 return True
             try:
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
-                
                 from config import settings
-                vram_gb = getattr(settings, 'video_vlm_vram_gb', 4.0)
-                
+                from core.utils.resource_arbiter import RESOURCE_ARBITER
+
+                vram_gb = getattr(settings, "video_vlm_vram_gb", 4.0)
+
                 if not await RESOURCE_ARBITER.ensure_loaded(
-                    "video_vlm", 
-                    vram_gb=vram_gb, 
-                    cleanup_fn=self.cleanup
+                    "video_vlm", vram_gb=vram_gb, cleanup_fn=self.cleanup
                 ):
-                     log.error("[VideoVLM] Failed to acquire VRAM")
-                     return False
+                    log.error("[VideoVLM] Failed to acquire VRAM")
+                    return False
 
                 log.info(f"[VideoVLM] Loading {self.model_id}...")
 
                 # Check for Flash Attention 2
                 import torch
                 from transformers import AutoModelForCausalLM, AutoProcessor
-                
+
                 attn_impl = (
                     "flash_attention_2"
                     if torch.cuda.get_device_capability()[0] >= 8
@@ -103,10 +103,13 @@ class VideoVLM:
             try:
                 # Sampling: Qwen2-VL handles variable frames, but let's cap at 16 for memory
                 from config import settings
+
                 max_frames = settings.vlm_max_frames
                 sampled_frames = frames
                 if len(frames) > max_frames:
-                    indices = np.linspace(0, len(frames) - 1, max_frames, dtype=int)
+                    indices = np.linspace(
+                        0, len(frames) - 1, max_frames, dtype=int
+                    )
                     sampled_frames = [frames[i] for i in indices]
 
                 # Prepare inputs (Qwen2-VL specific format)
@@ -189,9 +192,11 @@ class VideoVLM:
         if self.processor:
             del self.processor
             self.processor = None
-        
+
         import sys
+
         if "torch" in sys.modules:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

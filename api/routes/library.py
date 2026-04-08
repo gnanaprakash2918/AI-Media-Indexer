@@ -64,7 +64,9 @@ async def get_library(
         }
     except Exception as e:
         logger.error(f"[Library] Get library failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.delete("/library")
@@ -114,7 +116,9 @@ async def delete_from_library(
                 )
                 deleted_counts[label] = "deleted"
             except Exception as e:
-                logger.error(f"[Library] Failed to delete {label} for {path}: {e}")
+                logger.error(
+                    f"[Library] Failed to delete {label} for {path}: {e}"
+                )
                 errors[label] = str(e)
 
         status = "deleted" if not errors else "partial_failure"
@@ -129,7 +133,9 @@ async def delete_from_library(
         return result
     except Exception as e:
         logger.error(f"[Library] Delete failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/stats")
@@ -204,7 +210,9 @@ async def get_stats(
         return stats
     except Exception as e:
         logger.error(f"[Stats] Get stats failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/config")
@@ -262,4 +270,6 @@ async def search_by_name(
         }
     except Exception as e:
         logger.error(f"[Search] By-name failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e

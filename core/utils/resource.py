@@ -47,50 +47,60 @@ class ResourceManager:
                 f"System throttled! Cooling down for {settings.cool_down_seconds}s.. "
                 f"({self._get_status_string()})"
             )
-            
+
             # After first throttle, try to clear GPU memory
             if throttle_count == 1:
                 await self._clear_gpu_memory()
-            
+
             await asyncio.sleep(settings.cool_down_seconds)
-            
+
             # If stuck for too long (3+ cycles), force aggressive cleanup
             if throttle_count >= 3:
-                log.warning("Throttle stuck! Attempting aggressive GPU cleanup...")
+                log.warning(
+                    "Throttle stuck! Attempting aggressive GPU cleanup..."
+                )
                 await self._clear_gpu_memory(aggressive=True)
                 throttle_count = 0  # Reset to prevent spamming
 
     async def _clear_gpu_memory(self, aggressive: bool = False) -> None:
         """Force clear GPU memory by unloading models and clearing cache.
-        
+
         Uses RESOURCE_ARBITER for centralized model lifecycle management.
-        
+
         Args:
             aggressive: If True, force unload all models. If False, only clear cache.
         """
         try:
             import gc
+
             gc.collect()
-            
+
             import torch
+
             if torch.cuda.is_available():
                 # First, unload models if aggressive cleanup needed
                 if aggressive or self._should_aggressive_cleanup():
                     try:
                         from core.utils.resource_arbiter import RESOURCE_ARBITER
+
                         # Force release all to free VRAM
                         await RESOURCE_ARBITER.force_release_all()
-                        log.info("Force released all models via RESOURCE_ARBITER")
+                        log.info(
+                            "Force released all models via RESOURCE_ARBITER"
+                        )
                     except Exception as e:
                         log.debug(f"Could not use RESOURCE_ARBITER: {e}")
-                
+
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                
+
                 # Log actual VRAM freed
                 try:
                     from core.utils.hardware import get_vram_usage_percent
-                    log.info(f"GPU memory cleared. VRAM now at {get_vram_usage_percent():.1f}%")
+
+                    log.info(
+                        f"GPU memory cleared. VRAM now at {get_vram_usage_percent():.1f}%"
+                    )
                 except Exception:
                     log.info("GPU memory cache cleared")
         except ImportError:
@@ -102,6 +112,7 @@ class ResourceManager:
         """Check if aggressive model unloading is needed."""
         try:
             from core.utils.hardware import get_vram_usage_percent
+
             # If VRAM > 80%, do aggressive cleanup
             return get_vram_usage_percent() > 80.0
         except Exception:
@@ -118,8 +129,9 @@ class ResourceManager:
         try:
             # Check VRAM (Global usage is safer than just local)
             from core.utils.hardware import get_global_vram_usage_percent
+
             vram_percent = get_global_vram_usage_percent()
-            
+
             if vram_percent > settings.max_vram_percent:
                 self.status = f"High VRAM ({vram_percent:.1f}%)"
                 return False
@@ -142,9 +154,11 @@ class ResourceManager:
 
         # 5. Check GPU Temperature (NVIDIA via pynvml)
         gpu_temp = self._get_gpu_temp()
-        gpu_max = getattr(settings, 'max_gpu_temp_celsius', 80)
+        gpu_max = getattr(settings, "max_gpu_temp_celsius", 80)
         if gpu_temp and gpu_temp > gpu_max:
-            log.warning(f"GPU overheating: {gpu_temp}°C (limit: {gpu_max}°C). Throttling...")
+            log.warning(
+                f"GPU overheating: {gpu_temp}°C (limit: {gpu_max}°C). Throttling..."
+            )
             return False
 
         return True

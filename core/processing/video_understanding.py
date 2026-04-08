@@ -90,15 +90,19 @@ class LanguageBindEncoder:
                 # Acquire resources first
                 # Acquire resources first
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
+
                 # Reserve 2GB for Video Encoder - Persistent
-                if not await RESOURCE_ARBITER.ensure_loaded("video_encoder", vram_gb=2.0, cleanup_fn=self.cleanup):
-                     log.warning("[VideoEncoder] VRAM full, cannot load")
-                     return False
+                if not await RESOURCE_ARBITER.ensure_loaded(
+                    "video_encoder", vram_gb=2.0, cleanup_fn=self.cleanup
+                ):
+                    log.warning("[VideoEncoder] VRAM full, cannot load")
+                    return False
 
                 def _load():
                     import gc
+
                     import torch
-                    
+
                     # ... (rest of loading logic) ...
 
                     # AGGRESSIVE VRAM cleanup before loading - CRITICAL for 8GB GPUs
@@ -117,7 +121,9 @@ class LanguageBindEncoder:
 
                         processor = XCLIPProcessor.from_pretrained(model_id)
                         # Load to CPU first, then move to GPU to avoid fragmentation
-                        model = XCLIPModel.from_pretrained(model_id, device_map="cpu")
+                        model = XCLIPModel.from_pretrained(
+                            model_id, device_map="cpu"
+                        )
 
                         device = self._device or (
                             "cuda" if torch.cuda.is_available() else "cpu"
@@ -126,7 +132,9 @@ class LanguageBindEncoder:
                             try:
                                 model = model.to(device)
                             except torch.cuda.OutOfMemoryError:
-                                log.warning("[VideoEncoder] X-CLIP OOM, running on CPU")
+                                log.warning(
+                                    "[VideoEncoder] X-CLIP OOM, running on CPU"
+                                )
                                 device = "cpu"
                         log.info(f"[VideoEncoder] X-CLIP loaded on {device}")
                         return processor, model, device, "xclip"
@@ -146,7 +154,9 @@ class LanguageBindEncoder:
                         model_id = "openai/clip-vit-large-patch14"  # Use larger CLIP if no X-CLIP
 
                         processor = CLIPProcessor.from_pretrained(model_id)
-                        model = CLIPModel.from_pretrained(model_id, device_map="cpu")
+                        model = CLIPModel.from_pretrained(
+                            model_id, device_map="cpu"
+                        )
 
                         device = self._device or (
                             "cuda" if torch.cuda.is_available() else "cpu"
@@ -155,7 +165,9 @@ class LanguageBindEncoder:
                             try:
                                 model = model.to(device)
                             except torch.cuda.OutOfMemoryError:
-                                log.warning("[VideoEncoder] CLIP OOM, running on CPU")
+                                log.warning(
+                                    "[VideoEncoder] CLIP OOM, running on CPU"
+                                )
                                 device = "cpu"
                         log.info(
                             f"[VideoEncoder] CLIP fallback loaded on {device}"

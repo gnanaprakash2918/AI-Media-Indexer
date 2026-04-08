@@ -230,7 +230,8 @@ async def list_jobs() -> dict:
     jobs = progress_tracker.get_all()
     return {
         "jobs": [
-            progress_tracker.get_job_stats(j.job_id) or {
+            progress_tracker.get_job_stats(j.job_id)
+            or {
                 "job_id": j.job_id,
                 "status": j.status.value,
                 "progress": j.progress,

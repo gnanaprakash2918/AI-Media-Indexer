@@ -25,6 +25,7 @@ class IdentityQueryManager:
     # These will be available via IdentityGraphManager inheritance
     db_path: str
     _lock: Lock
+
     # Type stub for type checkers
     def __getattr__(self, name: str) -> Any: ...
 
@@ -83,4 +84,3 @@ class IdentityQueryManager:
         # Sort by similarity descending
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:limit]
-

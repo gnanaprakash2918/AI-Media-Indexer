@@ -19,7 +19,10 @@ import numpy as np
 from config import settings
 from core.processing.deep_research import get_deep_research_processor
 from core.processing.identity import FaceManager, FaceTrackBuilder
-from core.processing.temporal_context import SceneletBuilder, TemporalContextManager
+from core.processing.temporal_context import (
+    SceneletBuilder,
+    TemporalContextManager,
+)
 from core.processing.vision import VisionAnalyzer
 from core.storage.db import VectorDB
 from core.storage.identity_graph import identity_graph
@@ -36,12 +39,17 @@ class FrameStageMixin:
 
     # These will be available via IngestionPipeline inheritance
     db: VectorDB
+
     # Type stub for type checkers (allows accessing self.* in mixin)
     def __getattr__(self, name: str) -> Any: ...
 
     async def _process_frames(
-        self, path: Path, job_id: str | None = None, total_duration: float = 0.0,
-        chunk_start: float | None = None, chunk_end: float | None = None,
+        self,
+        path: Path,
+        job_id: str | None = None,
+        total_duration: float = 0.0,
+        chunk_start: float | None = None,
+        chunk_end: float | None = None,
     ) -> None:
         """Handles visual frame extraction and vision analysis.
 
@@ -314,7 +322,9 @@ class FrameStageMixin:
                             message=status_msg,
                         )
 
-                await asyncio.sleep(0)  # Yield event loop without wall-clock delay
+                await asyncio.sleep(
+                    0
+                )  # Yield event loop without wall-clock delay
                 # Always delete the frame file after processing
                 # Only delete if NOT in pending batch (processed frames are deleted by helper)
                 if extracted_frame not in pending_frames:
@@ -654,7 +664,6 @@ class FrameStageMixin:
         description: str | None = None
         analysis = None
 
-
         # Build identity context from HITL names for VLM
         identity_parts = []
         for idx, cid in enumerate(face_cluster_ids):
@@ -785,10 +794,7 @@ class FrameStageMixin:
 
                     now_ts = time.time()
                     last_ocr = getattr(self, "_last_ocr_time", None)
-                    if (
-                        last_ocr is not None
-                        and (now_ts - last_ocr) < 2.0
-                    ):
+                    if last_ocr is not None and (now_ts - last_ocr) < 2.0:
                         skip_ocr = True
 
                     # 2. Perceptual Hash Check
@@ -870,6 +876,7 @@ class FrameStageMixin:
 
             except Exception as e:
                 import traceback as _tb
+
                 logger.warning(f"[OCR] Failed: {e}\n{_tb.format_exc()}")
 
             # ============================================================
@@ -903,6 +910,7 @@ class FrameStageMixin:
 
             # Run structured vision analysis
             from core.ingestion.pipeline import VLM_SEMAPHORE
+
             async with VLM_SEMAPHORE:
                 analysis = await self.vision.analyze_frame(
                     frame_path,
@@ -922,6 +930,7 @@ class FrameStageMixin:
         if not description:
             try:
                 from core.ingestion.pipeline import VLM_SEMAPHORE  # noqa: F811
+
                 async with VLM_SEMAPHORE:
                     description = await self.vision.describe(
                         frame_path, context=context
@@ -930,7 +939,6 @@ class FrameStageMixin:
                 pass
 
         if description:
-
             # Build structured payload for accurate search with filterable fields
             payload: dict[str, Any] = {
                 "face_cluster_ids": face_cluster_ids,
@@ -1013,11 +1021,17 @@ class FrameStageMixin:
             # Add structured data if available for hybrid search
             if analysis:
                 payload["structured_data"] = analysis.model_dump()
-                payload["visible_text"] = analysis.scene.visible_text if analysis.scene else []
+                payload["visible_text"] = (
+                    analysis.scene.visible_text if analysis.scene else []
+                )
                 # CRITICAL FIX: Merge OCR-detected text with VLM-detected text
                 if ocr_text:
                     # Split OCR text into searchable tokens
-                    ocr_tokens = [w.strip() for w in ocr_text.split() if len(w.strip()) > 2]
+                    ocr_tokens = [
+                        w.strip()
+                        for w in ocr_text.split()
+                        if len(w.strip()) > 2
+                    ]
                     # Extend both tokenized words and full text
                     current_text = payload["visible_text"]
                     if isinstance(current_text, list):
@@ -1032,7 +1046,7 @@ class FrameStageMixin:
                 )
                 # Merge YOLO-World detected objects into entities
                 if detected_objects:
-                    vlm_entities = set(e.lower() for e in payload["entities"])
+                    vlm_entities = {e.lower() for e in payload["entities"]}
                     for obj in detected_objects:
                         if obj.lower() not in vlm_entities:
                             payload["entities"].append(obj)
@@ -1100,21 +1114,30 @@ class FrameStageMixin:
             # ============================================================
             try:
                 if frame_img is not None:
-                    
                     small_frame = cv2.resize(frame_img, (32, 32))
                     pixels = small_frame.reshape(-1, 3).astype(np.float32)
-                    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-                    _, labels, centers = cv2.kmeans(pixels, 3, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
-                    
+                    criteria = (
+                        cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+                        10,
+                        1.0,
+                    )
+                    _, labels, centers = cv2.kmeans(
+                        pixels, 3, None, criteria, 3, cv2.KMEANS_PP_CENTERS
+                    )
+
                     counts = np.bincount(labels.flatten())
                     dominant_idx = np.argmax(counts)
                     dominant_bgr = centers[dominant_idx].astype(int)
-                    
-                    r, g, b = int(dominant_bgr[2]), int(dominant_bgr[1]), int(dominant_bgr[0])
+
+                    r, g, b = (
+                        int(dominant_bgr[2]),
+                        int(dominant_bgr[1]),
+                        int(dominant_bgr[0]),
+                    )
                     r_n, g_n, b_n = r / 255.0, g / 255.0, b / 255.0
                     max_c, min_c = max(r_n, g_n, b_n), min(r_n, g_n, b_n)
                     delta = max_c - min_c
-                    
+
                     val = max_c * 100
                     sat = (delta / max_c * 100) if max_c > 0 else 0
                     hue = 0
@@ -1125,9 +1148,13 @@ class FrameStageMixin:
                             hue = 60 * (((b_n - r_n) / delta) + 2)
                         else:
                             hue = 60 * (((r_n - g_n) / delta) + 4)
-                    
+
                     payload["dominant_color_rgb"] = [r, g, b]
-                    payload["dominant_color_hsv"] = [round(hue, 1), round(sat, 1), round(val, 1)]
+                    payload["dominant_color_hsv"] = [
+                        round(hue, 1),
+                        round(sat, 1),
+                        round(val, 1),
+                    ]
             except Exception as e:
                 logger.debug(f"[DominantColor] Skipped: {e}")
 
@@ -1235,4 +1262,3 @@ class FrameStageMixin:
             )
 
         return description
-

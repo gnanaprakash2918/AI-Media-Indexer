@@ -10,15 +10,14 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
+from config import settings
 from core.knowledge.schemas import ParsedQuery
 from core.retrieval.query_parser import QueryParserMixin
 from core.retrieval.reranker import RerankingCouncil
 from core.retrieval.result_processor import ResultProcessorMixin
 from core.utils.logger import log
 from core.utils.observe import observe
-
 from llm.factory import LLMFactory
-from config import settings
 
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
@@ -26,7 +25,6 @@ if TYPE_CHECKING:
 
 
 class SearchAgent(QueryParserMixin, ResultProcessorMixin):
-
     def __init__(
         self,
         db: VectorDB,
@@ -50,6 +48,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         if self._hybrid_searcher is None and self._enable_hybrid:
             try:
                 from core.retrieval.hybrid import HybridSearcher
+
                 self._hybrid_searcher = HybridSearcher(self.db)
                 log("[Search] HybridSearcher initialized")
             except Exception as e:
@@ -67,6 +66,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         if self._graph_searcher is None and self._enable_graph:
             try:
                 from core.retrieval.graph import GraphSearcher
+
                 self._graph_searcher = GraphSearcher()
                 log("[Search] GraphSearcher initialized - PROD READY")
             except Exception as e:
@@ -102,24 +102,30 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             if cluster_id is not None:
                 face_ids = self._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
-                log(f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}")
+                log(
+                    f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}"
+                )
 
             masklet_hits = await self.db.search_masklets(
                 concept=parsed.person_name, limit=5
             )
             if masklet_hits:
-                log(f"[Search] Found {len(masklet_hits)} tagged masklets for '{parsed.person_name}'")
+                log(
+                    f"[Search] Found {len(masklet_hits)} tagged masklets for '{parsed.person_name}'"
+                )
                 for hit in masklet_hits:
-                    results.append({
-                        "id": hit.get("id"),
-                        "score": hit.get("score", 1.0) * 1.5,
-                        "type": "object_track",
-                        "text": f"Tracked Object: {parsed.person_name}",
-                        "start": hit.get("start_time"),
-                        "end": hit.get("end_time"),
-                        "video_path": hit.get("video_path"),
-                        "thumbnail_url": f"/thumbnails/{hit.get('id')}.jpg"
-                    })
+                    results.append(
+                        {
+                            "id": hit.get("id"),
+                            "score": hit.get("score", 1.0) * 1.5,
+                            "type": "object_track",
+                            "text": f"Tracked Object: {parsed.person_name}",
+                            "start": hit.get("start_time"),
+                            "end": hit.get("end_time"),
+                            "video_path": hit.get("video_path"),
+                            "thumbnail_url": f"/thumbnails/{hit.get('id')}.jpg",
+                        }
+                    )
 
         search_text = parsed.to_search_text()
         log(f"[Search] Expanded search text: '{search_text}'")
@@ -129,13 +135,19 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 query=search_text,
                 limit=limit,
                 person_name=resolved_name,
-                face_cluster_ids=[cluster_id] if cluster_id is not None else None,
+                face_cluster_ids=[cluster_id]
+                if cluster_id is not None
+                else None,
                 clothing_color=parsed.clothing_color,
                 clothing_type=parsed.clothing_type,
                 accessories=parsed.accessories if parsed.accessories else None,
                 location=parsed.location,
-                visible_text=parsed.text_to_find if parsed.text_to_find else None,
-                action_keywords=parsed.action_keywords if parsed.action_keywords else None,
+                visible_text=parsed.text_to_find
+                if parsed.text_to_find
+                else None,
+                action_keywords=parsed.action_keywords
+                if parsed.action_keywords
+                else None,
                 video_path=video_path,
                 mood=parsed.mood,
                 shot_type=parsed.shot_type,
@@ -145,13 +157,21 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             results.extend(scene_results)
             log(f"[Search] Found {len(scene_results)} scene results")
         except Exception as e:
-            log(f"[Search] Scene search failed: {e}, falling back to frame search")
-            frame_results = await self._fallback_frame_search(parsed, search_text, limit)
+            log(
+                f"[Search] Scene search failed: {e}, falling back to frame search"
+            )
+            frame_results = await self._fallback_frame_search(
+                parsed, search_text, limit
+            )
             results.extend(frame_results)
 
         if not results:
-            log("[Search] No scene results found. Triggering fallback frame search.")
-            frame_results = await self._fallback_frame_search(parsed, search_text, limit)
+            log(
+                "[Search] No scene results found. Triggering fallback frame search."
+            )
+            frame_results = await self._fallback_frame_search(
+                parsed, search_text, limit
+            )
             results.extend(frame_results)
 
         # Graph search
@@ -163,17 +183,27 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                     if cluster_id is not None:
                         graph_entities.append(str(cluster_id))
                 if parsed.visual_keywords:
-                    graph_entities.extend([k for k in parsed.visual_keywords if len(k) > 3])
+                    graph_entities.extend(
+                        [k for k in parsed.visual_keywords if len(k) > 3]
+                    )
 
-                graph_actions = parsed.action_keywords if parsed.action_keywords else []
+                graph_actions = (
+                    parsed.action_keywords if parsed.action_keywords else []
+                )
 
                 if graph_entities or graph_actions:
-                    log(f"[Search] Executing Graph Query for entities={graph_entities}, actions={graph_actions}")
+                    log(
+                        f"[Search] Executing Graph Query for entities={graph_entities}, actions={graph_actions}"
+                    )
                     graph_results = await self.graph_searcher.search(
-                        query=query, entities=graph_entities, actions=graph_actions
+                        query=query,
+                        entities=graph_entities,
+                        actions=graph_actions,
                     )
                     if graph_results:
-                        log(f"[Search] Graph found {len(graph_results)} results. Merging...")
+                        log(
+                            f"[Search] Graph found {len(graph_results)} results. Merging..."
+                        )
                         existing_ids = {r.get("id") for r in results}
                         for gr in graph_results:
                             if gr.get("id") not in existing_ids:
@@ -184,10 +214,16 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                                     "text": f"Graph Match: {gr.get('description', '')}",
                                     "start_time": gr.get("start"),
                                     "end_time": gr.get("end"),
-                                    "video_path": gr.get("video_path") or video_path,
+                                    "video_path": gr.get("video_path")
+                                    or video_path,
                                 }
-                                if not gr_formatted.get("video_path") and len(results) > 0:
-                                    gr_formatted["video_path"] = results[0].get("video_path")
+                                if (
+                                    not gr_formatted.get("video_path")
+                                    and len(results) > 0
+                                ):
+                                    gr_formatted["video_path"] = results[0].get(
+                                        "video_path"
+                                    )
                                 results.append(gr_formatted)
             except Exception as e:
                 log(f"[Search] Graph search failed: {e}")
@@ -199,8 +235,12 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 start = res.get("start_time")
                 end = res.get("end_time") or (start + 2.0 if start else None)
                 if vid_path and start is not None and end is not None:
-                    res["face_bboxes"] = self.db.get_faces_in_range(vid_path, start, end)
-                    res["voice_segments"] = self.db.get_voice_segments_in_range(vid_path, start, end)
+                    res["face_bboxes"] = self.db.get_faces_in_range(
+                        vid_path, start, end
+                    )
+                    res["voice_segments"] = self.db.get_voice_segments_in_range(
+                        vid_path, start, end
+                    )
             except Exception as e:
                 log(f"[Search] Failed to enrich result {res.get('id')}: {e}")
 
@@ -224,7 +264,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         ]
         log(f"[Search] Original: {query}")
         log(f"[Search] Expanded: {search_text}")
-        log(f"[Search] Filters: faces={[cluster_id] if cluster_id else []}, video={video_path or 'all'}")
+        log(
+            f"[Search] Filters: faces={[cluster_id] if cluster_id else []}, video={video_path or 'all'}"
+        )
         log(f"[Search] Scoring: {top_scores}")
         log(f"[Search] Reasoning: {reasoning_chain}")
 
@@ -263,7 +305,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             if cluster_id is not None:
                 face_ids = self._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
-                log(f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id} ({len(face_ids)} faces)")
+                log(
+                    f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id} ({len(face_ids)} faces)"
+                )
 
         search_text = parsed.to_search_text()
         log(f"[Search] Expanded search text: '{search_text}'")
@@ -321,7 +365,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             )
 
         if parsed.visual_keywords:
-            specific_entities = [k for k in parsed.visual_keywords if len(k) > 3]
+            specific_entities = [
+                k for k in parsed.visual_keywords if len(k) > 3
+            ]
             if specific_entities:
                 filters.append(
                     models.FieldCondition(
@@ -332,7 +378,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
         try:
             query_vector = (
-                await self.db.encode_texts(search_text or "scene activity", is_query=True)
+                await self.db.encode_texts(
+                    search_text or "scene activity", is_query=True
+                )
             )[0]
 
             if filters:
@@ -345,14 +393,22 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                     limit=limit,
                 ).points
                 results = [
-                    {"score": hit.score, "id": str(hit.id), **(hit.payload or {})}
+                    {
+                        "score": hit.score,
+                        "id": str(hit.id),
+                        **(hit.payload or {}),
+                    }
                     for hit in results
                 ]
             else:
-                results = await self.db.search_frames(query=search_text, limit=limit)
+                results = await self.db.search_frames(
+                    query=search_text, limit=limit
+                )
         except Exception as e:
             log(f"[Search] Hybrid search failed: {e}, falling back to simple")
-            results = await self.db.search_frames(query=search_text, limit=limit)
+            results = await self.db.search_frames(
+                query=search_text, limit=limit
+            )
 
         return {
             "query": query,
@@ -366,7 +422,10 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         }
 
     async def _fallback_frame_search(
-        self, parsed: ParsedQuery, search_text: str, limit: int,
+        self,
+        parsed: ParsedQuery,
+        search_text: str,
+        limit: int,
     ) -> list[dict]:
         try:
             return await self.db.search_frames(query=search_text, limit=limit)
@@ -387,11 +446,15 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         if self.hybrid_searcher:
             try:
                 results = await self.hybrid_searcher.search(
-                    query=query, limit=limit,
-                    vector_weight=vector_weight, keyword_weight=keyword_weight,
+                    query=query,
+                    limit=limit,
+                    vector_weight=vector_weight,
+                    keyword_weight=keyword_weight,
                     video_id=video_id,
                 )
-                log(f"[Search] Hybrid search: {len(results)} results (weights: {vector_weight:.1f}v/{keyword_weight:.1f}kw)")
+                log(
+                    f"[Search] Hybrid search: {len(results)} results (weights: {vector_weight:.1f}v/{keyword_weight:.1f}kw)"
+                )
                 return results
             except Exception as e:
                 log(f"[Search] Hybrid search failed, falling back: {e}")
@@ -412,7 +475,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         expansion_fallback: bool = True,
     ) -> dict[str, Any]:
         log(f"[SOTA Search] Query: '{query[:100]}...'")
-        log(f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}")
+        log(
+            f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}"
+        )
 
         # 1. Parse
         try:
@@ -422,7 +487,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 log(f"[SOTA Search] Expanded: '{search_text[:100]}...'")
             else:
                 search_text = query
-                log("[SOTA Search] Expansion disabled, using raw query with parsed constraints")
+                log(
+                    "[SOTA Search] Expansion disabled, using raw query with parsed constraints"
+                )
         except Exception as e:
             log(f"[SOTA Search] Parse failed: {e}, using raw query")
             parsed = ParsedQuery(visual_keywords=[query])
@@ -451,7 +518,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         # Extract clothing from parsed constraints
         all_clothing_colors: list[str] = []
         all_clothing_types: list[str] = []
-        all_accessories: list[str] = list(parsed.accessories) if hasattr(parsed, "accessories") else []
+        all_accessories: list[str] = (
+            list(parsed.accessories) if hasattr(parsed, "accessories") else []
+        )
 
         if hasattr(parsed, "clothing") and parsed.clothing:
             for c in parsed.clothing:
@@ -481,26 +550,42 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 clothing_colors=all_clothing_colors or None,
                 clothing_types=all_clothing_types or None,
                 accessories=all_accessories or None,
-                location=parsed.location if hasattr(parsed, "location") else None,
-                visible_text=parsed.text_to_find if hasattr(parsed, "text_to_find") else None,
-                action_keywords=parsed.action_keywords if hasattr(parsed, "action_keywords") else None,
+                location=parsed.location
+                if hasattr(parsed, "location")
+                else None,
+                visible_text=parsed.text_to_find
+                if hasattr(parsed, "text_to_find")
+                else None,
+                action_keywords=parsed.action_keywords
+                if hasattr(parsed, "action_keywords")
+                else None,
                 video_path=video_path,
                 mood=parsed.mood,
                 shot_type=parsed.shot_type,
                 aesthetic_score=parsed.aesthetic_score,
                 search_mode="hybrid",
-                exclusions=parsed.exclusions if hasattr(parsed, "exclusions") else None,
+                exclusions=parsed.exclusions
+                if hasattr(parsed, "exclusions")
+                else None,
             )
             all_results["scenes"] = scene_results
             log(f"[SOTA] Scenes: {len(scene_results)} results")
 
-            if not scene_results and (person_names or all_clothing_colors or parsed.location):
-                log("[SOTA] Strict scene search yielded 0 results. Retrying relaxed...")
+            if not scene_results and (
+                person_names or all_clothing_colors or parsed.location
+            ):
+                log(
+                    "[SOTA] Strict scene search yielded 0 results. Retrying relaxed..."
+                )
                 try:
                     fallback_scenes = await self.db.search_scenes(
-                        query=search_text, limit=limit, search_mode="hybrid",
+                        query=search_text,
+                        limit=limit,
+                        search_mode="hybrid",
                     )
-                    log(f"[SOTA] Relaxed search found {len(fallback_scenes)} scenes")
+                    log(
+                        f"[SOTA] Relaxed search found {len(fallback_scenes)} scenes"
+                    )
                     existing_ids = {r["id"] for r in scene_results}
                     for r in fallback_scenes:
                         if r["id"] not in existing_ids:
@@ -540,7 +625,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
         try:
             voice_results = await self.db.search_voice_segments(
-                query=search_text, limit=limit * 2, video_path=video_path,
+                query=search_text,
+                limit=limit * 2,
+                video_path=video_path,
             )
             all_results["voice"] = voice_results if voice_results else []
             log(f"[SOTA] Voice: {len(all_results['voice'])} results")
@@ -550,28 +637,40 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
         try:
             audio_results = await self.db.search_audio_events_semantic(
-                query=search_text, limit=limit * 2, video_path=video_path,
+                query=search_text,
+                limit=limit * 2,
+                video_path=video_path,
             )
             all_results["audio_events"] = audio_results if audio_results else []
-            log(f"[SOTA] Audio events: {len(all_results['audio_events'])} results")
+            log(
+                f"[SOTA] Audio events: {len(all_results['audio_events'])} results"
+            )
         except Exception as e:
             log(f"[SOTA] Audio event search failed: {e}")
             all_results["audio_events"] = []
 
         try:
             dialogue_results = await self.db.search_dialogue(
-                query=search_text, limit=limit * 2, video_path=video_path,
+                query=search_text,
+                limit=limit * 2,
+                video_path=video_path,
             )
-            all_results["dialogue"] = dialogue_results if dialogue_results else []
+            all_results["dialogue"] = (
+                dialogue_results if dialogue_results else []
+            )
             log(f"[SOTA] Dialogue: {len(all_results['dialogue'])} results")
         except Exception as e:
             log(f"[SOTA] Dialogue search failed: {e}")
             all_results["dialogue"] = []
 
         try:
-            video_meta = await self.db.search_video_metadata(query=search_text, limit=limit)
+            video_meta = await self.db.search_video_metadata(
+                query=search_text, limit=limit
+            )
             all_results["video_metadata"] = video_meta if video_meta else []
-            log(f"[SOTA] Video metadata: {len(all_results['video_metadata'])} results")
+            log(
+                f"[SOTA] Video metadata: {len(all_results['video_metadata'])} results"
+            )
         except Exception as e:
             log(f"[SOTA] Video metadata search failed: {e}")
             all_results["video_metadata"] = []
@@ -581,8 +680,13 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             voice_boost = getattr(settings, "voice_identity_boost", 1.5)
             for v_result in all_results["voice"]:
                 speaker_name = str(v_result.get("speaker_name", ""))
-                if any(name.lower() in speaker_name.lower() for name in person_names):
-                    v_result["score"] = min(1.0, v_result.get("score", 0.5) * voice_boost)
+                if any(
+                    name.lower() in speaker_name.lower()
+                    for name in person_names
+                ):
+                    v_result["score"] = min(
+                        1.0, v_result.get("score", 0.5) * voice_boost
+                    )
                     v_result["identity_boosted"] = True
 
         # FIX #3: Per-modality min-max normalization to [0, 1]
@@ -591,7 +695,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         for modality, results in all_results.items():
             if not results:
                 continue
-            scores = [r.get("score", 0) for r in results if r.get("score") is not None]
+            scores = [
+                r.get("score", 0) for r in results if r.get("score") is not None
+            ]
             if not scores:
                 continue
             min_s, max_s = min(scores), max(scores)
@@ -617,14 +723,18 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
                 vp = result.get("video_path") or result.get("media_path") or ""
                 start_time = (
-                    result.get("start_time") or result.get("start")
-                    or result.get("timestamp") or 0
+                    result.get("start_time")
+                    or result.get("start")
+                    or result.get("timestamp")
+                    or 0
                 )
 
                 bucket_size = settings.timestamp_bucket_seconds
                 ts_float = float(start_time)
                 primary_bucket = int(ts_float / bucket_size) * int(bucket_size)
-                half_offset_bucket = int((ts_float + bucket_size / 2) / bucket_size) * int(bucket_size)
+                half_offset_bucket = int(
+                    (ts_float + bucket_size / 2) / bucket_size
+                ) * int(bucket_size)
 
                 fusion_keys = [f"{vp}:{primary_bucket}"]
                 if half_offset_bucket != primary_bucket:
@@ -640,30 +750,57 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                         result_data[fusion_key] = result.copy()
                         result_data[fusion_key]["modality_sources"] = []
                         result_data[fusion_key]["_original_id"] = result_id
-                        result_data[fusion_key]["_best_timestamp_score"] = weighted_score
+                        result_data[fusion_key]["_best_timestamp_score"] = (
+                            weighted_score
+                        )
                     else:
                         existing = result_data[fusion_key]
-                        if weighted_score > existing.get("_best_timestamp_score", 0):
-                            for ts_key in ["start_time", "end_time", "start", "end", "timestamp"]:
+                        if weighted_score > existing.get(
+                            "_best_timestamp_score", 0
+                        ):
+                            for ts_key in [
+                                "start_time",
+                                "end_time",
+                                "start",
+                                "end",
+                                "timestamp",
+                            ]:
                                 if result.get(ts_key) is not None:
                                     existing[ts_key] = result[ts_key]
                             existing["_best_timestamp_score"] = weighted_score
 
-                    if modality not in result_data[fusion_key]["modality_sources"]:
-                        result_data[fusion_key]["modality_sources"].append(modality)
+                    if (
+                        modality
+                        not in result_data[fusion_key]["modality_sources"]
+                    ):
+                        result_data[fusion_key]["modality_sources"].append(
+                            modality
+                        )
 
                     existing = result_data[fusion_key]
-                    if not existing.get("face_names") and result.get("face_names"):
+                    if not existing.get("face_names") and result.get(
+                        "face_names"
+                    ):
                         existing["face_names"] = result["face_names"]
-                    if not existing.get("person_names") and result.get("person_names"):
+                    if not existing.get("person_names") and result.get(
+                        "person_names"
+                    ):
                         existing["person_names"] = result["person_names"]
-                    if not existing.get("face_cluster_ids") and result.get("face_cluster_ids"):
-                        existing["face_cluster_ids"] = result["face_cluster_ids"]
-                    if not existing.get("description") and result.get("description"):
+                    if not existing.get("face_cluster_ids") and result.get(
+                        "face_cluster_ids"
+                    ):
+                        existing["face_cluster_ids"] = result[
+                            "face_cluster_ids"
+                        ]
+                    if not existing.get("description") and result.get(
+                        "description"
+                    ):
                         existing["description"] = result["description"]
                     if not existing.get("entities") and result.get("entities"):
                         existing["entities"] = result["entities"]
-                    if not existing.get("scene_location") and result.get("scene_location"):
+                    if not existing.get("scene_location") and result.get(
+                        "scene_location"
+                    ):
                         existing["scene_location"] = result["scene_location"]
 
         ranked = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[
@@ -706,14 +843,18 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 "raw_fused_score": score,
                 "normalized_score": normalized_score,
                 "models_contributed": self._get_models_for_modalities(sources),
-                "match_type": "multimodal_fusion" if len(sources) > 1 else "single_modality",
+                "match_type": "multimodal_fusion"
+                if len(sources) > 1
+                else "single_modality",
             }
 
             if sources:
                 source_desc = ", ".join(sources)
                 desc_preview = (
-                    result.get("description") or result.get("action")
-                    or result.get("visual_summary") or ""
+                    result.get("description")
+                    or result.get("action")
+                    or result.get("visual_summary")
+                    or ""
                 )
                 reason_parts = []
                 if face_names:
@@ -726,11 +867,17 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
                 if reason_parts:
                     reason_extra = " | ".join(reason_parts)
-                    result["match_reason"] = f"Matched via {source_desc} ({normalized_score * 100:.0f}%) - {reason_extra}"
+                    result["match_reason"] = (
+                        f"Matched via {source_desc} ({normalized_score * 100:.0f}%) - {reason_extra}"
+                    )
                 elif desc_preview:
-                    result["match_reason"] = f"Semantic match (score={normalized_score:.2f}): {desc_preview[:100]}..."
+                    result["match_reason"] = (
+                        f"Semantic match (score={normalized_score:.2f}): {desc_preview[:100]}..."
+                    )
                 else:
-                    result["match_reason"] = f"Matched via {source_desc} (score={normalized_score:.2f})"
+                    result["match_reason"] = (
+                        f"Matched via {source_desc} (score={normalized_score:.2f})"
+                    )
 
             candidates.append(result)
 
@@ -746,23 +893,30 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 pairs = []
                 for c in candidates:
                     desc = c.get("description") or c.get("visual_summary") or ""
-                    action = c.get("motion_text") or c.get("action_summary") or ""
+                    action = (
+                        c.get("motion_text") or c.get("action_summary") or ""
+                    )
                     content = f"{desc} {action}"
                     if c.get("dialogue_transcript"):
                         content += f" Dialogue: {c['dialogue_transcript']}"
                     pairs.append([query, content])
 
                 from sentence_transformers import CrossEncoder
+
                 from core.processing.resource_arbiter import RESOURCE_ARBITER
 
                 reranker_model_id = "BAAI/bge-reranker-v2-m3"
 
                 def _cleanup_reranker():
-                    if hasattr(self, "_reranker") and self._reranker is not None:
+                    if (
+                        hasattr(self, "_reranker")
+                        and self._reranker is not None
+                    ):
                         del self._reranker
                         self._reranker = None
                         try:
                             import torch
+
                             if torch.cuda.is_available():
                                 torch.cuda.empty_cache()
                         except Exception:
@@ -773,12 +927,15 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 )
 
                 if not hasattr(self, "_reranker") or self._reranker is None:
-                    self._reranker = CrossEncoder(reranker_model_id, trust_remote_code=True)
+                    self._reranker = CrossEncoder(
+                        reranker_model_id, trust_remote_code=True
+                    )
 
                 scores = self._reranker.predict(pairs)
 
                 # Normalize BGE logits to 0..1 with sigmoid and blend with RRF score
                 import math
+
                 for i, raw_score in enumerate(scores):
                     try:
                         bge_norm = 1.0 / (1.0 + math.exp(-float(raw_score)))
@@ -786,7 +943,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                         bge_norm = 0.0 if float(raw_score) < 0 else 1.0
                     # Blend: 50% reranker + 50% existing RRF fusion score
                     existing_score = candidates[i].get("score", 0.5)
-                    candidates[i]["score"] = 0.5 * bge_norm + 0.5 * existing_score
+                    candidates[i]["score"] = (
+                        0.5 * bge_norm + 0.5 * existing_score
+                    )
                     candidates[i]["rerank_score"] = bge_norm
 
                 candidates.sort(key=lambda x: x["score"], reverse=True)
@@ -797,32 +956,48 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 log.error(f"[SOTA Search] Reranking failed: {e}")
 
         # 6. Granular scoring
-        has_constraints = any([
-            getattr(parsed, "identities", None),
-            getattr(parsed, "clothing", None),
-            getattr(parsed, "text", None),
-            getattr(parsed, "actions", None),
-            getattr(parsed, "location", None),
-            getattr(parsed, "audio", None),
-            getattr(parsed, "spatial", None),
-            getattr(parsed, "exclusions", None),
-        ])
+        has_constraints = any(
+            [
+                getattr(parsed, "identities", None),
+                getattr(parsed, "clothing", None),
+                getattr(parsed, "text", None),
+                getattr(parsed, "actions", None),
+                getattr(parsed, "location", None),
+                getattr(parsed, "audio", None),
+                getattr(parsed, "spatial", None),
+                getattr(parsed, "exclusions", None),
+            ]
+        )
         if has_constraints:
             candidates = self._apply_granular_scoring(candidates, parsed)
             candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         pipeline_steps = [
-            {"step": "Query Parsing", "status": "completed",
-             "detail": f"Extracted {len(parsed.entities) if hasattr(parsed, 'entities') and parsed.entities else 0} entities",
-             "data": {"original_query": query[:100]}},
-            {"step": "Vector Search", "status": "completed",
-             "detail": f"{'Fallback: ' + str(fallback_used) if fallback_used else 'scenes'} → {len(candidates)} results",
-             "data": {"collection_searched": fallback_used or "scenes",
-                      "fallback_used": fallback_used is not None,
-                      "candidates_found": len(candidates)}},
-            {"step": "LLM Reranking", "status": "completed" if use_reranking else "skipped",
-             "detail": f"{'Applied' if use_reranking else 'Disabled'} → {len(candidates[:limit])} final results",
-             "data": {"enabled": use_reranking, "final_count": len(candidates[:limit])}},
+            {
+                "step": "Query Parsing",
+                "status": "completed",
+                "detail": f"Extracted {len(parsed.entities) if hasattr(parsed, 'entities') and parsed.entities else 0} entities",
+                "data": {"original_query": query[:100]},
+            },
+            {
+                "step": "Vector Search",
+                "status": "completed",
+                "detail": f"{'Fallback: ' + str(fallback_used) if fallback_used else 'scenes'} → {len(candidates)} results",
+                "data": {
+                    "collection_searched": fallback_used or "scenes",
+                    "fallback_used": fallback_used is not None,
+                    "candidates_found": len(candidates),
+                },
+            },
+            {
+                "step": "LLM Reranking",
+                "status": "completed" if use_reranking else "skipped",
+                "detail": f"{'Applied' if use_reranking else 'Disabled'} → {len(candidates[:limit])} final results",
+                "data": {
+                    "enabled": use_reranking,
+                    "final_count": len(candidates[:limit]),
+                },
+            },
         ]
 
         reasoning_chain = {
@@ -835,7 +1010,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
         return {
             "query": query,
-            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
+            "parsed": parsed.model_dump()
+            if hasattr(parsed, "model_dump")
+            else {},
             "search_text": search_text,
             "person_names_resolved": person_names,
             "face_ids_matched": len(face_ids),
@@ -848,11 +1025,19 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             "reasoning_chain": reasoning_chain,
         }
 
-    def _compute_adaptive_weights(self, query: str, parsed: Any) -> dict[str, float]:
+    def _compute_adaptive_weights(
+        self, query: str, parsed: Any
+    ) -> dict[str, float]:
         llm_weights = None
-        if parsed and hasattr(parsed, "modality_weights") and parsed.modality_weights:
+        if (
+            parsed
+            and hasattr(parsed, "modality_weights")
+            and parsed.modality_weights
+        ):
             llm_weights = parsed.modality_weights
-        elif parsed and isinstance(parsed, dict) and "modality_weights" in parsed:
+        elif (
+            parsed and isinstance(parsed, dict) and "modality_weights" in parsed
+        ):
             llm_weights = parsed["modality_weights"]
 
         if llm_weights:
@@ -893,15 +1078,21 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
     @observe("scenelet_search")
     async def scenelet_search(
-        self, query: str, video_path: str | None = None, limit: int = 10,
+        self,
+        query: str,
+        video_path: str | None = None,
+        limit: int = 10,
     ) -> dict:
         log(f"[Scenelet Search] Query: '{query[:80]}...'")
         parsed = await self.parse_query(query)
         search_text = parsed.to_search_text() or query
 
         results = self.db.search_scenelets(
-            query=search_text, limit=limit, video_path=video_path,
-            gap_threshold=3.0, padding=3.0,
+            query=search_text,
+            limit=limit,
+            video_path=video_path,
+            gap_threshold=3.0,
+            padding=3.0,
         )
 
         formatted_results = []
@@ -909,15 +1100,19 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             start = r.get("start_time", 0.0)
             end = r.get("end_time", 0.0)
             text = r.get("text", "")
-            formatted_results.append({
-                **r,
-                "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
-                "match_explanation": f"Action sequence detected: {text[:50]}",
-            })
+            formatted_results.append(
+                {
+                    **r,
+                    "reasoning": f"Matched scenelet ({start:.1f}s-{end:.1f}s): {text[:100]}...",
+                    "match_explanation": f"Action sequence detected: {text[:50]}",
+                }
+            )
 
         return {
-            "query": query, "search_type": "scenelet",
-            "results": formatted_results, "result_count": len(formatted_results),
+            "query": query,
+            "search_type": "scenelet",
+            "results": formatted_results,
+            "result_count": len(formatted_results),
         }
 
     @observe("comprehensive_multimodal_search")
@@ -952,13 +1147,16 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             if voice_cid:
                 voice_cluster_ids.append(voice_cid)
 
-        log(f"[Multimodal] Resolved identities: faces={face_cluster_ids}, voices={voice_cluster_ids}")
+        log(
+            f"[Multimodal] Resolved identities: faces={face_cluster_ids}, voices={voice_cluster_ids}"
+        )
 
         modality_results = {}
 
         try:
             scene_results = await self.db.search_scenes(
-                query=search_text, limit=limit * 2,
+                query=search_text,
+                limit=limit * 2,
                 person_name=person_names[0] if person_names else None,
                 face_cluster_ids=face_cluster_ids if face_cluster_ids else None,
                 clothing_color=getattr(parsed, "clothing_color", None),
@@ -966,7 +1164,8 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 location=getattr(parsed, "location", None),
                 visible_text=getattr(parsed, "text_to_find", None),
                 action_keywords=getattr(parsed, "action_keywords", None),
-                video_path=video_path, search_mode="hybrid",
+                video_path=video_path,
+                search_mode="hybrid",
             )
             modality_results["scenes"] = scene_results
             log(f"[Multimodal] Scene search: {len(scene_results)} results")
@@ -975,24 +1174,40 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             modality_results["scenes"] = []
 
         try:
-            if person_names or "speak" in query.lower() or "say" in query.lower():
+            if (
+                person_names
+                or "speak" in query.lower()
+                or "say" in query.lower()
+            ):
                 voice_results = []
                 if video_path:
-                    voice_segments = self.db.get_voice_segments_by_video(video_path=video_path)
+                    voice_segments = self.db.get_voice_segments_by_video(
+                        video_path=video_path
+                    )
                 else:
                     voice_segments = self.db.get_all_voice_segments(limit=500)
 
                 for seg in voice_segments:
                     speaker_name = seg.get("speaker_name", "")
-                    if any(name.lower() in str(speaker_name).lower() for name in person_names):
-                        voice_results.append({
-                            "id": seg.get("id"),
-                            "video_path": seg.get("media_path"),
-                            "start_time": seg.get("start_time", seg.get("start", 0)),
-                            "end_time": seg.get("end_time", seg.get("end", 0)),
-                            "speaker_name": speaker_name,
-                            "score": 0.9, "modality": "voice",
-                        })
+                    if any(
+                        name.lower() in str(speaker_name).lower()
+                        for name in person_names
+                    ):
+                        voice_results.append(
+                            {
+                                "id": seg.get("id"),
+                                "video_path": seg.get("media_path"),
+                                "start_time": seg.get(
+                                    "start_time", seg.get("start", 0)
+                                ),
+                                "end_time": seg.get(
+                                    "end_time", seg.get("end", 0)
+                                ),
+                                "speaker_name": speaker_name,
+                                "score": 0.9,
+                                "modality": "voice",
+                            }
+                        )
                 modality_results["voices"] = voice_results[:limit]
                 log(f"[Multimodal] Voice search: {len(voice_results)} matches")
         except Exception as e:
@@ -1000,50 +1215,83 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             modality_results["voices"] = []
 
         try:
-            if len(person_names) >= 2 or "with" in query.lower() or "together" in query.lower():
-                co_occurrences = self.db.get_person_co_occurrences(video_path=video_path)
+            if (
+                len(person_names) >= 2
+                or "with" in query.lower()
+                or "together" in query.lower()
+            ):
+                co_occurrences = self.db.get_person_co_occurrences(
+                    video_path=video_path
+                )
                 co_results = []
                 for co in co_occurrences:
                     p1_name = co.get("person1_name", "")
                     p2_name = co.get("person2_name", "")
                     matched = any(
-                        name.lower() in str(p1_name).lower() or name.lower() in str(p2_name).lower()
+                        name.lower() in str(p1_name).lower()
+                        or name.lower() in str(p2_name).lower()
                         for name in person_names
                     )
                     if matched:
-                        co_results.append({
-                            "video_path": co.get("video_path"),
-                            "start_time": co.get("start_time", 0),
-                            "end_time": co.get("end_time", 0),
-                            "person1": p1_name, "person2": p2_name,
-                            "interaction_count": co.get("interaction_count", 1),
-                            "score": min(1.0, 0.5 + co.get("interaction_count", 1) * 0.1),
-                            "modality": "co_occurrence",
-                        })
+                        co_results.append(
+                            {
+                                "video_path": co.get("video_path"),
+                                "start_time": co.get("start_time", 0),
+                                "end_time": co.get("end_time", 0),
+                                "person1": p1_name,
+                                "person2": p2_name,
+                                "interaction_count": co.get(
+                                    "interaction_count", 1
+                                ),
+                                "score": min(
+                                    1.0,
+                                    0.5 + co.get("interaction_count", 1) * 0.1,
+                                ),
+                                "modality": "co_occurrence",
+                            }
+                        )
                 modality_results["co_occurrences"] = co_results[:limit]
-                log(f"[Multimodal] Co-occurrence search: {len(co_results)} relationships")
+                log(
+                    f"[Multimodal] Co-occurrence search: {len(co_results)} relationships"
+                )
         except Exception as e:
             log(f"[Multimodal] Co-occurrence search failed: {e}")
             modality_results["co_occurrences"] = []
 
         try:
-            audio_events = await self.db.search_audio_events(query=search_text, limit=limit)
+            audio_events = await self.db.search_audio_events(
+                query=search_text, limit=limit
+            )
             modality_results["audio_events"] = [
-                {**event, "modality": "audio_event", "score": event.get("score", 0.7)}
+                {
+                    **event,
+                    "modality": "audio_event",
+                    "score": event.get("score", 0.7),
+                }
                 for event in audio_events
             ]
-            log(f"[Multimodal] Audio events search: {len(audio_events)} matches")
+            log(
+                f"[Multimodal] Audio events search: {len(audio_events)} matches"
+            )
         except Exception as e:
             log(f"[Multimodal] Audio events search failed: {e}")
             modality_results["audio_events"] = []
 
         try:
-            video_meta = await self.db.search_video_metadata(query=search_text, limit=limit)
+            video_meta = await self.db.search_video_metadata(
+                query=search_text, limit=limit
+            )
             modality_results["video_metadata"] = [
-                {**meta, "modality": "video_metadata", "score": meta.get("score", 0.6)}
+                {
+                    **meta,
+                    "modality": "video_metadata",
+                    "score": meta.get("score", 0.6),
+                }
                 for meta in video_meta
             ]
-            log(f"[Multimodal] Video metadata search: {len(video_meta)} matches")
+            log(
+                f"[Multimodal] Video metadata search: {len(video_meta)} matches"
+            )
         except Exception as e:
             log(f"[Multimodal] Video metadata search failed: {e}")
             modality_results["video_metadata"] = []
@@ -1056,6 +1304,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         if use_reranking and fused_results:
             try:
                 from core.retrieval.reranker import SearchCandidate
+
                 sc_candidates = [
                     SearchCandidate(
                         video_path=str(r.get("video_path", "")),
@@ -1064,10 +1313,13 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                         score=float(r.get("fused_score", r.get("score", 0))),
                         payload=r,
                     )
-                    for r in fused_results[:limit * 2]
+                    for r in fused_results[: limit * 2]
                 ]
                 ranked = await self.council.council_rerank(
-                    query=query, candidates=sc_candidates, max_candidates=limit, use_vlm=True,
+                    query=query,
+                    candidates=sc_candidates,
+                    max_candidates=limit,
+                    use_vlm=True,
                 )
                 fused_results = []
                 for r in ranked:
@@ -1075,14 +1327,18 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                     result["final_score"] = r.final_score
                     result["llm_reasoning"] = r.vlm_reason or "Verified"
                     fused_results.append(result)
-                log(f"[Multimodal] Reranked to {len(fused_results)} final results")
+                log(
+                    f"[Multimodal] Reranked to {len(fused_results)} final results"
+                )
             except Exception as e:
                 log(f"[Multimodal] Reranking failed: {e}")
 
         return {
             "query": query,
             "search_type": "comprehensive_multimodal",
-            "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
+            "parsed": parsed.model_dump()
+            if hasattr(parsed, "model_dump")
+            else {},
             "identities_resolved": {
                 "names": person_names,
                 "face_clusters": face_cluster_ids,
@@ -1091,9 +1347,15 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             "modality_breakdown": {
                 "scenes_searched": len(modality_results.get("scenes", [])),
                 "voices_matched": len(modality_results.get("voices", [])),
-                "co_occurrences_found": len(modality_results.get("co_occurrences", [])),
-                "audio_events_matched": len(modality_results.get("audio_events", [])),
-                "video_metadata_matched": len(modality_results.get("video_metadata", [])),
+                "co_occurrences_found": len(
+                    modality_results.get("co_occurrences", [])
+                ),
+                "audio_events_matched": len(
+                    modality_results.get("audio_events", [])
+                ),
+                "video_metadata_matched": len(
+                    modality_results.get("video_metadata", [])
+                ),
             },
             "results": fused_results[:limit],
             "result_count": len(fused_results[:limit]),
@@ -1111,7 +1373,10 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         from core.storage.identity_graph import identity_graph
 
         if not sequence_steps or len(sequence_steps) < 2:
-            return {"error": "Temporal sequence requires at least 2 steps", "results": []}
+            return {
+                "error": "Temporal sequence requires at least 2 steps",
+                "results": [],
+            }
 
         media_ids: list[str] = []
         if video_path:
@@ -1119,8 +1384,14 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         else:
             try:
                 import sqlite3
-                with identity_graph._lock, sqlite3.connect(identity_graph.db_path) as conn:
-                    cursor = conn.execute("SELECT DISTINCT media_id FROM scenes LIMIT 100")
+
+                with (
+                    identity_graph._lock,
+                    sqlite3.connect(identity_graph.db_path) as conn,
+                ):
+                    cursor = conn.execute(
+                        "SELECT DISTINCT media_id FROM scenes LIMIT 100"
+                    )
                     media_ids = [row[0] for row in cursor.fetchall()]
             except Exception as e:
                 log(f"[Temporal] Failed to get media list: {e}")
@@ -1152,31 +1423,41 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 for step_idx, step in enumerate(sequence_steps):
                     best_match = None
                     best_score = 0.0
-                    search_start = start_idx + step_idx if step_idx == 0 else start_idx + len(chain_matches)
+                    search_start = (
+                        start_idx + step_idx
+                        if step_idx == 0
+                        else start_idx + len(chain_matches)
+                    )
 
-                    for scene_idx in range(search_start, min(search_start + 3, len(scenes))):
+                    for scene_idx in range(
+                        search_start, min(search_start + 3, len(scenes))
+                    ):
                         scene = scenes[scene_idx]
                         if prev_end_time is not None:
                             gap = scene.start_time - prev_end_time
                             if gap > max_gap_seconds:
                                 continue
 
-                        score = self._score_scene_step_match(scene, step, person_cluster_map)
+                        score = self._score_scene_step_match(
+                            scene, step, person_cluster_map
+                        )
                         if score > best_score:
                             best_score = score
                             best_match = scene
 
                     if best_match and best_score > 0.2:
-                        chain_matches.append({
-                            "step": step,
-                            "scene_id": best_match.id,
-                            "start_time": best_match.start_time,
-                            "end_time": best_match.end_time,
-                            "description": best_match.description,
-                            "location": best_match.location,
-                            "actions": best_match.actions,
-                            "score": best_score,
-                        })
+                        chain_matches.append(
+                            {
+                                "step": step,
+                                "scene_id": best_match.id,
+                                "start_time": best_match.start_time,
+                                "end_time": best_match.end_time,
+                                "description": best_match.description,
+                                "location": best_match.location,
+                                "actions": best_match.actions,
+                                "score": best_score,
+                            }
+                        )
                         chain_score += best_score
                         prev_end_time = best_match.end_time
                     else:
@@ -1184,16 +1465,19 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                         break
 
                 if valid_chain and len(chain_matches) == len(sequence_steps):
-                    all_chains.append({
-                        "media_path": media_id,
-                        "chain": chain_matches,
-                        "total_score": chain_score / len(sequence_steps),
-                        "time_span": {
-                            "start": chain_matches[0]["start_time"],
-                            "end": chain_matches[-1]["end_time"],
-                            "duration": chain_matches[-1]["end_time"] - chain_matches[0]["start_time"],
-                        },
-                    })
+                    all_chains.append(
+                        {
+                            "media_path": media_id,
+                            "chain": chain_matches,
+                            "total_score": chain_score / len(sequence_steps),
+                            "time_span": {
+                                "start": chain_matches[0]["start_time"],
+                                "end": chain_matches[-1]["end_time"],
+                                "duration": chain_matches[-1]["end_time"]
+                                - chain_matches[0]["start_time"],
+                            },
+                        }
+                    )
 
         all_chains.sort(key=lambda x: x["total_score"], reverse=True)
         return {

@@ -80,12 +80,6 @@ async def test_temporal_analyzer() -> dict:
     }
 
 
-
-
-
-
-
-
 async def test_visual_encoder() -> dict:
     """Test visual encoder (SigLIP/CLIP) model load/unload."""
     print("\n🖼️ Testing VisualEncoder (SigLIP/CLIP)...")

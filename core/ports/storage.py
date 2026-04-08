@@ -83,6 +83,8 @@ class StorageBackend(
         """Close the storage connection."""
         ...
 
-    def update_media_metadata(self, media_path: str, metadata: dict[str, Any]) -> None:
+    def update_media_metadata(
+        self, media_path: str, metadata: dict[str, Any]
+    ) -> None:
         """Update video-level metadata."""
         ...

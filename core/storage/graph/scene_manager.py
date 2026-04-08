@@ -10,7 +10,6 @@ import uuid
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-
 from core.storage.identity_models import (
     Scene,
     SceneTransition,
@@ -26,6 +25,7 @@ class SceneManager:
     # These will be available via IdentityGraphManager inheritance
     db_path: str
     _lock: Lock
+
     # Type stub for type checkers
     def __getattr__(self, name: str) -> Any: ...
 
@@ -51,7 +51,7 @@ class SceneManager:
             conn.execute(
                 """
                 INSERT INTO scenes
-                (id, media_id, start_time, end_time, location, description, 
+                (id, media_id, start_time, end_time, location, description,
                  scene_type, face_cluster_ids, speaker_cluster_ids, entities, actions)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -152,4 +152,3 @@ class SceneManager:
             transition_type=transition_type,
             confidence=confidence,
         )
-

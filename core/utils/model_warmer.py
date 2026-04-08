@@ -23,17 +23,25 @@ _STALE_CACHE_DIRS = [
 
 def cleanup_stale_caches() -> None:
     """Delete leftover model caches from default Windows locations.
-    
+
     Since we redirect all downloads to project's models/ dir via env vars,
     any files in the default locations are stale and waste disk space.
     """
     for cache_dir in _STALE_CACHE_DIRS:
         if cache_dir.exists() and cache_dir.is_dir():
             try:
-                size_mb = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file()) / (1024 * 1024)
-                log_verbose(f"[Cleanup] Found stale cache: {cache_dir}, size={size_mb:.1f}MB")
+                size_mb = sum(
+                    f.stat().st_size
+                    for f in cache_dir.rglob("*")
+                    if f.is_file()
+                ) / (1024 * 1024)
+                log_verbose(
+                    f"[Cleanup] Found stale cache: {cache_dir}, size={size_mb:.1f}MB"
+                )
                 if size_mb > 10:  # Only log to terminal if > 10MB
-                    log.info(f"[Cleanup] Removing stale cache ({size_mb:.0f}MB)")
+                    log.info(
+                        f"[Cleanup] Removing stale cache ({size_mb:.0f}MB)"
+                    )
                 shutil.rmtree(cache_dir, ignore_errors=True)
                 log_verbose(f"[Cleanup] Removed: {cache_dir}")
             except Exception as e:
@@ -46,10 +54,12 @@ async def warmup_models():
     start_time = time.time()
     log.info("[Warmer] Starting model warmup...")
     log_verbose(f"[Warmer] Model cache dir: {settings.model_cache_dir}")
-    log_verbose(f"[Warmer] Settings: face_rec={getattr(settings, 'enable_face_recognition', False)}, "
-                f"sam3={getattr(settings, 'enable_sam3_tracking', False)}, "
-                f"object_det={getattr(settings, 'enable_object_detection', False)}")
-    
+    log_verbose(
+        f"[Warmer] Settings: face_rec={getattr(settings, 'enable_face_recognition', False)}, "
+        f"sam3={getattr(settings, 'enable_sam3_tracking', False)}, "
+        f"object_det={getattr(settings, 'enable_object_detection', False)}"
+    )
+
     # Clean up any stale caches from default Windows locations (C drive)
     cleanup_stale_caches()
 
@@ -65,7 +75,7 @@ async def warmup_models():
         transnet_path = settings.model_cache_dir / "transnetv2.onnx"
         log_verbose(f"[Warmer] TransNet V2 expected at: {transnet_path}")
         log_verbose(f"[Warmer] TransNet V2 exists: {transnet_path.exists()}")
-        
+
         log.info("[Warmer] Checking TransNet V2...")
         hf_hub_download(
             repo_id="elya5/transnetv2",
@@ -96,7 +106,9 @@ async def warmup_models():
     # Only warm up if specifically configured to avoid OOM on small GPUs
     # We just trigger the DOWNLOAD but not full load.
     try:
-        log_verbose("[Warmer] Qwen2-VL: Skipping full load (lazy-loaded on demand)")
+        log_verbose(
+            "[Warmer] Qwen2-VL: Skipping full load (lazy-loaded on demand)"
+        )
         pass  # Skip full load for Qwen to save VRAM
     except Exception:
         pass
@@ -140,6 +152,7 @@ async def warmup_models():
     if getattr(settings, "enable_object_detection", False):
         try:
             from ultralytics import YOLO
+
             log.info("[Warmer] Checking YOLOv8...")
             log_verbose("[Warmer] YOLOv8 object detection enabled")
             # This triggers download if missing
@@ -155,13 +168,16 @@ async def warmup_models():
     # 7. ArcFace (Identity)
     if getattr(settings, "enable_face_recognition", False):
         try:
-            arcface_path = settings.model_cache_dir / "arcface" / "w600k_r50.onnx"
+            arcface_path = (
+                settings.model_cache_dir / "arcface" / "w600k_r50.onnx"
+            )
             log_verbose(f"[Warmer] ArcFace expected at: {arcface_path}")
             log_verbose(f"[Warmer] ArcFace exists: {arcface_path.exists()}")
-            
+
             if not arcface_path.exists():
                 log.info("[Warmer] Downloading ArcFace ONNX...")
                 from huggingface_hub import hf_hub_download
+
                 hf_hub_download(
                     repo_id="minchul/cvl-face-recognition-models",
                     filename="w600k_r50.onnx",
@@ -180,7 +196,9 @@ async def warmup_models():
 
     # Generate Status Report
     elapsed = time.time() - start_time
-    log_verbose(f"[Warmer] Total warmup time: {elapsed:.1f}s, models checked: {models_checked}")
+    log_verbose(
+        f"[Warmer] Total warmup time: {elapsed:.1f}s, models checked: {models_checked}"
+    )
     _print_status_report()
     log.info(f"[Warmer] Model warmup complete ({elapsed:.1f}s)")
 
@@ -189,7 +207,9 @@ async def _warmup_component(component, name: str):
     """Generic warmer for components with _lazy_load."""
     start = time.time()
     try:
-        log_verbose(f"[Warmer] Loading {name}, component type: {type(component).__name__}")
+        log_verbose(
+            f"[Warmer] Loading {name}, component type: {type(component).__name__}"
+        )
         if hasattr(component, "_lazy_load"):
             if asyncio.iscoroutinefunction(component._lazy_load):
                 await component._lazy_load()
@@ -209,13 +229,25 @@ def _print_status_report():
     try:
         # Check TransNet
         t_status = (
-            "OK" if (settings.model_cache_dir / "transnetv2.onnx").exists() else "MISSING"
+            "OK"
+            if (settings.model_cache_dir / "transnetv2.onnx").exists()
+            else "MISSING"
         )
-        arcface_status = "OK" if (settings.model_cache_dir / "arcface" / "w600k_r50.onnx").exists() else "MISSING"
+        arcface_status = (
+            "OK"
+            if (
+                settings.model_cache_dir / "arcface" / "w600k_r50.onnx"
+            ).exists()
+            else "MISSING"
+        )
 
         # Log verbose details
-        log_verbose(f"[Warmer] Status: TransNet={t_status}, ArcFace={arcface_status}")
-        log_verbose(f"[Warmer] Model cache contents: {list(settings.model_cache_dir.glob('*'))[:10]}")
+        log_verbose(
+            f"[Warmer] Status: TransNet={t_status}, ArcFace={arcface_status}"
+        )
+        log_verbose(
+            f"[Warmer] Model cache contents: {list(settings.model_cache_dir.glob('*'))[:10]}"
+        )
 
         report_lines = [
             "",
@@ -255,4 +287,3 @@ async def _warmup_bge():
     except Exception as e:
         log.error(f"[Warmer] BGE-Reranker failed: {e}")
         log_verbose(f"[Warmer] BGE exception: {type(e).__name__}: {e}")
-

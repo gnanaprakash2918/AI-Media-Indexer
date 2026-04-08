@@ -137,7 +137,7 @@ async def agent_chat(
         User Query: {request.message}
         Tool Used: {tool_name} ({agent_type})
         Tool Result: {results}
-        
+
         Based on the tool result, answer the user's query gracefully.
         """
 
@@ -159,4 +159,6 @@ async def agent_chat(
 
     except Exception as e:
         logger.error(f"[Agent] Chat failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e

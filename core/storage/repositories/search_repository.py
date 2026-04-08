@@ -6,8 +6,6 @@ VectorDB inherits from SearchRepository to compose these methods.
 
 from __future__ import annotations
 
-from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
-
 from typing import TYPE_CHECKING, Any, cast
 
 from qdrant_client.http import models
@@ -187,7 +185,10 @@ class SearchRepository:
         if isinstance(query_vector, str):
             query_vector = await self.get_embedding(query_vector)
             if query_vector is None:
-                log("Embedding generation failed, cannot search frames", level="WARNING")
+                log(
+                    "Embedding generation failed, cannot search frames",
+                    level="WARNING",
+                )
                 return []
 
         # Build filter conditions
@@ -262,12 +263,16 @@ class SearchRepository:
             try:
                 query_vector = await self.visual_encoder.encode_text(query)
             except Exception as ve:
-                log(f"Visual encoder failed, falling back to text encoder: {ve}")
+                log(
+                    f"Visual encoder failed, falling back to text encoder: {ve}"
+                )
             if not query_vector:
                 # Fallback: text encoder — may produce lower-quality results
                 # but still better than no vector search at all
                 await self._ensure_encoder_loaded()
-                query_vector = (await self.encode_texts(query, is_query=True))[0]
+                query_vector = (await self.encode_texts(query, is_query=True))[
+                    0
+                ]
 
             conditions = []
             if video_paths:
@@ -1456,4 +1461,3 @@ class SearchRepository:
         )
 
         return results[:limit]
-

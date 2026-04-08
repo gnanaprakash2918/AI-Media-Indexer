@@ -116,6 +116,7 @@ class BiometricArbitrator:
             True if faces should be merged.
         """
         import asyncio
+
         return await asyncio.to_thread(
             self.should_merge_sync, emb1, emb2, primary_sim
         )

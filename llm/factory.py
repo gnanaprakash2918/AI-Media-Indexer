@@ -50,7 +50,7 @@ from .ollama import OllamaLLM
 # Lazy import for Gemini to avoid triggering google-generativeai SDK errors
 # when user is not using Gemini
 if TYPE_CHECKING:
-    from .gemini import GeminiLLM
+    pass
 
 # Supported providers - easily add new ones here
 SUPPORTED_PROVIDERS = ("gemini", "ollama", "openai", "anthropic")
@@ -112,6 +112,7 @@ class LLMFactory:
             # SPEED: Fast (~1-2s for vision)
             # Lazy import to avoid triggering google-generativeai SDK errors
             from .gemini import GeminiLLM
+
             return GeminiLLM(prompt_dir=prompt_dir, **kwargs)
 
         elif provider == "ollama":

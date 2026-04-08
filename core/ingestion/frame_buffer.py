@@ -26,7 +26,9 @@ class FrameBuffer:
         Validates timestamp before adding. Skips frames with invalid timestamps.
         """
         timestamp = frame_data.get("timestamp")
-        if timestamp is None or (isinstance(timestamp, (int, float)) and timestamp < 0):
+        if timestamp is None or (
+            isinstance(timestamp, (int, float)) and timestamp < 0
+        ):
             video_path = frame_data.get("video_path", "unknown")
             logger.warning(
                 f"[FrameBuffer] Skipping frame with invalid timestamp={timestamp} "

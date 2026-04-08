@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
-
 import uuid
 
 from qdrant_client import QdrantClient

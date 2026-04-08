@@ -257,6 +257,7 @@ class VideoProcessor:
             if frame_count % cleanup_interval == 0:
                 self.pipeline._cleanup_memory(context=f"frame_{frame_count}")
                 from core.utils.device import empty_cache
+
                 empty_cache()
 
                 await resource_manager.throttle_if_needed("compute")
@@ -660,6 +661,7 @@ class VideoProcessor:
             finally:
                 cleanup_vram()
                 from core.utils.device import empty_cache
+
                 empty_cache()
 
             return description

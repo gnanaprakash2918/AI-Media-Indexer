@@ -171,10 +171,18 @@ class OCRProcessor:
             try:
                 result = await asyncio.to_thread(self.ocr.ocr, frame, cls=True)
             except Exception as inner_e:
-                if "OneDnnContext" in str(inner_e) or "operator <" in str(inner_e):
-                    log.warning("[OCR] PaddleOCR layout bug detected, retrying with padded frame...")
-                    padded = np.pad(frame, ((2, 2), (2, 2), (0, 0)), mode="edge")
-                    result = await asyncio.to_thread(self.ocr.ocr, padded, cls=True)
+                if "OneDnnContext" in str(inner_e) or "operator <" in str(
+                    inner_e
+                ):
+                    log.warning(
+                        "[OCR] PaddleOCR layout bug detected, retrying with padded frame..."
+                    )
+                    padded = np.pad(
+                        frame, ((2, 2), (2, 2), (0, 0)), mode="edge"
+                    )
+                    result = await asyncio.to_thread(
+                        self.ocr.ocr, padded, cls=True
+                    )
                 else:
                     raise inner_e
 

@@ -314,7 +314,9 @@ class RerankingCouncil:
         # Cross-encoder scoring
         if self._cross_encoder:
             try:
-                pairs = [(query, candidate_texts[i]) for i in range(len(candidates))]
+                pairs = [
+                    (query, candidate_texts[i]) for i in range(len(candidates))
+                ]
                 ce_scores = self._cross_encoder.predict(list(pairs))
                 for i, score in enumerate(ce_scores):
                     scores[i]["cross"] = float(score)
@@ -325,7 +327,9 @@ class RerankingCouncil:
         # BGE-Reranker scoring
         if self._bge_reranker:
             try:
-                pairs = [(query, candidate_texts[i]) for i in range(len(candidates))]
+                pairs = [
+                    (query, candidate_texts[i]) for i in range(len(candidates))
+                ]
                 bge_scores = self._bge_reranker.compute_score(pairs)
                 if bge_scores is not None:
                     if isinstance(bge_scores, (int, float)):
@@ -365,7 +369,9 @@ class RerankingCouncil:
                 q_enc = await self._colbert.encode_query(query)
                 if q_enc:
                     # Encode all candidates (batch)
-                    d_encs = await self._colbert.encode_documents(candidate_texts)
+                    d_encs = await self._colbert.encode_documents(
+                        candidate_texts
+                    )
 
                     for i, d_enc in enumerate(d_encs):
                         # Compute MaxSim score
@@ -380,6 +386,7 @@ class RerankingCouncil:
 
         # Sigmoid normalization for BGE scores (raw logits can be -10..+10)
         import math
+
         def _sigmoid(x: float) -> float:
             try:
                 return 1.0 / (1.0 + math.exp(-x))
@@ -564,7 +571,9 @@ class RerankingCouncil:
                 consistency = max(0.0, 1.0 - (std_dev / max(avg_conf, 1.0)))
 
                 # Blend: high consistency → trust max; low consistency → lean toward avg
-                final_conf = int(max_conf * consistency + avg_conf * (1 - consistency))
+                final_conf = int(
+                    max_conf * consistency + avg_conf * (1 - consistency)
+                )
 
                 if consistency > 0.8:
                     reason = f"Consistent across {len(frame_scores)} frames (σ={std_dev:.0f}): {frame_reasons[0] if frame_reasons else 'no detail'}"
@@ -572,7 +581,11 @@ class RerankingCouncil:
                     reason = f"Mixed signals across {len(frame_scores)} frames (σ={std_dev:.0f}): {', '.join(frame_reasons[:2])}"
             else:
                 final_conf = int(max_conf)
-                reason = frame_reasons[0] if frame_reasons else "Single frame analysis"
+                reason = (
+                    frame_reasons[0]
+                    if frame_reasons
+                    else "Single frame analysis"
+                )
 
             return RerankScore(confidence=final_conf, reason=reason)
 

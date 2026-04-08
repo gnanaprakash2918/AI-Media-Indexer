@@ -6,8 +6,6 @@ VectorDB inherits from FaceRepository to compose these methods.
 
 from __future__ import annotations
 
-from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
-
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -15,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from qdrant_client.http import models
 
 from config import settings
+from core.domain.values import ClusterId, Timestamp, VideoPath
 from core.utils.logger import log
 
 if TYPE_CHECKING:
@@ -74,7 +73,9 @@ class FaceRepository:
         import uuid
 
         # Deterministic UUID for the centroid
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"face_centroid_{cluster_id}"))
+        point_id = str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, f"face_centroid_{cluster_id}")
+        )
 
         try:
             self.client.upsert(
@@ -93,7 +94,10 @@ class FaceRepository:
                 ],
             )
         except Exception as e:
-            log(f"Failed to upsert face centroid {cluster_id}: {e}", level="ERROR")
+            log(
+                f"Failed to upsert face centroid {cluster_id}: {e}",
+                level="ERROR",
+            )
 
     def get_cluster_id_by_name(self, name: str) -> int | None:
         """Resolve a person's name to their cluster ID.
@@ -410,7 +414,9 @@ class FaceRepository:
         except Exception:
             return 0
 
-    def update_face_cluster_id(self, face_id: str, cluster_id: int | ClusterId) -> bool:
+    def update_face_cluster_id(
+        self, face_id: str, cluster_id: int | ClusterId
+    ) -> bool:
         """Update the cluster ID for a single face.
 
         Args:
@@ -503,7 +509,9 @@ class FaceRepository:
         except Exception:
             return 0
 
-    def set_face_main(self, cluster_id: int | ClusterId, is_main: bool = True) -> bool:
+    def set_face_main(
+        self, cluster_id: int | ClusterId, is_main: bool = True
+    ) -> bool:
         """Set a face cluster as main character.
 
         This updates all faces in the cluster with is_main_character flag.
@@ -804,7 +812,10 @@ class FaceRepository:
             return {}
 
     def update_cluster_centroid(
-        self, cluster_id: int | ClusterId, new_embedding: list[float], alpha: float = 0.3
+        self,
+        cluster_id: int | ClusterId,
+        new_embedding: list[float],
+        alpha: float = 0.3,
     ) -> bool:
         """Update cluster centroid with exponential moving average.
 
@@ -1503,18 +1514,19 @@ class FaceRepository:
             faces = []
             for point in results:
                 payload = point.payload or {}
-                faces.append({
-                    "id": str(point.id),
-                    "name": payload.get("name"),
-                    "cluster_id": payload.get("cluster_id"),
-                    "timestamp": payload.get("timestamp"),
-                    "bbox": payload.get("bbox"),
-                    "bbox_size": payload.get("bbox_size"),
-                    "det_score": payload.get("det_score"),
-                    "media_path": payload.get("media_path"),
-                })
+                faces.append(
+                    {
+                        "id": str(point.id),
+                        "name": payload.get("name"),
+                        "cluster_id": payload.get("cluster_id"),
+                        "timestamp": payload.get("timestamp"),
+                        "bbox": payload.get("bbox"),
+                        "bbox_size": payload.get("bbox_size"),
+                        "det_score": payload.get("det_score"),
+                        "media_path": payload.get("media_path"),
+                    }
+                )
             return faces
         except Exception as e:
             log(f"get_faces_in_range failed: {e}")
             return []
-

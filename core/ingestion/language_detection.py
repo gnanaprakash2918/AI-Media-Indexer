@@ -118,8 +118,16 @@ def _run_detection_with_confidence_sync(
 
             # Boost confidence for Indic languages (Whisper often underestimates)
             indic_langs = [
-                "ta", "hi", "te", "ml", "kn",
-                "bn", "gu", "mr", "or", "pa",
+                "ta",
+                "hi",
+                "te",
+                "ml",
+                "kn",
+                "bn",
+                "gu",
+                "mr",
+                "or",
+                "pa",
             ]
             if detected_lang in indic_langs and confidence > 0.2:
                 confidence = min(confidence * 1.5, 0.95)

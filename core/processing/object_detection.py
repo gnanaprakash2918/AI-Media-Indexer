@@ -78,15 +78,15 @@ class ObjectDetector:
 
             try:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
-                
+
                 # Persistent load: Allocate VRAM and register cleanup
-                if not await RESOURCE_ARBITER.ensure_loaded("yolo_world", vram_gb=1.0, cleanup_fn=self.cleanup):
+                if not await RESOURCE_ARBITER.ensure_loaded(
+                    "yolo_world", vram_gb=1.0, cleanup_fn=self.cleanup
+                ):
                     log.warning("[YOLO-World] VRAM full, cannot load")
                     return False
 
-                log.info(
-                    f"[YOLO-World] Loading model size={self.model_size}"
-                )
+                log.info(f"[YOLO-World] Loading model size={self.model_size}")
 
                 try:
                     from ultralytics import YOLO  # type: ignore
@@ -244,6 +244,7 @@ class ObjectDetector:
             self.model = None
 
         from core.utils.device import empty_cache
+
         empty_cache()
 
         log.info("[YOLO-World] Resources released")
@@ -280,7 +281,9 @@ class GroundingDINODetector:
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
 
                 # Persistent load
-                if not await RESOURCE_ARBITER.ensure_loaded("grounding_dino", vram_gb=2.0, cleanup_fn=self.cleanup):
+                if not await RESOURCE_ARBITER.ensure_loaded(
+                    "grounding_dino", vram_gb=2.0, cleanup_fn=self.cleanup
+                ):
                     log.warning("[GroundingDINO] VRAM full, cannot load")
                     return False
 
@@ -410,6 +413,7 @@ class GroundingDINODetector:
             self.processor = None
 
         from core.utils.device import empty_cache
+
         empty_cache()
 
         log.info("[GroundingDINO] Resources released")

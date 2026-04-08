@@ -11,6 +11,7 @@ from llm.factory import LLMFactory
 
 log = get_logger(__name__)
 
+
 class GraphSearcher:
     """Exploits the Graph for complex retrieval."""
 
@@ -19,7 +20,9 @@ class GraphSearcher:
         # We can use a specialized small LLM for Cypher generation if needed
         self.llm = LLMFactory.create_llm()
 
-    async def search(self, query: str, entities: List[str] = None, actions: List[str] = None) -> List[Dict[str, Any]]:
+    async def search(
+        self, query: str, entities: List[str] = None, actions: List[str] = None
+    ) -> List[Dict[str, Any]]:
         """Main entry point for Graph Search.
         For Phase 1, we implement a robust heuristic search:
         - Find connection between entities.
@@ -53,7 +56,7 @@ class GraphSearcher:
         # Cypher: Find scenes containing Person A and Person B
         cypher = """
         MATCH (s:Scene)
-        WHERE 
+        WHERE
             EXISTS {
                 MATCH (p1:Person)-[:APPEARED_IN]->(s)
                 WHERE p1.id CONTAINS $e1 OR p1.cluster_id = $e1_int
@@ -74,10 +77,15 @@ class GraphSearcher:
         e2_int = int(e2) if str(e2).isdigit() else -1
 
         try:
-            return self.store.query(cypher, {
-                "e1": str(e1), "e1_int": e1_int,
-                "e2": str(e2), "e2_int": e2_int
-            })
+            return self.store.query(
+                cypher,
+                {
+                    "e1": str(e1),
+                    "e1_int": e1_int,
+                    "e2": str(e2),
+                    "e2_int": e2_int,
+                },
+            )
         except Exception as e:
             log.error(f"[GraphSearch] Interaction search failed: {e}")
             return []
@@ -92,7 +100,9 @@ class GraphSearcher:
         """
         return self.store.query(cypher, {"action": action.lower()})
 
-    def _deduplicate(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _deduplicate(
+        self, results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         seen = set()
         unique = []
         for r in results:

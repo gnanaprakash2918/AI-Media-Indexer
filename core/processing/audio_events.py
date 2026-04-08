@@ -29,6 +29,7 @@ class AudioEventDetector:
         if self._device:
             return self._device
         from core.utils.device import get_device
+
         return get_device()
 
     async def _lazy_load(self) -> bool:
@@ -61,9 +62,7 @@ class AudioEventDetector:
                 self.processor = ClapProcessor.from_pretrained(
                     settings.clap_model_id
                 )
-                self.model = ClapModel.from_pretrained(
-                    settings.clap_model_id
-                )
+                self.model = ClapModel.from_pretrained(settings.clap_model_id)
 
                 # Load AST for predictive tagging (Dynamic Ontology)
                 self.ast_processor = AutoFeatureExtractor.from_pretrained(
@@ -80,6 +79,7 @@ class AudioEventDetector:
 
                 # Register cleanup for emergency unloading
                 from core.utils.resource_arbiter import RESOURCE_ARBITER
+
                 RESOURCE_ARBITER.register_model("clap", self.cleanup)
 
                 log.info(f"[CLAP] Model loaded on {device}")
@@ -499,8 +499,6 @@ class AudioEventDetector:
             log.error(f"[CLAP] Text encoding failed: {e}")
             return None
 
-
-
     async def predict_events_dynamic(
         self,
         audio_chunks: list[tuple[np.ndarray, float]],
@@ -680,8 +678,10 @@ class AudioEventDetector:
             self.ast_processor = None
 
         try:
-            import torch
             import gc
+
+            import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             gc.collect()
@@ -689,6 +689,7 @@ class AudioEventDetector:
             pass
 
         from core.utils.resource_arbiter import safe_cleanup_vram
+
         safe_cleanup_vram()
 
         log.info("[CLAP/AST] All resources released")
@@ -704,4 +705,3 @@ def get_audio_detector(device: str | None = None) -> AudioEventDetector:
     if _AUDIO_DETECTOR is None:
         _AUDIO_DETECTOR = AudioEventDetector(device=device)
     return _AUDIO_DETECTOR
-

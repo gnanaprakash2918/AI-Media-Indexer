@@ -107,7 +107,7 @@ async def set_council_mode(
         log.warning(f"[API] Invalid council mode '{update.mode}': {e}")
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid mode: must be 'oss_only', 'commercial_only', or 'combined'"
+            detail="Invalid mode: must be 'oss_only', 'commercial_only', or 'combined'",
         ) from e
 
 

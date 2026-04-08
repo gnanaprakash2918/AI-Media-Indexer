@@ -26,6 +26,7 @@ class VoiceTrackManager:
     # These will be available via IdentityGraphManager inheritance
     db_path: str
     _lock: Lock
+
     # Type stub for type checkers
     def __getattr__(self, name: str) -> Any: ...
 
@@ -130,4 +131,3 @@ class VoiceTrackManager:
             speaker_label=row["speaker_label"],
             total_duration=row["total_duration"],
         )
-

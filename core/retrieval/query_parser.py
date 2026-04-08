@@ -8,12 +8,11 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
+from config import settings
 from core.knowledge.schemas import ParsedQuery
 from core.utils.logger import log
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
-
-from config import settings
 
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
@@ -33,7 +32,9 @@ class QueryParserMixin:
     llm: LLMInterface
 
     def _init_cache(self) -> None:
-        self._query_cache: OrderedDict[str, tuple[list[float], float]] = OrderedDict()
+        self._query_cache: OrderedDict[str, tuple[list[float], float]] = (
+            OrderedDict()
+        )
         self._cache_ttl = 3600
         self._cache_max_size = 1000
 
@@ -58,7 +59,8 @@ class QueryParserMixin:
     def _evict_expired_cache(self) -> None:
         now = time.time()
         expired_keys = [
-            k for k, (_, ts) in self._query_cache.items()
+            k
+            for k, (_, ts) in self._query_cache.items()
             if now - ts >= self._cache_ttl
         ]
         for k in expired_keys:
@@ -89,7 +91,9 @@ class QueryParserMixin:
                 return cluster_id
             cluster_id = self.db.fuzzy_get_cluster_id_by_name(person_name)
             if cluster_id:
-                log(f"[Search] Fuzzy matched '{person_name}' → cluster {cluster_id}")
+                log(
+                    f"[Search] Fuzzy matched '{person_name}' → cluster {cluster_id}"
+                )
             return cluster_id
         except Exception:
             return None

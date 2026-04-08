@@ -10,7 +10,6 @@ import uuid
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-
 from core.storage.identity_models import (
     TemporalEvent,
 )
@@ -25,6 +24,7 @@ class TemporalEventManager:
     # These will be available via IdentityGraphManager inheritance
     db_path: str
     _lock: Lock
+
     # Type stub for type checkers
     def __getattr__(self, name: str) -> Any: ...
 
@@ -65,4 +65,3 @@ class TemporalEventManager:
             event_type=event_type,
             description=description,
         )
-

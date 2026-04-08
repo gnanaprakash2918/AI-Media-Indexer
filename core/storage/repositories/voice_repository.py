@@ -6,14 +6,13 @@ VectorDB inherits from VoiceRepository to compose these methods.
 
 from __future__ import annotations
 
-from core.domain.values import VideoPath, Timestamp, ClusterId, JobId
-
 import uuid
 from typing import TYPE_CHECKING, Any
 
 from qdrant_client.http import models
 
 from config import settings
+from core.domain.values import ClusterId, Timestamp, VideoPath
 from core.utils.logger import log
 
 if TYPE_CHECKING:
@@ -175,7 +174,9 @@ class VoiceRepository:
         import uuid
 
         # Deterministic UUID for the centroid
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"voice_centroid_{cluster_id}"))
+        point_id = str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, f"voice_centroid_{cluster_id}")
+        )
 
         try:
             self.client.upsert(
@@ -195,7 +196,10 @@ class VoiceRepository:
                 ],
             )
         except Exception as e:
-            log(f"Failed to upsert voice centroid {cluster_id}: {e}", level="ERROR")
+            log(
+                f"Failed to upsert voice centroid {cluster_id}: {e}",
+                level="ERROR",
+            )
 
     def upsert_speaker_embedding(
         self,
@@ -382,7 +386,7 @@ class VoiceRepository:
         video_path: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search voice segments using keyword/substring matching.
-        
+
         NOTE: Semantic vector search is disabled for voice segments because the
         collection currently stores speaker embeddings (256d), not text embeddings (1024d).
         Unlocks 'search by transcript' functionality via text matching.
@@ -399,34 +403,30 @@ class VoiceRepository:
         try:
             # Build filter conditions for Keyword Search
             should_conditions = []
-            
+
             # 1. Search in transcription text
             should_conditions.append(
                 models.FieldCondition(
-                    key="text", 
-                    match=models.MatchText(text=query)
+                    key="text", match=models.MatchText(text=query)
                 )
             )
             should_conditions.append(
                 models.FieldCondition(
-                    key="transcription", 
-                    match=models.MatchText(text=query)
+                    key="transcription", match=models.MatchText(text=query)
                 )
             )
-            
+
             # 2. Search in speaker name
             should_conditions.append(
                 models.FieldCondition(
-                    key="speaker_name", 
-                    match=models.MatchText(text=query)
+                    key="speaker_name", match=models.MatchText(text=query)
                 )
             )
 
             # 3. Search in speaker_id (exact match or partial)
             should_conditions.append(
                 models.FieldCondition(
-                    key="speaker_id", 
-                    match=models.MatchText(text=query)
+                    key="speaker_id", match=models.MatchText(text=query)
                 )
             )
 
@@ -441,7 +441,7 @@ class VoiceRepository:
 
             query_filter = models.Filter(
                 should=should_conditions,
-                must=must_conditions if must_conditions else None
+                must=must_conditions if must_conditions else None,
             )
 
             # Use Scroll (no vector scoring)
@@ -478,7 +478,9 @@ class VoiceRepository:
                         "start": ts_start,
                         "end": ts_end,
                         "video_path": payload.get("media_path"),
-                        "media_path": payload.get("media_path"),  # Also standardize path
+                        "media_path": payload.get(
+                            "media_path"
+                        ),  # Also standardize path
                         **payload,
                     }
                 )
@@ -536,8 +538,10 @@ class VoiceRepository:
                         "media_path": payload.get("media_path"),
                         "start": payload.get("start"),
                         "end": payload.get("end"),
-                        "start_time": payload.get("start_time") or payload.get("start"),
-                        "end_time": payload.get("end_time") or payload.get("end"),
+                        "start_time": payload.get("start_time")
+                        or payload.get("start"),
+                        "end_time": payload.get("end_time")
+                        or payload.get("end"),
                         "speaker_label": payload.get("speaker_label"),
                         "audio_path": payload.get("audio_path"),
                         "emotion": payload.get("emotion"),
@@ -636,7 +640,9 @@ class VoiceRepository:
         except Exception:
             return []
 
-    def update_voice_cluster_id(self, segment_id: str, cluster_id: int | ClusterId) -> bool:
+    def update_voice_cluster_id(
+        self, segment_id: str, cluster_id: int | ClusterId
+    ) -> bool:
         """Update the voice_cluster_id for a voice segment.
 
         Args:
@@ -980,7 +986,9 @@ class VoiceRepository:
 
         return result
 
-    def get_speaker_name_by_cluster(self, cluster_id: int | ClusterId) -> str | None:
+    def get_speaker_name_by_cluster(
+        self, cluster_id: int | ClusterId
+    ) -> str | None:
         """Get HITL-assigned name for a speaker cluster.
 
         Args:
@@ -1105,7 +1113,10 @@ class VoiceRepository:
             return 0
 
     def re_embed_voice_cluster_frames(
-        self, cluster_id: int | ClusterId, new_name: str, old_name: str | None = None
+        self,
+        cluster_id: int | ClusterId,
+        new_name: str,
+        old_name: str | None = None,
     ) -> int:
         """Update and re-embed all frames associated with a voice cluster.
 
@@ -1281,4 +1292,3 @@ class VoiceRepository:
         except Exception as e:
             log(f"get_voice_segments_in_range failed: {e}")
             return []
-

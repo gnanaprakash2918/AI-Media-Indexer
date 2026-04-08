@@ -10,10 +10,12 @@ import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
 import torch
 from qdrant_client.http import models
 
 from config import settings
+from core.domain.schemas import MediaType
 from core.errors import IngestionError, MediaIndexerError
 from core.llm.video_vlm import VideoVLM
 from core.processing.extractor import FrameExtractor
@@ -26,7 +28,6 @@ from core.processing.scene_detector import detect_scenes
 from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
-from core.domain.schemas import MediaType
 from core.storage.db import VectorDB
 from core.tracking.sam3_tracker import SAM3Tracker
 from core.utils.frame_sampling import FrameSampler
@@ -40,21 +41,19 @@ from core.utils.retry import retry
 VLM_SEMAPHORE = asyncio.Semaphore(settings.vlm_concurrency)
 
 
-
-
-from core.ingestion.stages.audio_stage import AudioStageMixin
-from core.ingestion.stages.voice_stage import VoiceStageMixin
 from core.ingestion.stages.audio_events_stage import AudioEventsStageMixin
+from core.ingestion.stages.audio_stage import AudioStageMixin
 from core.ingestion.stages.frame_stage import FrameStageMixin
 from core.ingestion.stages.scene_stage import SceneStageMixin
-
-from core.ports.storage import StorageBackend
+from core.ingestion.stages.voice_stage import VoiceStageMixin
 from core.ports.processors import (
     FaceTracker as FaceTrackerProtocol,
     VisionAnalyzer as VisionAnalyzerProtocol,
-    VoiceProcessor as VoiceProcessorProtocol,
     VLMProcessor as VLMProcessorProtocol,
+    VoiceProcessor as VoiceProcessorProtocol,
 )
+from core.ports.storage import StorageBackend
+
 
 class IngestionPipeline(
     AudioStageMixin,
@@ -103,7 +102,7 @@ class IngestionPipeline(
         self.ocr_engine = get_ocr_engine()
         self.text_gate = TextGatedOCR()
         self.extractor = FrameExtractor()
-        
+
         # Inject or instantiate dependencies
         self.db = db or VectorDB(
             backend=qdrant_backend,
@@ -122,7 +121,7 @@ class IngestionPipeline(
         self.transnet = TransNetV2()
         self.video_vlm = video_vlm or VideoVLM()
         self.voice_processor = voice_processor or VoiceProcessor(db=self.db)
-        
+
         self.frame_interval_seconds = frame_interval_seconds
         self.vision: VisionAnalyzerProtocol | None = None
         self.faces: FaceTrackerProtocol | None = None
@@ -130,12 +129,15 @@ class IngestionPipeline(
 
         # GraphRAG Builder (Lazy load later or init here if safe)
         from core.knowledge.graph_builder import GraphBuilder
+
         self.graph_builder = GraphBuilder()
 
         # Enhanced pipeline config for SmartFrameSampler, BiometricArbitrator, etc.
         self._enhanced_config = None
         self._face_clusters: dict[int, list[float]] = {}
-        self._face_cluster_lock = asyncio.Lock()  # Prevents race during parallel face clustering
+        self._face_cluster_lock = (
+            asyncio.Lock()
+        )  # Prevents race during parallel face clustering
 
         # Deep Video Understanding (SAM 3)
         self.sam3_tracker = (
@@ -176,10 +178,12 @@ class IngestionPipeline(
         """Force garbage collection and clear CUDA cache."""
         gc.collect()
         from core.utils.device import empty_cache
+
         empty_cache()
 
         try:
             from core.utils.hardware import log_vram_status
+
             log_vram_status(context or "cleanup")
         except Exception:
             pass
@@ -195,6 +199,7 @@ class IngestionPipeline(
         """Clear probe cache (call after video processing complete)."""
         self._probe_cache.clear()
         from core.processing.prober import clear_probe_cache as _clear_global
+
         _clear_global()
 
     @observe("process_video")
@@ -232,7 +237,9 @@ class IngestionPipeline(
         self._audio_classification = None
 
         path = Path(video_path)
-        log_verbose(f"[Pipeline] Resolved path: {path}, exists={path.exists()}, size={path.stat().st_size if path.exists() else 0}")
+        log_verbose(
+            f"[Pipeline] Resolved path: {path}, exists={path.exists()}, size={path.stat().st_size if path.exists() else 0}"
+        )
 
         progress_tracker.start(
             job_id,
@@ -309,7 +316,11 @@ class IngestionPipeline(
         )
 
         # Track trimmed file for cleanup at end of processing
-        self._trimmed_path = trimmed_path if (start_time is not None or end_time is not None) else None
+        self._trimmed_path = (
+            trimmed_path
+            if (start_time is not None or end_time is not None)
+            else None
+        )
 
         _ = await self.metadata_engine.identify(path, user_hint=hint_enum)
 
@@ -327,7 +338,9 @@ class IngestionPipeline(
             settings, "chunk_duration_seconds", 600
         )  # 10 min default
         if chunk_duration <= 0:
-            logger.warning(f"[Pipeline] Invalid chunk_duration={chunk_duration}, defaulting to 600s")
+            logger.warning(
+                f"[Pipeline] Invalid chunk_duration={chunk_duration}, defaulting to 600s"
+            )
             chunk_duration = 600
         min_length_for_chunk = getattr(
             settings, "min_media_length_for_chunking", 1800
@@ -505,9 +518,13 @@ class IngestionPipeline(
                     progress_tracker.update(job_id, progress_base)
 
                     await retry(
-                        lambda cs=chunk_start, ce=chunk_end: self._process_frames(
-                            path, job_id, total_duration=duration,
-                            chunk_start=cs, chunk_end=ce,
+                        lambda cs=chunk_start,
+                        ce=chunk_end: self._process_frames(
+                            path,
+                            job_id,
+                            total_duration=duration,
+                            chunk_start=cs,
+                            chunk_end=ce,
                         ),
                         on_retry=lambda e: progress_tracker.increment_retry(
                             job_id, "frames"
@@ -525,7 +542,12 @@ class IngestionPipeline(
                     f"scene_captions_chunk_{current_chunk}",
                     "Generating scene captions",
                 ):
-                    await self._process_scene_captions(path, job_id, chunk_start=chunk_start, chunk_end=chunk_end)
+                    await self._process_scene_captions(
+                        path,
+                        job_id,
+                        chunk_start=chunk_start,
+                        chunk_end=chunk_end,
+                    )
 
                 # MEMORY CLEANUP between chunks
                 self._cleanup_memory(f"chunk_{current_chunk}_complete")
@@ -566,25 +588,6 @@ class IngestionPipeline(
                 f"Unexpected pipeline failure: {e}", original_error=e
             )
 
-    @observe("audio_processing")
-
-
-
-
-    @observe("voice_processing")
-
-    @observe("audio_events")
-
-
-
-    @observe("frame_processing")
-
-
-
-    @observe("scene_captioning")
-
-    @observe("frame")
-
     def _get_speaker_clusters_at_time(
         self, media_path: str, timestamp: float
     ) -> list[int]:
@@ -594,6 +597,7 @@ class IngestionPipeline(
         ATSC standard: 45ms audio lead, 125ms lag acceptable.
         """
         from config import settings
+
         tol = settings.face_audio_sync_tolerance  # Default 0.3s
 
         clusters = []
@@ -687,7 +691,6 @@ class IngestionPipeline(
         except Exception:
             return []
 
-
     def _prepare_segments_for_db(
         self,
         *,
@@ -759,8 +762,12 @@ class IngestionPipeline(
                 try:
                     full_masklets = self.db.get_masklets_for_media(media_path)
                     if full_masklets:
-                        self.graph_builder.process_masklets(media_path, full_masklets)
-                        logger.info(f"[Graph] Ingested {len(full_masklets)} masklet nodes.")
+                        self.graph_builder.process_masklets(
+                            media_path, full_masklets
+                        )
+                        logger.info(
+                            f"[Graph] Ingested {len(full_masklets)} masklet nodes."
+                        )
                 except Exception as e:
                     logger.warning(f"[Graph] Masklet ingestion failed: {e}")
 
@@ -867,7 +874,6 @@ class IngestionPipeline(
         Returns:
             The relative web path to the generated thumbnail, or None on failure.
         """
-
         try:
             thumb_dir = settings.cache_dir / "thumbnails" / "videos"
             thumb_dir.mkdir(parents=True, exist_ok=True)

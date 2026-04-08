@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -98,7 +97,9 @@ async def get_social_graph(
 
     except Exception as e:
         log(f"Social graph lookup failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/timeline/{video_path:path}")
@@ -132,7 +133,9 @@ async def get_scene_timeline(
         }
     except Exception as e:
         log(f"Scene timeline failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 class SequenceSearchRequest(BaseModel):
@@ -180,7 +183,9 @@ async def find_temporal_sequence(
         }
     except Exception as e:
         log(f"Sequence search failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e
 
 
 @router.get("/stats")
@@ -196,4 +201,6 @@ async def get_graphrag_stats(request: Request):
         }
     except Exception as e:
         log(f"GraphRAG stats failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from e

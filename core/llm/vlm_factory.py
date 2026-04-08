@@ -132,7 +132,9 @@ class GeminiVLM(VLMClient):
                 genai.configure(api_key=self.api_key)  # type: ignore
                 self._client = genai.GenerativeModel(self.model)  # type: ignore
             except ImportError:
-                log("[GeminiVLM] google-generativeai not installed, Gemini disabled")
+                log(
+                    "[GeminiVLM] google-generativeai not installed, Gemini disabled"
+                )
                 return None
             except Exception as e:
                 log(f"[GeminiVLM] Failed to initialize: {e}")

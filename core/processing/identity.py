@@ -24,15 +24,14 @@ from sklearn.cluster import HDBSCAN  # type: ignore
 
 from config import settings
 from core.domain.schemas import DetectedFace
-from core.utils.observe import observe
-from core.utils.resource_arbiter import GPU_SEMAPHORE
-from core.utils.logger import log
 
 # =========================================================================
 # SYSTEM CAPABILITY DETECTION (delegates to hardware.py)
 # =========================================================================
-
 from core.utils.hardware import get_available_ram, get_available_vram
+from core.utils.logger import log
+from core.utils.observe import observe
+from core.utils.resource_arbiter import GPU_SEMAPHORE
 
 # High-end threshold: 32GB+ RAM or 8GB+ VRAM
 _HIGH_END_RAM_GB: Final[float] = 32.0
@@ -355,7 +354,6 @@ SFACE_URL: Final = (
 )
 
 
-
 # Model type for tracking which engine is in use
 ModelType = Literal["insightface", "sface", "yunet_only"]
 
@@ -420,7 +418,9 @@ class FaceManager:
         self._initialized = False
         self._init_lock = asyncio.Lock()
 
-        self.global_clusters: dict[int, list[float]] = dict(global_clusters) if global_clusters else {}
+        self.global_clusters: dict[int, list[float]] = (
+            dict(global_clusters) if global_clusters else {}
+        )
         self._next_cluster_id = max(self.global_clusters.keys(), default=0) + 1
 
         self._model_type: ModelType = "yunet_only"
@@ -601,11 +601,12 @@ class FaceManager:
                 gc.collect()
 
             self._insightface_app = app
-            
+
             # Register cleanup for emergency unloading
             from core.utils.resource_arbiter import RESOURCE_ARBITER
+
             RESOURCE_ARBITER.register_model("insightface", self.unload_gpu)
-            
+
             log(
                 f"[FaceManager] SUCCESS: Using InsightFace ArcFace (512-dim). Providers: {providers}"
             )
@@ -715,7 +716,10 @@ class FaceManager:
                 nms_threshold=settings.face_nms_threshold,
                 top_k=5000,
             )
-            log("[FaceManager] Using YuNet detection only - NO EMBEDDINGS", level="WARNING")
+            log(
+                "[FaceManager] Using YuNet detection only - NO EMBEDDINGS",
+                level="WARNING",
+            )
         except Exception as e:
             log(f"[FaceManager] YuNet init failed: {e}", level="ERROR")
 
@@ -780,6 +784,7 @@ class FaceManager:
                             continue
 
                         import cv2
+
                         bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                         # Inference in thread
                         try:
@@ -817,7 +822,10 @@ class FaceManager:
                                 res.append(dface)
                             chunk_results.append(res)
                         except Exception as e:
-                            log(f"[FaceManager] Batch inference failed: {e}", level="ERROR")
+                            log(
+                                f"[FaceManager] Batch inference failed: {e}",
+                                level="ERROR",
+                            )
                             chunk_results.append([])
 
                     elif self._model_type == "sface":

@@ -10,7 +10,6 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-
 from config import settings
 from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
@@ -27,6 +26,7 @@ class AudioStageMixin:
 
     # These will be available via IngestionPipeline inheritance
     db: VectorDB
+
     # Type stub for type checkers (allows accessing self.* in mixin)
     def __getattr__(self, name: str) -> Any: ...
 
@@ -175,9 +175,7 @@ class AudioStageMixin:
             )
             try:
                 with AudioTranscriber() as transcriber:
-                    async with RESOURCE_ARBITER.acquire(
-                        "whisper", vram_gb=1.5
-                    ):
+                    async with RESOURCE_ARBITER.acquire("whisper", vram_gb=1.5):
                         audio_segments = (
                             await transcriber.transcribe(
                                 path,
@@ -339,7 +337,6 @@ class AudioStageMixin:
                     f"[Loudness] Overall: {estimated_spl:.0f} dB SPL ({category}) [LUFS: {lufs:.1f}]"
                 )
 
-
                 # Store overall loudness in media metadata
                 self.db.update_media_metadata(
                     media_path=str(path),
@@ -368,25 +365,15 @@ class AudioStageMixin:
             # Load audio if not already loaded
             # SAFETY: Only load first 5 minutes for music structure to prevent OOM
             # Music structure (verse/chorus) is typically established early
-            if "audio_array" not in locals():
-                import librosa
+            import librosa
 
-                max_duration = 300.0  # 5 minutes max for music analysis
-                audio_array, sr = librosa.load(
-                    str(path), sr=22050, mono=True, duration=max_duration
-                )
-                log(
-                    f"[MusicStructure] Loaded {len(audio_array) / sr:.1f}s audio (limited to {max_duration}s)"
-                )
-            else:
-                # Resample to 22050 for librosa if needed
-                if "sr" in locals() and sr != 22050:
-                    import librosa
-
-                    audio_array = librosa.resample(
-                        audio_array, orig_sr=sr, target_sr=22050
-                    )
-                    sr = 22050
+            max_duration = 300.0  # 5 minutes max for music analysis
+            audio_array, sr = librosa.load(
+                str(path), sr=22050, mono=True, duration=max_duration
+            )
+            log(
+                f"[MusicStructure] Loaded {len(audio_array) / sr:.1f}s audio (limited to {max_duration}s)"
+            )
 
             # Analyze music structure
             analysis = music_analyzer.analyze_array(audio_array, sr=22050)
@@ -438,6 +425,7 @@ class AudioStageMixin:
     async def _detect_audio_language(self, path: Path) -> str:
         """Detect audio language. Delegates to language_detection module."""
         from core.ingestion.language_detection import detect_audio_language
+
         return await detect_audio_language(path)
 
     async def _detect_audio_language_with_confidence(
@@ -447,8 +435,10 @@ class AudioStageMixin:
         duration: float = 30.0,
     ) -> tuple[str, float]:
         """Detect audio language with confidence. Delegates to language_detection module."""
-        from core.ingestion.language_detection import detect_audio_language_with_confidence
+        from core.ingestion.language_detection import (
+            detect_audio_language_with_confidence,
+        )
+
         return await detect_audio_language_with_confidence(
             path, start_offset=start_offset, duration=duration
         )
-

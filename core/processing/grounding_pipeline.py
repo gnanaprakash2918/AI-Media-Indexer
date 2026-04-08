@@ -37,6 +37,7 @@ class GroundingPipeline:
         """Lazy accessor for VectorDB."""
         if self._db is None:
             from core.storage.db import VectorDB
+
             self._db = VectorDB()
         return self._db
 
@@ -67,6 +68,7 @@ class GroundingPipeline:
 
         try:
             import cv2
+
             cap = cv2.VideoCapture(str(path))
             fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         except ImportError:
