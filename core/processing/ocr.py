@@ -223,10 +223,6 @@ class OCRProcessor:
                     "confidence": 0.0,
                 }
 
-            lines = []
-            boxes = []
-            confidences = []
-
             new_lines = []
             new_boxes = []
             new_confidences = []

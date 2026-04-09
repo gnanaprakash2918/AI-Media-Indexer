@@ -144,6 +144,7 @@ async def ingest_media(
         )
         try:
             from core.ingestion.pipeline import IngestionPipeline
+
             local_pipeline = IngestionPipeline()
             await local_pipeline.process_video(
                 file_path,
