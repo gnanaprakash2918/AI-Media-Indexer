@@ -716,21 +716,24 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
         for modality, results in all_results.items():
             weight = weights.get(modality, 0.1)
-            
+
             # --- Dynamic Thresholding per Modality ---
             # If weight is high (>0.4), set a looser threshold so recall is high.
             # If weight is low (<0.1), set a tighter threshold, avoiding noise.
             base_threshold = 0.5
-            if weight >= 0.4: threshold = 0.35  # loose
-            elif weight <= 0.1: threshold = 0.7 # tight
-            else: threshold = base_threshold
-            
+            if weight >= 0.4:
+                threshold = 0.35  # loose
+            elif weight <= 0.1:
+                threshold = 0.7  # tight
+            else:
+                threshold = base_threshold
+
             filtered_results = []
             for r in results:
                 raw = r.get("_raw_score", r.get("score", 0))
                 if raw >= threshold:
                     filtered_results.append(r)
-            
+
             # Continue RRF with filtered results
             for rank, result in enumerate(filtered_results, start=1):
                 result_id = result.get("id")

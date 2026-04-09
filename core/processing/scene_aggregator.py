@@ -321,9 +321,7 @@ class SceneAggregator:
             # Flat searchable lists built from per-person clothing data
             "clothing_types": list(set(all_clothing_types)),
             "clothing_descriptions": all_clothing_descriptions,
-            "accessories": list(
-                {a.lower() for a in all_accessory_names if a}
-            ),
+            "accessories": list({a.lower() for a in all_accessory_names if a}),
         }
 
         self.global_context.add_scene(scene_data)

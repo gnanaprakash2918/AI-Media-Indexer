@@ -103,7 +103,7 @@ class OCRProcessor:
         self.enable_angle_cls = enable_angle_cls
         self.ocr = None
         self._init_lock = asyncio.Lock()
-        
+
         # State for deduplication (IoU + Levenshtein)
         self._last_boxes = []
         self._last_texts = []
@@ -169,13 +169,18 @@ class OCRProcessor:
         def calculate_iou(box1, box2):
             """Calculate Intersection over Union for two polygon boxes."""
             try:
-                b1_x = [pt[0] for pt in box1]; b1_y = [pt[1] for pt in box1]
-                b2_x = [pt[0] for pt in box2]; b2_y = [pt[1] for pt in box2]
+                b1_x = [pt[0] for pt in box1]
+                b1_y = [pt[1] for pt in box1]
+                b2_x = [pt[0] for pt in box2]
+                b2_y = [pt[1] for pt in box2]
                 rect1 = (min(b1_x), min(b1_y), max(b1_x), max(b1_y))
                 rect2 = (min(b2_x), min(b2_y), max(b2_x), max(b2_y))
-                x_left = max(rect1[0], rect2[0]); y_top = max(rect1[1], rect2[1])
-                x_right = min(rect1[2], rect2[2]); y_bottom = min(rect1[3], rect2[3])
-                if x_right < x_left or y_bottom < y_top: return 0.0
+                x_left = max(rect1[0], rect2[0])
+                y_top = max(rect1[1], rect2[1])
+                x_right = min(rect1[2], rect2[2])
+                y_bottom = min(rect1[3], rect2[3])
+                if x_right < x_left or y_bottom < y_top:
+                    return 0.0
                 intersection_area = (x_right - x_left) * (y_bottom - y_top)
                 rect1_area = (rect1[2] - rect1[0]) * (rect1[3] - rect1[1])
                 rect2_area = (rect2[2] - rect2[0]) * (rect2[3] - rect2[1])
@@ -239,15 +244,19 @@ class OCRProcessor:
                 if conf >= min_confidence:
                     # Deduplication Logic (IoU + String Similarity)
                     is_duplicate = False
-                    for last_box, last_text in zip(self._last_boxes, self._last_texts):
+                    for last_box, last_text in zip(
+                        self._last_boxes, self._last_texts
+                    ):
                         iou = calculate_iou(box, last_box)
                         if iou > 0.4:
                             # High overlap. Check text similarity
-                            ratio = difflib.SequenceMatcher(None, text.lower(), last_text.lower()).ratio()
-                            if ratio >= 0.8: # >80% similar text
+                            ratio = difflib.SequenceMatcher(
+                                None, text.lower(), last_text.lower()
+                            ).ratio()
+                            if ratio >= 0.8:  # >80% similar text
                                 is_duplicate = True
                                 break
-                    
+
                     if not is_duplicate:
                         new_lines.append(text)
                         new_boxes.append(box)
@@ -258,7 +267,11 @@ class OCRProcessor:
             self._last_texts = [line[1][0] for line in result[0]]
 
             full_text = " ".join(new_lines)
-            avg_conf = sum(new_confidences) / len(new_confidences) if new_confidences else 0
+            avg_conf = (
+                sum(new_confidences) / len(new_confidences)
+                if new_confidences
+                else 0
+            )
 
             return {
                 "text": full_text,

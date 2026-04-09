@@ -124,6 +124,16 @@ async def unified_search(
     if not pipeline or not pipeline.db:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
+    # Phase 3: Dynamic Pattern Matching / Prompt Injection Defense
+    from core.security.query_sanitizer import query_sanitizer
+
+    is_safe, refusal_reason = await query_sanitizer.sanitize(q, pipeline.db)
+    if not is_safe:
+        logger.warning(
+            f"[Security] Rejected query '{q[:50]}...': {refusal_reason}"
+        )
+        raise HTTPException(status_code=400, detail=refusal_reason)
+
     pipeline_steps = []
 
     try:

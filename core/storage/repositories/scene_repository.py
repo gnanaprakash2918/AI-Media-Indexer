@@ -572,6 +572,7 @@ class SceneRepository:
         # Build full payload with modality presence flags for search filtering
         def _has_real_values(v):
             return any(abs(x) > _NEAR_ZERO for x in v[:10])
+
         full_payload = {
             "media_path": media_path,
             "start_time": start_time,
@@ -614,9 +615,14 @@ class SceneRepository:
 
         # HIERARCHICAL TREE: Link Children (Frames, Audio, OCR) to this Parent Scene
         try:
-            self._link_children_to_scene(scene_id, media_path, start_time, end_time)
+            self._link_children_to_scene(
+                scene_id, media_path, start_time, end_time
+            )
         except Exception as e:
-            log(f"Failed to link children to parent scene {scene_id}: {e}", level="WARNING")
+            log(
+                f"Failed to link children to parent scene {scene_id}: {e}",
+                level="WARNING",
+            )
 
         log(
             f"Stored scene {start_time:.1f}-{end_time:.1f}s for {Path(media_path).name}"
@@ -640,7 +646,9 @@ class SceneRepository:
                     scroll_filter=models.Filter(
                         must=[
                             models.FieldCondition(
-                                key="media_path" if collection != self.MEDIA_COLLECTION else "video_path",
+                                key="media_path"
+                                if collection != self.MEDIA_COLLECTION
+                                else "video_path",
                                 match=models.MatchValue(value=media_path),
                             )
                         ]
@@ -648,16 +656,20 @@ class SceneRepository:
                     limit=1000,
                     with_payload=True,
                 )
-                
+
                 point_ids = []
                 for point in resp:
                     if not point.payload:
                         continue
                     # Handle both time keys gracefully
-                    ts = float(point.payload.get("timestamp", point.payload.get("start", -1.0)))
+                    ts = float(
+                        point.payload.get(
+                            "timestamp", point.payload.get("start", -1.0)
+                        )
+                    )
                     if start_time <= ts <= end_time:
                         point_ids.append(point.id)
-                
+
                 if point_ids:
                     # 2. Bulk update payload for exactly these children
                     self.client.set_payload(
@@ -666,7 +678,10 @@ class SceneRepository:
                         points=point_ids,
                     )
             except Exception as e:
-                log(f"[HierarchicalTree] Warning processing collection {collection}: {e}", level="WARNING")
+                log(
+                    f"[HierarchicalTree] Warning processing collection {collection}: {e}",
+                    level="WARNING",
+                )
 
     async def store_scenelet(
         self,
