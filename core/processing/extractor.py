@@ -166,14 +166,12 @@ class FrameExtractor:
                     ]
                 )
 
-                log(f"Starting async ffmpeg stream for {path_obj.name}")
+                log(f"Starting sandboxed ffmpeg stream for {path_obj.name}")
 
-                process = await asyncio.create_subprocess_exec(
-                    *args_to_ffmpeg,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    limit=10 * 1024 * 1024,  # 10MB buffer
-                )
+                from core.ingestion.sandbox import MediaSandbox
+                sandbox = MediaSandbox(max_memory_mb=2048, timeout_seconds=14400) # 4 hours max for giant videos
+                
+                process = await sandbox.create_process(*args_to_ffmpeg)
 
                 # Read from stdout and delimit JPEGs
                 # JPEG Start of Image (SOI): FF D8
