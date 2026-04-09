@@ -130,11 +130,11 @@ if [ "$SKIP_DOCKER" = false ]; then
     fi
     
     if [ "$DISTRIBUTED" = true ]; then
-        docker-compose up -d qdrant redis
-        echo -e "  ${GREEN}Qdrant + Redis started (Distributed mode)${NC}"
+        docker-compose up -d qdrant redis neo4j
+        echo -e "  ${GREEN}Qdrant + Redis + Neo4j started (Distributed mode)${NC}"
     else
-        docker-compose up -d qdrant
-        echo -e "  ${GREEN}Qdrant started${NC}"
+        docker-compose up -d qdrant neo4j
+        echo -e "  ${GREEN}Qdrant + Neo4j started${NC}"
     fi
 else
     echo -e "${YELLOW}[4/5] Skipping Docker (--skip-docker)${NC}"
