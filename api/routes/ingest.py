@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from api.deps import get_pipeline
 from api.schemas import IngestRequest, ScanRequest
 from config import settings
-from core.ingestion.pipeline import IngestionPipeline
+from core.retrieval.query_pipeline import QueryPipeline
 from core.utils.logger import logger
 from core.utils.observability import end_trace, start_trace
 from core.utils.progress import progress_tracker
@@ -40,7 +40,7 @@ ALLOWED_MEDIA_EXTENSIONS = {
 async def ingest_media(
     ingest_request: IngestRequest,
     background_tasks: BackgroundTasks,
-    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    pipeline: Annotated[QueryPipeline, Depends(get_pipeline)],
 ) -> dict:
     """Initiates the media ingestion pipeline for a specific file or URL.
 
@@ -143,8 +143,9 @@ async def ingest_media(
             metadata={"file": str(file_path), "job_id": job_id},
         )
         try:
-            assert pipeline is not None
-            await pipeline.process_video(
+            from core.ingestion.pipeline import IngestionPipeline
+            local_pipeline = IngestionPipeline()
+            await local_pipeline.process_video(
                 file_path,
                 ingest_request.media_type_hint,
                 start_time=ingest_request.start_time,
@@ -172,7 +173,7 @@ async def ingest_media(
 @router.post("/scan")
 async def scan_library(
     request: ScanRequest,
-    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    pipeline: Annotated[QueryPipeline, Depends(get_pipeline)],
 ) -> dict:
     """Scans a local directory for new media files and reports discoveries.
 
@@ -308,7 +309,7 @@ async def resume_job(job_id: str):
 @router.delete("/jobs/{job_id}")
 async def delete_job(
     job_id: str,
-    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+    pipeline: Annotated[QueryPipeline, Depends(get_pipeline)],
 ):
     """Delete a job and ALL associated data from the system.
 

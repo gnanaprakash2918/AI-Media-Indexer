@@ -2,11 +2,11 @@
 
 from fastapi import Request
 
-from core.ingestion.pipeline import IngestionPipeline
+from core.retrieval.query_pipeline import QueryPipeline
 
 
-def get_pipeline(request: Request) -> IngestionPipeline | None:
-    """Retrieve the ingestion pipeline from app state."""
+def get_pipeline(request: Request) -> QueryPipeline | None:
+    """Retrieve the lightweight decoupled query pipeline from app state."""
     return getattr(request.app.state, "pipeline", None)
 
 

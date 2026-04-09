@@ -129,7 +129,7 @@ except ImportError:
 print("DEBUG: Importing config & pipeline...")
 from config import settings  # noqa: E402
 from core.ingestion.jobs import job_manager  # noqa: E402
-from core.ingestion.pipeline import IngestionPipeline  # noqa: E402
+from core.retrieval.query_pipeline import QueryPipeline # [DECOUPLED]
 from core.utils.logger import bind_context, clear_context, logger  # noqa: E402
 from core.utils.model_warmer import warmup_models  # [NEW] Warmer
 from core.utils.observability import (  # noqa: E402
@@ -138,7 +138,7 @@ from core.utils.observability import (  # noqa: E402
     start_trace,
 )
 
-pipeline: IngestionPipeline | None = None
+pipeline: QueryPipeline | None = None
 
 
 @asynccontextmanager
@@ -159,10 +159,11 @@ async def lifespan(app: FastAPI):
 
     global pipeline
     try:
-        print("DEBUG: Lifespan: Initializing pipeline...")  # Added debug
-        pipeline = IngestionPipeline()
+        print("DEBUG: Lifespan: Initializing QueryPipeline...")
+        pipeline = QueryPipeline()
         app.state.pipeline = pipeline
-        logger.info("Pipeline initialized")
+        app.state.db = pipeline.db # Explicit alias for dependencies
+        logger.info("QueryPipeline initialized (Lightweight Web Tier)")
 
         # Crash Recovery
         recovery_stats = job_manager.recover_on_startup(timeout_seconds=60.0)
