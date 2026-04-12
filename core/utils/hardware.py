@@ -132,11 +132,9 @@ def cleanup_vram() -> None:
 
     This is used to free up VRAM between heavy processing stages.
     """
-    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
-    gc.collect()
     torch.cuda.synchronize()
 
 

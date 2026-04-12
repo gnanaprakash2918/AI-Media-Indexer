@@ -106,7 +106,6 @@ class LanguageBindEncoder:
                     # ... (rest of loading logic) ...
 
                     # AGGRESSIVE VRAM cleanup before loading - CRITICAL for 8GB GPUs
-                    gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                         torch.cuda.synchronize()
@@ -144,7 +143,6 @@ class LanguageBindEncoder:
                             f"[VideoEncoder] X-CLIP failed: {xclip_error}, falling back to CLIP"
                         )
                         # Cleanup again before loading fallback
-                        gc.collect()
                         if torch.cuda.is_available():
                             torch.cuda.empty_cache()
 

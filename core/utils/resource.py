@@ -73,7 +73,6 @@ class ResourceManager:
         try:
             import gc
 
-            gc.collect()
 
             import torch
 

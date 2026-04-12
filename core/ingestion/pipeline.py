@@ -176,7 +176,6 @@ class IngestionPipeline(
 
     def _cleanup_memory(self, context: str = "") -> None:
         """Force garbage collection and clear CUDA cache."""
-        gc.collect()
         from core.utils.device import empty_cache
 
         empty_cache()

@@ -235,7 +235,6 @@ class VideoInpainter:
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        gc.collect()
         logger.info("VideoInpainter resources released")
 
     def unload(self) -> None:
@@ -322,7 +321,6 @@ class WanVideoInpainter:
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        gc.collect()
 
 
 _inpainter: VideoInpainter | None = None

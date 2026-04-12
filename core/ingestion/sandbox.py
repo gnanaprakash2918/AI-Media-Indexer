@@ -3,7 +3,6 @@ import subprocess
 import time
 
 import psutil
-from func_timeout import FunctionTimedOut, func_set_timeout
 
 from core.utils.logger import log
 

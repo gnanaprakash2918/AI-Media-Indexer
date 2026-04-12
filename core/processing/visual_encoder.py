@@ -206,7 +206,6 @@ class BaseVisualEncoder(VisualEncoderInterface, ABC):
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            gc.collect()
         except ImportError:
             pass
 

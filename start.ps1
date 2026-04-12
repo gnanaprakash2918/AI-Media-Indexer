@@ -517,7 +517,7 @@ if ($NukeQdrant) {
     Write-Host "  Stopping Docker containers and removing volumes..." -ForegroundColor Gray
     try {
         # Using & (call operator) to ensure flags are passed correctly
-        & docker-compose down -v --remove-orphans 2>&1 | Out-Null
+        & docker compose down -v --remove-orphans 2>&1 | Out-Null
         
         # NUCLEAR OPTION: Force remove specific containers if they are stuck
         # This addresses the issue where Qdrant would remain running despite 'down'
@@ -665,15 +665,10 @@ if (-not $SkipDocker) {
         Write-Host "  Docker Daemon is already running" -ForegroundColor Green
     }
 
-    # Detect valid Docker Compose command
-    $dockerComposeCmd = "docker-compose"
-    if (-not (Get-Command "docker-compose" -ErrorAction SilentlyContinue)) {
-        if (docker compose version 2>&1 | Select-String "Docker Compose") {
-             $dockerComposeCmd = "docker compose"
-             Write-Host "  Using 'docker compose'..." -ForegroundColor Gray
-        } else {
-             Write-Host "  WARNING: docker-compose not found. Docker operations might fail." -ForegroundColor Red
-        }
+    # Use Docker Compose v2 syntax
+    $dockerComposeCmd = "docker compose"
+    if (-not (Get-Command "docker" -ErrorAction SilentlyContinue)) {
+        Write-Host "  WARNING: docker not found. Docker operations might fail." -ForegroundColor Red
     }
 
     Write-Host ""
@@ -760,18 +755,10 @@ if (-not $SkipDocker) {
     
     if ($Distributed) {
          # Ensure Redis and Neo4j are up
-         if ($dockerComposeCmd -eq "docker-compose") {
-             Invoke-Expression "$dockerComposeCmd up -d qdrant redis neo4j"
-         } else {
-             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
-         }
+         Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
     } else {
-         # Start Qdrant and Neo4j
-         if ($dockerComposeCmd -eq "docker-compose") {
-             Invoke-Expression "$dockerComposeCmd up -d qdrant neo4j"
-         } else {
-             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant neo4j"
-         }
+         # Start Qdrant, Redis, and Neo4j
+         Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
     }
 
     if ($LASTEXITCODE -ne 0) {
@@ -787,17 +774,9 @@ if (-not $SkipDocker) {
         # Retry Start
         Write-Host "  [Recovery] Retrying start..." -ForegroundColor Gray
         if ($Distributed) {
-             if ($dockerComposeCmd -eq "docker-compose") {
-                 Invoke-Expression "$dockerComposeCmd up -d qdrant redis neo4j"
-             } else {
-                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
-             }
+             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
         } else {
-             if ($dockerComposeCmd -eq "docker-compose") {
-                 Invoke-Expression "$dockerComposeCmd up -d qdrant neo4j"
-             } else {
-                 Invoke-Expression "$dockerComposeCmd up -d --wait qdrant neo4j"
-             }
+             Invoke-Expression "$dockerComposeCmd up -d --wait qdrant redis neo4j"
         }
         
         if ($LASTEXITCODE -ne 0) {

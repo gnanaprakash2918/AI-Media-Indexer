@@ -94,7 +94,6 @@ class SAM3Tracker:
             del self.predictor
             self.predictor = None
         self._model_loaded = False
-        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         log.info("[SAM3] Model unloaded")

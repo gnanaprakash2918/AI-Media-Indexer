@@ -33,7 +33,6 @@ def get_vram_info() -> tuple[float, float]:
 
 def cleanup_vram() -> None:
     """Force VRAM cleanup."""
-    gc.collect()
     try:
         import torch
 

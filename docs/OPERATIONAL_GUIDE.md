@@ -26,13 +26,13 @@ python tests/stress_test_memory.py
 
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Verify services are healthy
-docker-compose ps
+docker compose ps
 
 # Check logs
-docker-compose logs -f media-indexer
+docker compose logs -f media-indexer
 ```
 
 ### Local Launch (Development)
@@ -98,10 +98,10 @@ tail -f logs/app.log
 
 ```bash
 # Follow all logs
-docker-compose logs -f
+docker compose logs -f
 
 # Just the worker
-docker-compose logs -f media-indexer
+docker compose logs -f media-indexer
 ```
 
 ---

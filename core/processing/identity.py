@@ -469,7 +469,6 @@ class FaceManager:
         self._initialized = False
 
         # Force garbage collection and GPU memory release
-        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
@@ -530,7 +529,6 @@ class FaceManager:
         is_high_end = caps["is_high_end"]
 
         # CRITICAL: Clean VRAM before loading InsightFace to prevent OOM
-        gc.collect()
         try:
             import torch
 
@@ -567,7 +565,6 @@ class FaceManager:
                 log(
                     "[FaceManager] Low-resource system detected, loading InsightFace models sequentially..."
                 )
-                gc.collect()
 
                 # Force garbage collection before loading
                 try:
@@ -598,7 +595,6 @@ class FaceManager:
                 )
 
                 # Clean up after model load
-                gc.collect()
 
             self._insightface_app = app
 
@@ -622,7 +618,6 @@ class FaceManager:
                     "[FaceManager] InsightFace OOM error, trying minimal config...",
                     level="WARNING",
                 )
-                gc.collect()
 
                 try:
                     import torch

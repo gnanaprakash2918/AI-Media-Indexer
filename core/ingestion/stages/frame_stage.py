@@ -641,7 +641,6 @@ class FrameStageMixin:
                     logger.warning(
                         f"Thumbnail generation skipped (OOM/CV error): {e}"
                     )
-                    gc.collect()  # Try to recover leaks
                 except Exception as e:
                     logger.error(f"Thumbnail generation failed: {e}")
 

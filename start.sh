@@ -114,7 +114,7 @@ fi
 if [ "$NUCLEAR" = true ]; then
     echo -e "\n${RED}[3/5] Performing complete data reset...${NC}"
     rm -rf qdrant_data qdrant_data_embedded thumbnails jobs.db identity.db 2>/dev/null || true
-    docker-compose down -v --remove-orphans 2>/dev/null || true
+    docker compose down -v --remove-orphans 2>/dev/null || true
     echo -e "  ${GREEN}Data reset complete!${NC}"
 else
     echo -e "${YELLOW}[3/5] Keeping Qdrant data (use -n to delete)${NC}"
@@ -126,14 +126,14 @@ if [ "$SKIP_DOCKER" = false ]; then
     
     if [ "$PULL_IMAGES" = true ]; then
         echo "  Pulling latest images..."
-        docker-compose pull
+        docker compose pull
     fi
     
     if [ "$DISTRIBUTED" = true ]; then
-        docker-compose up -d qdrant redis neo4j
+        docker compose up -d qdrant redis neo4j
         echo -e "  ${GREEN}Qdrant + Redis + Neo4j started (Distributed mode)${NC}"
     else
-        docker-compose up -d qdrant neo4j
+        docker compose up -d qdrant neo4j
         echo -e "  ${GREEN}Qdrant + Neo4j started${NC}"
     fi
 else

@@ -84,13 +84,12 @@ class VisionAnalyzer:
 
             import torch
 
-            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
             log("[Vision] LLM unloaded to free VRAM.")
             log_verbose(
-                "[Vision] Unload complete, gc.collect() and cuda.empty_cache() called"
+                "[Vision] Unload complete, cuda.empty_cache() called"
             )
 
     def _ensure_llm_loaded(self) -> None:

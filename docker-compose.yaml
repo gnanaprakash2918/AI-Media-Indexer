@@ -1,11 +1,7 @@
-
-
 services:
   # ===== Main Application =====
-  # NOTE: This service is for full Docker deployment only. 
-  # For local dev, run the backend directly with 'uv run uvicorn api.server:app'
   media-indexer:
-    profiles: ["docker"]  # Only active with --profile docker
+    profiles: ["docker"]
     build:
       context: .
       dockerfile: Dockerfile.cuda
@@ -16,10 +12,15 @@ services:
       - ./cache:/app/cache
       - ./data:/app/data
       - ./logs:/app/logs
-      - /media:/media:ro  # Mount your media library (read-only)
+      - /media:/media:ro
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redispass
+      - CELERY_BROKER_URL=redis://:redispass@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:redispass@redis:6379/0
       - PYTHONUNBUFFERED=1
     depends_on:
       - qdrant
@@ -35,6 +36,44 @@ services:
           memory: 8G
     restart: unless-stopped
 
+
+  # ===== Celery Worker =====
+  celery-worker:
+    profiles: ["docker"]
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    container_name: media_agent_celery
+    command: celery -A api.worker worker --loglevel=info --concurrency=2
+    volumes:
+      - ./cache:/app/cache
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /media:/media:ro
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redispass
+      - CELERY_BROKER_URL=redis://:redispass@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:redispass@redis:6379/0
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - redis
+      - qdrant
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 4G
+    restart: unless-stopped
+
+
   # ===== Vector Database =====
   qdrant:
     image: qdrant/qdrant:v1.16.2
@@ -49,6 +88,21 @@ services:
         limits:
           memory: 1G
     restart: unless-stopped
+
+
+  # ===== Redis (NO profile — always starts for local dev too) =====
+  redis:
+    image: redis:7.2.4-alpine
+    container_name: media_agent_redis
+    command: redis-server --requirepass "redispass"
+    ports:
+      - "6379:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+
 
   postgres:
     profiles: ["docker"]
@@ -73,13 +127,14 @@ services:
           memory: 512M
     restart: unless-stopped
 
+
   clickhouse:
     profiles: ["docker"]
     image: clickhouse/clickhouse-server:24.3
     container_name: media_agent_clickhouse
     ports:
       - "8123:8123"
-      - "9000:9000" # ClickHouse keeps port 9000
+      - "9000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
     environment:
@@ -98,18 +153,6 @@ services:
           memory: 2G
     restart: unless-stopped
 
-  redis:
-    profiles: ["docker"]
-    image: redis:7.2.4-alpine
-    container_name: media_agent_redis
-    command: redis-server --requirepass "redispass"
-    ports:
-      - "6379:6379"
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    restart: unless-stopped
 
   minio:
     profiles: ["docker"]
@@ -117,7 +160,6 @@ services:
     container_name: media_agent_minio
     command: server /data --console-address ":9001"
     ports:
-      # CHANGED: Map Host 9090 -> Container 9000 to avoid conflict with ClickHouse
       - "9090:9000"
       - "9001:9001"
     environment:
@@ -131,6 +173,7 @@ services:
           memory: 512M
     restart: unless-stopped
 
+
   createbuckets:
     profiles: ["docker"]
     image: minio/mc
@@ -143,6 +186,7 @@ services:
       /usr/bin/mc mb myminio/langfuse;
       exit 0;
       "
+
 
   langfuse:
     profiles: ["docker"]
@@ -161,41 +205,33 @@ services:
       - "3300:3000"
     environment:
       DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
-      
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_PASSWORD: "langfuse"
       CLICKHOUSE_DB: "default"
       CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_URL: "http://clickhouse:8123"
       CLICKHOUSE_MIGRATION_URL: "clickhouse://default:langfuse@clickhouse:9000"
-      
       NEXTAUTH_SECRET: "89ec276067b45f431662998a6915f0d579c8d672808006e001844b245780517f"
       SALT: "89ec276067b45f431662998a6915f0d579c8d672808006e001844b245780517f"
       NEXTAUTH_URL: "http://localhost:3300"
       ENCRYPTION_KEY: "92ae3af72cce9731d13da597943582a6cd1134f5a95c7f6a78f0484e03f99d7d"
-      
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_AUTH: "redispass"
-      
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse"
-
-      # INTERNAL URL (Containers talk to each other on port 9000)
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "minio"
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "miniosecret"
       LANGFUSE_S3_EVENT_UPLOAD_REGION: "us-east-1"
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-      
       LANGFUSE_ENABLE_TELEMETRY: "false"
-      
-      # Worker settings
       LANGFUSE_WORKER_CONCURRENCY: "1"
     deploy:
       resources:
         limits:
           memory: 1G
     restart: unless-stopped
+
 
   langfuse-worker:
     profiles: ["docker"]
@@ -208,25 +244,21 @@ services:
       - clickhouse
     environment:
       DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
-      
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_PASSWORD: "langfuse"
       CLICKHOUSE_DB: "default"
       CLICKHOUSE_CLUSTER_ENABLED: "false"
       CLICKHOUSE_URL: "http://clickhouse:8123"
       CLICKHOUSE_MIGRATION_URL: "clickhouse://default:langfuse@clickhouse:9000"
-      
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_AUTH: "redispass"
-      
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse"
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "minio"
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "miniosecret"
       LANGFUSE_S3_EVENT_UPLOAD_REGION: "us-east-1"
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-      
       LANGFUSE_ENABLE_TELEMETRY: "false"
       ENCRYPTION_KEY: "92ae3af72cce9731d13da597943582a6cd1134f5a95c7f6a78f0484e03f99d7d"
       SALT: "89ec276067b45f431662998a6915f0d579c8d672808006e001844b245780517f"
@@ -235,6 +267,7 @@ services:
         limits:
           memory: 512M
     restart: unless-stopped
+
 
 volumes:
   clickhouse_data:

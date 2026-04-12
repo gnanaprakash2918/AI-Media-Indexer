@@ -183,6 +183,5 @@ class IdentityProcessor:
             self.voice_processor = None
             import gc
 
-            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

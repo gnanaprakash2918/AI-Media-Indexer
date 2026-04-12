@@ -42,7 +42,7 @@ class AudioEventsStageMixin:
         - 30s chunks: Fits ~3MB RAM at 48kHz stereo
         - 5s overlap: Catches events spanning chunk boundaries
         - Per-chunk progress: User always sees what's processing
-        - Immediate cleanup: gc.collect() after each chunk
+        - Immediate cleanup: chunk processing
         """
         logger.info(f"Starting audio event detection for {path.name}")
 
@@ -187,7 +187,6 @@ class AudioEventsStageMixin:
 
                 # Cleanup chunk memory immediately
                 del audio_chunk
-                gc.collect()
 
             logger.info(f"Indexed {events_stored} audio events for {path.name}")
             detector.cleanup()

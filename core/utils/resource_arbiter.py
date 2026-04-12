@@ -18,7 +18,6 @@ def safe_cleanup_vram() -> None:
     Use this instead of bare ``torch.cuda.empty_cache()`` in cleanup/unload
     methods so they never crash with ``NameError: name 'torch' is not defined``.
     """
-    gc.collect()
     try:
         import torch
 

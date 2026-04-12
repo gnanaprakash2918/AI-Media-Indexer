@@ -684,7 +684,6 @@ class AudioEventDetector:
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            gc.collect()
         except ImportError:
             pass
 

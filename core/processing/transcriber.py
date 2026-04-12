@@ -153,7 +153,6 @@ class AudioTranscriber:
             AudioTranscriber._SHARED_SIZE = None
 
         # 2. Force Python's Garbage Collector to run
-        gc.collect()
 
         # 3. Force PyTorch to release cached VRAM
         from core.utils.resource_arbiter import safe_cleanup_vram
@@ -644,7 +643,6 @@ class AudioTranscriber:
                     # Try smaller models
                     for fallback_model in self.LOW_MEMORY_MODELS:
                         try:
-                            gc.collect()
                             if (
                                 self.device == "cuda"
                                 and torch.cuda.is_available()
