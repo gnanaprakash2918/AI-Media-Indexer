@@ -662,6 +662,9 @@ class VehicleInQuery(BaseModel):
         description="What vehicle is doing (e.g., 'passes by', 'crashes')",
     )
 
+class AgenticSearchRequest(BaseModel):
+    query: str
+    prompt: str
 
 class ParsedQuery(BaseModel):
     """Structured representation of extremely complex user search queries.
