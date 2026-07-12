@@ -10,13 +10,7 @@ import warnings
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-
 # Configure TensorFlow BEFORE any imports that trigger TF loading
-print("DEBUG: Starting detailed server imports...")
-print("DEBUG: Importing os/warnings/logging...")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault(
     "TF_CPP_MIN_LOG_LEVEL", "2"
@@ -34,9 +28,18 @@ warnings.filterwarnings("ignore", message=".*sparse_softmax_cross_entropy.*")
 warnings.filterwarnings("ignore", message=".*deprecated.*", module=".*keras.*")
 
 # Also filter via logging (tf_keras uses this path)
-print("DEBUG: Configuring loggers...")
 for logger_name in ["tensorflow", "tf_keras", "absl"]:
     logging.getLogger(logger_name).setLevel(logging.ERROR)
+
+from core.utils.logger import logger  # noqa: E402
+
+logger.debug("Starting detailed server imports...")
+logger.debug("Importing os/warnings/logging...")
+logger.debug("Configuring loggers...")
+
+from fastapi import FastAPI, Request  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 # Windows-specific asyncio fix for "WinError 10054" noise
 if sys.platform == "win32":
@@ -99,11 +102,11 @@ if sys.platform == "win32":
 
     asyncio.set_event_loop_policy(SilenceEventLoopPolicy())
 
-print("DEBUG: Importing FastAPI...")
+logger.debug("Importing FastAPI...")
 # Imports already at top
 
 # Import routers
-print("DEBUG: Importing API routers...")
+logger.debug("Importing API routers...")
 from api.routes import (  # noqa: E402
     agent,
     councils,
@@ -121,16 +124,16 @@ from api.routes import (  # noqa: E402
     voices,
 )
 
-print("DEBUG: Checking overlays...")
+logger.debug("Checking overlays...")
 try:
     from api.routes import overlays  # noqa: E402
 except ImportError:
     overlays = None
-print("DEBUG: Importing config & pipeline...")
+logger.debug("Importing config & pipeline...")
 from config import settings  # noqa: E402
 from core.ingestion.jobs import job_manager  # noqa: E402
 from core.retrieval.query_pipeline import QueryPipeline  # [DECOUPLED]
-from core.utils.logger import bind_context, clear_context, logger  # noqa: E402
+from core.utils.logger import bind_context, clear_context  # noqa: E402
 from core.utils.model_warmer import warmup_models  # [NEW] Warmer
 from core.utils.observability import (  # noqa: E402
     end_trace,
@@ -159,7 +162,7 @@ async def lifespan(app: FastAPI):
 
     global pipeline
     try:
-        print("DEBUG: Lifespan: Initializing QueryPipeline...")
+        logger.debug("Lifespan: Initializing QueryPipeline...")
         pipeline = QueryPipeline()
         app.state.pipeline = pipeline
         app.state.db = pipeline.db  # Explicit alias for dependencies
@@ -197,7 +200,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    print("DEBUG: create_app() start...")
+    logger.debug("create_app() start...")
     app = FastAPI(
         title="AI Media Indexer",
         version="2.1.0",
@@ -241,7 +244,7 @@ def create_app() -> FastAPI:
             clear_context()
 
     # Mount Routers
-    print("DEBUG: Mounting routers...")
+    logger.debug("Mounting routers...")
     app.include_router(system.router, tags=["System"])
     app.include_router(media.router, tags=["Media"])
     app.include_router(ingest.router, tags=["Ingestion"])
@@ -268,24 +271,24 @@ def create_app() -> FastAPI:
         "/thumbnails", StaticFiles(directory=str(thumb_dir)), name="thumbnails"
     )
 
-    print("DEBUG: create_app() done!")
+    logger.debug("create_app() done!")
     return app
 
 
 # Create module-level app for "uvicorn api.server:app" imports
-print("DEBUG: Creating module-level app...")
+logger.debug("Creating module-level app...")
 app = create_app()
-print("DEBUG: App created!")
+logger.debug("App created!")
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    print("DEBUG: Starting Uvicorn run...")
+    logger.debug("Starting Uvicorn run...")
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8000,
         reload=False,
     )
-    print("DEBUG: Uvicorn run exited.")
+    logger.debug("Uvicorn run exited.")
