@@ -1577,6 +1577,22 @@ jobs:
 3. Use the LLM to perform contextual error correction (simulating ROVER voting) by aligning the raw transcript with the visual context.
 4. Output highly accurate, visually-aligned subtitles (`.srt`).
 
+---
+
+### Task 9.5 — High-Throughput vLLM Integration & OpenAI Compatibility
+
+**Why:** For local deployments on machines with GPUs, Ollama's default sequential text generation and VLM captioning acts as a processing bottleneck. Integrating a dedicated vLLM server provides vLLM's PagedAttention and continuous batching, accelerating video analysis by 3-10x.
+
+**Action:**
+1. Configure an OpenAI-compatible client adapter in `core/llm/text_factory.py` and `core/llm/vlm_factory.py` (e.g., `VllmText` and `VllmVlm`) that routes to a local or remote vLLM server.
+2. Support configuring `vllm` as the provider in environment variables:
+   ```env
+   LLM_PROVIDER=vllm
+   LLM_BASE_URL=http://localhost:8000/v1
+   LLM_MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+   ```
+3. Enable batch request dispatching for scenelet captioning so that multiple frames are caption-analyzed concurrently in the vLLM batching queue.
+
 
 ## Execution Timeline
 

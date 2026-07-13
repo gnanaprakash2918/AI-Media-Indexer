@@ -26,7 +26,7 @@ dependencies = [
     "langchain-core>=0.3.0",
     "langchain-google-genai>=2.0.0",
     "librosa>=0.10.0",
-    "onnx==1.16.1",
+    "onnx>=1.16.1",
     "ml_dtypes>=0.4.0,<0.6.0",
     "ollama>=0.6.1",
     "packaging",
@@ -34,10 +34,10 @@ dependencies = [
     "python-magic>=0.4.27",
     "python-magic-bin>=0.4.14; sys_platform == 'win32'",
     "scikit-learn>=1.5.0",
-    "transformers==4.46.3",
-    "torch==2.5.1",
-    "torchaudio==2.5.1",
-    "torchvision==0.20.1",
+    "transformers>=4.46.3",
+    "torch>=2.5.1",
+    "torchaudio>=2.5.1",
+    "torchvision>=0.20.1",
     "python-dotenv>=1.2.1",
     "pydantic-settings>=2.6.0",
     "qdrant-client>=1.16.2",
@@ -50,7 +50,8 @@ dependencies = [
     "loguru>=0.7.2",
     "a2a>=0.44",
     "python-a2a>=0.5.10",
-    "numpy>=1.26.0,<2.0.0",
+    "numpy>=1.26.0",
+    "numba>=0.60.0",
     "a2a-sdk[all,http-server]>=0.3.20",
     "opencv-python-headless>=4.8.0",
     "uvicorn>=0.38.0",
@@ -66,25 +67,25 @@ dependencies = [
     "nvidia-ml-py>=12.535.0",
     "celery[redis]>=5.3.6",
     "redis>=5.0.1",
-    "sam3 @ https://github.com/facebookresearch/sam3.git",
+    "sam3 @ https://github.com/facebookresearch/sam3.git ; python_version < '3.14'",
     # "brave-search>=0.1.0", # Removed due to httpx conflict
     "pyloudnorm>=0.1.1",
-    "fer>=22.5.1",
-    "deepface>=0.0.93",
+    "fer>=22.5.1 ; python_version < '3.14'",
+    "deepface>=0.0.93 ; python_version < '3.14'",
     "ultralytics>=8.3.0",
-    "paddleocr>=2.9.1",
+    "paddleocr>=2.9.1 ; python_version < '3.14'",
     "decord>=0.6.0",
     "pycocotools>=2.0.0",
     "FlagEmbedding>=1.3.3",
     "rank_bm25>=0.2.2",
-    "tf-keras>=2.16.0",  # Required for transformers compatibility with Keras 3
-    "scenedetect[opencv]>=0.6.0",
-    "triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.0.0-windows.post1/triton-3.0.0-cp312-cp312-win_amd64.whl ; sys_platform == 'win32'",
+    "tf-keras>=2.16.0 ; python_version < '3.14'",  # Required for transformers compatibility with Keras 3
+    "scenedetect>=0.6.0",
+    "triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.0.0-windows.post1/triton-3.0.0-cp312-cp312-win_amd64.whl ; sys_platform == 'win32' and python_version == '3.12'",
     "imagehash>=4.3.0",  # Perceptual hashing for content fingerprinting
     "open-clip-torch>=3.2.0",
     "neo4j>=6.1.0",
     "opencv-python>=4.11.0.86",
-    "paddlepaddle>=3.3.0",
+    "paddlepaddle>=3.3.0 ; python_version < '3.14'",
 ]
 
 [project.optional-dependencies]
@@ -125,12 +126,8 @@ line-ending = "lf"
 [tool.uv]
 cache-dir = ".uv_cache"
 concurrent-downloads = 5
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.14'"]
 
-# Force torch packages to use CUDA 12.4 index
-[tool.uv.sources]
-torch = { index = "pytorch-cu124" }
-torchaudio = { index = "pytorch-cu124" }
-torchvision = { index = "pytorch-cu124" }
 
 [tool.pyright]
 typeCheckingMode = "basic"
