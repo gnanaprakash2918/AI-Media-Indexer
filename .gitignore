@@ -32,7 +32,6 @@ debug_import.py
 langfuse_data/
 
 # Agents
-AGENTS.md
 ANTIGRAVITY.md
 MY_RESEARCH.md
 RESEARCH_LINKS.md

@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from core.utils.logger import log
 
-router = APIRouter()
+router = APIRouter(prefix="/graph", tags=["Graph"])
 
 
 class CoOccurrence(BaseModel):

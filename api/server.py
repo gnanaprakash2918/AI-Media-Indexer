@@ -113,6 +113,7 @@ from api.routes import (  # noqa: E402
     events,
     faces,
     graph,
+    grounding,
     identities,
     ingest,
     library,
@@ -120,7 +121,6 @@ from api.routes import (  # noqa: E402
     media,
     search,
     system,
-    tracking,  # [NEW] SAM 3 Object Tracking
     voices,
 )
 
@@ -256,8 +256,8 @@ def create_app() -> FastAPI:
     app.include_router(faces.router, tags=["Faces"])
     app.include_router(voices.router, tags=["Voices"])
     app.include_router(library.router, tags=["Library"])
-    app.include_router(graph.router, tags=["Graph"])  # New
-    app.include_router(tracking.router, tags=["Tracking"])  # [NEW] SAM 3
+    app.include_router(graph.router, tags=["Graph"])
+    app.include_router(grounding.router, tags=["Grounding"])
     if overlays:
         app.include_router(overlays.router, tags=["Overlays"])
 
