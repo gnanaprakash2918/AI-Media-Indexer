@@ -9,13 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-try:
-    from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-
-    HAS_A2A = True
-except ImportError:
-    HAS_A2A = False
-
 
 @dataclass
 class ToolParameter:
@@ -144,133 +137,9 @@ SEARCH_AGENT_TOOLS = [
 ]
 
 
-def get_vision_agent_card(
-    base_url: str = "http://localhost:8000",
-) -> AgentCard:
-    """Returns the AgentCard for the VisionAgent.
-
-    Args:
-        base_url: The base URL where the agent is reachable.
-
-    Returns:
-        The vision agent card.
-    """
-    if not HAS_A2A:
-        raise ImportError("a2a package not installed")
-    return AgentCard(
-        name="VisionAgent",
-        description="Analyzes video frames for objects, people, actions, and scene context using VLM and SAM3",
-        version="1.0.0",
-        url=f"{base_url}/a2a/vision",
-        capabilities=AgentCapabilities(
-            streaming=False, push_notifications=False
-        ),
-        default_input_modes=["image/jpeg", "video/mp4"],
-        default_output_modes=["application/json"],
-        skills=[
-            AgentSkill(
-                id="analyze_frame",
-                name="Analyze Frame",
-                description="Dense frame analysis",
-                tags=["vision"],
-            ),
-            AgentSkill(
-                id="track_concept",
-                name="Track Concept",
-                description="SAM3 tracking",
-                tags=["segmentation"],
-            ),
-            AgentSkill(
-                id="detect_faces",
-                name="Detect Faces",
-                description="InsightFace 512D",
-                tags=["identity"],
-            ),
-        ],
-    )
-
-
-def get_audio_agent_card(
-    base_url: str = "http://localhost:8000",
-) -> AgentCard:
-    """Returns the AgentCard for the AudioAgent.
-
-    Args:
-        base_url: The base URL where the agent is reachable.
-
-    Returns:
-        The audio agent card.
-    """
-    if not HAS_A2A:
-        raise ImportError("a2a package not installed")
-    return AgentCard(
-        name="AudioAgent",
-        description="Transcribes audio using Whisper and performs speaker diarization",
-        version="1.0.0",
-        url=f"{base_url}/a2a/audio",
-        capabilities=AgentCapabilities(
-            streaming=True, push_notifications=False
-        ),
-        default_input_modes=["audio/wav", "video/mp4"],
-        default_output_modes=["application/json", "text/srt"],
-        skills=[
-            AgentSkill(
-                id="transcribe",
-                name="Transcribe",
-                description="ASR with Whisper",
-                tags=["audio"],
-            ),
-            AgentSkill(
-                id="diarize",
-                name="Diarize Speakers",
-                description="Speaker identification",
-                tags=["audio"],
-            ),
-        ],
-    )
-
-
-def get_search_agent_card(
-    base_url: str = "http://localhost:8000",
-) -> AgentCard:
-    """Returns the AgentCard for the SearchAgent.
-
-    Args:
-        base_url: The base URL where the agent is reachable.
-
-    Returns:
-        The search agent card.
-    """
-    if not HAS_A2A:
-        raise ImportError("a2a package not installed")
-    return AgentCard(
-        name="SearchAgent",
-        description="Agentic search with LLM query expansion, identity resolution, and constraint verification",
-        version="1.0.0",
-        url=f"{base_url}/a2a/search",
-        capabilities=AgentCapabilities(
-            streaming=False, push_notifications=False
-        ),
-        default_input_modes=["application/json"],
-        default_output_modes=["application/json"],
-        skills=[
-            AgentSkill(
-                id="search_scenes",
-                name="Search Scenes",
-                description="Complex visual search",
-                tags=["search"],
-            ),
-            AgentSkill(
-                id="search_dialogue",
-                name="Search Dialogue",
-                description="Transcript search",
-                tags=["search"],
-            ),
-        ],
-    )
-
-
 def get_all_tool_schemas() -> list[dict]:
     """Get all agent tools as JSON schemas for LLM function calling."""
     all_tools = VISION_AGENT_TOOLS + AUDIO_AGENT_TOOLS + SEARCH_AGENT_TOOLS
     return [t.to_json_schema() for t in all_tools]
+
+

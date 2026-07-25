@@ -13,11 +13,11 @@ WORKDIR /build
 
 # Install Python and build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-venv python3.11-dev python3-pip \
+    python3.12 python3.12-venv python3.12-dev python3-pip \
     gcc g++ make git cmake \
     libsndfile1-dev libgl1-mesa-dev libglib2.0-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python
+    && ln -sf /usr/bin/python3.12 /usr/bin/python
 
 # Create virtual environment
 RUN python -m venv /opt/venv
@@ -41,11 +41,11 @@ WORKDIR /app
 
 # Runtime dependencies only (minimal)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-venv \
+    python3.12 python3.12-venv \
     ffmpeg libsndfile1 libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python
+    && ln -sf /usr/bin/python3.12 /usr/bin/python
 
 # Copy venv from builder
 COPY --from=builder /opt/venv /opt/venv
