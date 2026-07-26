@@ -196,38 +196,43 @@ class VoiceStageMixin:
                     continue
 
                 # Speech Emotion Recognition (SER)
+                # Gated by settings.enable_speech_emotion (default: False).
+                # When disabled: true no-op — no import, no model load, no GPU.
+                # To enable: set ENABLE_SPEECH_EMOTION=true in .env and
+                #             uv sync --group enrichment to install Wav2Vec2 deps.
                 emotion_meta = {}
-                try:
-                    if not hasattr(self, "_ser_analyzer"):
-                        self._ser_failed = False
-                        try:
-                            from core.processing.speech_emotion import (
-                                SpeechEmotionAnalyzer,
-                            )
+                if settings.enable_speech_emotion:
+                    try:
+                        if not hasattr(self, "_ser_analyzer"):
+                            self._ser_failed = False
+                            try:
+                                from core.processing.speech_emotion import (
+                                    SpeechEmotionAnalyzer,
+                                )
 
-                            self._ser_analyzer = SpeechEmotionAnalyzer()
-                        except Exception as init_err:
-                            logger.warning(
-                                f"[Voice] SER init failed (disabling): {init_err}"
-                            )
-                            self._ser_analyzer = None
+                                self._ser_analyzer = SpeechEmotionAnalyzer()
+                            except Exception as init_err:
+                                logger.warning(
+                                    f"[Voice] SER init failed (disabling): {init_err}"
+                                )
+                                self._ser_analyzer = None
+                                self._ser_failed = True
+
+                        if self._ser_analyzer is not None:
+                            import librosa
+
+                            # Load the clip we just made (resample to 16k for Wav2Vec2)
+                            y, sr = librosa.load(str(clip_file), sr=16000)
+                            emotion_res = await self._ser_analyzer.analyze(y, sr)
+                            if emotion_res:
+                                emotion_meta = {
+                                    "emotion": emotion_res.get("emotion"),
+                                    "emotion_conf": emotion_res.get("confidence"),
+                                }
+                    except Exception as e:
+                        if not getattr(self, "_ser_failed", False):
+                            logger.warning(f"[Voice] SER failed: {e}")
                             self._ser_failed = True
-
-                    if self._ser_analyzer is not None:
-                        import librosa
-
-                        # Load the clip we just made (resample to 16k for Wav2Vec2)
-                        y, sr = librosa.load(str(clip_file), sr=16000)
-                        emotion_res = await self._ser_analyzer.analyze(y, sr)
-                        if emotion_res:
-                            emotion_meta = {
-                                "emotion": emotion_res.get("emotion"),
-                                "emotion_conf": emotion_res.get("confidence"),
-                            }
-                except Exception as e:
-                    if not getattr(self, "_ser_failed", False):
-                        logger.warning(f"[Voice] SER failed: {e}")
-                        self._ser_failed = True
 
                 if seg.embedding is not None and audio_extraction_success:
                     # Ensure voice_cluster_id is always valid (never -1 or 0)

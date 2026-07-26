@@ -40,10 +40,9 @@ def check_model_dependencies():
     if not importlib.util.find_spec("librosa"):
         missing.append("librosa (required for audio analysis)")
 
-    # 4. SAM3 (if we ever re-enable it or for future object tracking)
-    # This is just a check, currently SAM3 is disabled in defaults
-    # if not importlib.util.find_spec("sam2"):
-    #     logger.warning("SAM2 not found - Object Tracking will be disabled.")
+    # 4. SAM 3 (object tracking — optional, off by default)
+    # if not importlib.util.find_spec("sam3"):
+    #     logger.warning("SAM3 not found - Object Tracking will be disabled.")
 
     if missing:
         raise ImportError(

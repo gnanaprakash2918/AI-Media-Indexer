@@ -514,10 +514,21 @@ class FaceManager:
     async def _try_init_insightface(self) -> bool:
         """Try to initialize InsightFace. Returns True on success.
 
-        On low-resource systems, loads models sequentially with allowed_modules
-        to prevent memory allocation failures.
+        Gated by settings.enable_face_recognition (default: True).
+        When disabled: true no-op — no import, no ONNX model load, no GPU.
+        InsightFace model tier controlled by settings.insightface_model:
+            buffalo_sc — compact, ~300MB, good accuracy (DEFAULT)
+            buffalo_l  — full accuracy, ~1GB
+        On low-resource systems loads only detection+recognition modules.
         """
         import gc
+
+        # True no-op guard — skip entirely when face recognition is disabled.
+        if not settings.enable_face_recognition:
+            log(
+                "[FaceManager] InsightFace skipped: enable_face_recognition=False"
+            )
+            return False
 
         face_analysis_cls = _try_import_insightface()
         if face_analysis_cls is None:
