@@ -113,7 +113,7 @@ flowchart TD
     
     subgraph VideoLogic[Video Council]
         VS[Text-Gated Smart Sampler] --> VC[Video Council: InternVideo2.5]
-        VC --> VT[SAM 2 Temporal Tracking]
+        VC --> VT[SAM 3 Temporal Tracking]
         VT --> VM[Metadata: InsightFace 512D, PP-OCRv5]
     end
     

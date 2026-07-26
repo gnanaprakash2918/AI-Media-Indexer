@@ -67,7 +67,7 @@ flowchart TD
         Video[Video Input] --> Demux[Audio/Video Demuxer]
         Demux --> AudioCouncil[ASR Council: ROVER]
         Demux --> VideoCouncil[VLM Council: InternVideo2.5]
-        VideoCouncil --> SAM2[SAM 2 Temporal Tracking]
+        VideoCouncil --> SAM3[SAM 3 Temporal Tracking]
     end
 
     subgraph Memory["Temporal Memory - AUDITED"]
@@ -85,7 +85,7 @@ flowchart TD
 
     AudioCouncil --> Sensory
     VideoCouncil --> Sensory
-    SAM2 --> Working
+    SAM3 --> Working
     Working --> LTG
 
     style Ingestion fill:#ccffcc,stroke:#00cc00
