@@ -81,10 +81,20 @@ _HW_PROFILE = get_hardware_profile()
 
 
 class LLMProvider(str, Enum):
-    """Supported LLM providers."""
+    """Supported LLM providers.
 
-    GEMINI = "gemini"
-    OLLAMA = "ollama"
+    All providers expose an OpenAI-compatible REST API so the same
+    VLLMProvider/VLLMVLMClient/VLLMText clients work regardless of
+    whether the backend is a local vLLM instance or a hosted endpoint
+    (Together, Fireworks, etc.).
+
+    Switching providers only requires changing LLM_PROVIDER + the
+    matching base_url/model config — no code changes.
+    """
+
+    VLLM = "vllm"    # Default: local vLLM or any OpenAI-compat endpoint
+    GEMINI = "gemini"  # Google Gemini (cloud, behind LLMInterface)
+    OLLAMA = "ollama"  # Local Ollama (dev convenience, slower inference)
 
 
 class Settings(BaseSettings):
@@ -173,7 +183,45 @@ class Settings(BaseSettings):
     agent_model: str = Field(
         default="llama3.1", description="Model for Agent CLI"
     )
-    llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
+    llm_provider: LLMProvider = Field(
+        default=LLMProvider.VLLM,
+        description=(
+            "LLM provider for all text/vision inference. "
+            "Set LLM_PROVIDER=ollama for local dev without a GPU/vLLM instance. "
+            "Failing to set this when vLLM is unreachable will produce a clear "
+            "connection error — there is NO silent fallback to Ollama."
+        ),
+    )
+
+    # --- vLLM / OpenAI-compatible endpoint ---
+    # VLLMProvider uses these for any OpenAI-compatible backend:
+    # local vLLM, Together AI, Fireworks, etc.
+    vllm_base_url: str = Field(
+        default="http://localhost:8000",
+        validation_alias="VLLM_BASE_URL",
+        description="Base URL for the vLLM (or any OpenAI-compatible) endpoint",
+    )
+    vllm_api_key: str | None = Field(
+        default=None,
+        validation_alias="VLLM_API_KEY",
+        description="API key for vLLM endpoint (None for local vLLM without auth)",
+    )
+    # vlm_model_id: stable logical name used for cache keys, logging, observability.
+    # Keep this consistent even if you swap the endpoint.
+    vlm_model_id: str = Field(
+        default="Qwen3-VL-2B-Instruct",
+        validation_alias="VLM_MODEL_ID",
+        description="Logical model identifier for cache keying and observability (stable across endpoint changes)",
+    )
+    # vlm_endpoint_model_name: the literal string sent to /v1/chat/completions 'model' field.
+    # Update this when you change what vLLM is serving.
+    vlm_endpoint_model_name: str = Field(
+        default="Qwen/Qwen3-VL-2B-Instruct",
+        validation_alias="VLM_ENDPOINT_MODEL_NAME",
+        description="Model name sent to the vLLM endpoint (must match what vLLM serves)",
+    )
+
+    # --- Ollama (dev convenience) ---
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         validation_alias="OLLAMA_BASE_URL",
@@ -190,10 +238,11 @@ class Settings(BaseSettings):
         description="Text model for structured output (e.g., llama3.1, mistral)",
     )
 
+    # --- Gemini (cloud, behind LLMInterface) ---
     gemini_api_key: SecretStr | None = Field(
         default=None, validation_alias="GOOGLE_API_KEY"
     )
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.5-flash"
 
     tmdb_api_key: str | None = None
     omdb_api_key: str | None = None
@@ -403,14 +452,16 @@ class Settings(BaseSettings):
         default=1.0, description="Min scene length in seconds"
     )
 
-    # AI Provider Strategy (runtime switchable)
+    # AI Provider Strategy (runtime switchable via LLM_PROVIDER env var)
+    # All providers go through the unified LLMInterface / VLMClient abstraction.
+    # Valid values: "vllm" | "gemini" | "ollama"
     ai_provider_vision: str = Field(
-        default="ollama",
-        description="VLM provider for dense captioning (ollama/gemini)",
+        default="vllm",
+        description="VLM provider for dense captioning (vllm/ollama/gemini). vllm=Qwen3-VL endpoint.",
     )
     ai_provider_text: str = Field(
-        default="ollama",
-        description="LLM provider for query parsing (ollama/gemini)",
+        default="vllm",
+        description="LLM provider for query parsing/planning (vllm/ollama/gemini).",
     )
 
     # Resource
@@ -504,9 +555,12 @@ class Settings(BaseSettings):
     )
 
     # --- Model Names (no hardcoding) ---
+    # buffalo_sc (~300MB, good accuracy, default) vs buffalo_l (~1GB, best accuracy)
+    # Hardware-profiling note: a future frontend feature will auto-select based on
+    # detected VRAM; for now buffalo_sc is the sensible default.
     insightface_model: str = Field(
-        default="buffalo_l",
-        description="InsightFace model pack name (buffalo_l, buffalo_sc, etc.)",
+        default="buffalo_sc",
+        description="InsightFace model pack name. buffalo_sc=compact+accurate (default), buffalo_l=full accuracy.",
     )
 
     face_nms_threshold: float = Field(
@@ -867,10 +921,14 @@ class Settings(BaseSettings):
         default="mit/ast-finetuned-audioset-10-10-0.4593",
         description="HuggingFace model ID for AST audio classification",
     )
-    video_vlm_model_id: str = Field(
-        default="Qwen/Qwen2-VL-2B-Instruct",
-        description="HuggingFace model ID for Video VLM (Qwen2-VL)",
-    )
+    # DEPRECATED: use vlm_endpoint_model_name for the endpoint model string
+    # and vlm_model_id for the stable logical name.
+    # This field is retained as a read-through alias for back-compat.
+    @computed_field
+    @property
+    def video_vlm_model_id(self) -> str:
+        """Back-compat alias for vlm_endpoint_model_name."""
+        return self.vlm_endpoint_model_name
 
     # --- VLM ---
     vlm_max_frames: int = Field(
@@ -925,6 +983,16 @@ class Settings(BaseSettings):
     enable_audio_analysis: bool = Field(
         default=False,
         description="Enable tempo/beat detection. OFF by default (only useful for music videos).",
+    )
+
+    # --- Optional Enrichment Models (off by default; move insightface/SER deps to uv sync --group enrichment) ---
+    enable_speech_emotion: bool = Field(
+        default=False,
+        description=(
+            "Enable Speech Emotion Recognition (Wav2Vec2). "
+            "When False: no model is loaded, no GPU allocated, no import attempted. "
+            "Requires: uv sync --group enrichment"
+        ),
     )
 
     # --- OCR Configuration ---

@@ -102,12 +102,12 @@ async def warmup_models():
         log.warning(f"[Warmer] BGE init failed: {e}")
         log_verbose(f"[Warmer] BGE exception: {type(e).__name__}: {e}")
 
-    # 3. Qwen2-VL (Video Understanding) - Heavy!
+    # 3. Qwen3-VL (Video Understanding via vLLM) - endpoint client, no local load
     # Only warm up if specifically configured to avoid OOM on small GPUs
     # We just trigger the DOWNLOAD but not full load.
     try:
         log_verbose(
-            "[Warmer] Qwen2-VL: Skipping full load (lazy-loaded on demand)"
+            "[Warmer] Qwen3-VL: Skipping full load (lazy-loaded on demand)"
         )
         pass  # Skip full load for Qwen to save VRAM
     except Exception:
@@ -165,32 +165,29 @@ async def warmup_models():
     else:
         log_verbose("[Warmer] YOLOv8 disabled, skipping")
 
-    # 7. ArcFace (Identity)
+    # 7. ArcFace (Identity / Face Recognition)
     if getattr(settings, "enable_face_recognition", False):
         try:
-            arcface_path = (
-                settings.model_cache_dir / "arcface" / "w600k_r50.onnx"
-            )
-            log_verbose(f"[Warmer] ArcFace expected at: {arcface_path}")
-            log_verbose(f"[Warmer] ArcFace exists: {arcface_path.exists()}")
+            from core.processing.identity import _try_import_insightface
 
-            if not arcface_path.exists():
-                log.info("[Warmer] Downloading ArcFace ONNX...")
-                from huggingface_hub import hf_hub_download
-
-                hf_hub_download(
-                    repo_id="minchul/cvl-face-recognition-models",
-                    filename="w600k_r50.onnx",
-                    local_dir=str(settings.model_cache_dir / "arcface"),
-                    local_dir_use_symlinks=False,
+            face_cls = _try_import_insightface()
+            if face_cls is not None:
+                app = face_cls(
+                    name=settings.insightface_model,
+                    root=str(settings.model_cache_dir / "insightface"),
+                    providers=["CPUExecutionProvider"],
+                    allowed_modules=["detection", "recognition"],
                 )
-                log_verbose("[Warmer] ArcFace download complete")
-            models_checked.append("ArcFace")
+                app.prepare(ctx_id=-1, det_size=(320, 320))
+                models_checked.append(f"InsightFace ({settings.insightface_model})")
+                log_verbose(f"[Warmer] InsightFace ({settings.insightface_model}) loaded successfully")
+            else:
+                log_verbose("[Warmer] InsightFace library not installed")
         except Exception as e:
-            log.warning(f"[Warmer] ArcFace init failed: {e}")
-            log_verbose(f"[Warmer] ArcFace exception: {type(e).__name__}: {e}")
+            log.warning(f"[Warmer] Face recognition init failed: {e}")
+            log_verbose(f"[Warmer] Face recognition exception: {type(e).__name__}: {e}")
     else:
-        log_verbose("[Warmer] ArcFace disabled, skipping")
+        log_verbose("[Warmer] Face recognition disabled, skipping")
 
     await asyncio.gather(*tasks)
 

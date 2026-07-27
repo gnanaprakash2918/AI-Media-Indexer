@@ -25,22 +25,24 @@ from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
 
 log = get_logger(__name__)
 
-# DYNAMIC IMPORT: Don't assume package name (sam3 vs sam2)
+# DYNAMIC IMPORT: Prefer sam3; fall back to sam2 as a compatibility shim only.
+# Production target is always SAM 3. The sam2 fallback exists to prevent hard
+# failures during the transition period — it is NOT a supported configuration.
 try:
-    # 1. Try SAM 3 (Official / Fork)
+    # 1. SAM 3 (target)
     from sam3.model_builder import build_sam3_video_predictor
 
     _SAM_NAMESPACE = "sam3"
 except ImportError:
     try:
-        # 2. Key Fallback: SAM 2 (Meta Official)
+        # 2. SAM 2 compatibility shim — install sam3 to remove this path
         from sam2.build_sam import (
             build_sam2_video_predictor as build_sam3_video_predictor,
         )
 
-        _SAM_NAMESPACE = "sam2"
+        _SAM_NAMESPACE = "sam2"  # shim only; NOT the intended runtime
     except ImportError:
-        # Fallback for dev/mocking if neither exists
+        # Dev/mock fallback if neither is installed
         log.warning("[SAM] neither 'sam3' nor 'sam2' found. Using mocks.")
         _SAM_NAMESPACE = "mock"
         build_sam3_video_predictor = None
@@ -57,7 +59,7 @@ class SAM3Tracker:
         self._model_loaded = False
 
         # Register with arbiter (SAM 3 Large needs ~24GB, Small ~8GB)
-        # We'll assume 'sam2_hiera_small.yaml' usage for consumer hardware unless configured otherwise
+        # Default config: sam3_hiera_small.yaml for consumer hardware
         RESOURCE_ARBITER.register_model("sam3_tracker", self.unload_model)
 
     async def _lazy_load(self):
