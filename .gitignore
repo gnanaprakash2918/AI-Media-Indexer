@@ -407,6 +407,6 @@ OVERLAY_METHODS.py
 ADD_TO_DB.py
 *.tmp
 *.bak
-debug_*.py
-test_*.py
-verify_*.py
+/debug_*.py
+/test_*.py
+/verify_*.py

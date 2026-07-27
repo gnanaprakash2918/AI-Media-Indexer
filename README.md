@@ -10,7 +10,7 @@
 
 ![InternVideo2.5](https://img.shields.io/badge/InternVideo2.5-SOTA_VLM-blue)
 ![Whisper v3](https://img.shields.io/badge/Whisper_v3-General_ASR-green)
-![SAM 2](https://img.shields.io/badge/SAM_2-Visual_Tracking-purple)
+![SAM 3](https://img.shields.io/badge/SAM_3-Visual_Tracking-purple)
 ![NV-Embed-v2](https://img.shields.io/badge/NV--Embed--v2-7B_SOTA-red)
 ![BGE-M3](https://img.shields.io/badge/BGE--M3-Hybrid_Retrieval-blue)
 ![Pyannote 3.1](https://img.shields.io/badge/Pyannote_3.1-Diarization-yellow)
@@ -47,7 +47,7 @@ flowchart TD
     
     subgraph VideoLogic[Video Council]
         VS[Text-Gated Smart Sampler] --> VC[Video Council: InternVideo2.5]
-        VC --> VT[SAM 2 Temporal Tracking]
+        VC --> VT[SAM 3 Temporal Tracking]
         VT --> VM[Metadata: InsightFace 512D, PP-OCRv5]
     end
     
@@ -103,7 +103,7 @@ flowchart TD
 - **Parallel Ingestion Pipeline**: Independent audio/video processing with GPU-aware resource orchestration (Semaphores in `processing/identity.py`).
 - **Multimodal Intelligence**:
     - **Audio**: **AST (Audio Spectrogram Transformer)** for 527-class event tagging, **CLAP** for text-audio retrieval, and **Whisper v3** for ASR.
-    - **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 2** for tracking.
+    - **Vision**: **SigLIP (1152d)** for dense captioning, **X-CLIP** for temporal video understanding from Microsoft, and **SAM 3** for tracking.
     - **Identity**: Temporal face tracking with **InsightFace ArcFace (512-dim)** and **HDBSCAN** global identity clustering.
 - **Advanced Temporal Fusion**:
     - **3-Tier Memory**: XMem-inspired sensory (sliding window), working, and long-term memory tiers.
@@ -119,7 +119,7 @@ flowchart TD
 | **VLM Intelligence** | Gemini 1.5 Pro/Flash | Narrative synthesis, reasoning traces, re-ranking |
 | **Action Recognition** | InternVideo2.5 | Dense motion description and semantic indexing |
 | **Face Identity** | InsightFace ArcFace | 512D biometric vectors with temporal track building |
-| **Object Tracking** | SAM 2 | Zero-shot visual segmentation and multi-frame tracking |
+| **Object Tracking** | SAM 3 | Zero-shot visual segmentation and multi-frame tracking |
 | **Search Fusion** | RRF + Cross-Encoders | Hybrid ranking (MiniLM-L-12-v2 + BGE-Reranker v2) |
 
 ## Tech Stack

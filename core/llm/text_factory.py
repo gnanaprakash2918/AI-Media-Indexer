@@ -1,4 +1,16 @@
-"""Text LLM client factory and base classes."""
+"""Text LLM client factory.
+
+All providers implement TextLLMClient (synchronous text generation interface).
+Switch providers via settings.ai_provider_text or the ai_provider_text env var.
+
+Supported providers:
+    vllm   — Any OpenAI-compatible endpoint (DEFAULT)
+    ollama — Local Ollama (dev convenience)
+    gemini — Google Gemini (cloud; uses langchain_google_genai)
+
+NOTE: google.generativeai is NOT imported directly in this file.
+All Gemini calls go through langchain_google_genai to maintain provider isolation.
+"""
 
 from __future__ import annotations
 
@@ -14,29 +26,21 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class TextLLMClient(ABC):
-    """Abstract base class for Text LLM clients."""
+    """Abstract base class for synchronous text LLM clients."""
 
     @abstractmethod
     def generate(self, prompt: str) -> str:
-        """Generates a text response from the given prompt.
-
-        Args:
-            prompt: The text prompt.
-
-        Returns:
-            The generated text response.
-        """
-        pass
+        """Generate a text response from the given prompt."""
 
     def generate_json(self, prompt: str, schema: type[T]) -> T | None:
-        """Generates a JSON response matching the provided schema.
+        """Generate a JSON response matching the provided schema.
 
         Args:
             prompt: The text prompt.
-            schema: The Pydantic model class to validate against.
+            schema: Pydantic model class to validate against.
 
         Returns:
-            An instance of the schema, or None if generation or parsing fails.
+            An instance of the schema, or None if generation/parsing fails.
         """
         raw = self.generate(prompt)
         if not raw:
@@ -49,7 +53,7 @@ class TextLLMClient(ABC):
                     clean = clean[4:]
             return schema.model_validate_json(clean)
         except Exception as e:
-            log(f"JSON parse failed: {e}")
+            log(f"[TextLLMClient] JSON parse failed: {e}")
             try:
                 start = raw.find("{")
                 end = raw.rfind("}") + 1
@@ -60,8 +64,60 @@ class TextLLMClient(ABC):
             return None
 
 
+class VLLMText(TextLLMClient):
+    """Text client that calls a vLLM (or any OpenAI-compat) endpoint."""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout: float = 60.0,
+    ):
+        self.base_url = (base_url or settings.vllm_base_url).rstrip("/")
+        self.model = model or settings.vlm_endpoint_model_name
+        self.api_key = api_key or settings.vllm_api_key
+        self.timeout = timeout
+
+    def _headers(self) -> dict[str, str]:
+        h = {"Content-Type": "application/json"}
+        if self.api_key:
+            h["Authorization"] = f"Bearer {self.api_key}"
+        return h
+
+    def generate(self, prompt: str) -> str:
+        import httpx
+
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 512,
+            "temperature": 0.0,
+        }
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(
+                    f"{self.base_url}/v1/chat/completions",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                resp.raise_for_status()
+                return (
+                    resp.json()["choices"][0]["message"]["content"].strip()
+                )
+        except httpx.ConnectError as exc:
+            log(
+                f"[VLLMText] Cannot connect to {self.base_url}. "
+                f"Set LLM_PROVIDER=ollama for dev without vLLM. Error: {exc}"
+            )
+            return ""
+        except Exception as e:
+            log(f"[VLLMText] error: {e}")
+            return ""
+
+
 class OllamaText(TextLLMClient):
-    """Client for generating text using Ollama."""
+    """Text client backed by local Ollama (dev convenience)."""
 
     def __init__(
         self,
@@ -69,19 +125,11 @@ class OllamaText(TextLLMClient):
         base_url: str | None = None,
         timeout: float = 60.0,
     ):
-        """Initializes the Ollama text client.
-
-        Args:
-            model: Optional model name.
-            base_url: Optional base URL for the Ollama API.
-            timeout: Request timeout in seconds.
-        """
-        self.model = model or settings.ollama_model
+        self.model = model or settings.ollama_text_model
         self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self.timeout = timeout
 
     def generate(self, prompt: str) -> str:
-        """Sends a text generation request to Ollama."""
         import httpx
 
         payload = {
@@ -98,77 +146,86 @@ class OllamaText(TextLLMClient):
                 resp.raise_for_status()
                 return resp.json().get("response", "").strip()
         except Exception as e:
-            log(f"OllamaText error: {e}")
+            log(f"[OllamaText] error: {e}")
             return ""
 
 
 class GeminiText(TextLLMClient):
-    """Client for generating text using Google Gemini."""
+    """Text client backed by Google Gemini (cloud).
+
+    Uses langchain_google_genai — NOT the bare google.generativeai SDK.
+    """
 
     def __init__(self, model: str | None = None, api_key: str | None = None):
-        """Initializes the Gemini text client.
-
-        Args:
-            model: Optional model name.
-            api_key: Optional Gemini API key.
-        """
         self.model = model or settings.gemini_model
         self.api_key = api_key or (
             settings.gemini_api_key.get_secret_value()
             if settings.gemini_api_key
             else None
         )
-        self._client = None
+        self._llm = None
 
-    def _get_client(self):
-        """Retrieves or initializes the Gemini generative model client."""
-        if self._client is None:
+    def _get_llm(self):
+        """Lazily initialize langchain_google_genai ChatGoogleGenerativeAI."""
+        if self._llm is None:
+            if not self.api_key:
+                log("[GeminiText] GOOGLE_API_KEY not set, Gemini disabled")
+                return None
             try:
-                import google.generativeai as genai  # type: ignore
+                from langchain_google_genai import ChatGoogleGenerativeAI
 
-                if not self.api_key:
-                    log("[GeminiText] GOOGLE_API_KEY not set, Gemini disabled")
-                    return None
-                genai.configure(api_key=self.api_key)  # type: ignore
-                self._client = genai.GenerativeModel(  # type: ignore
-                    self.model,
-                    generation_config={
-                        "response_mime_type": "application/json"
-                    },
+                self._llm = ChatGoogleGenerativeAI(
+                    model=self.model,
+                    api_key=self.api_key,
+                    temperature=0.0,
                 )
             except ImportError:
                 log(
-                    "[GeminiText] google-generativeai not installed, Gemini disabled"
+                    "[GeminiText] langchain_google_genai not installed, Gemini disabled"
                 )
                 return None
             except Exception as e:
                 log(f"[GeminiText] Failed to initialize: {e}")
                 return None
-        return self._client
+        return self._llm
 
     def generate(self, prompt: str) -> str:
-        """Sends a content generation request to Gemini."""
+        import asyncio
+
+        llm = self._get_llm()
+        if llm is None:
+            return ""
         try:
-            client = self._get_client()
-            if client is None:
-                return ""  # Gemini not available
-            response = client.generate_content(prompt)
-            return response.text.strip() if response.text else ""
+            result = asyncio.get_event_loop().run_until_complete(
+                llm.ainvoke(prompt)
+            )
+            content = getattr(result, "content", str(result))
+            return str(content).strip()
         except Exception as e:
-            log(f"GeminiText error: {e}")
+            log(f"[GeminiText] error: {e}")
             return ""
 
 
 def get_text_client(provider: str | None = None) -> TextLLMClient:
-    """Retrieves a text LLM client based on the configured provider.
+    """Get a text LLM client for the configured provider.
 
     Args:
-        provider: Optional provider name ('ollama' or 'gemini').
+        provider: "vllm" | "ollama" | "gemini". Falls back to
+                  settings.ai_provider_text (default: "vllm").
 
     Returns:
-        The initialized text LLM client.
+        Initialized TextLLMClient implementation.
     """
-    provider = provider or settings.ai_provider_text
-    if provider == "gemini":
+    p = (provider or settings.ai_provider_text).lower()
+
+    if p == "vllm":
+        return VLLMText()
+    elif p == "gemini":
         return GeminiText()
-    return OllamaText()
+    elif p == "ollama":
+        return OllamaText()
+    else:
+        log(
+            f"[get_text_client] Unknown provider '{p}', defaulting to vllm"
+        )
+        return VLLMText()

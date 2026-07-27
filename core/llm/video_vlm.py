@@ -1,202 +1,187 @@
-"""Video-Native VLM Client (Qwen2-VL / LLaVA-Video).
+"""Video-Native VLM Client for Qwen3-VL via vLLM.
 
-Provides true video understanding by processing multiple frames with temporal queries.
-Backs "Action Summary" feature to fix "posing to camera" hallucinations.
+Replaces the previous local HuggingFace model load (Qwen2-VL) with a
+thin HTTP client calling the vLLM OpenAI-compatible /v1/chat/completions
+endpoint. No local GPU allocation, no transformers import, no weights on disk.
+
+The endpoint is configured via:
+    VLLM_BASE_URL          — base URL (default: http://localhost:8000)
+    VLM_ENDPOINT_MODEL_NAME — model name served by vLLM (Qwen/Qwen3-VL-2B-Instruct)
+    VLLM_API_KEY           — bearer token if required (default: None)
+
+For local dev without vLLM, set LLM_PROVIDER=ollama — VideoVLM will use
+the Ollama vision model as a fallback.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+from typing import Any
 
 import numpy as np
 
+from config import settings
 from core.utils.logger import get_logger
-from core.utils.resource_arbiter import GPU_SEMAPHORE
 
 log = get_logger(__name__)
 
 
 class VideoVLM:
-    """Video Understanding VLM (Qwen2-VL)."""
+    """Video Understanding VLM client (Qwen3-VL via vLLM endpoint).
 
-    def __init__(self, model_id: str | None = None):
-        from config import settings
+    Sends frame sequences to the vLLM /v1/chat/completions endpoint
+    formatted as OpenAI-style image_url content parts. No local model
+    loading — all inference happens on the vLLM server.
+    """
 
-        self.model_id = model_id or settings.video_vlm_model_id
-        self.model = None
-        self.processor = None
-        self._init_lock = asyncio.Lock()
-        import torch
+    def __init__(
+        self,
+        base_url: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout: float = 120.0,
+    ):
+        """Initialize the VideoVLM client.
 
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        Args:
+            base_url: vLLM endpoint base URL. Defaults to settings.vllm_base_url.
+            model:    Model name sent to the endpoint. Defaults to
+                      settings.vlm_endpoint_model_name.
+            api_key:  Bearer token. Defaults to settings.vllm_api_key.
+            timeout:  HTTP request timeout in seconds.
+        """
+        self.base_url = (base_url or settings.vllm_base_url).rstrip("/")
+        self.model = model or settings.vlm_endpoint_model_name
+        self.api_key = api_key or settings.vllm_api_key
+        self.timeout = timeout
 
-    async def _lazy_load(self) -> bool:
-        """Load model with Flash Attention and Quantization."""
-        if self.model is not None:
-            return True
+        log.info(
+            f"[VideoVLM] endpoint={self.base_url}  model={self.model}"
+        )
 
-        async with self._init_lock:
-            if self.model is not None:
-                return True
-            try:
-                from config import settings
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+    def _headers(self) -> dict[str, str]:
+        h = {"Content-Type": "application/json"}
+        if self.api_key:
+            h["Authorization"] = f"Bearer {self.api_key}"
+        return h
 
-                vram_gb = getattr(settings, "video_vlm_vram_gb", 4.0)
+    @staticmethod
+    def _encode_frame(frame: np.ndarray) -> str:
+        """Encode an RGB numpy frame to a base64 JPEG string."""
+        import cv2
 
-                if not await RESOURCE_ARBITER.ensure_loaded(
-                    "video_vlm", vram_gb=vram_gb, cleanup_fn=self.cleanup
-                ):
-                    log.error("[VideoVLM] Failed to acquire VRAM")
-                    return False
-
-                log.info(f"[VideoVLM] Loading {self.model_id}...")
-
-                # Check for Flash Attention 2
-                import torch
-                from transformers import AutoModelForCausalLM, AutoProcessor
-
-                attn_impl = (
-                    "flash_attention_2"
-                    if torch.cuda.get_device_capability()[0] >= 8
-                    else "eager"
-                )
-
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id,
-                    torch_dtype=torch.bfloat16
-                    if torch.cuda.is_bf16_supported()
-                    else torch.float16,
-                    attn_implementation=attn_impl,
-                    device_map="auto",
-                    trust_remote_code=True,
-                )
-
-                self.processor = AutoProcessor.from_pretrained(
-                    self.model_id, trust_remote_code=True
-                )
-
-                log.info(
-                    f"[VideoVLM] Loaded on {self._device} with {attn_impl}"
-                )
-                return True
-            except Exception as e:
-                log.error(f"[VideoVLM] Load failed: {e}")
-                return False
+        # frame is RGB from PIL/numpy — convert to BGR for cv2.imencode
+        bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            raise ValueError("Failed to encode frame as JPEG")
+        return base64.b64encode(buf.tobytes()).decode("utf-8")
 
     async def generate_action_summary(
         self, frames: list[np.ndarray], fps: float = 1.0
     ) -> dict[str, str]:
-        """Generate structured action summary from video frames.
+        """Generate a structured action summary from video frames.
+
+        Samples up to vlm_max_frames frames, encodes them as base64 JPEG,
+        and sends them to the Qwen3-VL endpoint in a single chat request.
 
         Args:
-            frames: List of RGB numpy frames.
-            fps: Approximate frame rate of the list (e.g. 1.0 means 1 frame per sec).
+            frames: List of RGB numpy frames (H, W, 3).
+            fps:    Approximate frame rate of the list (informational only).
 
         Returns:
-            JSON-like dict with keys: 'action', 'subject', 'mood'.
+            Dict with keys 'action', 'subject', 'mood', and 'raw'.
+            Returns empty dict on connection/inference error.
         """
-        if not await self._lazy_load():
+        if not frames:
             return {}
 
-        async with GPU_SEMAPHORE:
-            try:
-                # Sampling: Qwen2-VL handles variable frames, but let's cap at 16 for memory
-                from config import settings
+        try:
+            import httpx
 
-                max_frames = settings.vlm_max_frames
-                sampled_frames = frames
-                if len(frames) > max_frames:
-                    indices = np.linspace(
-                        0, len(frames) - 1, max_frames, dtype=int
-                    )
-                    sampled_frames = [frames[i] for i in indices]
+            # --- Sample frames ---
+            max_frames = settings.vlm_max_frames
+            sampled = frames
+            if len(frames) > max_frames:
+                indices = np.linspace(
+                    0, len(frames) - 1, max_frames, dtype=int
+                )
+                sampled = [frames[i] for i in indices]
 
-                # Prepare inputs (Qwen2-VL specific format)
-                # Note: Actual implementation depends on qwen_vl_utils which is standard companion
-                # But here we assume standard transformers processor usage if updated
+            # --- Build message content ---
+            # Encode frames as base64 images in a thread (CPU-bound)
+            def _encode_all() -> list[str]:
+                return [self._encode_frame(f) for f in sampled]
 
-                # Convert frames to standard format (local path or PIL)
-                # Qwen2-VL can accept PIL images
-                from PIL import Image
+            encoded_frames = await asyncio.to_thread(_encode_all)
 
-                pil_frames = [Image.fromarray(f) for f in sampled_frames]
-
-                messages = [
+            content: list[dict[str, Any]] = []
+            for b64 in encoded_frames:
+                content.append(
                     {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "video",
-                                "video": pil_frames,
-                                "fps": fps,  # Placeholder, processor handles it
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Analyze this video clip. Describe the main action, "
-                                    "the subjects involved, and the interaction. "
-                                    "Do not describe valid static poses. Focus on movement."
-                                    "Format: Action: ... | Subjects: ... | Mood: ..."
-                                ),
-                            },
-                        ],
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{b64}"
+                        },
                     }
-                ]
-
-                text = self.processor.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
                 )
+            content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"These are {len(sampled)} frames sampled from a video "
+                        f"at approximately {fps:.1f} fps. "
+                        "Analyze the clip and describe the main action, "
+                        "the subjects involved, and the overall mood. "
+                        "Ignore static poses; focus on movement and interaction. "
+                        "Format your answer exactly as: "
+                        "Action: <action> | Subjects: <subjects> | Mood: <mood>"
+                    ),
+                }
+            )
 
-                inputs = self.processor(
-                    text=[text],
-                    videos=[pil_frames],
-                    padding=True,
-                    return_tensors="pt",
-                )
-                inputs = inputs.to(self.model.device)
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": content}],
+                "max_tokens": settings.vlm_max_tokens,
+                "temperature": 0.0,
+            }
 
-                generated_ids = self.model.generate(
-                    **inputs, max_new_tokens=settings.vlm_max_tokens
-                )
-                generated_ids_trimmed = [
-                    out_ids[len(in_ids) :]
-                    for in_ids, out_ids in zip(
-                        inputs.input_ids, generated_ids, strict=True
+            # --- Send to vLLM ---
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                try:
+                    resp = await client.post(
+                        f"{self.base_url}/v1/chat/completions",
+                        headers=self._headers(),
+                        json=payload,
                     )
-                ]
-                output_text = self.processor.batch_decode(
-                    generated_ids_trimmed,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False,
-                )[0]
+                    resp.raise_for_status()
+                except httpx.ConnectError as exc:
+                    log.error(
+                        f"[VideoVLM] Cannot connect to vLLM at {self.base_url}. "
+                        f"Check VLLM_BASE_URL or set LLM_PROVIDER=ollama for "
+                        f"dev without a GPU/vLLM instance. Error: {exc}"
+                    )
+                    return {}
 
-                # Simple parsing
-                parts = output_text.split("|")
-                result = {"raw": output_text}
-                for part in parts:
-                    if ":" in part:
-                        k, v = part.split(":", 1)
-                        result[k.strip().lower()] = v.strip()
+            output_text = resp.json()["choices"][0]["message"]["content"]
 
-                return result
+            # --- Parse "Action: X | Subjects: Y | Mood: Z" ---
+            parts = output_text.split("|")
+            result: dict[str, str] = {"raw": output_text}
+            for part in parts:
+                if ":" in part:
+                    k, v = part.split(":", 1)
+                    result[k.strip().lower()] = v.strip()
 
-            except Exception as e:
-                log.error(f"[VideoVLM] Generation failed: {e}")
-                return {}
+            log.debug(f"[VideoVLM] Summary: {result}")
+            return result
 
-    def cleanup(self):
-        if self.model:
-            del self.model
-            self.model = None
-        if self.processor:
-            del self.processor
-            self.processor = None
+        except Exception as e:
+            log.error(f"[VideoVLM] Generation failed: {e}")
+            return {}
 
-        import sys
-
-        if "torch" in sys.modules:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+    def cleanup(self) -> None:
+        """No-op — remote endpoint; nothing to unload locally."""
+        pass

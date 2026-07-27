@@ -422,7 +422,6 @@ if [ "$NUKE_QDRANT" = true ]; then
         ".cache"
         ".face_cache"
         "langfuse_data"
-        "postgres_data"
         "jobs.db"
         "identity.db"
         "identity_graph.db"
@@ -435,6 +434,15 @@ if [ "$NUKE_QDRANT" = true ]; then
         "eslint_report.txt"
         "test_results.log"
     )
+
+    # Nuclear/Full mode wipes Postgres too (matches start.ps1 behaviour)
+    if [ "$NUCLEAR" = true ] || [ "$FULL" = true ]; then
+        WIPE_ITEMS+=("postgres_data")
+        echo -e "${RED}  >> Including postgres_data in cleanup (Nuclear/Full mode).${NC}"
+    elif [ -d "postgres_data" ]; then
+        WIPE_ITEMS+=("postgres_data")
+        echo -e "${RED}  >> Removing postgres_data...${NC}"
+    fi
 
     for item in "${WIPE_ITEMS[@]}"; do
         if [ -e "$item" ]; then
@@ -676,7 +684,7 @@ if [ "$USE_INTEGRATED" = true ]; then
     echo -e "${WHITE}  Qdrant:   http://localhost:6333${NC}\n"
     echo -e "${GRAY}  Frontend running in background (PID: $FRONTEND_PID).${NC}"
     echo -e "${GRAY}  Press Ctrl+C to stop backend.${NC}\n"
-2
+
     echo -e "${GREEN}  Starting Backend (Port 8000)...${NC}"
     uv run uvicorn api.server:app --host 0.0.0.0 --port 8000 &
     BACKEND_PID=$!
