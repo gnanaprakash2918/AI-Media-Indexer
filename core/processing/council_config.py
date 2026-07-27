@@ -76,11 +76,11 @@ DEFAULT_VLM_MODELS = [
         description="LLaVA 7B - balanced quality/speed",
     ),
     ModelSpec(
-        name="qwen2-vl",
+        name="qwen3-vl",
         model_type=ModelType.OSS,
-        model_id="qwen2-vl:7b",
+        model_id="Qwen/Qwen3-VL-2B-Instruct",
         vram_gb=6.0,
-        description="Qwen2-VL 7B - strong vision",
+        description="Qwen3-VL via vLLM endpoint — strong vision + OCR",
     ),
     ModelSpec(
         name="gemini-flash",

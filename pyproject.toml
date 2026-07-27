@@ -45,6 +45,9 @@ dependencies = [
     "mcp>=1.23.2",
     "websockets>=15.0.1",
     "httpx>=0.28.1",
+    # OpenAI-compatible client library — used by VLLMProvider/VLLMVLMClient/VLLMText
+    # to call vLLM (or any OpenAI-compat endpoint) without vendoring the HTTP layer.
+    "openai>=1.0.0",
     "langfuse>=3.11.0",
     "loguru>=0.7.2",
     "numpy>=1.26.0",
@@ -55,7 +58,9 @@ dependencies = [
     "pillow>=12.0.0",
     "pyannote.audio>=3.1.1",
     "psutil>=5.9.0",
-    "insightface>=0.7.3",
+    # insightface moved to optional [enrichment] group.
+    # Install with: uv sync --group enrichment
+    # Controlled by settings.enable_face_recognition (default: True).
     "onnxruntime>=1.16.0",
     "hdbscan>=0.8.36",
     "easyocr>=1.7.1",
@@ -64,6 +69,9 @@ dependencies = [
     "celery[redis]>=5.3.6",
     "redis>=5.0.1",
     "sam3 @ https://github.com/facebookresearch/sam3.git ; python_version < '3.14'",
+    # TODO(Phase1): Pin sam3 to a specific commit hash for reproducibility:
+    # sam3 @ git+https://github.com/facebookresearch/sam3.git@<COMMIT_HASH>
+    # Unpinned git URLs are a reproducibility risk — pin before production.
     # "brave-search>=0.1.0", # Removed due to httpx conflict
     "pyloudnorm>=0.1.1",
     "fer>=22.5.1 ; python_version < '3.14'",
@@ -79,12 +87,24 @@ dependencies = [
     "triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.0.0-windows.post1/triton-3.0.0-cp312-cp312-win_amd64.whl ; sys_platform == 'win32' and python_version == '3.12'",
     "imagehash>=4.3.0",  # Perceptual hashing for content fingerprinting
     "open-clip-torch>=3.2.0",
+    "setuptools<70.0.0",
     "neo4j>=6.1.0",
     "opencv-python>=4.11.0.86",
     "paddlepaddle>=3.3.0 ; python_version < '3.14'",
 ]
 
 [project.optional-dependencies]
+# Enrichment models: InsightFace (face recognition) and Speech Emotion Recognition.
+# These are off by default to keep the default install footprint small.
+# Enable in config: enable_face_recognition=True / enable_speech_emotion=True
+# Install: uv sync --group enrichment
+enrichment = [
+    "insightface>=0.7.3",
+    # SER (Speech Emotion Recognition) — Wav2Vec2 via HuggingFace:
+    # transformers is already a core dep, so no extra package needed.
+    # The model is downloaded on first use when enable_speech_emotion=True.
+]
+
 dev = [
     "black>=24.0.0",
     "ruff>=0.6.0",
