@@ -11,7 +11,15 @@ celery_app = Celery(
     "ai_media_indexer",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["core.ingestion.tasks"],
+    include=[
+        "core.ingestion.tasks",
+        # Phase 2 — parallel ingestion DAG workers
+        "core.ingestion.workers.scene_worker",
+        "core.ingestion.workers.speech_worker",
+        "core.ingestion.workers.audio_event_worker",
+        "core.ingestion.workers.metadata_worker",
+        "core.ingestion.workers.fusion_worker",
+    ],
 )
 
 import hashlib

@@ -68,6 +68,10 @@ dependencies = [
     "nvidia-ml-py>=12.535.0",
     "celery[redis]>=5.3.6",
     "redis>=5.0.1",
+    # Phase 2: chunk_state persistent table (idempotent checkpoints)
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "asyncpg>=0.29.0",
     "sam3 @ https://github.com/facebookresearch/sam3.git ; python_version < '3.14'",
     # TODO(Phase1): Pin sam3 to a specific commit hash for reproducibility:
     # sam3 @ git+https://github.com/facebookresearch/sam3.git@<COMMIT_HASH>
@@ -91,6 +95,7 @@ dependencies = [
     "neo4j>=6.1.0",
     "opencv-python>=4.11.0.86",
     "paddlepaddle>=3.3.0 ; python_version < '3.14'",
+    "psycopg2-binary>=2.9.12",
 ]
 
 [project.optional-dependencies]
@@ -112,6 +117,10 @@ dev = [
     "cython>=3.0.0",
     "ninja>=1.11.0",
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.21.0",     # HTTP mocking for vLLM/httpx tests
+    "fakeredis>=2.23.0", # In-memory Redis for fan-in tests
+    "aiosqlite>=0.19.0", # Async SQLite driver for repository tests
     "mypy>=1.10.0",
     "pyright>=1.1.380",
 ]

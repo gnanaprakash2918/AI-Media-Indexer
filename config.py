@@ -491,11 +491,47 @@ class Settings(BaseSettings):
     # Local (Docker) Langfuse
     langfuse_docker_host: str = "http://localhost:3300"
 
+
     # Redis/Celery Configuration
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_auth: str = "redispass"
     enable_distributed_ingestion: bool = False
+
+    # PostgreSQL — chunk_state idempotent checkpoint table (Phase 2)
+    # Local dev default; override via POSTGRES_URL env var in Docker/prod.
+    postgres_url: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@localhost:5432/ai_media",
+        description=(
+            "Async SQLAlchemy URL for the chunk_state PostgreSQL table. "
+            "Alembic migrations strip the +asyncpg prefix automatically."
+        ),
+    )
+
+    # Ingestion chunking defaults (can be overridden per-request)
+    chunk_duration_seconds: float = Field(
+        default=600.0,
+        description="Target chunk window size in seconds (default 10 min).",
+    )
+    min_media_length_for_chunking: float = Field(
+        default=1800.0,
+        description="Only chunk media longer than this many seconds (default 30 min).",
+    )
+
+    # Ingestion stage version string — included in chunk_state rows so
+    # operators can re-run specific stages after a model upgrade.
+    # Bump this string when upgrading a model (e.g. Whisper, Qwen3-VL).
+    ingestion_stage_version: str = Field(
+        default="v1.0.0",
+        description="Pipeline version tag written to chunk_state.stage_version.",
+    )
+
+    # Audio events track (CLAP) — excluded from fan-in when disabled
+    enable_audio_events: bool = Field(
+        default=True,
+        description="Enable CLAP-based audio event detection (non-speech events).",
+    )
+
 
     # Observability (Loki)
     enable_loki: bool = Field(
