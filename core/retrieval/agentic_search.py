@@ -17,11 +17,11 @@ from core.retrieval.reranker import RerankingCouncil
 from core.retrieval.result_processor import ResultProcessorMixin
 from core.utils.logger import log
 from core.utils.observe import observe
-from llm.factory import LLMFactory
+from core.llm.factory import LLMFactory
 
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
-    from llm.interface import LLMInterface
+    from core.llm.interface import LLMInterface
 
 
 class SearchAgent(QueryParserMixin, ResultProcessorMixin):

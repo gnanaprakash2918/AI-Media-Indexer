@@ -16,7 +16,7 @@ from core.utils.logger import log
 from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
-    from llm.interface import LLMInterface
+    from core.llm.interface import LLMInterface
 
 ROUTER_PROMPT = load_prompt("orchestrator_routing")
 
@@ -30,7 +30,7 @@ class MultiAgentOrchestrator:
         Args:
             llm: Optional LLM interface for reasoning and routing.
         """
-        from llm.factory import LLMFactory
+        from core.llm.factory import LLMFactory
 
         self.llm = llm or LLMFactory.get_default_llm()
         self.tool_schemas = get_all_tool_schemas()

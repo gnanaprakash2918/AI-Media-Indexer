@@ -16,7 +16,7 @@ from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
-    from llm.interface import LLMInterface
+    from core.llm.interface import LLMInterface
 
 DYNAMIC_QUERY_PROMPT = load_prompt("dynamic_query")
 QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT  # Legacy alias

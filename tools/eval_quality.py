@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings  # noqa: E402
 from core.utils.prompt_loader import load_prompt  # noqa: E402
-from llm.factory import LLMFactory  # noqa: E402
+from core.llm.factory import LLMFactory  # noqa: E402
 
 TEST_SET = [
     {

@@ -163,7 +163,7 @@ async def main():
 
     try:
         from core.retrieval.agentic_search import SearchAgent
-        from llm.factory import LLMFactory
+        from core.llm.factory import LLMFactory
 
         llm = LLMFactory.create_llm()
         agent = SearchAgent(db=db, llm=llm)

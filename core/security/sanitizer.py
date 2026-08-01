@@ -8,7 +8,7 @@ from core.errors import MediaIndexerError
 from core.utils.logger import log
 
 if TYPE_CHECKING:
-    from llm.interface import LLMInterface
+    from core.llm.interface import LLMInterface
 
 
 class SanitizationDecision(BaseModel):

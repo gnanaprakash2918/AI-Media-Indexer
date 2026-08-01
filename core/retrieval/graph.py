@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from core.knowledge.graph_store import get_graph_store
 from core.utils.logger import get_logger
-from llm.factory import LLMFactory
+from core.llm.factory import LLMFactory
 
 log = get_logger(__name__)
 

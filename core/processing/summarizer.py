@@ -14,8 +14,8 @@ from config import settings
 from core.storage.db import VectorDB
 from core.utils.logger import log
 from core.utils.prompt_loader import load_prompt
-from llm.factory import LLMFactory
-from llm.interface import LLMInterface
+from core.llm.factory import LLMFactory
+from core.llm.interface import LLMInterface
 
 # Load prompts from external files
 SCENE_SUMMARY_PROMPT = load_prompt("scene_summary")

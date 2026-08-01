@@ -14,7 +14,7 @@ from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
-    from llm.interface import LLMInterface
+    from core.llm.interface import LLMInterface
 
 
 class RerankResult(BaseModel):

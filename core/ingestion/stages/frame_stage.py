@@ -69,7 +69,7 @@ class FrameStageMixin:
 
         # Use the configured LLM provider from settings
         from core.processing.extractor import FrameExtractor
-        from llm.factory import LLMFactory
+        from core.llm.factory import LLMFactory
 
         vision_llm = LLMFactory.create_llm(provider=settings.llm_provider.value)
         self.vision = VisionAnalyzer(llm=vision_llm)

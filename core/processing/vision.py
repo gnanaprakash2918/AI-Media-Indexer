@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 from core.utils.logger import log, log_verbose
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
-from llm.factory import LLMFactory
-from llm.interface import LLMInterface
+from core.llm.factory import LLMFactory
+from core.llm.interface import LLMInterface
 
 if TYPE_CHECKING:
     from core.knowledge.schemas import FrameAnalysis

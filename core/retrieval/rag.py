@@ -20,8 +20,8 @@ from core.retrieval.schemas import (
 from core.storage.db import VectorDB
 from core.utils.logger import log
 from core.utils.prompt_loader import load_prompt
-from llm.factory import LLMFactory
-from llm.interface import LLMInterface
+from core.llm.factory import LLMFactory
+from core.llm.interface import LLMInterface
 
 # Load prompts from external files
 QUERY_DECOMPOSITION_PROMPT = load_prompt("rag_query_decomposition")

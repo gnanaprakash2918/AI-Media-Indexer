@@ -25,8 +25,8 @@ import pytest
 
 class TestLLMFactory:
     def test_create_vllm_returns_vllm_provider(self):
-        from llm.factory import LLMFactory
-        from llm.vllm import VLLMProvider
+        from core.llm.factory import LLMFactory
+        from core.llm.vllm import VLLMProvider
 
         llm = LLMFactory.create_llm("vllm", prompt_dir="/tmp/prompts_test")
         assert isinstance(llm, VLLMProvider)
@@ -34,8 +34,8 @@ class TestLLMFactory:
     def test_create_gemini_returns_gemini_llm(self):
         """GeminiLLM init requires GOOGLE_API_KEY; mock the env."""
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "fake-key-for-test"}):
-            from llm.factory import LLMFactory
-            from llm.gemini import GeminiLLM
+            from core.llm.factory import LLMFactory
+            from core.llm.gemini import GeminiLLM
 
             # GeminiLLM may raise if langchain_google_genai is not installed.
             # Only assert type if construction succeeds.
@@ -48,37 +48,37 @@ class TestLLMFactory:
                 pytest.skip(f"Gemini not available in test env: {exc}")
 
     def test_create_ollama_returns_ollama_llm(self):
-        from llm.factory import LLMFactory
-        from llm.ollama import OllamaLLM
+        from core.llm.factory import LLMFactory
+        from core.llm.ollama import OllamaLLM
 
         llm = LLMFactory.create_llm("ollama", prompt_dir="/tmp/prompts_test")
         assert isinstance(llm, OllamaLLM)
 
     def test_unknown_provider_raises_value_error(self):
-        from llm.factory import LLMFactory
+        from core.llm.factory import LLMFactory
 
         with pytest.raises(ValueError, match="Unknown LLM provider"):
             LLMFactory.create_llm("anthropic")  # type: ignore
 
     def test_get_default_llm_respects_env_var_vllm(self):
         with patch.dict(os.environ, {"LLM_PROVIDER": "vllm"}):
-            from llm.factory import LLMFactory
-            from llm.vllm import VLLMProvider
+            from core.llm.factory import LLMFactory
+            from core.llm.vllm import VLLMProvider
 
             llm = LLMFactory.get_default_llm(prompt_dir="/tmp/prompts_test")
             assert isinstance(llm, VLLMProvider)
 
     def test_get_default_llm_respects_env_var_ollama(self):
         with patch.dict(os.environ, {"LLM_PROVIDER": "ollama"}):
-            from llm.factory import LLMFactory
-            from llm.ollama import OllamaLLM
+            from core.llm.factory import LLMFactory
+            from core.llm.ollama import OllamaLLM
 
             llm = LLMFactory.get_default_llm(prompt_dir="/tmp/prompts_test")
             assert isinstance(llm, OllamaLLM)
 
     def test_get_default_llm_unknown_provider_raises(self):
         with patch.dict(os.environ, {"LLM_PROVIDER": "notarealthing"}):
-            from llm.factory import LLMFactory
+            from core.llm.factory import LLMFactory
 
             with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
                 LLMFactory.get_default_llm()
@@ -168,11 +168,11 @@ class TestVLLMProviderNoLocalLoad:
 
         # Remove cached module if already imported
         for key in list(sys.modules.keys()):
-            if key.startswith("llm.vllm"):
+            if key.startswith("core.llm.vllm"):
                 del sys.modules[key]
 
         # Import the module
-        from llm.vllm import VLLMProvider
+        from core.llm.vllm import VLLMProvider
 
         provider = VLLMProvider(
             base_url="http://localhost:8000",
