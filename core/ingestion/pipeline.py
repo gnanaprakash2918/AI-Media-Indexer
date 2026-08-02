@@ -29,8 +29,6 @@ from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
 from core.storage.db import VectorDB
-from core.tracking.sam3_tracker import SAM3Tracker
-from core.utils.frame_sampling import FrameSampler
 from core.utils.logger import bind_context, log_verbose, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
@@ -113,11 +111,6 @@ class IngestionPipeline(
         self.metadata_engine = MetadataEngine(
             tmdb_key=settings.tmdb_api_key, omdb_key=settings.omdb_api_key
         )
-        self.face_manager = face_manager or FaceManager(
-            db_client=self.db.client,
-            dbscan_eps=settings.hdbscan_cluster_selection_epsilon,
-            dbscan_min_samples=settings.hdbscan_min_samples,
-        )
         self.transnet = TransNetV2()
         self.video_vlm = video_vlm or VideoVLM()
         self.voice_processor = voice_processor or VoiceProcessor(db=self.db)
@@ -132,18 +125,18 @@ class IngestionPipeline(
 
         self.graph_builder = GraphBuilder()
 
-        # Enhanced pipeline config for SmartFrameSampler, BiometricArbitrator, etc.
-        self._enhanced_config = None
         self._face_clusters: dict[int, list[float]] = {}
         self._face_cluster_lock = (
             asyncio.Lock()
         )  # Prevents race during parallel face clustering
 
         # Deep Video Understanding (SAM 3)
-        self.sam3_tracker = (
-            SAM3Tracker() if settings.enable_sam3_tracking else None
-        )
-        self.frame_sampler = FrameSampler(every_n=5)
+        if settings.enable_sam3_tracking:
+            from core.tracking.sam3_tracker import SAM3Tracker
+            self.sam3_tracker = SAM3Tracker()
+        else:
+            self.sam3_tracker = None
+        self.frame_sampler_every_n = getattr(settings, "frame_sample_every", 5)
 
         # Visual encoder for CLIP/SigLIP embeddings (lazy-loaded)
         self._visual_encoder = None
@@ -161,18 +154,7 @@ class IngestionPipeline(
         self._cached_scenes_path = None
         self._probe_cache.clear()
 
-    @property
-    def enhanced_config(self):
-        """Lazy-load EnhancedPipelineConfig for SmartFrameSampler, audio events, etc."""
-        if self._enhanced_config is None:
-            try:
-                from core.integration import get_enhanced_config
 
-                self._enhanced_config = get_enhanced_config()
-                logger.info("[Pipeline] EnhancedPipelineConfig loaded")
-            except Exception as e:
-                logger.warning(f"[Pipeline] EnhancedPipelineConfig failed: {e}")
-        return self._enhanced_config
 
     def _cleanup_memory(self, context: str = "") -> None:
         """Force garbage collection and clear CUDA cache."""

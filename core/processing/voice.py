@@ -28,6 +28,30 @@ except Exception:
     if torio_lib_venv.exists():
         os.environ["PATH"] += os.pathsep + str(torio_lib_venv)
 
+# FIX: torchaudio >= 2.6 compatibility patch for pyannote.audio
+from dataclasses import dataclass
+import torchaudio
+
+if not hasattr(torchaudio, "AudioMetaData"):
+    @dataclass
+    class AudioMetaData:
+        sample_rate: int
+        num_frames: int
+        num_channels: int
+        bits_per_sample: int = 16
+        encoding: str = "PCM_S"
+    torchaudio.AudioMetaData = AudioMetaData
+
+if not hasattr(torchaudio, "list_audio_backends"):
+    torchaudio.list_audio_backends = lambda: ["soundfile"]
+
+if not hasattr(torchaudio, "backend"):
+    class _BackendCommon:
+        AudioMetaData = AudioMetaData
+    class _Backend:
+        common = _BackendCommon
+    torchaudio.backend = _Backend
+
 import numpy as np
 
 from config import settings  # noqa: E402
@@ -245,7 +269,7 @@ class VoiceProcessor:
                     try:
                         self.pipeline = Pipeline.from_pretrained(
                             settings.pyannote_model,
-                            use_auth_token=self.hf_token,
+                            token=self.hf_token,
                         )
                         log_verbose(
                             "[Voice] Pipeline loaded via from_pretrained"
@@ -265,7 +289,7 @@ class VoiceProcessor:
                             )
                             self.pipeline = Pipeline.from_pretrained(
                                 settings.pyannote_model,
-                                use_auth_token=self.hf_token,
+                                token=self.hf_token,
                             )
                             log_verbose(
                                 "[Voice] Pipeline loaded after snapshot_download"
@@ -287,7 +311,7 @@ class VoiceProcessor:
                         )
                         self.embedding_model = Model.from_pretrained(
                             settings.voice_embedding_model,
-                            use_auth_token=self.hf_token,
+                            token=self.hf_token,
                         )
                     except Exception as model_err:
                         log.warning(
@@ -304,7 +328,7 @@ class VoiceProcessor:
                             )
                             self.embedding_model = Model.from_pretrained(
                                 settings.voice_embedding_model,
-                                use_auth_token=self.hf_token,
+                                token=self.hf_token,
                             )
                             log_verbose(
                                 "[Voice] Embedding model loaded after snapshot_download"

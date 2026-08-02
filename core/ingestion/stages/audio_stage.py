@@ -357,65 +357,70 @@ class AudioStageMixin:
         # Enables temporal queries like "during the chorus" or "at the drop"
         # ============================================================
         try:
-            from core.processing.audio_structure import get_music_analyzer
-
-            log("[MusicStructure] Starting structure analysis...")
-            music_analyzer = get_music_analyzer()
-
-            # Load audio if not already loaded
-            # SAFETY: Only load first 5 minutes for music structure to prevent OOM
-            # Music structure (verse/chorus) is typically established early
-            import librosa
-
-            max_duration = 300.0  # 5 minutes max for music analysis
-            audio_array, sr = librosa.load(
-                str(path), sr=22050, mono=True, duration=max_duration
-            )
-            log(
-                f"[MusicStructure] Loaded {len(audio_array) / sr:.1f}s audio (limited to {max_duration}s)"
-            )
-
-            # Analyze music structure
-            analysis = music_analyzer.analyze_array(audio_array, sr=22050)
-
-            if analysis.sections:
+            from config import settings
+            if getattr(settings, "enable_music_structure", False):
+                from core.processing.audio_structure import get_music_analyzer
+                import asyncio
+    
+                log("[MusicStructure] Starting structure analysis...")
+                music_analyzer = get_music_analyzer()
+    
+                # Load audio if not already loaded
+                # SAFETY: Only load first 5 minutes for music structure to prevent OOM
+                # Music structure (verse/chorus) is typically established early
+                import librosa
+    
+                max_duration = 300.0  # 5 minutes max for music analysis
+                audio_array, sr = await asyncio.to_thread(
+                    librosa.load, str(path), sr=22050, mono=True, duration=max_duration
+                )
                 log(
-                    f"[MusicStructure] Found {len(analysis.sections)} sections at {analysis.global_tempo:.1f} BPM"
+                    f"[MusicStructure] Loaded {len(audio_array) / sr:.1f}s audio (limited to {max_duration}s)"
+                )
+    
+                # Analyze music structure
+                analysis = await asyncio.to_thread(
+                    music_analyzer.analyze_array, audio_array, sr=22050
                 )
 
-                # Store each section as an audio event for searchability
-                for section in analysis.sections:
-                    self.db.insert_audio_event(
-                        media_path=str(path),
-                        event_type=f"music_{section.section_type}",
-                        start_time=section.start_time,
-                        end_time=section.end_time,
-                        confidence=section.confidence,
-                        payload={
-                            "section_type": section.section_type,
-                            "energy": section.energy,
-                            "beat_count": section.beat_count,
-                            "tempo": section.tempo,
-                        },
+                if analysis.sections:
+                    log(
+                        f"[MusicStructure] Found {len(analysis.sections)} sections at {analysis.global_tempo:.1f} BPM"
                     )
 
-                # Store music metadata
-                self.db.update_media_metadata(
-                    media_path=str(path),
-                    metadata={
-                        "music_tempo": analysis.global_tempo,
-                        "has_vocals": analysis.has_vocals,
-                        "section_count": len(analysis.sections),
-                        "music_structure": [
-                            s.to_dict() for s in analysis.sections[:20]
-                        ],  # Limit for storage
-                    },
-                )
-                log(
-                    f"[MusicStructure] Indexed {len(analysis.sections)} sections"
-                )
-            else:
-                log("[MusicStructure] No sections detected (may not be music)")
+                    # Store each section as an audio event for searchability
+                    for section in analysis.sections:
+                        self.db.insert_audio_event(
+                            media_path=str(path),
+                            event_type=f"music_{section.section_type}",
+                            start_time=section.start_time,
+                            end_time=section.end_time,
+                            confidence=section.confidence,
+                            payload={
+                                "section_type": section.section_type,
+                                "energy": section.energy,
+                                "beat_count": section.beat_count,
+                                "tempo": section.tempo,
+                            },
+                        )
+
+                    # Store music metadata
+                    self.db.update_media_metadata(
+                        media_path=str(path),
+                        metadata={
+                            "music_tempo": analysis.global_tempo,
+                            "has_vocals": analysis.has_vocals,
+                            "section_count": len(analysis.sections),
+                            "music_structure": [
+                                s.to_dict() for s in analysis.sections[:20]
+                            ],  # Limit for storage
+                        },
+                    )
+                    log(
+                        f"[MusicStructure] Indexed {len(analysis.sections)} sections"
+                    )
+                else:
+                    log("[MusicStructure] No sections detected (may not be music)")
 
         except Exception as e:
             log(f"[MusicStructure] Analysis failed: {e}")

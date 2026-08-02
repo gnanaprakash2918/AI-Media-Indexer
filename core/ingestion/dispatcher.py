@@ -160,7 +160,7 @@ class MediaIngestDispatcher:
             from core.processing.prober import MediaProber
 
             prober = MediaProber()
-            info = prober.probe(str(path))
+            info = await prober.probe(str(path))
             duration_s = float(info.get("duration", 0))
         except Exception as e:
             logger.warning(
@@ -304,5 +304,5 @@ class MediaIngestDispatcher:
         from core.ingestion.pipeline import IngestionPipeline
 
         pipeline = IngestionPipeline()
-        result_job_id = await pipeline.ingest(str(path))
+        result_job_id = await pipeline.process_video(str(path), job_id=job_id)
         return result_job_id or job_id

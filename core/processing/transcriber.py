@@ -877,8 +877,24 @@ class AudioTranscriber:
 
                 # Prepare input source and display name
                 if isinstance(audio_path, bytes):
-                    audio_source = io.BytesIO(audio_path)
-                    display_name = "<In-Memory Audio Bytes>"
+                    try:
+                        import soundfile as sf
+
+                        audio_data, _ = sf.read(
+                            io.BytesIO(audio_path), dtype="float32"
+                        )
+                        if audio_data.ndim > 1:
+                            audio_data = audio_data.mean(axis=1)
+                        audio_source = audio_data
+                        display_name = (
+                            f"<In-Memory Audio Array {len(audio_data)} samples>"
+                        )
+                    except Exception as sf_err:
+                        log.warning(
+                            f"[Transcriber] soundfile read failed for bytes: {sf_err}"
+                        )
+                        audio_source = io.BytesIO(audio_path)
+                        display_name = "<In-Memory Audio Bytes>"
                 else:
                     audio_source = str(audio_path)
                     display_name = str(audio_path)
@@ -910,6 +926,7 @@ class AudioTranscriber:
                     condition_on_previous_text=False,
                     initial_prompt="♪" if force_lyrics else None,
                     repetition_penalty=1.2,
+                    compression_ratio_threshold=2.4,
                     word_timestamps=True,
                     vad_filter=True,
                     vad_parameters={
@@ -948,38 +965,47 @@ class AudioTranscriber:
             ) in segments_list:  # Iterator exhausted to list in thread
                 if (segment.end - segment.start) < 0.2:
                     continue
+                clean_seg_text = segment.text.replace("\x00", "").strip()
                 if segment.words:
                     current_words = []
                     seg_start = segment.words[0].start
 
                     for word in segment.words:
-                        current_words.append(word.word)
+                        clean_w = word.word.replace("\x00", "")
+                        if not clean_w:
+                            continue
+                        current_words.append(clean_w)
                         if (
                             word.end - seg_start > 6.0
-                        ) or word.word.strip().endswith(("?", ".", "!")):
-                            chunks.append(
-                                {
-                                    "text": "".join(current_words).strip(),
-                                    "timestamp": (seg_start, word.end),
-                                }
-                            )
+                        ) or clean_w.strip().endswith(("?", ".", "!")):
+                            chunk_text = "".join(current_words).strip()
+                            if chunk_text:
+                                chunks.append(
+                                    {
+                                        "text": chunk_text,
+                                        "timestamp": (seg_start, word.end),
+                                    }
+                                )
                             current_words = []
                             seg_start = word.end
 
                     if current_words:
+                        chunk_text = "".join(current_words).strip()
+                        if chunk_text:
+                            chunks.append(
+                                {
+                                    "text": chunk_text,
+                                    "timestamp": (seg_start, segment.words[-1].end),
+                                }
+                            )
+                else:
+                    if clean_seg_text:
                         chunks.append(
                             {
-                                "text": "".join(current_words).strip(),
-                                "timestamp": (seg_start, segment.words[-1].end),
+                                "text": clean_seg_text,
+                                "timestamp": (segment.start, segment.end),
                             }
                         )
-                else:
-                    chunks.append(
-                        {
-                            "text": segment.text.strip(),
-                            "timestamp": (segment.start, segment.end),
-                        }
-                    )
 
             if not chunks:
                 log("[WARN] No speech detected.")

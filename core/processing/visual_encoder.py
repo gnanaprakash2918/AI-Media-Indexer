@@ -412,6 +412,10 @@ class SigLIPEncoder(BaseVisualEncoder):
 
         with torch.no_grad():
             outputs = self._model.get_image_features(**inputs)
+            if hasattr(outputs, "image_embeds"):
+                outputs = outputs.image_embeds
+            elif hasattr(outputs, "pooler_output") and not isinstance(outputs, torch.Tensor):
+                outputs = outputs.pooler_output
             # Normalize
             outputs /= outputs.norm(dim=-1, keepdim=True)
             return outputs.cpu().float().numpy().flatten()
@@ -426,6 +430,10 @@ class SigLIPEncoder(BaseVisualEncoder):
                 batch_inputs[k] = torch.cat([inp[k] for inp in inputs], dim=0)
 
             outputs = self._model.get_image_features(**batch_inputs)
+            if hasattr(outputs, "image_embeds"):
+                outputs = outputs.image_embeds
+            elif hasattr(outputs, "pooler_output") and not isinstance(outputs, torch.Tensor):
+                outputs = outputs.pooler_output
             outputs /= outputs.norm(dim=-1, keepdim=True)
 
             embeddings = outputs.cpu().float().numpy()
@@ -441,6 +449,10 @@ class SigLIPEncoder(BaseVisualEncoder):
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
 
             outputs = self._model.get_text_features(**inputs)
+            if hasattr(outputs, "text_embeds"):
+                outputs = outputs.text_embeds
+            elif hasattr(outputs, "pooler_output") and not isinstance(outputs, torch.Tensor):
+                outputs = outputs.pooler_output
             # Normalize
             outputs /= outputs.norm(dim=-1, keepdim=True)
             return outputs.cpu().float().numpy().flatten()

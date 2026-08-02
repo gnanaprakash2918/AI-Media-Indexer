@@ -34,6 +34,7 @@ langfuse_data/
 logs/
 *.log
 output/
+reports/
 downloads/
 uploads/
 thumbnails/

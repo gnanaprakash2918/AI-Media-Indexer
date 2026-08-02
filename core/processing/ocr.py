@@ -133,13 +133,19 @@ class OCRProcessor:
                 os.environ["FLAGS_enable_mkldnn"] = "0"
 
                 log.info(f"[OCR] Loading PaddleOCR lang={self.lang}")
-                self.ocr = PaddleOCR(
-                    use_angle_cls=self.enable_angle_cls,
-                    lang=self.lang,
-                    use_gpu=self.use_gpu,
-                    show_log=False,
-                    enable_mkldnn=False,  # Explicitly disable in init args too
-                )
+                try:
+                    self.ocr = PaddleOCR(
+                        use_angle_cls=self.enable_angle_cls,
+                        lang=self.lang,
+                        use_gpu=self.use_gpu,
+                        show_log=False,
+                        enable_mkldnn=False,
+                    )
+                except TypeError:
+                    # Newer PaddleOCR (>=2.9) constructor signature
+                    self.ocr = PaddleOCR(
+                        lang=self.lang,
+                    )
                 log.info("[OCR] Model loaded")
                 return True
 

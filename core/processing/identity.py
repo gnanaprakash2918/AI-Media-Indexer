@@ -778,13 +778,9 @@ class FaceManager:
             chunk = images[i : i + self.batch_size]
             chunk_results = []
 
-            # Acquire GPU lock & Register VRAM usage
-            # InsightFace = ~1.5GB
-            async with RESOURCE_ARBITER.acquire("insightface", vram_gb=1.5):
-                for img in chunk:
-                    if self._model_type == "insightface":
-                        # Direct call to avoid double-locking deadlock
-                        # _detect_insightface acquires lock, so we copy logic here
+            if self._model_type == "insightface":
+                async with RESOURCE_ARBITER.acquire("insightface", vram_gb=1.5):
+                    for img in chunk:
                         if img.size == 0:
                             chunk_results.append([])
                             continue
@@ -833,11 +829,12 @@ class FaceManager:
                                 level="ERROR",
                             )
                             chunk_results.append([])
-
-                    elif self._model_type == "sface":
-                        chunk_results.append(await self._detect_sface(img))
-                    else:
-                        chunk_results.append(await self._detect_yunet_only(img))
+            elif self._model_type == "sface":
+                for img in chunk:
+                    chunk_results.append(await self._detect_sface(img))
+            else:
+                for img in chunk:
+                    chunk_results.append(await self._detect_yunet_only(img))
 
             results.extend(chunk_results)
 

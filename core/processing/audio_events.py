@@ -641,7 +641,7 @@ class AudioEventDetector:
                         continue
 
                     inputs = self.processor(
-                        audios=valid,
+                        audio=valid,
                         sampling_rate=target_sr,
                         return_tensors="pt",
                         padding=True,
@@ -649,7 +649,10 @@ class AudioEventDetector:
                     inputs = {k: v.to(device) for k, v in inputs.items()}
 
                     with torch.no_grad():
-                        audio_embeds = self.model.get_audio_features(**inputs)
+                        raw_embeds = self.model.get_audio_features(**inputs)
+                        audio_embeds = getattr(raw_embeds, "audio_embeds", raw_embeds)
+                        if hasattr(raw_embeds, "pooler_output") and not isinstance(audio_embeds, torch.Tensor):
+                            audio_embeds = raw_embeds.pooler_output
                         audio_embeds = audio_embeds / audio_embeds.norm(
                             dim=-1, keepdim=True
                         )

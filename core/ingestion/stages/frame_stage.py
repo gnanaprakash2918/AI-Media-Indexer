@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from config import settings
-from core.processing.deep_research import get_deep_research_processor
 from core.processing.identity import FaceManager, FaceTrackBuilder
 from core.processing.temporal_context import (
     SceneletBuilder,
@@ -249,7 +248,7 @@ class FrameStageMixin:
                 # This fixes timestamp drift on VFR videos
                 timestamp = extracted_frame.timestamp
 
-                if self.frame_sampler.should_sample(frame_count):
+                if frame_count % getattr(settings, "frame_sample_every", 5) == 0:
                     pending_frames.append(extracted_frame)
                     # Use config batch_size for optimal hardware utilization
                     if len(pending_frames) >= settings.batch_size:
@@ -499,30 +498,7 @@ class FrameStageMixin:
         # OPTIMIZATION: Skip per-frame if deep_research_per_scene is True
         # (Will run on scene keyframes instead via _process_scene_captions)
         # ------------------------------------------------------------
-        dr_result = None
-        # Check global master switch first
-        if getattr(settings, "enable_deep_research", True):
-            skip_deep_research = getattr(
-                settings, "deep_research_per_scene", True
-            )
-            if not skip_deep_research:
-                try:
-                    dr_processor = get_deep_research_processor()
-                    # Run analysis (fire and forget features for now, use metadata)
-                    dr_result = await dr_processor.analyze_frame(
-                        frame=frame_path,
-                        compute_aesthetics=True,
-                        compute_saliency=False,  # Skip heavy saliency for speed
-                        compute_fingerprint=True,
-                    )
-                    if dr_result:
-                        logger.info(
-                            f"[DeepResearch] Frame {timestamp:.2f}s: "
-                            f"Shot='{dr_result.shot_type}', Mood='{dr_result.mood}', "
-                            f"Aesthetic={dr_result.aesthetic_score:.2f}"
-                        )
-                except Exception as e:
-                    logger.warning(f"[DeepResearch] Analysis failed: {e}")
+
 
         # Save face thumbnails
         thumb_dir = settings.cache_dir / "thumbnails" / "faces"
