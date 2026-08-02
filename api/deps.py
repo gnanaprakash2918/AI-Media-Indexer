@@ -1,7 +1,6 @@
 """API dependency injection components."""
 
 from fastapi import Request
-
 from core.retrieval.query_pipeline import QueryPipeline
 
 

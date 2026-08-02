@@ -8,10 +8,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
-from api.deps import get_pipeline
 from api.schemas import IngestRequest, ScanRequest
 from config import settings
-from core.retrieval.query_pipeline import QueryPipeline
 from core.utils.logger import logger
 from core.utils.observability import end_trace, start_trace
 from core.utils.progress import progress_tracker
@@ -40,7 +38,6 @@ ALLOWED_MEDIA_EXTENSIONS = {
 async def ingest_media(
     ingest_request: IngestRequest,
     background_tasks: BackgroundTasks,
-    pipeline: Annotated[QueryPipeline, Depends(get_pipeline)],
 ) -> dict:
     """Initiates the media ingestion pipeline for a specific file or URL.
 
@@ -51,17 +48,14 @@ async def ingest_media(
     Args:
         ingest_request: Details of the media to ingest (path, type hints, bounds).
         background_tasks: FastAPI background task manager.
-        pipeline: The core ingestion pipeline instance.
 
     Returns:
         A dictionary containing the generated 'job_id' and initial status.
 
     Raises:
         HTTPException: If the file is missing, the type is unsupported, or
-            the pipeline is uninitialized.
+            .
     """
-    if not pipeline:
-        raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     if ingest_request.encoded_path:
         try:
@@ -174,7 +168,6 @@ async def ingest_media(
 @router.post("/scan")
 async def scan_library(
     request: ScanRequest,
-    pipeline: Annotated[QueryPipeline, Depends(get_pipeline)],
 ) -> dict:
     """Scans a local directory for new media files and reports discoveries.
 
@@ -182,7 +175,6 @@ async def scan_library(
 
     Args:
         request: The scan configuration (directory, optional extensions).
-        pipeline: The core ingestion pipeline instance.
 
     Returns:
         A dictionary summary of found files and their absolute paths.
@@ -190,8 +182,6 @@ async def scan_library(
     Raises:
         HTTPException: If the pipeline is invalid or the scan fails.
     """
-    if not pipeline:
-        raise HTTPException(status_code=503, detail="Pipeline invalid")
 
     from core.ingestion.scanner import LibraryScanner
 
@@ -310,7 +300,6 @@ async def resume_job(job_id: str):
 @router.delete("/jobs/{job_id}")
 async def delete_job(
     job_id: str,
-    pipeline: Annotated[QueryPipeline, Depends(get_pipeline)],
 ):
     """Delete a job and ALL associated data from the system.
 
@@ -336,16 +325,20 @@ async def delete_job(
     cleanup_results = {"qdrant": False, "neo4j": False, "sqlite": False}
 
     # 2. Clean up Qdrant (all 10 collections) and Neo4j if we have the file path
-    if file_path and pipeline:
+    if file_path:
         try:
-            pipeline.db.delete_media_by_path(file_path)
+            from core.storage.db import VectorDB
+            db = VectorDB()
+            db.delete_media_by_path(file_path)
             cleanup_results["qdrant"] = True
             logger.info(f"[DeleteJob] Cleaned Qdrant for {file_path}")
         except Exception as e:
             logger.warning(f"[DeleteJob] Qdrant cleanup failed: {e}")
 
         try:
-            pipeline.graph_builder.delete_video(file_path)
+            from core.knowledge.graph_builder import GraphBuilder
+            graph_builder = GraphBuilder()
+            graph_builder.delete_video(file_path)
             cleanup_results["neo4j"] = True
             logger.info(f"[DeleteJob] Cleaned Neo4j for {file_path}")
         except Exception as e:
