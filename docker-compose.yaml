@@ -121,7 +121,10 @@ services:
       --trust-remote-code
       --max-model-len 4096
       --limit-mm-per-prompt image=8
-      --gpu-memory-utilization 0.8
+      --gpu-memory-utilization 0.70
+      --quantization awq_marlin
+      --enable-prefix-caching
+      --disable-log-requests
     deploy:
       resources:
         reservations:

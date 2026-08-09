@@ -562,28 +562,93 @@ if [[ "$CURRENT_PROVIDER" == "vllm" ]]; then
         if [ -n "$ENV_VLLM_URL" ]; then VLLM_URL="$ENV_VLLM_URL"; fi
     fi
 
+    # Read model name from .env (fallback to AWQ default)
+    VLLM_MODEL="Qwen/Qwen2.5-VL-3B-Instruct-AWQ"
+    if [ -f ".env" ]; then
+        ENV_MODEL=$(grep -E '^VLM_ENDPOINT_MODEL_NAME\s*=' .env | cut -d '=' -f2 | tr -d ' "' || true)
+        if [ -n "$ENV_MODEL" ]; then VLLM_MODEL="$ENV_MODEL"; fi
+    fi
+
+    # -----------------------------------------------------------------------
+    # VRAM budget (7.6 GiB card):
+    #   --gpu-memory-utilization 0.70  → vLLM KV cache  ~5.33 GiB
+    #   Headroom for other processes   →                 ~2.27 GiB
+    #     SigLIP embeddings            ~0.50 GiB
+    #     InsightFace / face recog.    ~0.30 GiB
+    #     PyTorch CUDA allocator slack ~0.30 GiB
+    #   Whisper + CLAP run on CPU when VRAM < threshold (auto-fallback)
+    # -----------------------------------------------------------------------
+    VLLM_GPU_UTIL="0.70"
+    VLLM_MAX_LEN="4096"
+    VLLM_EXTRA_ARGS="--quantization awq_marlin --enable-prefix-caching --disable-log-requests"
+    VLLM_PORT="8001"
+
     echo -e "${GRAY}  Testing vLLM connection at $VLLM_URL...${NC}"
     VLLM_READY=false
-    RETRIES=20
-    MAX_RETRIES=20
-    while [ $RETRIES -gt 0 ]; do
-        if curl -s "$VLLM_URL/health" >/dev/null 2>&1 || curl -s "$VLLM_URL/v1/models" >/dev/null 2>&1; then
-            VLLM_READY=true
-            break
-        fi
-        ATTEMPT=$((MAX_RETRIES - RETRIES + 1))
-        echo -e "${GRAY}  Waiting for vLLM engine initialization (check $ATTEMPT/$MAX_RETRIES)...${NC}"
-        sleep 2
-        RETRIES=$((RETRIES-1))
-    done
+    if curl -s "$VLLM_URL/health" >/dev/null 2>&1 || curl -s "$VLLM_URL/v1/models" >/dev/null 2>&1; then
+        VLLM_READY=true
+    fi
 
     if [ "$VLLM_READY" = true ]; then
-        echo -e "${GREEN}  vLLM Inference Server is ready at $VLLM_URL!${NC}"
+        echo -e "${GREEN}  vLLM Inference Server is already running at $VLLM_URL${NC}"
     else
-        echo -e "${YELLOW}  WARNING: Could not connect to vLLM at $VLLM_URL.${NC}"
-        echo -e "${YELLOW}  If starting vLLM for the first time, model weights download may still be in progress.${NC}"
-        echo -e "${GRAY}  (To use Ollama instead, set LLM_PROVIDER=ollama in .env)${NC}"
+        # Try to auto-launch vllm serve if the binary is available
+        if command -v vllm >/dev/null 2>&1 && command -v nvidia-smi >/dev/null 2>&1; then
+            echo -e "${YELLOW}  vLLM not running — launching in background with VRAM-safe settings...${NC}"
+            echo -e "${GRAY}  Model: $VLLM_MODEL${NC}"
+            echo -e "${GRAY}  GPU util: $VLLM_GPU_UTIL  max-model-len: $VLLM_MAX_LEN  port: $VLLM_PORT${NC}"
+
+            # Launch vllm serve as a background daemon
+            mkdir -p "$PROJECT_ROOT/logs"
+            nohup vllm serve "$VLLM_MODEL" \
+                --port "$VLLM_PORT" \
+                --gpu-memory-utilization "$VLLM_GPU_UTIL" \
+                --max-model-len "$VLLM_MAX_LEN" \
+                --limit-mm-per-prompt image=8 \
+                --trust-remote-code \
+                $VLLM_EXTRA_ARGS \
+                > "$PROJECT_ROOT/logs/vllm.log" 2>&1 &
+            VLLM_PID=$!
+            echo -e "${GRAY}  vLLM started (PID $VLLM_PID). Logs: logs/vllm.log${NC}"
+
+            # Wait up to 5 minutes for vLLM to become ready
+            echo -e "${GRAY}  Waiting for vLLM to load model weights (this may take a few minutes)...${NC}"
+            RETRIES=30
+            MAX_RETRIES=30
+            while [ $RETRIES -gt 0 ]; do
+                if curl -s "$VLLM_URL/health" >/dev/null 2>&1 || curl -s "$VLLM_URL/v1/models" >/dev/null 2>&1; then
+                    VLLM_READY=true
+                    break
+                fi
+                ATTEMPT=$((MAX_RETRIES - RETRIES + 1))
+                echo -e "${GRAY}  Waiting for vLLM engine initialization (check $ATTEMPT/$MAX_RETRIES)...${NC}"
+                sleep 10
+                RETRIES=$((RETRIES-1))
+            done
+
+            if [ "$VLLM_READY" = true ]; then
+                echo -e "${GREEN}  vLLM Inference Server is ready at $VLLM_URL!${NC}"
+            else
+                echo -e "${YELLOW}  WARNING: vLLM did not respond after 5 minutes.${NC}"
+                echo -e "${GRAY}  Check logs/vllm.log for details. The app will start anyway.${NC}"
+            fi
+        else
+            # vllm binary not found — show the exact command to run manually
+            echo -e "${YELLOW}  WARNING: vLLM is not running and 'vllm' binary not found in PATH.${NC}"
+            echo -e "${YELLOW}  Start vLLM manually with these VRAM-safe flags:${NC}"
+            echo -e "${CYAN}    vllm serve $VLLM_MODEL \\
+      --port $VLLM_PORT \\
+      --gpu-memory-utilization $VLLM_GPU_UTIL \\
+      --max-model-len $VLLM_MAX_LEN \\
+      --limit-mm-per-prompt image=8 \\
+      --trust-remote-code \\
+      $VLLM_EXTRA_ARGS${NC}"
+            echo -e ""
+            echo -e "${GRAY}  Or via Docker: docker compose up -d vllm${NC}"
+            echo -e "${GRAY}  (To switch to Ollama instead: set LLM_PROVIDER=ollama in .env)${NC}"
+        fi
     fi
+
 elif [ "$SKIP_OLLAMA" = false ]; then
     echo -e "\n${YELLOW}[8/8] Checking Ollama status...${NC}"
     OLLAMA_RUNNING=false

@@ -59,6 +59,23 @@ class AudioEventDetector:
 
                 from config import settings
 
+                device = self._get_device()
+
+                # Pre-emptive VRAM guard: CLAP + AST together need ~1.5GB.
+                # If vLLM already occupies the GPU, load on CPU to avoid OOM.
+                if device == "cuda":
+                    try:
+                        import torch
+                        free_bytes, _ = torch.cuda.mem_get_info()
+                        if free_bytes / (1024**3) < 1.5:
+                            log.warning(
+                                "[CLAP] Less than 1.5GB VRAM free — "
+                                "loading CLAP+AST on CPU to avoid OOM with vLLM."
+                            )
+                            device = "cpu"
+                    except Exception:
+                        device = "cpu"  # conservative fallback
+
                 self.processor = ClapProcessor.from_pretrained(
                     settings.clap_model_id
                 )
@@ -71,9 +88,8 @@ class AudioEventDetector:
                 self.ast_model = ASTForAudioClassification.from_pretrained(
                     settings.ast_model_id
                 )
-                self.ast_model.to(self._get_device())
+                self.ast_model.to(device)
 
-                device = self._get_device()
                 self.model.to(device)  # type: ignore
                 self._device = device
 

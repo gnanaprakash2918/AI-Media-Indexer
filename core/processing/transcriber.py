@@ -93,6 +93,28 @@ class AudioTranscriber:
         self._fallback_attempted = False
         self._locked_language: str | None = None
 
+        # Pre-emptive VRAM check: Whisper large-v3-turbo needs ~2GB.
+        # If vLLM is already using the GPU (common scenario), there won't be
+        # enough headroom — fall back to CPU immediately instead of OOMing.
+        if self.device == "cuda":
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    free_bytes, total_bytes = torch.cuda.mem_get_info()
+                    free_gb = free_bytes / (1024**3)
+                    if free_gb < 2.0:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "[Whisper] Only %.1fGB VRAM free (need ≥2GB). "
+                            "Routing Whisper to CPU to avoid OOM with vLLM.",
+                            free_gb,
+                        )
+                        self.device = "cpu"
+                        self.compute_type = "int8"
+            except Exception:
+                pass
+
         # Register with Resource Arbiter for VRAM management
         try:
             from core.utils.resource_arbiter import (
