@@ -35,11 +35,7 @@ import {
   DarkMode,
   Dashboard,
   RecordVoiceOver,
-  Architecture as EditorIcon,
   SmartToy as AgentIcon,
-  Gavel as CouncilsIcon,
-  Hub as GraphIcon,
-  MovieEdit as VideoEditorIcon,
 } from '@mui/icons-material';
 import {
   QueryClient,
@@ -58,11 +54,7 @@ const IngestPage = lazy(() => import('./pages/Ingest'));
 const FacesPage = lazy(() => import('./pages/Faces'));
 const VoicesPage = lazy(() => import('./pages/Voices'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
-const EditorPage = lazy(() => import('./pages/Editor'));
 const AgentPage = lazy(() => import('./pages/Agent'));
-const CouncilsPage = lazy(() => import('./pages/Councils'));
-const GraphPage = lazy(() => import('./pages/Graph'));
-const VideoEditorPage = lazy(() => import('./pages/VideoEditor'));
 
 const PageLoader = () => (
   <Box
@@ -96,10 +88,6 @@ const navItems = [
   { path: '/faces', label: 'Faces', icon: <Face /> },
   { path: '/voices', label: 'Voices', icon: <RecordVoiceOver /> },
   { path: '/agent', label: 'Agent', icon: <AgentIcon /> },
-  { path: '/graph', label: 'Graph', icon: <GraphIcon /> },
-  { path: '/councils', label: 'Councils', icon: <CouncilsIcon /> },
-  { path: '/editor', label: 'Editor', icon: <EditorIcon /> },
-  { path: '/video-editor', label: 'Video Editor', icon: <VideoEditorIcon /> },
   { path: '/settings', label: 'Settings', icon: <Settings /> },
 ];
 
@@ -395,14 +383,6 @@ const router = createBrowserRouter([
         ),
       },
       {
-        path: 'editor',
-        element: (
-          <Suspense fallback={<PageLoader />}>
-            <EditorPage />
-          </Suspense>
-        ),
-      },
-      {
         path: 'agent',
         element: (
           <Suspense fallback={<PageLoader />}>
@@ -411,34 +391,10 @@ const router = createBrowserRouter([
         ),
       },
       {
-        path: 'councils',
-        element: (
-          <Suspense fallback={<PageLoader />}>
-            <CouncilsPage />
-          </Suspense>
-        ),
-      },
-      {
-        path: 'graph',
-        element: (
-          <Suspense fallback={<PageLoader />}>
-            <GraphPage />
-          </Suspense>
-        ),
-      },
-      {
         path: 'settings',
         element: (
           <Suspense fallback={<PageLoader />}>
             <SettingsPage />
-          </Suspense>
-        ),
-      },
-      {
-        path: 'video-editor',
-        element: (
-          <Suspense fallback={<PageLoader />}>
-            <VideoEditorPage />
           </Suspense>
         ),
       },

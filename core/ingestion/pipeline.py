@@ -120,10 +120,7 @@ class IngestionPipeline(
         self.faces: FaceTrackerProtocol | None = None
         self.voice: VoiceProcessorProtocol | None = None
 
-        # GraphRAG Builder (Lazy load later or init here if safe)
-        from core.knowledge.graph_builder import GraphBuilder
-
-        self.graph_builder = GraphBuilder()
+        self.graph_builder = None
 
         self._face_clusters: dict[int, list[float]] = {}
         self._face_cluster_lock = (
@@ -785,39 +782,7 @@ class IngestionPipeline(
                 }
                 global_ctx.add_scene(scene_data_global)
 
-                # Wire to Knowledge Graph / GraphRAG for social network and timeline queries
-                try:
-                    from core.storage.identity_graph import identity_graph
-
-                    # Get face_cluster_ids from all frames
-                    all_face_cluster_ids = list(
-                        {
-                            cid
-                            for f in frames
-                            for cid in f.get("face_cluster_ids", [])
-                        }
-                    )
-
-                    # Create scene in SQLite graph database
-                    identity_graph.create_scene(
-                        media_id=media_path,
-                        start_time=scene_data_global["start_time"],
-                        end_time=scene_data_global["end_time"],
-                        location=scene_data_global.get("location"),
-                        description=scene_data_global.get("visual_summary"),
-                        face_cluster_ids=all_face_cluster_ids,
-                        entities=scene_data_global.get("entities", []),
-                        actions=[
-                            f.get("action", "")
-                            for f in frames[:10]
-                            if f.get("action")
-                        ],
-                    )
-                    logger.debug(
-                        f"[GraphRAG] Created scene with {len(all_face_cluster_ids)} faces"
-                    )
-                except Exception as e:
-                    logger.debug(f"[GraphRAG] Scene creation skipped: {e}")
+                # Scene metadata recorded in SQL database
 
                 global_summary = global_ctx.to_payload()
 

@@ -5,7 +5,7 @@
  *   - ./search.ts  — search, feedback
  *   - ./faces.ts   — face detection, clustering, identity
  *   - ./voices.ts  — voice segments, clustering, overlays
- *   - ./media.ts   — library, overlays, grounding, manipulation, councils, graph
+ *   - ./media.ts   — library, overlays, grounding
  *
  * All exports are re-exported here for backward compatibility.
  */
@@ -259,13 +259,7 @@ export {
   getLibrary, deleteLibraryItem, getIndexedVideos,
   getOverlays, triggerGrounding, updateMasklet, getMasklets, getVideoSummary,
   updateFrameDescription,
-  triggerInpaint, triggerRedact, getManipulationJob,
-  getCouncilsConfig, setCouncilMode, updateCouncilModel,
-  getSocialGraph, getSceneTimeline, getGraphStats,
 } from './media';
 export type {
   MediaItem, OverlayItem, VideoOverlays,
-  RegionRequest, ManipulationJob,
-  CouncilConfig, Council, ModelSpec,
-  CoOccurrence, SocialGraphResponse, SceneNode,
 } from './media';

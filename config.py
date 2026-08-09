@@ -562,13 +562,6 @@ class Settings(BaseSettings):
         description="SAM3 model config (auto-downloaded from facebook/sam3 on HuggingFace)",
     )
 
-    manipulation_backend: Literal["disabled", "wan", "propainter", "auto"] = (
-        Field(
-            default="disabled",
-            description="Backend for video inpainting/manipulation",
-        )
-    )
-
     # Hierarchical Summarization
     summary_scene_duration: int = Field(
         default=300,
@@ -921,11 +914,6 @@ class Settings(BaseSettings):
         default=0.3,
         description="YOLO-World object detection confidence threshold (0-1)",
     )
-    deep_research_confidence: float = Field(
-        default=0.4,
-        description="Min confidence for deep research shot/mood classification (0-1)",
-    )
-
     # --- Color & Visual Analysis ---
     dominant_color_clusters: int = Field(
         default=3,
@@ -1000,10 +988,6 @@ class Settings(BaseSettings):
     )
 
     # --- Search Feature Flags (Master Switches) ---
-    enable_deep_research: bool = Field(
-        default=True,
-        description="Master switch for deep research (cinematography, aesthetics).",
-    )
     enable_face_recognition: bool = Field(
         default=True,
         description="Master switch for face detection and clustering.",

@@ -406,15 +406,7 @@ async def name_voice_cluster(
             cluster_id, request.name
         )
 
-        # 3. Identity Linking
-        try:
-            from core.storage.identity_graph import identity_graph
-
-            identity_graph.get_or_create_identity_by_name(request.name)
-            # Use db method if it exists, but we successfully did it above manually
-            # pipeline.db.set_speaker_name(cluster_id, request.name)
-        except Exception as e:
-            logger.error(f"Identity linking failed: {e}")
+        # 3. Identity Linking handled via pipeline.db
 
         return {
             "status": "updated",

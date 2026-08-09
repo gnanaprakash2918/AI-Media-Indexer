@@ -63,15 +63,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
     @property
     def graph_searcher(self):
-        if self._graph_searcher is None and self._enable_graph:
-            try:
-                from core.retrieval.graph import GraphSearcher
-
-                self._graph_searcher = GraphSearcher()
-                log("[Search] GraphSearcher initialized - PROD READY")
-            except Exception as e:
-                log(f"[Search] GraphSearcher init failed: {e}")
-        return self._graph_searcher
+        return None
 
     # =========================================================================
     # SEARCH METHODS
@@ -1389,8 +1381,6 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         max_gap_seconds: float = 60.0,
         limit: int = 10,
     ) -> dict[str, Any]:
-        from core.storage.identity_graph import identity_graph
-
         if not sequence_steps or len(sequence_steps) < 2:
             return {
                 "error": "Temporal sequence requires at least 2 steps",
@@ -1402,24 +1392,18 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             media_ids = [video_path]
         else:
             try:
-                import sqlite3
-
-                with (
-                    identity_graph._lock,
-                    sqlite3.connect(identity_graph.db_path) as conn,
-                ):
-                    cursor = conn.execute(
-                        "SELECT DISTINCT media_id FROM scenes LIMIT 100"
-                    )
-                    media_ids = [row[0] for row in cursor.fetchall()]
+                media_ids = self.db.list_media_ids(limit=100) if hasattr(self.db, "list_media_ids") else []
             except Exception as e:
                 log(f"[Temporal] Failed to get media list: {e}")
                 return {"error": str(e), "results": []}
 
         all_chains: list[dict] = []
 
+        from core.storage.repositories.scene_repository import SceneRepository
+        scene_repo = SceneRepository(self.db) if hasattr(self.db, "session") else None
+
         for media_id in media_ids:
-            scenes = identity_graph.get_scenes_for_media(media_id)
+            scenes = scene_repo.get_scenes_for_video(media_id) if scene_repo else []
             if len(scenes) < len(sequence_steps):
                 continue
 

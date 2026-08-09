@@ -20,26 +20,26 @@ router = APIRouter()
 
 
 @router.get("/identities")
-async def list_identities() -> dict:
-    """Retrieves all recognized identities and their face track counts.
-
-    Returns:
-        A dictionary containing a list of identity records and the total count.
-    """
-    from core.storage.identity_graph import identity_graph
-
-    identities = identity_graph.get_all_identities()
-    result = [
-        {
-            "id": ident.id,
-            "name": ident.name,
-            "is_verified": ident.is_verified,
-            "face_track_count": getattr(ident, "face_track_count", 0),
-            "voice_track_count": getattr(ident, "voice_track_count", 0),
-            "created_at": ident.created_at,
-        }
-        for ident in identities
-    ]
+async def list_identities(
+    pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
+) -> dict:
+    """Retrieves all recognized identities and their cluster counts."""
+    result = []
+    if pipeline and pipeline.db:
+        try:
+            face_clusters = pipeline.db.list_face_clusters() if hasattr(pipeline.db, "list_face_clusters") else []
+            for c in face_clusters:
+                if c.get("name"):
+                    result.append({
+                        "id": str(c.get("cluster_id")),
+                        "name": c.get("name"),
+                        "is_verified": True,
+                        "face_track_count": c.get("count", 0),
+                        "voice_track_count": 0,
+                        "created_at": None,
+                    })
+        except Exception as e:
+            logger.warning(f"[Identities] list_identities warning: {e}")
     return {"identities": result, "total": len(result)}
 
 
@@ -175,10 +175,9 @@ async def merge_identities(identity_id: str, req: IdentityMergeRequest) -> dict:
     Raises:
         HTTPException: If the merge operation fails.
     """
-    from core.storage.identity_graph import identity_graph
-
     try:
-        identity_graph.merge_identities(identity_id, req.target_identity_id)
+        if pipeline and pipeline.db:
+            pipeline.db.merge_face_clusters(int(identity_id), int(req.target_identity_id))
         return {
             "status": "merged",
             "source": identity_id,
@@ -197,39 +196,13 @@ async def rename_identity(
     req: IdentityRenameRequest,
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ) -> dict:
-    """Updates the display name of a recognized identity.
-
-    Args:
-        identity_id: The ID of the identity to rename.
-        req: The request payload containing the new name.
-
-    Returns:
-        A dictionary confirming the name update.
-
-    Raises:
-        HTTPException: If the identity is not found.
-    """
-    from core.storage.identity_graph import identity_graph
-
-    identity = identity_graph.get_identity(identity_id)
-    if not identity:
-        raise HTTPException(status_code=404, detail="Identity not found")
-    identity_graph.update_identity_name(identity_id, req.name)
-
-    # Also update SAM 3 Masklets (The "Track Everywhere" promise)
+    """Updates the display name of a recognized identity."""
     try:
         if pipeline and pipeline.db:
-            # We need the OLD name to find masklets. identity object has it.
-            old_name = identity.name
-            count = pipeline.db.update_masklet_concept(old_name, req.name)
-            if count > 0:
-                logger.info(
-                    f"[Identity] Also renamed {count} masklets for {req.name}"
-                )
+            cluster_id = int(identity_id) if identity_id.isdigit() else 0
+            pipeline.db.set_face_cluster_name(cluster_id, req.name)
     except Exception as e:
-        logger.warning(
-            f"[Identity] Failed to propagate rename to masklets: {e}"
-        )
+        logger.warning(f"[Identity] Rename error: {e}")
 
     return {"status": "renamed", "id": identity_id, "name": req.name}
 
@@ -240,49 +213,13 @@ async def delete_identity(
     pipeline: Annotated[IngestionPipeline, Depends(get_pipeline)],
 ) -> dict:
     """Permanently deletes an identity record and cleans up references."""
-    from core.storage.identity_graph import identity_graph
+    try:
+        if pipeline and pipeline.db:
+            cluster_id = int(identity_id) if identity_id.isdigit() else 0
+            pipeline.db.set_face_cluster_name(cluster_id, "")
+    except Exception as e:
+        logger.warning(f"[Identity] Delete error: {e}")
 
-    identity = identity_graph.get_identity(identity_id)
-    if not identity:
-        raise HTTPException(status_code=404, detail="Identity not found")
-
-    # Clean up face/voice references in Qdrant before deleting from graph
-    if identity.name and pipeline and pipeline.db:
-        try:
-            from qdrant_client import models
-
-            # Clear name from face points
-            pipeline.db.client.set_payload(
-                collection_name=pipeline.db.FACES_COLLECTION,
-                payload={"name": None},
-                points=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="name",
-                            match=models.MatchValue(value=identity.name),
-                        )
-                    ]
-                ),
-            )
-            # Clear speaker_name from voice points
-            pipeline.db.client.set_payload(
-                collection_name=pipeline.db.VOICE_COLLECTION,
-                payload={"speaker_name": None, "name": None},
-                points=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="speaker_name",
-                            match=models.MatchValue(value=identity.name),
-                        )
-                    ]
-                ),
-            )
-        except Exception as e:
-            logger.warning(
-                f"[Identity] Failed to clean up Qdrant refs for {identity.name}: {e}"
-            )
-
-    identity_graph.delete_identity(identity_id)
     return {"status": "deleted", "id": identity_id}
 
 

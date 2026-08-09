@@ -124,16 +124,6 @@ class RerankingCouncil:
         except Exception as e:
             log.warning(f"[RerankCouncil] BGE-Reranker load failed: {e}")
 
-        # Load ColBERT (Late Interaction)
-        try:
-            from core.retrieval.late_interaction import ColBERTRetriever
-
-            self._colbert = ColBERTRetriever()
-            # Note: ColBERTRetriever is also lazy-loaded internally on first use
-            log.info("[RerankCouncil] Initialized ColBERT Retriever")
-        except Exception as e:
-            log.warning(f"[RerankCouncil] ColBERT init failed: {e}")
-
         self._models_loaded = True
 
     def _get_text_for_ranking(self, candidate: SearchCandidate) -> str:
@@ -353,36 +343,7 @@ class RerankingCouncil:
         w_ce, w_bge, w_vlm = self.weights
         results = []
 
-        # Lazy load HITL feedback manager
-        try:
-            from core.retrieval.hitl_feedback import get_hitl_manager
-
-            hitl = get_hitl_manager()
-        except ImportError:
-            hitl = None
-            log.debug("[RerankCouncil] HITL feedback not available")
-
-        # ColBERT scoring (Late Interaction)
-        if self._colbert:
-            try:
-                # Encode query once
-                q_enc = await self._colbert.encode_query(query)
-                if q_enc:
-                    # Encode all candidates (batch)
-                    d_encs = await self._colbert.encode_documents(
-                        candidate_texts
-                    )
-
-                    for i, d_enc in enumerate(d_encs):
-                        # Compute MaxSim score
-                        score = self._colbert.compute_score(
-                            q_enc["colbert_vecs"][0],  # Query has 1 item
-                            d_enc["colbert_vecs"],
-                        )
-                        scores[i]["colbert"] = score
-                        scores[i]["candidate"] = candidates[i]
-            except Exception as e:
-                log.warning(f"[RerankCouncil] ColBERT failed: {e}")
+        hitl = None
 
         # Sigmoid normalization for BGE scores (raw logits can be -10..+10)
         import math

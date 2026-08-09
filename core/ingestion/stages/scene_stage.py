@@ -244,96 +244,10 @@ class SceneStageMixin:
             # Dialogue: transcript
             dialogue_text = aggregated.get("dialogue_transcript", "")
 
-            # 6. Deep Research Analysis (Cinematography, Aesthetics, Mood)
+            # 6. Deep Research Analysis removed per AGENTS.md clean architecture stance
             dr_meta = {}
             internvideo_features = None
             languagebind_features = None
-
-            if frame_bytes:
-                try:
-                    from core.processing.deep_research import (
-                        get_deep_research_processor,
-                    )
-
-                    nparr = np.frombuffer(frame_bytes, np.uint8)
-                    img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                    processor = get_deep_research_processor()
-                    # Run deep research on the representative frame
-                    dr_result = await processor.analyze_frame(
-                        img_np,
-                        compute_embeddings=False,  # VectorDB does this
-                        compute_saliency=False,
-                        compute_fingerprint=False,  # Hash was never stored
-                    )
-
-                    # Skip black/blank frames — they pollute search results
-                    if dr_result.is_black_frame:
-                        logger.debug(f"Scene {idx}: Skipping black frame")
-                        continue
-
-                    dr_meta = {
-                        "shot_type": dr_result.shot_type,
-                        "mood": dr_result.mood,
-                        "aesthetic_score": dr_result.aesthetic_score,
-                    }
-
-                    # Video understanding embeddings (InternVideo, LanguageBind)
-                    # Only compute if enabled in settings (saves VRAM on low-end systems)
-                    if settings.enable_video_embeddings:
-                        try:
-                            video_result = (
-                                await processor.analyze_video_segment(
-                                    video_path=path,
-                                    start_time=scene.start_time,
-                                    end_time=scene.end_time,
-                                    sample_frames=8,
-                                )
-                            )
-
-                            # Extract video embeddings for action search
-                            if "internvideo" in video_result.video_features:
-                                internvideo_features = (
-                                    video_result.video_features[
-                                        "internvideo"
-                                    ].tolist()
-                                )
-                                # CAPTURE ACTION LABELS (Gap #2 Fix)
-                                # Merge specialized motion labels with VLM general actions
-                                if video_result.action_labels:
-                                    # Add to aggregated actions for payload
-                                    current_actions = set(
-                                        aggregated.get("actions", [])
-                                    )
-                                    current_actions.update(
-                                        video_result.action_labels
-                                    )
-                                    aggregated["actions"] = list(
-                                        current_actions
-                                    )
-
-                                    # Add to motion text for vector search
-                                    motion_text += " " + " ".join(
-                                        video_result.action_labels
-                                    )
-
-                            if "languagebind" in video_result.video_features:
-                                languagebind_features = (
-                                    video_result.video_features[
-                                        "languagebind"
-                                    ].tolist()
-                                )
-
-                            logger.debug(
-                                f"Scene {idx}: InternVideo={internvideo_features is not None}, LanguageBind={languagebind_features is not None}"
-                            )
-                        except Exception as e:
-                            logger.debug(
-                                f"Video understanding failed for scene {idx}: {e}"
-                            )
-
-                except Exception as e:
-                    logger.warning(f"Deep Research failed for scene {idx}: {e}")
 
             # 7. Generate CLIP/SigLIP visual features for true multimodal search
             visual_features = None
@@ -469,90 +383,8 @@ class SceneStageMixin:
                         from core.domain.schemas import (
                             MediaFile,
                             MediaMetadata,
-                            MediaType,
-                        )
-
-                        # Generate lightweight content hash (path + size + mtime)
-                        # Avoid full file read for graph node init
-                        file_stat = path.stat()
-                        hash_input = (
-                            f"{path}_{file_stat.st_size}_{file_stat.st_mtime}"
-                        )
-                        content_hash = hashlib.md5(
-                            hash_input.encode()
-                        ).hexdigest()
-
-                        mf_wrapper = MediaFile(
-                            path=str(path),
-                            filename=path.name,
-                            media_type=MediaType.VIDEO,
-                            content_hash=content_hash,
-                            metadata=MediaMetadata(
-                                duration=self.prober.get_duration(path)
-                                if hasattr(self.prober, "get_duration")
-                                else 0
-                            ),
-                        )
-                        self.graph_builder.process_video_node(mf_wrapper)
-
-                    # Construct Synthetic Analysis for Graph
-                    from core.domain.schemas import FrameAnalysis, SceneContext
-
-                    # Explicitly capture Deep Research signals
-                    dr_mood = dr_meta.get("mood", "") if dr_meta else ""
-                    dr_shot = dr_meta.get("shot_type", "") if dr_meta else ""
-
-                    scene_ctx = SceneContext(
-                        location=aggregated.get("location", ""),
-                        visible_text=aggregated.get("visible_text", []),
-                        cultural_context=aggregated.get("cultural_context", ""),
-                        mood=dr_mood,  # <--- CRITICAL: Graph gets the DR Mood
-                    )
-
-                    # Merge DR Shot info into action/description if needed
-                    action_desc = aggregated.get(
-                        "action_sequence", ""
-                    ) or aggregated.get("action", "")
-                    if dr_shot:
-                        action_desc += f" ({dr_shot})"
-
-                    synth_analysis = FrameAnalysis(
-                        main_subject=aggregated.get("main_subject", ""),
-                        action=action_desc,
-                        entities=aggregated.get("entities", []),
-                        scene=scene_ctx,
-                        face_cluster_ids=aggregated.get("face_cluster_ids", []),
-                    )
-
-                    # Qdrant Scene ID (re-generated to match store_scene logic if needed, but db.store_scene handles it)
-                    # We need the ID used by Qdrant to link.
-                    # db.store_scene generates ID internally.
-                    # We should align ID generation.
-                    # Ideally db.store_scene returns ID or we generate it here.
-                    # QdrantHandler.store_scene uses uuid5(video_path + start_time).
-                    graph_scene_id = str(
-                        uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            f"{str(path)}_scene_{scene.start_time:.3f}",
-                        )
-                    )
-
-                    self.graph_builder.process_scene(
-                        video_path=str(path),
-                        scene_id=graph_scene_id,
-                        start_time=scene.start_time,
-                        end_time=scene.end_time,
-                        analysis=synth_analysis,
-                        prev_scene_id=None,  # GraphBuilder handles temporal linking internally via query/TimeGap
-                    )
-                    logger.debug(
-                        f"[Graph] Ingested Scene {idx} (Mood: {dr_mood})"
-                    )
-
-                except Exception as ge:
-                    logger.warning(
-                        f"[Graph] Ingestion failed for scene {idx}: {ge}"
-                    )
+                # Graph updates handled in SQL system of record
+                pass
 
             except Exception as e:
                 logger.warning(f"Failed to store scene {idx}: {e}")

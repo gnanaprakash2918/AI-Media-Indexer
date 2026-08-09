@@ -6,7 +6,6 @@ strict VRAM bounding and memory isolation as requested in MVP Phase 5.
 """
 
 from core.storage.db import VectorDB
-from core.storage.identity_graph import identity_graph
 from core.utils.logger import log
 
 
@@ -16,4 +15,4 @@ class QueryPipeline:
     def __init__(self):
         log("[QueryPipeline] Initializing decoupled lightweight search core...")
         self.db = VectorDB()
-        self.graph_builder = identity_graph
+        self.graph_builder = None

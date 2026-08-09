@@ -335,15 +335,6 @@ async def delete_job(
         except Exception as e:
             logger.warning(f"[DeleteJob] Qdrant cleanup failed: {e}")
 
-        try:
-            from core.knowledge.graph_builder import GraphBuilder
-            graph_builder = GraphBuilder()
-            graph_builder.delete_video(file_path)
-            cleanup_results["neo4j"] = True
-            logger.info(f"[DeleteJob] Cleaned Neo4j for {file_path}")
-        except Exception as e:
-            logger.warning(f"[DeleteJob] Neo4j cleanup failed: {e}")
-
     # 3. Delete from progress tracker cache + SQLite
     success = progress_tracker.delete(job_id)
     if success:

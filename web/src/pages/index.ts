@@ -5,7 +5,3 @@ export { default as VoicesPage } from './Voices';
 export { default as SettingsPage } from './Settings';
 export { default as DashboardPage } from './Dashboard';
 export { default as AgentPage } from './Agent';
-export { default as CouncilsPage } from './Councils';
-export { default as GraphPage } from './Graph';
-export { default as EditorPage } from './Editor';
-export { default as VideoEditorPage } from './VideoEditor';

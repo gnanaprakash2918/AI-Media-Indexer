@@ -109,15 +109,12 @@ logger.debug("Importing FastAPI...")
 logger.debug("Importing API routers...")
 from api.routes import (  # noqa: E402
     agent,
-    councils,
     events,
     faces,
-    graph,
     grounding,
     identities,
     ingest,
     library,
-    manipulation,
     media,
     search,
     system,
@@ -251,18 +248,13 @@ def create_app() -> FastAPI:
     app.include_router(search.router, tags=["Search"])
     app.include_router(agent.router, tags=["Agent"])
     app.include_router(identities.router, tags=["Identities"])
-    app.include_router(councils.router, tags=["Councils"])
     app.include_router(events.router, tags=["Events"])
     app.include_router(faces.router, tags=["Faces"])
     app.include_router(voices.router, tags=["Voices"])
     app.include_router(library.router, tags=["Library"])
-    app.include_router(graph.router, tags=["Graph"])
     app.include_router(grounding.router, tags=["Grounding"])
     if overlays:
         app.include_router(overlays.router, tags=["Overlays"])
-
-    # Manipulation Routes
-    app.include_router(manipulation.router, tags=["Manipulation"])
 
     # Mount static files for default thumbnails/assets
     thumb_dir = settings.cache_dir / "thumbnails"

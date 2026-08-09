@@ -24,7 +24,6 @@ from core.processing.temporal_context import (
 )
 from core.processing.vision import VisionAnalyzer
 from core.storage.db import VectorDB
-from core.storage.identity_graph import identity_graph
 from core.utils.logger import logger
 from core.utils.progress import progress_tracker
 from core.utils.resource import resource_manager
@@ -389,23 +388,8 @@ class FrameStageMixin:
                         avg_embedding,
                         metadata,
                     ) in self._face_track_builder.get_track_embeddings():
-                        try:
-                            identity_graph.create_face_track(
-                                media_id=media_id,
-                                start_frame=metadata["start_frame"],
-                                end_frame=metadata["end_frame"],
-                                start_time=metadata["start_time"],
-                                end_time=metadata["end_time"],
-                                avg_embedding=avg_embedding,
-                                avg_confidence=metadata.get(
-                                    "avg_confidence", 0.0
-                                ),
-                                frame_count=metadata.get("frame_count", 1),
-                            )
-                        except Exception as track_err:
-                            logger.warning(
-                                f"Failed to store face track: {track_err}"
-                            )
+                        # Face tracks are stored in FaceRepository / SQL
+                        pass
                 except Exception as e:
                     logger.warning(f"Track finalization failed: {e}")
 
@@ -493,11 +477,7 @@ class FrameStageMixin:
                 timestamp=timestamp,
             )
 
-        # ------------------------------------------------------------
-        # DEEP RESEARCH: SOTA Frame Analysis (Cinematography, Aesthetics)
-        # OPTIMIZATION: Skip per-frame if deep_research_per_scene is True
-        # (Will run on scene keyframes instead via _process_scene_captions)
-        # ------------------------------------------------------------
+
 
 
         # Save face thumbnails

@@ -1057,52 +1057,8 @@ class FaceRepository:
             # === Step 4: Propagate name to frames for proper search ===
             self._propagate_face_name_to_frames(cluster_id, name)
 
-            # === Step 5: Identity Linking (Face + Voice Cross-Modal) ===
-            try:
-                from core.storage.identity_graph import identity_graph
-
-                # Get/Create Global Identity
-                identity = identity_graph.get_or_create_identity_by_name(name)
-
-                # Link these face tracks to the identity
-                identity_graph.link_faces_to_identity(point_ids, identity.id)
-                log(
-                    f"[Identity] Linked {len(point_ids)} faces to {identity.name} ({identity.id})"
-                )
-
-                # === Cross-Modal Link: Check for voice cluster with same name ===
-                voice_cluster = self.get_speaker_cluster_by_name(name)
-                if voice_cluster:
-                    log(
-                        f"[Identity] Found voice cluster with same name '{name}' (ID: {voice_cluster})"
-                    )
-                    # Get voice segment IDs for this cluster
-                    voice_resp = self.client.scroll(
-                        collection_name=self.VOICE_COLLECTION,
-                        scroll_filter=models.Filter(
-                            must=[
-                                models.FieldCondition(
-                                    key="voice_cluster_id",
-                                    match=models.MatchValue(
-                                        value=voice_cluster
-                                    ),
-                                )
-                            ]
-                        ),
-                        limit=1000,
-                    )
-                    voice_ids = [str(p.id) for p in voice_resp[0]]
-                    if voice_ids:
-                        identity_graph.link_voices_to_identity(
-                            voice_ids, identity.id
-                        )
-                        log(
-                            f"[Identity] Cross-linked {len(voice_ids)} voice segments to {identity.name}"
-                        )
-
-            except Exception as e:
-                log(f"[Identity] Linking failed: {e}")
-            # ------------------------
+            # === Step 5: Identity Linking (Handled in SQL Repositories) ===
+            pass
 
             log(
                 f"[HITL] Set name '{name}' on {len(point_ids)} faces in cluster {cluster_id}"
