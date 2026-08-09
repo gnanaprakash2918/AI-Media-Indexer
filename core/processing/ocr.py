@@ -211,12 +211,7 @@ class OCRProcessor:
         try:
             # Run OCR in a thread to prevent blocking the event loop
             try:
-                try:
-                    result = await asyncio.to_thread(
-                        self.ocr.ocr, frame, cls=True
-                    )
-                except TypeError:
-                    result = await asyncio.to_thread(self.ocr.ocr, frame)
+                result = await asyncio.to_thread(self.ocr.ocr, frame)
             except Exception as inner_e:
                 if "OneDnnContext" in str(inner_e) or "operator <" in str(
                     inner_e
@@ -227,12 +222,7 @@ class OCRProcessor:
                     padded = np.pad(
                         frame, ((2, 2), (2, 2), (0, 0)), mode="edge"
                     )
-                    try:
-                        result = await asyncio.to_thread(
-                            self.ocr.ocr, padded, cls=True
-                        )
-                    except TypeError:
-                        result = await asyncio.to_thread(self.ocr.ocr, padded)
+                    result = await asyncio.to_thread(self.ocr.ocr, padded)
                 else:
                     raise inner_e
 

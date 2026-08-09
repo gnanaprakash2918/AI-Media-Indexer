@@ -29,38 +29,52 @@ class ResourceManager:
 
         Args:
             task_type:
-                - 'compute': Heavy local processing (Whisper,Pyannote). Checks CPU temp.
-                - 'network': API calls. Ignores Temp/CPU, checks RAM.
-                - 'io': File operations. Checks RAM.
+                - 'compute': Heavy local processing (Whisper,Pyannote). Checks CPU temp + VRAM.
+                - 'network': API calls. Checks RAM only (VRAM won't change from waiting on HTTP).
+                - 'io': File operations. Checks RAM only.
         """
         if not self.enabled:
             return
 
-        # We assume network tasks (API calls) don't heat up the CPU
-        # But we still check RAM to prevent OOM crashes
+        # Only compute tasks should be gated on thermals and VRAM.
+        # Network tasks blocked on VRAM will spin forever because no GPU work
+        # is happening that could free memory — that's the "stuck at 6%" bug.
         check_thermal = task_type == "compute"
+        check_vram = task_type == "compute"
 
         throttle_count = 0
-        while not self._is_safe(check_thermal=check_thermal):
+        max_throttle_cycles = 10  # Hard ceiling to prevent infinite blocking
+
+        while not self._is_safe(
+            check_thermal=check_thermal, check_vram=check_vram
+        ):
             throttle_count += 1
             log.warning(
                 f"System throttled! Cooling down for {settings.cool_down_seconds}s.. "
-                f"({self._get_status_string()})"
+                f"({self._get_status_string()}) [cycle {throttle_count}/{max_throttle_cycles}]"
             )
 
             # After first throttle, try to clear GPU memory
             if throttle_count == 1:
                 await self._clear_gpu_memory()
 
+            # CancelledError must propagate for graceful shutdown (^C fix)
             await asyncio.sleep(settings.cool_down_seconds)
 
             # If stuck for too long (3+ cycles), force aggressive cleanup
-            if throttle_count >= 3:
+            if throttle_count >= 3 and check_vram:
                 log.warning(
                     "Throttle stuck! Attempting aggressive GPU cleanup..."
                 )
                 await self._clear_gpu_memory(aggressive=True)
-                throttle_count = 0  # Reset to prevent spamming
+
+            # Hard ceiling: don't block forever — log and proceed
+            if throttle_count >= max_throttle_cycles:
+                log.error(
+                    f"Throttle exhausted after {max_throttle_cycles} cycles "
+                    f"({self._get_status_string()}). Proceeding to avoid deadlock."
+                )
+                break
 
     async def _clear_gpu_memory(self, aggressive: bool = False) -> None:
         """Force clear GPU memory by unloading models and clearing cache.
@@ -117,30 +131,37 @@ class ResourceManager:
         except Exception:
             return False
 
-    def _is_safe(self, check_thermal: bool = True) -> bool:
-        """Returns True if system resources are within safe limits."""
+    def _is_safe(self, check_thermal: bool = True, check_vram: bool = True) -> bool:
+        """Returns True if system resources are within safe limits.
+
+        Args:
+            check_thermal: Whether to check CPU/GPU temperature and CPU usage.
+            check_vram: Whether to check GPU VRAM usage.
+        """
         # 1. Check RAM (Always critical)
         mem = psutil.virtual_memory()
         if mem.percent > settings.max_ram_percent:
             self.status = f"High RAM ({mem.percent:.1f}%)"
             return False
 
-        # 2. Check VRAM (GPU memory) if available
-        try:
-            # Check VRAM (Global usage is safer than just local)
-            from core.utils.hardware import get_global_vram_usage_percent
+        # 2. Check VRAM (GPU memory) if available and requested
+        if check_vram:
+            try:
+                # Check VRAM (Global usage is safer than just local)
+                from core.utils.hardware import get_global_vram_usage_percent
 
-            vram_percent = get_global_vram_usage_percent()
+                vram_percent = get_global_vram_usage_percent()
 
-            if vram_percent > settings.max_vram_percent:
-                self.status = f"High VRAM ({vram_percent:.1f}%)"
-                return False
-        except Exception:
-            pass  # No GPU or import failed
+                if vram_percent > settings.max_vram_percent:
+                    self.status = f"High VRAM ({vram_percent:.1f}%)"
+                    return False
+            except Exception:
+                pass  # No GPU or import failed
 
         # If it's just a network call, we don't care about CPU/Temp as much
         if not check_thermal:
             return True
+
 
         # 3. Check CPU Usage
         cpu_usage = psutil.cpu_percent(interval=None)
