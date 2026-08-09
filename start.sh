@@ -135,9 +135,15 @@ check_port_availability() {
         PROC_NAME=$(ps -p "$PID" -o comm= 2>/dev/null || echo "Unknown")
 
         if [[ "$PROC_NAME" =~ docker ]] || [[ "$PROC_NAME" =~ com.docker ]]; then
-            if [ "$NUCLEAR" = false ]; then
-                echo -e "${GRAY}Note: Port $PORT is used by Docker ($PROC_NAME). This is usually normal.${NC}"
-                echo -e "${GRAY}Skipping kill check to avoid breaking the daemon.${NC}"
+            local CONTAINER_ID=$(docker ps -q --filter "publish=$PORT" 2>/dev/null || true)
+            if [ -n "$CONTAINER_ID" ]; then
+                echo -e "${YELLOW}Note: Port $PORT ($SERVICE_NAME) is used by Docker container ($CONTAINER_ID). Stopping container...${NC}"
+                docker stop "$CONTAINER_ID" >/dev/null 2>&1 || true
+                sleep 1
+            fi
+            PID=$(lsof -t -i:$PORT 2>/dev/null | head -n 1 || true)
+            if [ -z "$PID" ]; then
+                echo -e "${GREEN}Port $PORT is now free.${NC}"
                 return 0
             fi
         fi
@@ -158,7 +164,13 @@ check_port_availability() {
 
         if [ "$SHOULD_KILL" = true ]; then
             kill -9 "$PID" 2>/dev/null || true
-            echo -e "${GREEN}Process $PID terminated. Port $PORT is free.${NC}"
+            sleep 1
+            if lsof -t -i:$PORT >/dev/null 2>&1; then
+                echo -e "${RED}  Failed to kill process $PID (may require root privileges).${NC}"
+                echo -e "${YELLOW}  If docker fails to start, run: sudo systemctl restart containerd docker${NC}"
+            else
+                echo -e "${GREEN}Process $PID terminated. Port $PORT is free.${NC}"
+            fi
         else
             echo -e "${DARK_YELLOW}Skipping kill. Note: Application may fail to start.${NC}\n"
         fi
@@ -167,16 +179,6 @@ check_port_availability() {
 
 echo -e "${CYAN}>>> AI-Media-Indexer Full System Startup${NC}"
 echo -e "${GREEN}    Agentic Search: ENABLED (LLM query expansion)${NC}\n"
-
-if [ "$NUCLEAR" = true ]; then echo -e "   ${RED}Mode: NUCLEAR (wipe all data)${NC}"; fi
-if [ "$DISTRIBUTED" = true ]; then echo -e "   ${MAGENTA}Mode: Distributed (Redis + Celery)${NC}"; fi
-if [ "$FULL" = true ]; then echo -e "   ${RED}Mode: FULL SETUP (All features)${NC}"; fi
-
-# Check critical ports
-check_port_availability 8000 "Backend API"
-check_port_availability 3000 "Frontend UI"
-check_port_availability 6333 "Qdrant Vector DB"
-check_port_availability 6379 "Redis"
 
 # Check if any flags were set to determine interactive menu
 ANY_FLAGS_SET=false
@@ -245,6 +247,7 @@ if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS_SET" = false ]; then
             echo -e "\n  >> Fresh Start selected (clearing caches)"
             ;;
         3)
+            NUCLEAR=true
             SKIP_CLEAN=false
             NUKE_QDRANT=true
             echo -e "\n  >> NUCLEAR RESET selected (wiping all data, local processing)"
@@ -260,6 +263,7 @@ if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS_SET" = false ]; then
             echo -e "\n  >> Dev Mode selected (recreating venv, pulling images)"
             ;;
         6)
+            NUCLEAR=true
             SKIP_CLEAN=false
             NUKE_QDRANT=true
             RECREATE_VENV=true
@@ -267,6 +271,7 @@ if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS_SET" = false ]; then
             echo -e "\n  >> NUCLEAR + Dev Mode selected (wiping everything + fresh venv)"
             ;;
         7)
+            NUCLEAR=true
             SKIP_CLEAN=false
             NUKE_QDRANT=true
             DISTRIBUTED=true
@@ -283,6 +288,20 @@ if [ "$NO_INTERACTIVE" = false ] && [ "$ANY_FLAGS_SET" = false ]; then
     esac
     echo ""
 fi
+
+if [ "$NUCLEAR" = true ]; then echo -e "   ${RED}Mode: NUCLEAR (wipe all data)${NC}"; fi
+if [ "$DISTRIBUTED" = true ]; then echo -e "   ${MAGENTA}Mode: Distributed (Redis + Celery)${NC}"; fi
+if [ "$FULL" = true ]; then echo -e "   ${RED}Mode: FULL SETUP (All features)${NC}"; fi
+
+# Check critical ports after menu choice is finalized
+check_port_availability 8000 "Backend API"
+check_port_availability 3000 "Frontend UI"
+check_port_availability 6333 "Qdrant Vector DB (HTTP)"
+check_port_availability 6334 "Qdrant Vector DB (gRPC)"
+check_port_availability 6379 "Redis"
+check_port_availability 7474 "Neo4j Graph DB (HTTP)"
+check_port_availability 7687 "Neo4j Graph DB (Bolt)"
+check_port_availability 8001 "vLLM Inference Server"
 
 echo -e "${YELLOW}[1/8] Working directory: $PROJECT_ROOT${NC}"
 
@@ -406,8 +425,10 @@ if [ "$NUKE_QDRANT" = true ]; then
         "media_agent_langfuse_worker"
         "media_agent_createbuckets"
         "aimI_knowledge_graph"
+        "media_agent_vllm"
     )
     for c in "${CONTAINERS[@]}"; do
+        docker stop "$c" 2>/dev/null || true
         docker rm -f "$c" 2>/dev/null || true
     done
     echo -e "${GREEN}  Docker services stopped and volumes removed.${NC}"
@@ -464,6 +485,10 @@ if [ "$SKIP_DOCKER" = false ]; then
         exit 1
     else
         echo -e "${GREEN}  Docker Daemon is running${NC}"
+        if [ -f "/etc/docker/daemon.json" ] && grep -q '"default-runtime"\s*:\s*"nvidia"' /etc/docker/daemon.json 2>/dev/null; then
+            echo -e "${YELLOW}  WARNING: /etc/docker/daemon.json has 'default-runtime: nvidia'.${NC}"
+            echo -e "${YELLOW}  This can cause OCI runtime errors for standard containers (redis/qdrant/neo4j).${NC}"
+        fi
     fi
 
     echo -e "\n${YELLOW}[5.5/8] Stopping Docker containers...${NC}"
@@ -497,9 +522,10 @@ if [ "$SKIP_DOCKER" = false ]; then
         fi
     fi
 
-    echo -e "${GRAY}  Starting containers with $DOCKER_COMPOSE_CMD...${NC}"
+    echo -e "${GRAY}  Starting database containers with $DOCKER_COMPOSE_CMD...${NC}"
     if ! $DOCKER_COMPOSE_CMD up -d --wait qdrant redis neo4j; then
-        echo -e "${YELLOW}  WARNING: Docker start failed. Attempting auto-recovery (Pull & Build)...${NC}"
+        echo -e "${YELLOW}  WARNING: Docker start failed. Cleaning up and attempting auto-recovery (Pull & Build)...${NC}"
+        $DOCKER_COMPOSE_CMD down --remove-orphans 2>/dev/null || true
         $DOCKER_COMPOSE_CMD pull
         $DOCKER_COMPOSE_CMD build
         if ! $DOCKER_COMPOSE_CMD up -d --wait qdrant redis neo4j; then
@@ -507,17 +533,58 @@ if [ "$SKIP_DOCKER" = false ]; then
             exit 1
         fi
     fi
+
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        echo -e "${GREEN}  NVIDIA GPU detected: Launching vLLM container service...${NC}"
+        $DOCKER_COMPOSE_CMD up -d vllm 2>/dev/null || true
+    fi
     echo -e "${GREEN}  Docker containers started.${NC}"
 
-    echo -e "\n${GRAY}  Waiting for Qdrant to initialize (5s)...${NC}"
+    echo -e "\n${GRAY}  Waiting for database containers to initialize (5s)...${NC}"
     sleep 5
-    echo -e "${GREEN}  Qdrant should be ready.${NC}"
+    echo -e "${GREEN}  Databases should be ready.${NC}"
 else
     echo -e "${GRAY}[5/8] Skipping Docker startup (--SkipDocker)${NC}"
 fi
 
-# Start Ollama
-if [ "$SKIP_OLLAMA" = false ]; then
+# Check LLM / VLM Provider (vLLM or Ollama)
+CURRENT_PROVIDER="vllm"
+if [ -f ".env" ]; then
+    ENV_PROVIDER=$(grep -E '^LLM_PROVIDER\s*=' .env | cut -d '=' -f2 | tr -d ' "' || true)
+    if [ -n "$ENV_PROVIDER" ]; then CURRENT_PROVIDER="$ENV_PROVIDER"; fi
+fi
+
+if [[ "$CURRENT_PROVIDER" == "vllm" ]]; then
+    echo -e "\n${YELLOW}[8/8] Checking vLLM Provider status...${NC}"
+    VLLM_URL="http://localhost:8001"
+    if [ -f ".env" ]; then
+        ENV_VLLM_URL=$(grep -E '^VLLM_BASE_URL\s*=' .env | cut -d '=' -f2 | tr -d ' "' || true)
+        if [ -n "$ENV_VLLM_URL" ]; then VLLM_URL="$ENV_VLLM_URL"; fi
+    fi
+
+    echo -e "${GRAY}  Testing vLLM connection at $VLLM_URL...${NC}"
+    VLLM_READY=false
+    RETRIES=20
+    MAX_RETRIES=20
+    while [ $RETRIES -gt 0 ]; do
+        if curl -s "$VLLM_URL/health" >/dev/null 2>&1 || curl -s "$VLLM_URL/v1/models" >/dev/null 2>&1; then
+            VLLM_READY=true
+            break
+        fi
+        ATTEMPT=$((MAX_RETRIES - RETRIES + 1))
+        echo -e "${GRAY}  Waiting for vLLM engine initialization (check $ATTEMPT/$MAX_RETRIES)...${NC}"
+        sleep 2
+        RETRIES=$((RETRIES-1))
+    done
+
+    if [ "$VLLM_READY" = true ]; then
+        echo -e "${GREEN}  vLLM Inference Server is ready at $VLLM_URL!${NC}"
+    else
+        echo -e "${YELLOW}  WARNING: Could not connect to vLLM at $VLLM_URL.${NC}"
+        echo -e "${YELLOW}  If starting vLLM for the first time, model weights download may still be in progress.${NC}"
+        echo -e "${GRAY}  (To use Ollama instead, set LLM_PROVIDER=ollama in .env)${NC}"
+    fi
+elif [ "$SKIP_OLLAMA" = false ]; then
     echo -e "\n${YELLOW}[8/8] Checking Ollama status...${NC}"
     OLLAMA_RUNNING=false
     if command -v nc >/dev/null 2>&1; then

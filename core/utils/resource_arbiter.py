@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING  # noqa: F401 (used by type checkers)
 
+from config import settings
+
 
 def safe_cleanup_vram() -> None:
     """Safely clear GPU VRAM cache — handles missing/unavailable torch gracefully.
@@ -140,9 +142,7 @@ class ResourceArbiter:
             if model_name not in self.registry:
                 # TRANSIENT ALLOCATION (original behavior)
                 # Wait for VRAM availability
-                from config import settings as _s
-
-                limit = self.total_vram * (_s.max_vram_percent / 100)
+                limit = self.total_vram * (settings.max_vram_percent / 100)
 
                 max_offload_attempts = 10
                 offload_attempts = 0
@@ -219,8 +219,6 @@ class ResourceArbiter:
                     self.current_usage = max(0, self.current_usage - model_vram)
 
                     # LAZY UNLOAD: Actually unload the model if setting enabled
-                    from config import settings
-
                     unload_fn = self.registry[model_name].get("unload_fn")
                     if settings.lazy_unload and unload_fn:
                         try:
@@ -296,9 +294,7 @@ class ResourceArbiter:
             logger.info(f"[Arbiter] ensuring loaded {model_name} ({vram_gb}GB)")
 
             # Check limits
-            from config import settings as _s
-
-            limit = self.total_vram * (_s.max_vram_percent / 100)
+            limit = self.total_vram * (settings.max_vram_percent / 100)
 
             while self.current_usage + vram_gb > limit:
                 logger.info(

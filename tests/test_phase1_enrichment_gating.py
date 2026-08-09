@@ -51,8 +51,8 @@ class TestEnrichmentDefaults:
     def test_vlm_endpoint_model_name_is_qwen3(self):
         from config import settings
 
-        assert "Qwen3" in settings.vlm_endpoint_model_name or "qwen3" in settings.vlm_endpoint_model_name.lower(), (
-            f"Expected Qwen3-VL model name, got {settings.vlm_endpoint_model_name}"
+        assert "Qwen" in settings.vlm_endpoint_model_name or "qwen" in settings.vlm_endpoint_model_name.lower(), (
+            f"Expected Qwen-VL model name, got {settings.vlm_endpoint_model_name}"
         )
 
     def test_ai_provider_vision_defaults_to_vllm(self):

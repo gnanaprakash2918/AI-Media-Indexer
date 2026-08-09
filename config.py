@@ -470,8 +470,8 @@ class Settings(BaseSettings):
     max_ram_percent: float = 95.0
     max_temp_celsius: float = 85.0  # Pause if CPU hits 85°C
     max_vram_percent: float = Field(
-        default=85.0,
-        description="Max VRAM usage before throttling (85% gives headroom for 8GB GPUs)",
+        default=95.0,
+        description="Max VRAM usage before throttling (95% gives headroom for vLLM + local pipelines)",
     )
 
     # Pause duration when overheated (seconds)

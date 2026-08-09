@@ -122,6 +122,7 @@ class ResourceManager:
         # 1. Check RAM (Always critical)
         mem = psutil.virtual_memory()
         if mem.percent > settings.max_ram_percent:
+            self.status = f"High RAM ({mem.percent:.1f}%)"
             return False
 
         # 2. Check VRAM (GPU memory) if available
@@ -142,19 +143,22 @@ class ResourceManager:
             return True
 
         # 3. Check CPU Usage
-        # interval=None is non-blocking (returns usage since last call)
-        if psutil.cpu_percent(interval=None) > settings.max_cpu_percent:
+        cpu_usage = psutil.cpu_percent(interval=None)
+        if cpu_usage > settings.max_cpu_percent:
+            self.status = f"High CPU ({cpu_usage:.1f}%)"
             return False
 
         # 4. Check CPU Temperature (Best Effort)
         temp = self._get_cpu_temp()
         if temp and temp > settings.max_temp_celsius:
+            self.status = f"High CPU Temp ({temp:.1f}°C)"
             return False
 
         # 5. Check GPU Temperature (NVIDIA via pynvml)
         gpu_temp = self._get_gpu_temp()
         gpu_max = getattr(settings, "max_gpu_temp_celsius", 80)
         if gpu_temp and gpu_temp > gpu_max:
+            self.status = f"High GPU Temp ({gpu_temp:.1f}°C)"
             log.warning(
                 f"GPU overheating: {gpu_temp}°C (limit: {gpu_max}°C). Throttling..."
             )
@@ -215,11 +219,16 @@ class ResourceManager:
 
         # Add VRAM if available
         try:
-            from core.utils.hardware import get_available_vram, get_used_vram
+            from core.utils.hardware import (
+                get_available_vram,
+                get_global_vram_usage_percent,
+                get_used_vram,
+            )
 
             vram_used = get_used_vram()
             vram_total = get_available_vram()
-            vram_str = f" | VRAM: {vram_used:.1f}/{vram_total:.1f}GB"
+            global_vram_pct = get_global_vram_usage_percent()
+            vram_str = f" | VRAM: {global_vram_pct:.1f}% global ({vram_used:.1f}/{vram_total:.1f}GB local)"
         except Exception:
             vram_str = ""
 

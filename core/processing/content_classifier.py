@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from config import settings
 from core.utils.logger import log
 
 
@@ -226,8 +227,6 @@ class ContentClassifier:
 
     def should_use_lyrics_mode(self, regions: list[AudioRegion]) -> bool:
         """Check if audio is predominantly music (needs lyrics mode)."""
-        from config import settings
-
         total = sum(r.duration for r in regions)
         if total == 0:
             return False

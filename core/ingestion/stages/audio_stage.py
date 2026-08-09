@@ -357,7 +357,6 @@ class AudioStageMixin:
         # Enables temporal queries like "during the chorus" or "at the drop"
         # ============================================================
         try:
-            from config import settings
             if getattr(settings, "enable_music_structure", False):
                 from core.processing.audio_structure import get_music_analyzer
                 import asyncio

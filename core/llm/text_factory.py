@@ -74,7 +74,10 @@ class VLLMText(TextLLMClient):
         api_key: str | None = None,
         timeout: float = 60.0,
     ):
-        self.base_url = (base_url or settings.vllm_base_url).rstrip("/")
+        url = (base_url or settings.vllm_base_url).rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3]
+        self.base_url = url
         self.model = model or settings.vlm_endpoint_model_name
         self.api_key = api_key or settings.vllm_api_key
         self.timeout = timeout

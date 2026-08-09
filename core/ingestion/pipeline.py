@@ -577,8 +577,6 @@ class IngestionPipeline(
         Uses configurable tolerance to handle A/V sync drift.
         ATSC standard: 45ms audio lead, 125ms lag acceptable.
         """
-        from config import settings
-
         tol = settings.face_audio_sync_tolerance  # Default 0.3s
 
         clusters = []
