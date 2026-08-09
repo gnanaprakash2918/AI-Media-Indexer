@@ -90,15 +90,22 @@ class VLLMVLMClient(VLMClient):
 
     def _post(self, image_bytes: bytes, prompt: str) -> str:
         import httpx
+        import io
+        from PIL import Image
 
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        # Detect MIME type from magic bytes (JPEG / PNG / WebP / GIF)
-        if image_bytes[:2] == b"\xff\xd8":
-            mime = "image/jpeg"
-        elif image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
-            mime = "image/png"
-        else:
-            mime = "image/jpeg"  # safe default for cv2-encoded frames
+        # Auto-scale image to prevent token explosion (vLLM max-model-len limits)
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                img = img.convert("RGB")
+                if max(img.width, img.height) > 768:
+                    img.thumbnail((768, 768), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                mime = "image/jpeg"
+        except Exception as exc:
+            log(f"[VLLMVLMClient] Image preparation failed: {exc}")
+            return ""
 
         payload = {
             "model": self.model,
@@ -128,6 +135,9 @@ class VLLMVLMClient(VLMClient):
                 )
                 resp.raise_for_status()
                 return resp.json()["choices"][0]["message"]["content"].strip()
+        except httpx.HTTPStatusError as exc:
+            log(f"[VLLMVLMClient] HTTP Error {exc.response.status_code}: {exc.response.text}")
+            return ""
         except httpx.ConnectError as exc:
             log(
                 f"[VLLMVLMClient] Cannot connect to {self.base_url}. "

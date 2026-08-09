@@ -98,17 +98,8 @@ class LLMInterface(ABC):
         # Remove trailing commas before closing braces/brackets
         text = re.sub(r",\s*([}\]])", r"\1", text)
 
-        # Fix unescaped newlines in string values
-        text = re.sub(r'(?<!\\)\n(?=[^"]*"[^"]*$)', r"\\n", text)
-
-        # Remove control characters that break JSON
-        text = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text)
-
-        # Fix common Ollama issue: key without quotes
-        text = re.sub(r"(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'\1"\2":', text)
-
-        # Remove duplicate quotes
-        text = text.replace('""', '"')
+        # Remove control characters that break JSON (but not tab/newline inside strings)
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", " ", text)
 
         # Count braces and add missing closing braces
         open_braces = text.count("{") - text.count("}")
@@ -123,35 +114,73 @@ class LLMInterface(ABC):
 
     def parse_json_response(self, response_text: str, schema: type[T]) -> T:
         """Extract JSON from a model response and validate via Pydantic."""
+        import logging
+        _log = logging.getLogger(__name__)
+
+        if not response_text or not response_text.strip():
+            raise RuntimeError("Empty response received from LLM")
+
+        # Strip markdown code fences
         clean_text = (
             re.sub(r"```[a-zA-Z]*", "", response_text)
             .replace("```", "")
             .strip()
         )
 
+        # Strip Qwen3-VL / DeepSeek <think>…</think> reasoning blocks.
+        # These appear BEFORE the JSON when thinking mode is active and cause
+        # the {…} extraction regex to match content inside the thinking block
+        # rather than the actual JSON object.
+        clean_text = re.sub(
+            r"<think>.*?</think>", "", clean_text, flags=re.DOTALL | re.IGNORECASE
+        ).strip()
+
+        # Strategy 1: try to extract the outermost JSON object
         match = re.search(r"(\{.*\})", clean_text, re.DOTALL)
         if match:
-            clean_text = match.group(1)
+            candidate = match.group(1)
+        else:
+            candidate = clean_text
 
-        # Try parsing as-is first
+        # Try parsing candidate as-is first
         try:
-            data = json.loads(clean_text)
+            data = json.loads(candidate)
             return schema.model_validate(data)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, Exception):
             pass
 
-        # Try with JSON repair
-        repaired = self._repair_json(clean_text)
+        # Strategy 2: try with JSON repair on the candidate
+        repaired = self._repair_json(candidate)
         try:
             data = json.loads(repaired)
             return schema.model_validate(data)
-        except json.JSONDecodeError as e:
-            print(f"JSON Parsing Failed: {e}")
-            print(f"Failed Payload: {clean_text[:500]}...")
-            raise RuntimeError("Invalid JSON format received from LLM") from e
-        except Exception as e:
-            print(f"Schema Validation Failed: {e}")
-            raise RuntimeError(f"Parsed JSON did not match schema: {e}") from e
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # Strategy 3: find the first '{' and last '}' and try that slice
+        first_brace = clean_text.find("{")
+        last_brace = clean_text.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            slice_candidate = clean_text[first_brace : last_brace + 1]
+            try:
+                data = json.loads(slice_candidate)
+                return schema.model_validate(data)
+            except (json.JSONDecodeError, Exception):
+                repaired_slice = self._repair_json(slice_candidate)
+                try:
+                    data = json.loads(repaired_slice)
+                    return schema.model_validate(data)
+                except json.JSONDecodeError as e:
+                    _log.warning("JSON Parsing Failed: %s", e)
+                    _log.debug("Failed Payload: %s", clean_text[:500])
+                    raise RuntimeError("Invalid JSON format received from LLM") from e
+                except Exception as e:
+                    _log.warning("Schema Validation Failed: %s", e)
+                    raise RuntimeError(f"Parsed JSON did not match schema: {e}") from e
+
+        _log.warning("JSON Parsing Failed: no JSON object found in response")
+        _log.debug("Failed Payload: %s", clean_text[:500])
+        raise RuntimeError("Invalid JSON format received from LLM")
 
     def construct_system_prompt(
         self, schema: type[BaseModel], filename: str = "system_prompt.txt"
@@ -220,6 +249,13 @@ class LLMInterface(ABC):
         Default implementation: describe image, then parse JSON.
         Subclasses can override to use native format=json with image.
         """
+        # Append JSON schema to prompt if not already present
+        if "JSON Output Schema" not in prompt and "JSON Output Schema" not in system_prompt:
+            schema_json = json.dumps(schema.model_json_schema(), indent=2)
+            prompt = f"{prompt}\n\n## JSON Output Schema\n{schema_json}\n\nOUTPUT VALID JSON ONLY."
+
+        kwargs.setdefault("response_format", {"type": "json_object"})
+
         # Default: get text description, then try to parse as JSON
         response = await self.describe_image(
             prompt, image_path, system_prompt, **kwargs

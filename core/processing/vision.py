@@ -14,7 +14,7 @@ from core.llm.factory import LLMFactory
 from core.llm.interface import LLMInterface
 
 if TYPE_CHECKING:
-    from core.knowledge.schemas import FrameAnalysis
+    from core.domain.schemas import FrameAnalysis
 
 
 # Load prompts from external files - NO HARDCODING
@@ -95,11 +95,13 @@ class VisionAnalyzer:
     def _ensure_llm_loaded(self) -> None:
         """Loads the LLM and prompt template if they are not already cached."""
         if not self._llm_loaded:
-            log("[Vision] Lazy loading LLM...")
+            import os
+            provider = os.getenv("LLM_PROVIDER", "vllm")
+            log(f"[Vision] Lazy loading LLM (provider={provider})...")
             log_verbose(
-                "[Vision] Creating LLM via LLMFactory (provider=ollama)"
+                f"[Vision] Creating LLM via LLMFactory (provider={provider})"
             )
-            self._llm = LLMFactory.create_llm(provider="ollama")
+            self._llm = LLMFactory.get_default_llm()
             self._llm_loaded = True
 
         if self.prompt is None and self._llm is not None:
@@ -156,7 +158,7 @@ class VisionAnalyzer:
         Returns:
             FrameAnalysis object or None if analysis fails.
         """
-        from core.knowledge.schemas import FrameAnalysis
+        from core.domain.schemas import FrameAnalysis
 
         image_path = Path(image_path)
         if not image_path.exists() or not image_path.is_file():
