@@ -104,6 +104,34 @@ services:
     restart: unless-stopped
 
 
+  # ===== vLLM OpenAI-Compatible Server (GPU) =====
+  vllm:
+    image: vllm/vllm-openai:v0.7.3
+    container_name: media_agent_vllm
+    ports:
+      - "8001:8000"
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    command: >
+      --model ${VLM_ENDPOINT_MODEL_NAME:-Qwen/Qwen2.5-VL-3B-Instruct-AWQ}
+      --port 8000
+      --trust-remote-code
+      --max-model-len 4096
+      --limit-mm-per-prompt image=8
+      --gpu-memory-utilization 0.8
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+
   postgres:
     profiles: ["docker"]
     image: postgres:16-alpine

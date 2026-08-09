@@ -59,7 +59,10 @@ class VLLMProvider(LLMInterface):
 
         super().__init__(prompt_dir=prompt_dir)
 
-        self.base_url = (base_url or settings.vllm_base_url).rstrip("/")
+        url = (base_url or settings.vllm_base_url).rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3]
+        self.base_url = url
         self.model = model or settings.vlm_endpoint_model_name
         self.api_key = api_key or settings.vllm_api_key
         self.timeout = timeout
@@ -81,7 +84,7 @@ class VLLMProvider(LLMInterface):
     async def _chat_completion(
         self,
         messages: list[dict],
-        max_tokens: int = 2048,
+        max_tokens: int = 512,
         temperature: float = 0.0,
         response_format: dict | None = None,
         **kwargs: Any,
@@ -110,6 +113,19 @@ class VLLMProvider(LLMInterface):
                     f"Make sure vLLM is running, or set LLM_PROVIDER=ollama for "
                     f"local dev without a GPU/vLLM instance. "
                     f"Original error: {exc}"
+                ) from exc
+            except httpx.HTTPStatusError as exc:
+                error_detail = resp.text
+                try:
+                    err_json = resp.json()
+                    if isinstance(err_json, dict) and "message" in err_json.get("error", {}):
+                        error_detail = err_json["error"]["message"]
+                    elif isinstance(err_json, dict) and "message" in err_json:
+                        error_detail = err_json["message"]
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"[VLLMProvider] vLLM endpoint returned HTTP {resp.status_code}: {error_detail}"
                 ) from exc
 
         data = resp.json()
@@ -165,19 +181,26 @@ class VLLMProvider(LLMInterface):
     ) -> str:
         """Describe an image using the vLLM vision endpoint.
 
-        The image is base64-encoded and sent as an OpenAI-style image_url
-        content part (the "data:" scheme is supported by vLLM/Qwen3-VL).
+        The image is auto-scaled (max dimension 768px) and base64-encoded
+        as an OpenAI-style image_url content part to ensure token count
+        remains low (~400 tokens) and fits within context bounds.
         """
         image_path = Path(image_path)
 
-        def _read() -> bytes:
-            with open(image_path, "rb") as f:
-                return f.read()
+        def _prepare_b64() -> str:
+            import io
+            from PIL import Image
 
-        image_bytes = await asyncio.to_thread(_read)
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        mime, _ = mimetypes.guess_type(str(image_path))
-        mime = mime or "image/jpeg"
+            with Image.open(image_path) as img:
+                img = img.convert("RGB")
+                if max(img.width, img.height) > 768:
+                    img.thumbnail((768, 768), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        b64 = await asyncio.to_thread(_prepare_b64)
+        mime = "image/jpeg"
 
         content: list[dict] = [
             {"type": "text", "text": prompt},
