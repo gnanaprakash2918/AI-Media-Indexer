@@ -338,19 +338,36 @@ class SigLIPEncoder(BaseVisualEncoder):
 
     def _load(self) -> None:
         try:
+            import warnings
+
             import torch
             from transformers import AutoModel, AutoProcessor
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
             # Load with appropriate precision for speed and VRAM savings
-            torch_dtype = torch.float16 if device == "cuda" else torch.float32
+            # Use `dtype` (not deprecated `torch_dtype`) for AutoModel.from_pretrained
+            model_dtype = torch.float16 if device == "cuda" else torch.float32
 
-            self._model = AutoModel.from_pretrained(
-                self._hf_model_id,
-                torch_dtype=torch_dtype,
-                low_cpu_mem_usage=True,
-            ).to(device)
+            # Suppress SigLIP's spurious bos/eos_token_id config warnings — those
+            # fields are irrelevant for a vision-only model and safe to ignore.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*bos_token_id.*",
+                    category=UserWarning,
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*eos_token_id.*",
+                    category=UserWarning,
+                )
+                self._model = AutoModel.from_pretrained(
+                    self._hf_model_id,
+                    dtype=model_dtype,
+                    low_cpu_mem_usage=True,
+                ).to(device)
+
             self._model.eval()
 
             self._processor = AutoProcessor.from_pretrained(self._hf_model_id)

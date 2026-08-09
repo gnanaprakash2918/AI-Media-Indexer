@@ -391,3 +391,71 @@ class SearchResultDetail(BaseModel):
         default_factory=list,
         description="List of voice segments {start, end, label}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Query schemas (moved from core.knowledge.schemas which no longer exists)
+# ---------------------------------------------------------------------------
+
+
+class ParsedQuery(BaseModel):
+    """Structured representation of a user search query.
+
+    Produced by the query parser agent and consumed by the retrieval layer.
+    All fields are optional — the parser fills whatever it can extract from
+    the raw query string.
+    """
+
+    # Core search text / keywords
+    raw_query: str = Field(default="")
+    visual_keywords: list[str] = Field(default_factory=list)
+    action_keywords: list[str] = Field(default_factory=list)
+
+    # Identity / person constraints
+    person_name: str | None = None
+    entities: list[dict[str, Any]] = Field(default_factory=list)
+    identities: list[dict[str, Any]] = Field(default_factory=list)
+    people: list[Any] = Field(default_factory=list)
+
+    # Appearance constraints
+    clothing_color: str | None = None
+    clothing_type: str | None = None
+    accessories: list[str] = Field(default_factory=list)
+    clothing: list[dict[str, Any]] = Field(default_factory=list)
+
+    # Scene / location constraints
+    location: str | None = None
+    mood: str | None = None
+    shot_type: str | None = None
+    aesthetic_score: float | None = None
+
+    # Text / OCR constraints
+    text_to_find: list[str] = Field(default_factory=list)
+    text: list[dict[str, Any]] = Field(default_factory=list)
+
+    # Other modality constraints
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    audio: list[dict[str, Any]] = Field(default_factory=list)
+    spatial: list[dict[str, Any]] = Field(default_factory=list)
+    exclusions: list[dict[str, Any]] = Field(default_factory=list)
+
+    def to_search_text(self) -> str:
+        """Flatten all extracted keywords into a single search string."""
+        parts: list[str] = []
+        if self.visual_keywords:
+            parts.extend(self.visual_keywords)
+        if self.action_keywords:
+            parts.extend(self.action_keywords)
+        if self.person_name:
+            parts.append(self.person_name)
+        if self.location:
+            parts.append(self.location)
+        if self.mood:
+            parts.append(self.mood)
+        if self.text_to_find:
+            parts.extend(self.text_to_find)
+        for e in self.entities:
+            if isinstance(e, dict) and e.get("name"):
+                parts.append(e["name"])
+        return " ".join(filter(None, parts)) or self.raw_query
+

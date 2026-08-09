@@ -281,7 +281,7 @@ async def unified_search(
 
         # Fallback to basic hybrid search
         results = _normalize_results(
-            pipeline.db.search_frames_hybrid(query=q, limit=limit)
+            await pipeline.db.search_frames_hybrid(query=q, limit=limit)
         )
         duration = time.perf_counter() - start_time_search
 

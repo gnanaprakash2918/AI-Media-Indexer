@@ -376,13 +376,6 @@ class SceneStageMixin:
                 )
                 scenes_stored += 1
 
-                # === NEO4J GRAPH INGESTION (Prod Ready Abuse) ===
-                try:
-                    # Initialize Video Node (idempotent)
-                    if scenes_stored == 1:
-                        from core.domain.schemas import (
-                            MediaFile,
-                            MediaMetadata,
                 # Graph updates handled in SQL system of record
                 pass
 

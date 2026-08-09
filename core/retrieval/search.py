@@ -5,7 +5,7 @@ import asyncio
 from pydantic import BaseModel
 
 from core.errors import MediaIndexerError
-from core.knowledge.schemas import ParsedQuery
+from core.domain.schemas import ParsedQuery
 from core.utils.logger import log
 from core.security.sanitizer import query_sanitizer
 

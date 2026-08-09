@@ -9,7 +9,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 from config import settings
-from core.knowledge.schemas import ParsedQuery
+from core.domain.schemas import ParsedQuery
 from core.utils.logger import log
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt

@@ -11,7 +11,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from config import settings
-from core.knowledge.schemas import ParsedQuery
+from core.domain.schemas import ParsedQuery
 from core.retrieval.query_parser import QueryParserMixin
 from core.retrieval.reranker import RerankingCouncil
 from core.retrieval.result_processor import ResultProcessorMixin
@@ -493,8 +493,16 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
         if hasattr(parsed, "entities") and parsed.entities:
             for entity in parsed.entities:
-                if entity.entity_type.lower() == "person" and entity.name:
-                    person_names.append(entity.name)
+                entity_type = (
+                    entity.get("entity_type") if isinstance(entity, dict)
+                    else getattr(entity, "entity_type", None)
+                )
+                entity_name = (
+                    entity.get("name") if isinstance(entity, dict)
+                    else getattr(entity, "name", None)
+                )
+                if entity_type and entity_type.lower() == "person" and entity_name:
+                    person_names.append(entity_name)
         elif parsed.person_name:
             person_names.append(parsed.person_name)
 

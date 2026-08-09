@@ -37,7 +37,7 @@ class ModelLoader:
             path_or_name,
             device=device,
             trust_remote_code=True,
-            model_kwargs={"torch_dtype": torch.float16}
+            model_kwargs={"dtype": torch.float16}
             if device == "cuda"
             else {},
         )

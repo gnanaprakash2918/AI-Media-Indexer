@@ -618,6 +618,7 @@ class FrameStageMixin:
         # 2. RUN VISION ANALYSIS (With OCR and structured output)
         description: str | None = None
         analysis = None
+        dr_result = None  # Deep research enrichment result (reserved for future use)
 
         # Build identity context from HITL names for VLM
         identity_parts = []
