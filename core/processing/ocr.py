@@ -141,11 +141,18 @@ class OCRProcessor:
                         show_log=False,
                         enable_mkldnn=False,
                     )
-                except TypeError:
-                    # Newer PaddleOCR (>=2.9) constructor signature
-                    self.ocr = PaddleOCR(
-                        lang=self.lang,
-                    )
+                except Exception as e:
+                    # Newer PaddleOCR (>=2.7/2.9) constructor signature (e.g. show_log argument removed)
+                    try:
+                        self.ocr = PaddleOCR(
+                            use_angle_cls=self.enable_angle_cls,
+                            lang=self.lang,
+                            use_gpu=self.use_gpu,
+                        )
+                    except Exception:
+                        self.ocr = PaddleOCR(
+                            lang=self.lang,
+                        )
                 log.info("[OCR] Model loaded")
                 return True
 
@@ -204,7 +211,12 @@ class OCRProcessor:
         try:
             # Run OCR in a thread to prevent blocking the event loop
             try:
-                result = await asyncio.to_thread(self.ocr.ocr, frame, cls=True)
+                try:
+                    result = await asyncio.to_thread(
+                        self.ocr.ocr, frame, cls=True
+                    )
+                except TypeError:
+                    result = await asyncio.to_thread(self.ocr.ocr, frame)
             except Exception as inner_e:
                 if "OneDnnContext" in str(inner_e) or "operator <" in str(
                     inner_e
@@ -215,9 +227,12 @@ class OCRProcessor:
                     padded = np.pad(
                         frame, ((2, 2), (2, 2), (0, 0)), mode="edge"
                     )
-                    result = await asyncio.to_thread(
-                        self.ocr.ocr, padded, cls=True
-                    )
+                    try:
+                        result = await asyncio.to_thread(
+                            self.ocr.ocr, padded, cls=True
+                        )
+                    except TypeError:
+                        result = await asyncio.to_thread(self.ocr.ocr, padded)
                 else:
                     raise inner_e
 
