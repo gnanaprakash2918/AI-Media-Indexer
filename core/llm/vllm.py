@@ -114,6 +114,16 @@ class VLLMProvider(LLMInterface):
                     f"local dev without a GPU/vLLM instance. "
                     f"Original error: {exc}"
                 ) from exc
+            except httpx.ReadError as exc:
+                raise RuntimeError(
+                    f"[VLLMProvider] vLLM connection dropped or timed out (ReadError). "
+                    f"The vLLM server may still be loading model weights, or it crashed (e.g., OOM). "
+                    f"Original error: {exc}"
+                ) from exc
+            except httpx.RequestError as exc:
+                raise RuntimeError(
+                    f"[VLLMProvider] Request error communicating with vLLM: {exc}"
+                ) from exc
             except httpx.HTTPStatusError as exc:
                 error_detail = resp.text
                 try:

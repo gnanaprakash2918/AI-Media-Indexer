@@ -928,7 +928,6 @@ class VectorDB(
             log(f"search_dialogue failed: {e}")
             return []
 
-    @observe("db_search_audio_events_semantic")
     @observe("db_search_video_metadata")
     async def search_video_metadata(
         self,
@@ -946,29 +945,37 @@ class VectorDB(
             List of matching videos with metadata.
         """
         try:
-            query_vec = (await self.encode_texts(query, is_query=True))[0]
-
-            resp = self.client.query_points(
+            # VIDEO_METADATA_COLLECTION uses dummy vectors (size=1), 
+            # so we scroll and do a text match on summary and title instead of semantic search.
+            query_lower = query.lower()
+            resp = self.client.scroll(
                 collection_name=self.VIDEO_METADATA_COLLECTION,
-                query=query_vec,
-                limit=limit,
-                score_threshold=score_threshold,
+                limit=limit * 10,  # Fetch more to filter down
+                with_payload=True,
+                with_vectors=False,
             )
 
             results = []
-            for hit in resp.points:
+            for hit in resp[0]:
                 payload = hit.payload or {}
-                results.append(
-                    {
-                        "id": str(hit.id),
-                        "score": hit.score,
-                        "type": "video_metadata",
-                        "video_path": payload.get("video_path"),
-                        "summary": payload.get("summary"),
-                        "title": payload.get("title"),
-                        **payload,
-                    }
-                )
+                summary = payload.get("summary", "")
+                title = payload.get("title", "")
+                
+                # Check for query match in summary or title
+                if query_lower in summary.lower() or query_lower in title.lower():
+                    results.append(
+                        {
+                            "id": str(hit.id),
+                            "score": 1.0,  # Exact text match score
+                            "type": "video_metadata",
+                            "video_path": payload.get("video_path"),
+                            "summary": summary,
+                            "title": title,
+                            **payload,
+                        }
+                    )
+                    if len(results) >= limit:
+                        break
             return results
         except Exception as e:
             log(f"search_video_metadata failed: {e}")
@@ -1090,7 +1097,6 @@ class VectorDB(
         except Exception:
             return []
 
-    @observe("db_get_voice_segments")
     @observe("db_get_collection_stats")
     def get_collection_stats(self) -> dict[str, Any]:
         """Get statistics about all collections.

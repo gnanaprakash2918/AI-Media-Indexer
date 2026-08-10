@@ -978,8 +978,28 @@ class SceneRepository:
             if getattr(settings, "enable_visual_features", True):
                 target_vectors.append("visual_features")
 
+            visual_features_dim = getattr(settings, "visual_features_dim", 1152)
             for vector_name in target_vectors:
                 try:
+                    vec_for_search = query_vec
+                    if vector_name == "visual_features" and len(vec_for_search) != visual_features_dim:
+                        if isinstance(query, str):
+                            try:
+                                import numpy as np
+                                from core.processing.visual_encoder import get_default_visual_encoder
+                                v_enc = get_default_visual_encoder()
+                                v_vec = await v_enc.encode_text(query)
+                                if isinstance(v_vec, np.ndarray):
+                                    v_vec = v_vec.tolist()
+                                if v_vec and len(v_vec) == visual_features_dim:
+                                    vec_for_search = v_vec
+                            except Exception as ve_err:
+                                log(f"Could not encode visual text for {vector_name}: {ve_err}")
+
+                    if vector_name == "visual_features" and len(vec_for_search) != visual_features_dim:
+                        log(f"Skipping {vector_name} search: dimension mismatch (expected {visual_features_dim}, got {len(vec_for_search)})")
+                        continue
+
                     # For video/visual vectors, add filter to only search scenes with those embeddings
                     search_filter = query_filter
                     if vector_name in [
@@ -1006,7 +1026,7 @@ class SceneRepository:
 
                     resp = self.client.query_points(
                         collection_name=self.SCENES_COLLECTION,
-                        query=query_vec,
+                        query=vec_for_search,
                         using=vector_name,
                         limit=limit,
                         score_threshold=score_threshold,
@@ -1036,9 +1056,28 @@ class SceneRepository:
         else:
             # Single vector search
             try:
-                resp = self.client.query_points(
-                    collection_name=self.SCENES_COLLECTION,
-                    query=query_vec,
+                vec_for_search = query_vec
+                visual_features_dim = getattr(settings, "visual_features_dim", 1152)
+                if search_mode == "visual_features" and len(vec_for_search) != visual_features_dim:
+                    if isinstance(query, str):
+                        try:
+                            import numpy as np
+                            from core.processing.visual_encoder import get_default_visual_encoder
+                            v_enc = get_default_visual_encoder()
+                            v_vec = await v_enc.encode_text(query)
+                            if isinstance(v_vec, np.ndarray):
+                                v_vec = v_vec.tolist()
+                            if v_vec and len(v_vec) == visual_features_dim:
+                                vec_for_search = v_vec
+                        except Exception as ve_err:
+                            log(f"Could not encode visual text for {search_mode}: {ve_err}")
+                
+                if search_mode == "visual_features" and len(vec_for_search) != visual_features_dim:
+                    log(f"Skipping {search_mode} search: dimension mismatch (expected {visual_features_dim}, got {len(vec_for_search)})")
+                else:
+                    resp = self.client.query_points(
+                        collection_name=self.SCENES_COLLECTION,
+                        query=vec_for_search,
                     using=search_mode,
                     limit=limit,
                     score_threshold=score_threshold,
