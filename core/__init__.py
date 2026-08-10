@@ -1,5 +1,8 @@
 """Core system components for media indexing and retrieval."""
 
+import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 # FIX: torchaudio >= 2.6 compatibility patch for pyannote.audio
 from dataclasses import dataclass
 import torchaudio

@@ -56,7 +56,7 @@ dependencies = [
     "uvicorn>=0.38.0",
     "fastapi>=0.124.2",
     "pillow>=12.0.0",
-    "pyannote.audio>=3.1.1",
+    "pyannote.audio>=4.0.0",  # 4.x removes torchaudio.AudioMetaData dep; compatible with torchaudio 2.9+
     "psutil>=5.9.0",
     # insightface moved to optional [enrichment] group.
     # Install with: uv sync --group enrichment
@@ -72,10 +72,9 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
     "asyncpg>=0.29.0",
-    "sam3 @ https://github.com/facebookresearch/sam3.git ; python_version < '3.14'",
-    # TODO(Phase1): Pin sam3 to a specific commit hash for reproducibility:
-    # sam3 @ git+https://github.com/facebookresearch/sam3.git@<COMMIT_HASH>
-    # Unpinned git URLs are a reproducibility risk — pin before production.
+    # sam3 removed: conflicts with pyannote.audio>=4.0.0 via numpy<2 constraint.
+    # sam3_tracker.py falls back to sam2 or mocks gracefully when sam3 is absent.
+    # Re-add when sam3 publishes a PyPI release with numpy>=2 support.
     # "brave-search>=0.1.0", # Removed due to httpx conflict
     "pyloudnorm>=0.1.1",
     "fer>=22.5.1 ; python_version < '3.14'",
