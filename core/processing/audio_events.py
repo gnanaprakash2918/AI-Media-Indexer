@@ -12,6 +12,26 @@ from core.utils.logger import get_logger
 log = get_logger(__name__)
 
 
+def extract_feature_tensor(output: Any) -> Any:
+    """Extract PyTorch tensor from model output object (e.g. BaseModelOutputWithPooling)."""
+    import torch
+    if isinstance(output, torch.Tensor):
+        return output
+    if hasattr(output, "text_embeds") and output.text_embeds is not None:
+        return output.text_embeds
+    if hasattr(output, "audio_embeds") and output.audio_embeds is not None:
+        return output.audio_embeds
+    if hasattr(output, "image_embeds") and output.image_embeds is not None:
+        return output.image_embeds
+    if hasattr(output, "pooler_output") and output.pooler_output is not None:
+        return output.pooler_output
+    if hasattr(output, "last_hidden_state") and output.last_hidden_state is not None:
+        return output.last_hidden_state[:, 0, :]
+    if isinstance(output, (tuple, list)) and len(output) > 0:
+        return output[0]
+    return output
+
+
 class AudioEventDetector:
     """Detector for identifying specific audio events (e.g., siren, applause)."""
 
@@ -197,8 +217,8 @@ class AudioEventDetector:
 
                 log.debug("[CLAP] Running inference...")
                 with torch.no_grad():
-                    text_embeds = self.model.get_text_features(**text_inputs)
-                    audio_embeds = self.model.get_audio_features(**audio_inputs)
+                    text_embeds = extract_feature_tensor(self.model.get_text_features(**text_inputs))
+                    audio_embeds = extract_feature_tensor(self.model.get_audio_features(**audio_inputs))
 
                     # Store raw embedding before normalization if requested
                     if return_embedding:
@@ -333,7 +353,7 @@ class AudioEventDetector:
                 text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
 
                 with torch.no_grad():
-                    text_embeds = self.model.get_text_features(**text_inputs)
+                    text_embeds = extract_feature_tensor(self.model.get_text_features(**text_inputs))
                     text_embeds = text_embeds / text_embeds.norm(
                         dim=-1, keepdim=True
                     )
@@ -358,9 +378,9 @@ class AudioEventDetector:
                     }
 
                     with torch.no_grad():
-                        audio_embeds = self.model.get_audio_features(
+                        audio_embeds = extract_feature_tensor(self.model.get_audio_features(
                             **audio_inputs
-                        )
+                        ))
 
                         # Store embedding before normalization if requested
                         embedding_list = None
@@ -503,7 +523,7 @@ class AudioEventDetector:
                 text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
 
                 with torch.no_grad():
-                    text_embeds = self.model.get_text_features(**text_inputs)
+                    text_embeds = extract_feature_tensor(self.model.get_text_features(**text_inputs))
                     # Normalize for cosine similarity
                     text_embeds = text_embeds / text_embeds.norm(
                         dim=-1, keepdim=True
@@ -665,7 +685,7 @@ class AudioEventDetector:
                     inputs = {k: v.to(device) for k, v in inputs.items()}
 
                     with torch.no_grad():
-                        raw_embeds = self.model.get_audio_features(**inputs)
+                        raw_embeds = extract_feature_tensor(self.model.get_audio_features(**inputs))
                         audio_embeds = getattr(raw_embeds, "audio_embeds", raw_embeds)
                         if hasattr(raw_embeds, "pooler_output") and not isinstance(audio_embeds, torch.Tensor):
                             audio_embeds = raw_embeds.pooler_output

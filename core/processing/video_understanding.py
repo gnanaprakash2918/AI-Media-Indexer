@@ -320,7 +320,8 @@ class LanguageBindEncoder:
 
                 with torch.no_grad():
                     if hasattr(self._model, "get_text_features"):
-                        emb = self._model.get_text_features(**inputs)
+                        from core.processing.audio_events import extract_feature_tensor
+                        emb = extract_feature_tensor(self._model.get_text_features(**inputs))
                     else:
                         emb = self._model(**inputs).last_hidden_state.mean(
                             dim=1
@@ -382,9 +383,10 @@ class LanguageBindEncoder:
                     }
 
                     with torch.no_grad():
-                        audio_emb = detector.model.get_audio_features(
+                        from core.processing.audio_events import extract_feature_tensor
+                        audio_emb = extract_feature_tensor(detector.model.get_audio_features(
                             **audio_inputs
-                        )
+                        ))
                         audio_emb = audio_emb / audio_emb.norm(
                             dim=-1, keepdim=True
                         )

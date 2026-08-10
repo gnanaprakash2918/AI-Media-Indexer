@@ -428,11 +428,50 @@ class VoiceProcessor:
 
             async with GPU_SEMAPHORE:
                 log_verbose("[Voice] Running diarization pipeline...")
-                diarization = self.pipeline(
-                    str(processing_path),
-                    min_speakers=settings.min_speakers,
-                    max_speakers=settings.max_speakers,
+                # pyannote 4.x uses torchcodec for file I/O, but torchcodec
+                # requires FFmpeg shared libs that may not be present. Pre-load
+                # via soundfile (which avoids torchaudio crashing on torchcodec)
+                # and pass as a waveform dict — the documented fallback for this exact case.
+                import soundfile as sf
+                import torch
+
+                audio_data, sample_rate = sf.read(str(processing_path), dtype="float32")
+                if audio_data.ndim == 1:
+                    waveform = torch.from_numpy(audio_data).unsqueeze(0)
+                else:
+                    waveform = torch.from_numpy(audio_data).t()
+                log_verbose(
+                    f"[Voice] Loaded waveform: shape={tuple(waveform.shape)}, "
+                    f"sr={sample_rate}"
                 )
+                
+                # Clear cache before heavy pyannote model execution to avoid fragmentation OOM
+                from core.utils.device import empty_cache
+                empty_cache()
+                
+                try:
+                    diarization = self.pipeline(
+                        {"waveform": waveform, "sample_rate": sample_rate},
+                        min_speakers=settings.min_speakers,
+                        max_speakers=settings.max_speakers,
+                    )
+                except torch.cuda.OutOfMemoryError:
+                    log.warning(
+                        "[Voice] CUDA out of memory during diarization. Retrying on CPU..."
+                    )
+                    empty_cache()
+                    # Move to CPU for this heavy operation
+                    self.pipeline.to(torch.device("cpu"))
+                    diarization = self.pipeline(
+                        {"waveform": waveform, "sample_rate": sample_rate},
+                        min_speakers=settings.min_speakers,
+                        max_speakers=settings.max_speakers,
+                    )
+                    # Try to restore back to original device for subsequent runs
+                    try:
+                        self.pipeline.to(torch.device(self.device))
+                    except Exception:
+                        pass
 
             track_count = 0
             segments_with_placeholder = 0
