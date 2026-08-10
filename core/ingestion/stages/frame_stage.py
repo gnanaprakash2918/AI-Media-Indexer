@@ -876,7 +876,7 @@ class FrameStageMixin:
                 )
             if analysis:
                 description = analysis.to_search_content()
-                analysis.face_ids = [str(cid) for cid in face_cluster_ids]
+                analysis.face_cluster_ids = face_cluster_ids
         except Exception as e:
             logger.warning(
                 f"Structured analysis failed: {e}, falling back to describe"
@@ -894,7 +894,9 @@ class FrameStageMixin:
             except Exception:
                 pass
 
-        if description:
+        description = description or ""
+
+        if description or ocr_text or detected_objects or face_cluster_ids:
             # Build structured payload for accurate search with filterable fields
             payload: dict[str, Any] = {
                 "face_cluster_ids": face_cluster_ids,
@@ -995,22 +997,25 @@ class FrameStageMixin:
                         if len(ocr_text) > 3:
                             current_text.append(ocr_text.strip())
                         payload["visible_text"] = list(set(current_text))
-                payload["entities"] = (
-                    [e.name for e in analysis.entities]
-                    if analysis.entities
-                    else []
-                )
+                _entities_list = []
+                _entity_categories = set()
+                if analysis.entities:
+                    for e in analysis.entities:
+                        _n = e.get("name") if isinstance(e, dict) else getattr(e, "name", None)
+                        _c = e.get("category") if isinstance(e, dict) else getattr(e, "category", None)
+                        if _n:
+                            _entities_list.append(str(_n))
+                        if _c:
+                            _entity_categories.add(str(_c))
+
+                payload["entities"] = _entities_list
                 # Merge YOLO-World detected objects into entities
                 if detected_objects:
                     vlm_entities = {e.lower() for e in payload["entities"]}
                     for obj in detected_objects:
                         if obj.lower() not in vlm_entities:
                             payload["entities"].append(obj)
-                payload["entity_categories"] = (
-                    list({e.category for e in analysis.entities})
-                    if analysis.entities
-                    else []
-                )
+                payload["entity_categories"] = list(_entity_categories)
                 # NEW: Store YOLO-detected objects as dedicated searchable field
                 # Enables queries like "frames with cars" via object_labels text index
                 if detected_objects:
@@ -1029,16 +1034,21 @@ class FrameStageMixin:
 
                 # Extract from ALL entities - let VLM determine what's important
                 for entity in analysis.entities:
+                    vis_det = entity.get("visual_details") if isinstance(entity, dict) else getattr(entity, "visual_details", None)
+                    name = entity.get("name") if isinstance(entity, dict) else getattr(entity, "name", None)
+                    cat = entity.get("category") if isinstance(entity, dict) else getattr(entity, "category", None)
+
                     # Collect ALL visual details (colors, patterns, textures, states)
-                    if entity.visual_details:
-                        visual_attributes.append(entity.visual_details.lower())
+                    if vis_det:
+                        visual_attributes.append(str(vis_det).lower())
 
                     # Collect entity names for keyword search
-                    entity_details.append(entity.name.lower())
+                    if name:
+                        entity_details.append(str(name).lower())
 
                     # Also collect category for filtering
-                    if entity.category:
-                        entity_details.append(entity.category.lower())
+                    if cat:
+                        entity_details.append(str(cat).lower())
 
                 # Store as searchable fields - hybrid search will match these
                 if visual_attributes:
