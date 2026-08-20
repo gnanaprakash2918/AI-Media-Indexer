@@ -24,11 +24,14 @@ class RerankResult(BaseModel):
     missing: list[str] = Field(default_factory=list)
 
 
-class ResultProcessorMixin:
-    """Mixin providing reranking, granular scoring, RRF fusion.
+class ResultProcessor:
+    """Reranking, granular scoring, RRF fusion.
 
-    Expects `self.llm: LLMInterface`.
+    Initialized with `self.llm: LLMClient`.
     """
+
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
 
     @staticmethod
     def _word_match(term: str, text: str) -> bool:
@@ -39,7 +42,6 @@ class ResultProcessorMixin:
             re.search(r"\b" + re.escape(term) + r"\b", text, re.IGNORECASE)
         )
 
-    llm: LLMClient
 
     @observe("search_rerank_llm")
     async def rerank_with_llm(

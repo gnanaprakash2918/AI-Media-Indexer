@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 from config import settings
 from core.domain.schemas import ParsedQuery
-from core.retrieval.query_parser import QueryParserMixin
-from core.retrieval.reranker import RerankingCouncil
-from core.retrieval.result_processor import ResultProcessorMixin
+from core.retrieval.query_parser import QueryParser
+from core.retrieval.result_processor import ResultProcessor
+from core.storage.constants import MEDIA_COLLECTION
 from core.utils.logger import log
 from core.utils.observe import observe
 from core.llm.providers import get_client
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from core.llm.client import LLMClient
 
 
-class SearchAgent(QueryParserMixin, ResultProcessorMixin):
+class SearchAgent:
     def __init__(
         self,
         db: VectorDB,
@@ -35,12 +35,12 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
     ) -> None:
         self.db = db
         self.llm = llm or get_client()
+        self.parser = QueryParser(db=self.db, llm=self.llm)
+        self.processor = ResultProcessor(llm=self.llm)
         self._hybrid_searcher = None
         self._enable_hybrid = enable_hybrid
         self._enable_graph = enable_graph
-        self._council = None
         self._graph_searcher = None
-        self._init_cache()
 
     # ----- lazy properties -----
 
@@ -56,11 +56,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
                 log(f"[Search] HybridSearcher init failed: {e}")
         return self._hybrid_searcher
 
-    @property
-    def council(self) -> RerankingCouncil:
-        if self._council is None:
-            self._council = RerankingCouncil()
-        return self._council
+
 
     @property
     def graph_searcher(self):
@@ -87,7 +83,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         results = []
 
         if use_expansion:
-            parsed = await self.parse_query(query)
+            parsed = await self.parser.parse_query(query)
         else:
             parsed = ParsedQuery(visual_keywords=[query])
 
@@ -96,9 +92,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         resolved_name: str | None = None
 
         if parsed.person_name:
-            cluster_id = self._resolve_identity(parsed.person_name)
+            cluster_id = self.parser._resolve_identity(parsed.person_name)
             if cluster_id is not None:
-                face_ids = self._get_face_ids_for_cluster(cluster_id)
+                face_ids = self.parser._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
                 log(
                     f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id}"
@@ -294,7 +290,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             raise ValueError(f"Security violation: {msg}")
 
         if use_expansion:
-            parsed = await self.parse_query(query)
+            parsed = await self.parser.parse_query(query)
         else:
             parsed = ParsedQuery(visual_keywords=[query])
 
@@ -303,9 +299,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         cluster_id: int | None = None
 
         if parsed.person_name:
-            cluster_id = self._resolve_identity(parsed.person_name)
+            cluster_id = self.parser._resolve_identity(parsed.person_name)
             if cluster_id is not None:
-                face_ids = self._get_face_ids_for_cluster(cluster_id)
+                face_ids = self.parser._get_face_ids_for_cluster(cluster_id)
                 resolved_name = parsed.person_name
                 log(
                     f"[Search] Resolved '{parsed.person_name}' → cluster {cluster_id} ({len(face_ids)} faces)"
@@ -388,7 +384,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             if filters:
                 conditions: list[models.Condition] = list(filters)
                 results = self.db.client.query_points(
-                    collection_name=self.db.MEDIA_COLLECTION,
+                    collection_name=MEDIA_COLLECTION,
                     query=query_vector,
                     # FIX #2: Always AND — these are constraint filters, not relevance signals
                     query_filter=models.Filter(must=conditions),
@@ -487,7 +483,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
 
         # 1. Parse
         try:
-            parsed = await self.parse_query(query)
+            parsed = await self.parser.parse_query(query)
             if use_expansion:
                 search_text = parsed.to_search_text() or query
                 log(f"[SOTA Search] Expanded: '{search_text[:100]}...'")
@@ -521,9 +517,9 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
             person_names.append(parsed.person_name)
 
         for name in person_names:
-            cluster_id = self._resolve_identity(name)
-            if cluster_id:
-                ids = self._get_face_ids_for_cluster(cluster_id)
+            cluster_id = self.parser._resolve_identity(name)
+            if cluster_id is not None:
+                ids = self.parser._get_face_ids_for_cluster(cluster_id)
                 face_ids.extend(ids)
                 log(f"[SOTA Search] Resolved '{name}' → {len(ids)} faces")
 
@@ -1117,7 +1113,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         limit: int = 10,
     ) -> dict:
         log(f"[Scenelet Search] Query: '{query[:80]}...'")
-        parsed = await self.parse_query(query)
+        parsed = await self.parser.parse_query(query)
         search_text = parsed.to_search_text() or query
 
         results = self.db.search_scenelets(
@@ -1158,7 +1154,7 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
     ) -> dict[str, Any]:
         log(f"[Multimodal] Comprehensive search: '{query[:80]}...'")
 
-        parsed = await self.parse_query(query)
+        parsed = await self.parser.parse_query(query)
         search_text = parsed.to_search_text() or query
 
         person_names = []

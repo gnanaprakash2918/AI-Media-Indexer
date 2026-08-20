@@ -2,7 +2,10 @@
 
 from typing import Any
 
+from qdrant_client.http import models
+
 from config import settings
+from core.storage.constants import FACES_COLLECTION
 from core.storage.db import VectorDB
 from core.utils.logger import log
 
@@ -55,7 +58,7 @@ async def cluster_faces(db: VectorDB) -> dict[str, Any]:
         next_page = None
         while True:
             resp = db.client.scroll(
-                collection_name=db.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 limit=1000,
                 offset=next_page,
                 with_vectors=True,
@@ -97,7 +100,7 @@ async def cluster_faces(db: VectorDB) -> dict[str, Any]:
             # Special case: only 1 face, assign cluster 0
             if len(vectors) == 1:
                 db.client.set_payload(
-                    collection_name=db.FACES_COLLECTION,
+                    collection_name=FACES_COLLECTION,
                     points=[ids[0]],
                     payload={"cluster_id": 0},
                 )

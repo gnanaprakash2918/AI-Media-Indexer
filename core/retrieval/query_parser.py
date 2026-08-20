@@ -22,16 +22,12 @@ DYNAMIC_QUERY_PROMPT = load_prompt("dynamic_query")
 QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT  # Legacy alias
 
 
-class QueryParserMixin:
-    """Mixin providing query parsing, caching, and identity resolution.
+class QueryParser:
+    """Query parsing, caching, and identity resolution."""
 
-    Expects `self.db: VectorDB` and `self.llm: LLMInterface`.
-    """
-
-    db: VectorDB
-    llm: LLMClient
-
-    def _init_cache(self) -> None:
+    def __init__(self, db: VectorDB, llm: LLMClient):
+        self.db = db
+        self.llm = llm
         self._query_cache: OrderedDict[str, tuple[list[float], float]] = (
             OrderedDict()
         )

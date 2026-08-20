@@ -15,6 +15,7 @@ from core.storage.db import VectorDB
 from core.utils.logger import log
 from core.utils.prompt_loader import load_prompt
 from core.llm.providers import get_client
+from core.storage.constants import SUMMARIES_COLLECTION, FRAMES_COLLECTION
 from core.llm.client import LLMClient
 
 # Load prompts from external files
@@ -136,7 +137,7 @@ class HierarchicalSummarizer:
             from qdrant_client.http import models
 
             results = self.db.client.scroll(
-                collection_name=self.db.SUMMARIES_COLLECTION,
+                collection_name=SUMMARIES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -160,7 +161,7 @@ class HierarchicalSummarizer:
 
                 # Get L2 summaries
                 l2_results = self.db.client.scroll(
-                    collection_name=self.db.SUMMARIES_COLLECTION,
+                    collection_name=SUMMARIES_COLLECTION,
                     scroll_filter=models.Filter(
                         must=[
                             models.FieldCondition(
@@ -199,7 +200,7 @@ class HierarchicalSummarizer:
 
         try:
             results = self.db.client.scroll(
-                collection_name=self.db.FRAMES_COLLECTION,
+                collection_name=FRAMES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -457,7 +458,7 @@ class HierarchicalSummarizer:
 
         if points:
             self.db.client.upsert(
-                collection_name=self.db.SUMMARIES_COLLECTION,
+                collection_name=SUMMARIES_COLLECTION,
                 points=points,
                 wait=False,
             )

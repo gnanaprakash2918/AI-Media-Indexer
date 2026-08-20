@@ -52,12 +52,7 @@ from core.utils.logger import log
 from core.utils.observe import observe
 
 
-class VectorDB(
-    FaceRepository,
-    VoiceRepository,
-    SceneRepository,
-    SearchRepository,
-):
+class VectorDB:
     """Qdrant vector database storage and retrieval.
 
     Composed from focused modules:
@@ -66,25 +61,6 @@ class VectorDB(
     - constants: collection names, vector dimensions
     - qdrant_utils: retry, sanitize, paginated scroll
     """
-
-    # Re-export constants as class attributes for backward compatibility
-    MEDIA_SEGMENTS_COLLECTION = MEDIA_SEGMENTS_COLLECTION
-    MEDIA_COLLECTION = MEDIA_COLLECTION
-    FRAMES_COLLECTION = MEDIA_COLLECTION
-    FACES_COLLECTION = FACES_COLLECTION
-    VOICE_COLLECTION = VOICE_COLLECTION
-    SCENES_COLLECTION = SCENES_COLLECTION
-    SCENELETS_COLLECTION = SCENELETS_COLLECTION
-    SUMMARIES_COLLECTION = SUMMARIES_COLLECTION
-    MASKLETS_COLLECTION = MASKLETS_COLLECTION
-    AUDIO_EVENTS_COLLECTION = AUDIO_EVENTS_COLLECTION
-    VIDEO_METADATA_COLLECTION = VIDEO_METADATA_COLLECTION
-
-    MEDIA_VECTOR_SIZE = MEDIA_VECTOR_SIZE
-    FACE_VECTOR_SIZE = FACE_VECTOR_SIZE
-    TEXT_DIM = TEXT_DIM
-    VOICE_VECTOR_SIZE = VOICE_VECTOR_SIZE
-    MODEL_NAME = SELECTED_MODEL
 
     client: QdrantClient
 
@@ -159,6 +135,19 @@ class VectorDB(
             SCENELETS_COLLECTION: TEXT_DIM,
             VOICE_COLLECTION: VOICE_VECTOR_SIZE,
         }
+
+        # Initialize sub-repositories for composition
+        self.faces = FaceRepository(self.client)
+        self.voice = VoiceRepository(self.client)
+        self.scenes = SceneRepository(self.client)
+        self.search = SearchRepository(self.client)
+
+    def __getattr__(self, name: str) -> Any:
+        """Dynamically delegate method calls to the appropriate sub-repository."""
+        for repo in (self.faces, self.voice, self.scenes, self.search):
+            if hasattr(repo, name):
+                return getattr(repo, name)
+        raise AttributeError(f"'VectorDB' object has no attribute '{name}'")
 
     def _validate_vector_dim(
         self, vector: list | None, collection: str, context: str = ""
@@ -1666,7 +1655,3 @@ class VectorDB(
         except Exception as e:
             log(f"get_entity_co_occurrences failed: {e}")
             return {}
-
-    # =========================================================================
-    # METHODS REQUIRED BY AGENTIC SEARCH (Fix #14)
-    # =========================================================================

@@ -29,6 +29,7 @@ from core.processing.transnet_detector import TransNetV2
 from core.processing.vision import VisionAnalyzer
 from core.processing.voice import VoiceProcessor
 from core.storage.db import VectorDB
+from core.storage.constants import MEDIA_SEGMENTS_COLLECTION, AUDIO_EVENTS_COLLECTION
 from core.utils.logger import bind_context, log_verbose, logger
 from core.utils.observe import observe
 from core.utils.progress import progress_tracker
@@ -44,13 +45,13 @@ from core.ingestion.stages.audio_stage import AudioStage
 from core.ingestion.stages.frame_stage import FrameStage
 from core.ingestion.stages.scene_stage import SceneStage
 from core.ingestion.stages.voice_stage import VoiceStage
-from core.ports.processors import (
+from core.ports import (
     FaceTracker as FaceTrackerProtocol,
     VisionAnalyzer as VisionAnalyzerProtocol,
     VLMProcessor as VLMProcessorProtocol,
     VoiceProcessor as VoiceProcessorProtocol,
+    StorageBackend,
 )
-from core.ports.storage import StorageBackend
 
 
 class IngestionPipeline:
@@ -622,7 +623,7 @@ class IngestionPipeline:
         try:
             # Query media_segments collection for this video
             resp = self.db.client.scroll(
-                collection_name=self.db.MEDIA_SEGMENTS_COLLECTION,
+                collection_name=MEDIA_SEGMENTS_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -658,7 +659,7 @@ class IngestionPipeline:
         """
         try:
             resp = self.db.client.scroll(
-                collection_name=self.db.AUDIO_EVENTS_COLLECTION,
+                collection_name=AUDIO_EVENTS_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
