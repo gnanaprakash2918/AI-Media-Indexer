@@ -163,9 +163,9 @@ async def main():
 
     try:
         from core.retrieval.agentic_search import SearchAgent
-        from core.llm.factory import LLMFactory
+        from core.llm.providers import get_client
 
-        llm = LLMFactory.create_llm()
+        llm = get_client()
         agent = SearchAgent(db=db, llm=llm)
 
         print("  Parsing with LLM...")

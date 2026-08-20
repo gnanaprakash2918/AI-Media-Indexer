@@ -16,7 +16,7 @@ from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
-    from core.llm.interface import LLMInterface
+    from core.llm.client import LLMClient
 
 DYNAMIC_QUERY_PROMPT = load_prompt("dynamic_query")
 QUERY_EXPANSION_PROMPT = DYNAMIC_QUERY_PROMPT  # Legacy alias
@@ -29,7 +29,7 @@ class QueryParserMixin:
     """
 
     db: VectorDB
-    llm: LLMInterface
+    llm: LLMClient
 
     def _init_cache(self) -> None:
         self._query_cache: OrderedDict[str, tuple[list[float], float]] = (

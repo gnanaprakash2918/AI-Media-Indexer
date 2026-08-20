@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 from core.utils.logger import log, log_verbose
 from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
-from core.llm.factory import LLMFactory
-from core.llm.interface import LLMInterface
+from core.llm.providers import get_client
+from core.llm.client import LLMClient
 
 if TYPE_CHECKING:
     from core.domain.schemas import FrameAnalysis
@@ -34,7 +34,7 @@ class VisionAnalyzer:
 
     def __init__(
         self,
-        llm: LLMInterface | None = None,
+        llm: LLMClient | None = None,
         prompt_filename: str = "vision_prompt.txt",
     ) -> None:
         """Initializes the VisionAnalyzer in lazy mode.
@@ -101,7 +101,7 @@ class VisionAnalyzer:
             log_verbose(
                 f"[Vision] Creating LLM via LLMFactory (provider={provider})"
             )
-            self._llm = LLMFactory.get_default_llm()
+            self._llm = get_client()
             self._llm_loaded = True
 
         if self.prompt is None and self._llm is not None:
@@ -120,7 +120,7 @@ class VisionAnalyzer:
                 self.prompt = DENSE_MULTIMODAL_PROMPT
 
     @property
-    def llm(self) -> LLMInterface:
+    def llm(self) -> LLMClient:
         """Provides access to the lazy-loaded LLM interface.
 
         Returns:

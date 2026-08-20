@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 
 from config import settings
-from core.llm.vlm_factory import get_vlm_client
+from core.llm.providers import get_client
 from core.processing.scene_detector import detect_scenes, extract_scene_frame
 from core.storage.db import VectorDB
 from core.utils.logger import logger
@@ -141,7 +141,7 @@ class SceneStageMixin:
         # Import aggregator
         from core.processing.scene_aggregator import aggregate_frames_to_scene
 
-        vlm = get_vlm_client()
+        vlm = get_client()
         prompt = (
             "Describe this scene in detail: actions, objects, colors, expressions, "
             "and atmosphere. Be specific about what people are doing and wearing."

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings  # noqa: E402
 from core.utils.prompt_loader import load_prompt  # noqa: E402
-from core.llm.factory import LLMFactory  # noqa: E402
+from core.llm.providers import get_client  # noqa: E402
 
 TEST_SET = [
     {
@@ -67,7 +67,7 @@ class QualityEvaluator:
     def _ensure_llm(self):
         """Lazy load the LLM client."""
         if self.llm is None:
-            self.llm = LLMFactory.create_llm(provider=settings.llm_provider)  # type: ignore
+            self.llm = get_client(provider=settings.llm_provider)  # type: ignore
 
     async def judge_result(self, query: str, result: dict) -> dict:
         """Rate result relevance using LLM-as-a-Judge."""

@@ -16,7 +16,7 @@ from core.utils.logger import log
 from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
-    from core.llm.interface import LLMInterface
+    from core.llm.client import LLMClient
 
 ROUTER_PROMPT = load_prompt("orchestrator_routing")
 
@@ -24,15 +24,15 @@ ROUTER_PROMPT = load_prompt("orchestrator_routing")
 class MultiAgentOrchestrator:
     """Routes queries to appropriate agents using LLM-based reasoning."""
 
-    def __init__(self, llm: LLMInterface | None = None) -> None:
+    def __init__(self, llm: LLMClient | None = None) -> None:
         """Initializes the orchestrator with an LLM and tool schemas.
 
         Args:
             llm: Optional LLM interface for reasoning and routing.
         """
-        from core.llm.factory import LLMFactory
+        from core.llm.providers import get_client
 
-        self.llm = llm or LLMFactory.get_default_llm()
+        self.llm = llm or get_client()
         self.tool_schemas = get_all_tool_schemas()
         self._tool_map = self._build_tool_map()
 
@@ -215,7 +215,7 @@ class MultiAgentOrchestrator:
 _orchestrator: MultiAgentOrchestrator | None = None
 
 
-def get_orchestrator(llm: LLMInterface | None = None) -> MultiAgentOrchestrator:
+def get_orchestrator(llm: LLMClient | None = None) -> MultiAgentOrchestrator:
     """Retrieves the singleton instance of the MultiAgentOrchestrator.
 
     Args:

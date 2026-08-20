@@ -11,7 +11,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from core.llm.vlm_factory import VLMClient, get_vlm_client
+from core.llm.client import LLMClient
+from core.llm.providers import get_client
 from core.processing.scene_detector import extract_scene_frame
 from core.utils.logger import get_logger
 from core.utils.prompt_loader import load_prompt
@@ -69,16 +70,16 @@ class RerankingCouncil:
 
     def __init__(
         self,
-        client: VLMClient | None = None,
+        llm_client: LLMClient | None = None,
         weights: tuple[float, float, float] = (0.35, 0.35, 0.30),
     ):
         """Initialize reranking council.
 
         Args:
-            client: Optional VLM client for visual verification.
+            llm_client: Optional LLM client for visual verification.
             weights: (cross_encoder, bge, vlm) weights for fusion.
         """
-        self._client = client
+        self._llm_client = llm_client
         self.weights = weights
         self._cross_encoder = None
         self._bge_reranker = None
@@ -86,11 +87,11 @@ class RerankingCouncil:
         self._models_loaded = False
 
     @property
-    def client(self) -> VLMClient:
+    def client(self) -> LLMClient:
         """Lazy load the VLM client."""
-        if self._client is None:
-            self._client = get_vlm_client()
-        return self._client
+        if self._llm_client is None:
+            self._llm_client = get_client()
+        return self._llm_client
 
     def _lazy_load_models(self) -> None:
         """Load cross-encoder and BGE models lazily."""

@@ -14,7 +14,7 @@ from core.utils.observe import observe
 from core.utils.prompt_loader import load_prompt
 
 if TYPE_CHECKING:
-    from core.llm.interface import LLMInterface
+    from core.llm.client import LLMClient
 
 
 class RerankResult(BaseModel):
@@ -39,7 +39,7 @@ class ResultProcessorMixin:
             re.search(r"\b" + re.escape(term) + r"\b", text, re.IGNORECASE)
         )
 
-    llm: LLMInterface
+    llm: LLMClient
 
     @observe("search_rerank_llm")
     async def rerank_with_llm(

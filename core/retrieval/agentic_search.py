@@ -17,23 +17,24 @@ from core.retrieval.reranker import RerankingCouncil
 from core.retrieval.result_processor import ResultProcessorMixin
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.llm.factory import LLMFactory
+from core.llm.providers import get_client
+from core.security.query_sanitizer import query_sanitizer
 
 if TYPE_CHECKING:
     from core.storage.db import VectorDB
-    from core.llm.interface import LLMInterface
+    from core.llm.client import LLMClient
 
 
 class SearchAgent(QueryParserMixin, ResultProcessorMixin):
     def __init__(
         self,
         db: VectorDB,
-        llm: LLMInterface | None = None,
+        llm: LLMClient | None = None,
         enable_hybrid: bool = True,
         enable_graph: bool = True,
     ) -> None:
         self.db = db
-        self.llm = llm or LLMFactory.create_llm()
+        self.llm = llm or get_client()
         self._hybrid_searcher = None
         self._enable_hybrid = enable_hybrid
         self._enable_graph = enable_graph
@@ -78,6 +79,11 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         video_path: str | None = None,
     ) -> dict[str, Any]:
         log(f"[Search] Scene search: '{query[:100]}...'")
+        
+        is_safe, msg = await query_sanitizer.sanitize(query, self.db)
+        if not is_safe:
+            raise ValueError(f"Security violation: {msg}")
+            
         results = []
 
         if use_expansion:
@@ -283,6 +289,10 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
     ) -> dict[str, Any]:
         log(f"[Search] Agentic frame search: '{query}'")
 
+        is_safe, msg = await query_sanitizer.sanitize(query, self.db)
+        if not is_safe:
+            raise ValueError(f"Security violation: {msg}")
+
         if use_expansion:
             parsed = await self.parse_query(query)
         else:
@@ -470,6 +480,10 @@ class SearchAgent(QueryParserMixin, ResultProcessorMixin):
         log(
             f"[SOTA Search] Options: expansion={use_expansion}, fallback={expansion_fallback}, rerank={use_reranking}"
         )
+
+        is_safe, msg = await query_sanitizer.sanitize(query, self.db)
+        if not is_safe:
+            raise ValueError(f"Security violation: {msg}")
 
         # 1. Parse
         try:

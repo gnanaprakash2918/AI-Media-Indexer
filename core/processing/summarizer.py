@@ -14,8 +14,8 @@ from config import settings
 from core.storage.db import VectorDB
 from core.utils.logger import log
 from core.utils.prompt_loader import load_prompt
-from core.llm.factory import LLMFactory
-from core.llm.interface import LLMInterface
+from core.llm.providers import get_client
+from core.llm.client import LLMClient
 
 # Load prompts from external files
 SCENE_SUMMARY_PROMPT = load_prompt("scene_summary")
@@ -55,7 +55,7 @@ class HierarchicalSummarizer:
     def __init__(
         self,
         db: VectorDB | None = None,
-        llm: LLMInterface | None = None,
+        llm: LLMClient | None = None,
     ) -> None:
         """Initializes the hierarchical summarizer.
 
@@ -64,7 +64,7 @@ class HierarchicalSummarizer:
             llm: Optional LLM interface for summary generation.
         """
         self.db = db or VectorDB()
-        self.llm = llm or LLMFactory.get_default_llm()
+        self.llm = llm or get_client()
         self._scene_duration = getattr(
             settings, "summary_scene_duration", self.SCENE_DURATION_SECONDS
         )
