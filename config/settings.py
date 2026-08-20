@@ -1,5 +1,10 @@
 import logging
+import os
 from pathlib import Path
+
+# Suppress HuggingFace console spam
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 from pydantic import computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict

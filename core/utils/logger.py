@@ -179,6 +179,9 @@ def setup_logger() -> None:
         "filelock",
         "huggingface_hub",
         "datasets",
+        "urllib3",
+        "requests",
+        "fsspec",
     )
     for framework in noisy_ml_frameworks:
         framework_logger = logging.getLogger(framework)
