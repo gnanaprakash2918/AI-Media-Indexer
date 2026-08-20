@@ -129,7 +129,7 @@ except ImportError:
 logger.debug("Importing config & pipeline...")
 from config import settings  # noqa: E402
 from core.ingestion.jobs import job_manager  # noqa: E402
-from core.retrieval.query_pipeline import QueryPipeline  # [DECOUPLED]
+from core.storage.db import VectorDB
 from core.utils.logger import bind_context, clear_context  # noqa: E402
 from core.utils.model_warmer import warmup_models  # [NEW] Warmer
 from core.utils.observability import (  # noqa: E402
@@ -138,7 +138,7 @@ from core.utils.observability import (  # noqa: E402
     start_trace,
 )
 
-pipeline: QueryPipeline | None = None
+db: VectorDB | None = None
 
 
 @asynccontextmanager
@@ -157,13 +157,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Model warmup warning: {e}")
 
-    global pipeline
+    global db
     try:
-        logger.debug("Lifespan: Initializing QueryPipeline...")
-        pipeline = QueryPipeline()
-        app.state.pipeline = pipeline
-        app.state.db = pipeline.db  # Explicit alias for dependencies
-        logger.info("QueryPipeline initialized (Lightweight Web Tier)")
+        logger.debug("Lifespan: Initializing VectorDB...")
+        db = VectorDB()
+        app.state.db = db
+        logger.info("VectorDB initialized")
 
         # Crash Recovery
         recovery_stats = job_manager.recover_on_startup(timeout_seconds=60.0)
@@ -176,22 +175,22 @@ async def lifespan(app: FastAPI):
         try:
             from core.retrieval.agentic_search import SearchAgent
 
-            # Use the DB from the pipeline
-            app.state.search_agent = SearchAgent(pipeline.db)
+            # Use the DB from the state
+            app.state.search_agent = SearchAgent(app.state.db)
             logger.info("SearchAgent initialized (Singleton)")
         except Exception as sa_err:
             logger.error(f"SearchAgent init failed: {sa_err}")
             app.state.search_agent = None
 
     except Exception as exc:
-        pipeline = None
-        app.state.pipeline = None
+        db = None
+        app.state.db = None
         logger.error(f"Pipeline init failed: {exc}")
 
     yield
 
-    if pipeline and pipeline.db:
-        pipeline.db.close()
+    if db:
+        db.close()
     logger.info("shutdown")
 
 

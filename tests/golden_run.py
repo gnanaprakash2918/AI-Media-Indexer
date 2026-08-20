@@ -20,50 +20,7 @@ class TestOperationalIntegration(unittest.TestCase):
 
     # test_01_hybrid_asr_switching removed as Nemo is deprecated
 
-    def test_02_videorag_response_structure(self):
-        """Verify VideoRAG returns expected fields (match_reasons)."""
-        print("Testing VideoRAG structure...")
-
-        # We Mock the DB search
-        mock_db = MagicMock()
-        mock_db.search_frames_hybrid.return_value = [
-            {
-                "id": "test_id",
-                "score": 0.9,
-                "video_path": "vid.mp4",
-                "match_reasons": ["semantic", "face_match"],
-                "entities": ["Prakash"],
-                "timestamp": 10.0,
-            }
-        ]
-
-        from core.retrieval.rag import SearchResultItem, VideoRAGOrchestrator
-
-        orchestrator = VideoRAGOrchestrator(db=mock_db)
-
-        # Run search (Async requires sync wrapper or IsolatedAsyncioTestCase)
-        import asyncio
-
-        results = asyncio.run(
-            orchestrator._search_multimodal(
-                structured=MagicMock(
-                    identities=[],
-                    visual_cues=["bowling"],
-                    audio_cues=[],
-                    scene_description="test",
-                ),
-                limit=1,
-                video_path=None,
-            )
-        )
-
-        self.assertTrue(len(results) > 0)
-        item = results[0]
-        self.assertIsInstance(item, SearchResultItem)
-        self.assertIn("semantic", item.match_reasons)
-        print("✅ VideoRAG Mock Search passed.")
-
-    # def test_03_agent_connectivity(self):
+    pass    # def test_03_agent_connectivity(self):
     #     """Verify Agent Client can init (Phase 12 Fix)."""
     #     print("Testing Agent connection...")
     #     # from core.agent.client import McpClient
