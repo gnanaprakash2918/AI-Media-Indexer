@@ -25,16 +25,25 @@ if TYPE_CHECKING:
     pass
 
 
-class SceneStageMixin:
+class SceneStage:
     """Scene detection, aggregation, and VLM captioning stage."""
 
-    # These will be available via IngestionPipeline inheritance
-    db: VectorDB
+    def __init__(
+        self,
+        db: VectorDB,
+        transnet: Any,
+        get_audio_segments_for_video: Any,
+        get_audio_events_for_video: Any,
+    ):
+        self.db = db
+        self.transnet = transnet
+        self._get_audio_segments_for_video = get_audio_segments_for_video
+        self._get_audio_events_for_video = get_audio_events_for_video
+        self._cached_scenes: list | None = None
+        self._cached_scenes_path: str | None = None
+        self._visual_encoder = None
 
-    # Type stub for type checkers (allows accessing self.* in mixin)
-    def __getattr__(self, name: str) -> Any: ...
-
-    async def _process_scene_captions(
+    async def process_scene_captions(
         self,
         path: Path,
         job_id: str | None = None,

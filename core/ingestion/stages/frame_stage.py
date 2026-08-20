@@ -32,16 +32,35 @@ if TYPE_CHECKING:
     pass
 
 
-class FrameStageMixin:
+class FrameStage:
     """Frame extraction, OCR, object detection, and visual analysis stage."""
 
-    # These will be available via IngestionPipeline inheritance
-    db: VectorDB
+    def __init__(
+        self,
+        db: VectorDB,
+        extractor: Any,
+        frame_interval_seconds: float,
+        text_gate: Any,
+        face_cluster_lock: asyncio.Lock,
+        get_probe_data: Any,
+        cleanup_memory: Any,
+        get_audio_segments_for_video: Any,
+        get_speaker_clusters_at_time: Any,
+    ):
+        self.db = db
+        self.extractor = extractor
+        self.frame_interval_seconds = frame_interval_seconds
+        self.text_gate = text_gate
+        self._face_cluster_lock = face_cluster_lock
+        self.get_probe_data = get_probe_data
+        self._cleanup_memory = cleanup_memory
+        self._get_audio_segments_for_video = get_audio_segments_for_video
+        self._get_speaker_clusters_at_time = get_speaker_clusters_at_time
+        
+        self.audio_classification: dict | None = None
+        self.hitl_content_type: str | None = None
 
-    # Type stub for type checkers (allows accessing self.* in mixin)
-    def __getattr__(self, name: str) -> Any: ...
-
-    async def _process_frames(
+    async def process_frames(
         self,
         path: Path,
         job_id: str | None = None,
@@ -181,7 +200,7 @@ class FrameStageMixin:
                         c.timestamp for c in temporal_ctx.sensory
                     ]
 
-                    new_desc = await self._process_single_frame(
+                    new_desc = await self.process_single_frame(
                         video_path=path,
                         frame_path=f_path,
                         timestamp=f_ts,
@@ -425,7 +444,7 @@ class FrameStageMixin:
             del self._face_track_builder
         self._cleanup_memory()
 
-    async def _process_single_frame(
+    async def process_single_frame(
         self,
         *,
         video_path: Path,
@@ -665,8 +684,8 @@ class FrameStageMixin:
             ]
 
             # Check for HITL content type override (set via ingestion API)
-            hitl_content_type = getattr(self, "_hitl_content_type", None)
-            audio_classification = getattr(self, "_audio_classification", None)
+            hitl_content_type = self.hitl_content_type
+            audio_classification = self.audio_classification
 
             if hitl_content_type:
                 # User explicitly set content type during ingestion

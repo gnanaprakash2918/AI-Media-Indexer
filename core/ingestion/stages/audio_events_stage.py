@@ -21,16 +21,14 @@ if TYPE_CHECKING:
     pass
 
 
-class AudioEventsStageMixin:
+class AudioEventsStage:
     """Audio events detection stage."""
 
-    # These will be available via IngestionPipeline inheritance
-    db: VectorDB
+    def __init__(self, db: VectorDB, get_probe_data):
+        self.db = db
+        self.get_probe_data = get_probe_data
 
-    # Type stub for type checkers (allows accessing self.* in mixin)
-    def __getattr__(self, name: str) -> Any: ...
-
-    async def _process_audio_events(
+    async def process_audio_events(
         self, path: Path, job_id: str | None = None
     ) -> None:
         """Detects and indexes discrete audio events (CLAP) using streaming chunks.

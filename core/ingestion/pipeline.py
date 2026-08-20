@@ -39,11 +39,11 @@ from core.utils.retry import retry
 VLM_SEMAPHORE = asyncio.Semaphore(settings.vlm_concurrency)
 
 
-from core.ingestion.stages.audio_events_stage import AudioEventsStageMixin
-from core.ingestion.stages.audio_stage import AudioStageMixin
-from core.ingestion.stages.frame_stage import FrameStageMixin
-from core.ingestion.stages.scene_stage import SceneStageMixin
-from core.ingestion.stages.voice_stage import VoiceStageMixin
+from core.ingestion.stages.audio_events_stage import AudioEventsStage
+from core.ingestion.stages.audio_stage import AudioStage
+from core.ingestion.stages.frame_stage import FrameStage
+from core.ingestion.stages.scene_stage import SceneStage
+from core.ingestion.stages.voice_stage import VoiceStage
 from core.ports.processors import (
     FaceTracker as FaceTrackerProtocol,
     VisionAnalyzer as VisionAnalyzerProtocol,
@@ -53,13 +53,7 @@ from core.ports.processors import (
 from core.ports.storage import StorageBackend
 
 
-class IngestionPipeline(
-    AudioStageMixin,
-    VoiceStageMixin,
-    AudioEventsStageMixin,
-    FrameStageMixin,
-    SceneStageMixin,
-):
+class IngestionPipeline:
     """Orchestrate the media ingestion process (probing, transcription, vision, etc)."""
 
     def __init__(
@@ -138,17 +132,37 @@ class IngestionPipeline(
         # Visual encoder for CLIP/SigLIP embeddings (lazy-loaded)
         self._visual_encoder = None
 
-        # Caching for Scene Detection (avoid re-running TransNet per chunk)
-        self._cached_scenes = None
-        self._cached_scenes_path = None
-
         # Probe cache (avoid 6x FFprobe calls per video)
         self._probe_cache: dict[str, dict] = {}
+        
+        # Instantiate Composition Stages
+        self.audio_stage = AudioStage(
+            db=self.db, get_probe_data=self.get_probe_data, cleanup_memory=self._cleanup_memory
+        )
+        self.voice_stage = VoiceStage(db=self.db, cleanup_memory=self._cleanup_memory)
+        self.audio_events_stage = AudioEventsStage(db=self.db, get_probe_data=self.get_probe_data)
+        self.frame_stage = FrameStage(
+            db=self.db,
+            extractor=self.extractor,
+            frame_interval_seconds=self.frame_interval_seconds,
+            text_gate=self.text_gate,
+            face_cluster_lock=self._face_cluster_lock,
+            get_probe_data=self.get_probe_data,
+            cleanup_memory=self._cleanup_memory,
+            get_audio_segments_for_video=self._get_audio_segments_for_video,
+            get_speaker_clusters_at_time=self._get_speaker_clusters_at_time,
+        )
+        self.scene_stage = SceneStage(
+            db=self.db,
+            transnet=self.transnet,
+            get_audio_segments_for_video=self._get_audio_segments_for_video,
+            get_audio_events_for_video=self._get_audio_events_for_video,
+        )
 
     def _reset_per_video_caches(self) -> None:
         """Reset caches that should not persist across different videos."""
-        self._cached_scenes = None
-        self._cached_scenes_path = None
+        self.scene_stage._cached_scenes = None
+        self.scene_stage._cached_scenes_path = None
         self._probe_cache.clear()
 
 
@@ -212,7 +226,9 @@ class IngestionPipeline(
         self._hitl_content_type = (
             content_type_hint if content_type_hint != "auto" else None
         )
-        self._audio_classification = None
+        self.frame_stage.hitl_content_type = self._hitl_content_type
+        self.audio_stage.audio_classification = None
+        self.frame_stage.audio_classification = None
 
         path = Path(video_path)
         log_verbose(
@@ -383,7 +399,7 @@ class IngestionPipeline(
                 ):
                     progress_tracker.update(job_id, 10.0)
                     await retry(
-                        lambda: self._process_audio(path),
+                        lambda: self.audio_stage.process_audio(path),
                         on_retry=lambda e: progress_tracker.increment_retry(
                             job_id, "audio"
                         ),
@@ -394,6 +410,7 @@ class IngestionPipeline(
                     "[Pipeline] _process_audio completed, running cleanup..."
                 )
                 self._cleanup_memory("audio_complete")  # Unload Whisper
+                self.frame_stage.audio_classification = self.audio_stage.audio_classification
                 logger.info(
                     "[Pipeline] Audio cleanup done, saving checkpoint..."
                 )
@@ -421,7 +438,7 @@ class IngestionPipeline(
                 ):
                     progress_tracker.update(job_id, 35.0)
                     await retry(
-                        lambda: self._process_voice(path),
+                        lambda: self.voice_stage.process_voice(path),
                         on_retry=lambda e: progress_tracker.increment_retry(
                             job_id, "voice"
                         ),
@@ -449,11 +466,10 @@ class IngestionPipeline(
                 logger.info(f"Job {job_id} paused")
                 return job_id
 
-            # Audio Events (CLAP)
             async with progress_tracker.stage(
                 job_id, "audio_events", "Detecting audio events"
             ):
-                await self._process_audio_events(path, job_id)
+                await self.audio_events_stage.process_audio_events(path, job_id)
 
             # Frames & Scenes processing with Chunking
             current_chunk = 0
@@ -497,7 +513,7 @@ class IngestionPipeline(
 
                     await retry(
                         lambda cs=chunk_start,
-                        ce=chunk_end: self._process_frames(
+                        ce=chunk_end: self.frame_stage.process_frames(
                             path,
                             job_id,
                             total_duration=duration,
@@ -520,7 +536,7 @@ class IngestionPipeline(
                     f"scene_captions_chunk_{current_chunk}",
                     "Generating scene captions",
                 ):
-                    await self._process_scene_captions(
+                    await self.scene_stage.process_scene_captions(
                         path,
                         job_id,
                         chunk_start=chunk_start,

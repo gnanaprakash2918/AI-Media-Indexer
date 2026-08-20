@@ -21,16 +21,16 @@ if TYPE_CHECKING:
     pass
 
 
-class AudioStageMixin:
+class AudioStage:
     """Audio processing and transcription stage."""
 
-    # These will be available via IngestionPipeline inheritance
-    db: VectorDB
+    def __init__(self, db: VectorDB, get_probe_data, cleanup_memory):
+        self.db = db
+        self.get_probe_data = get_probe_data
+        self._cleanup_memory = cleanup_memory
+        self.audio_classification: dict | None = None
 
-    # Type stub for type checkers (allows accessing self.* in mixin)
-    def __getattr__(self, name: str) -> Any: ...
-
-    async def _process_audio(self, path: Path) -> None:
+    async def process_audio(self, path: Path) -> None:
         """Processes audio to generate transcriptions and language classification.
 
         Prioritizes sidecar SRT files, then tries to extract embedded
@@ -253,9 +253,9 @@ class AudioStageMixin:
                     )
                     speech_pct = (speech_duration / total_duration) * 100
                     music_pct = 100 - speech_pct
-                    self._audio_classification = {
-                        "speech_percentage": min(speech_pct, 100),
-                        "music_percentage": max(music_pct, 0),
+                    self.audio_classification = {
+                        "music_percentage": music_pct,
+                        "speech_percentage": speech_pct,
                         "total_duration": total_duration,
                     }
                     log(

@@ -21,16 +21,14 @@ if TYPE_CHECKING:
     pass
 
 
-class VoiceStageMixin:
+class VoiceStage:
     """Voice diarization and identity stage."""
 
-    # These will be available via IngestionPipeline inheritance
-    db: VectorDB
+    def __init__(self, db: VectorDB, cleanup_memory):
+        self.db = db
+        self._cleanup_memory = cleanup_memory
 
-    # Type stub for type checkers (allows accessing self.* in mixin)
-    def __getattr__(self, name: str) -> Any: ...
-
-    async def _process_voice(self, path: Path) -> None:
+    async def process_voice(self, path: Path) -> None:
         """Processes voice diarization and identity registries.
 
         Extracts voice segments, generates embeddings, matches them against
@@ -41,10 +39,10 @@ class VoiceStageMixin:
             path: Path to the media file.
         """
         await resource_manager.throttle_if_needed("compute")
-        self.voice = VoiceProcessor()
+        voice = VoiceProcessor()
 
         try:
-            voice_segments = await self.voice.process(path)
+            voice_segments = await voice.process(path)
 
             # Prepare voice thumbnails directory
             thumb_dir = settings.cache_dir / "thumbnails" / "voices"
@@ -287,8 +285,5 @@ class VoiceStageMixin:
                         f"no embedding (has_emb={seg.embedding is not None})"
                     )
         finally:
-            if self.voice:
-                self.voice.cleanup()
-            del self.voice
-            self.voice = None
+            voice.cleanup()
             self._cleanup_memory()
