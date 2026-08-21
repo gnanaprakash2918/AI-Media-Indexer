@@ -15,6 +15,11 @@ from qdrant_client.http import models
 from config import settings
 from core.domain.values import ClusterId, Timestamp, VideoPath
 from core.utils.logger import log
+from core.storage.constants import (
+    FACES_COLLECTION,
+    MEDIA_COLLECTION
+)
+
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
@@ -23,8 +28,8 @@ if TYPE_CHECKING:
 class FaceRepository:
     """Face detection, clustering, naming, and identity management operations."""
 
-    # These will be available via VectorDB inheritance
-    client: QdrantClient
+    def __init__(self, client: QdrantClient):
+        self.client = client
 
     def get_next_face_cluster_id(self) -> int:
         """Generate a unique face cluster ID.
@@ -43,7 +48,7 @@ class FaceRepository:
             offset = None
             while True:
                 results, offset = self.client.scroll(
-                    collection_name=self.FACES_COLLECTION,
+                    collection_name=FACES_COLLECTION,
                     limit=1000,
                     offset=offset,
                     with_payload=["cluster_id"],
@@ -79,7 +84,7 @@ class FaceRepository:
 
         try:
             self.client.upsert(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=point_id,
@@ -113,7 +118,7 @@ class FaceRepository:
         try:
             # Exact match search for name (case-sensitive)
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -158,7 +163,7 @@ class FaceRepository:
         try:
             # Get all named faces
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 limit=1000,
                 with_payload=["name", "cluster_id"],
                 with_vectors=False,
@@ -205,7 +210,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -269,7 +274,7 @@ class FaceRepository:
         }
 
         self.client.upsert(
-            collection_name=self.FACES_COLLECTION,
+            collection_name=FACES_COLLECTION,
             points=[
                 models.PointStruct(
                     id=point_id,
@@ -298,7 +303,7 @@ class FaceRepository:
             A list of matching faces.
         """
         resp = self.client.query_points(
-            collection_name=self.FACES_COLLECTION,
+            collection_name=FACES_COLLECTION,
             query=face_encoding,
             limit=limit,
             score_threshold=score_threshold,
@@ -329,7 +334,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.IsNullCondition(
@@ -382,7 +387,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -401,7 +406,7 @@ class FaceRepository:
                 payload = point.payload or {}
                 payload["name"] = name
                 self.client.set_payload(
-                    collection_name=self.FACES_COLLECTION,
+                    collection_name=FACES_COLLECTION,
                     payload=payload,
                     points=[point.id],
                 )
@@ -428,7 +433,7 @@ class FaceRepository:
         """
         try:
             self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 payload={"cluster_id": cluster_id},
                 points=[face_id],
             )
@@ -453,7 +458,7 @@ class FaceRepository:
             # First, check if the target cluster has a name
             target_name = None
             resp_target = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -470,7 +475,7 @@ class FaceRepository:
 
             # Get all faces in source cluster
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -497,7 +502,7 @@ class FaceRepository:
                 payload["name"] = target_name
 
             self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 payload=payload,
                 points=ids,  # type: ignore
             )
@@ -527,7 +532,7 @@ class FaceRepository:
         try:
             # First get all face IDs in this cluster
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -547,7 +552,7 @@ class FaceRepository:
 
             # Update all faces in cluster with PointIdsList (correct API usage)
             self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 payload={
                     "is_main_character": is_main,
                     "is_main": is_main,
@@ -570,7 +575,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must_not=[
                         models.IsNullCondition(
@@ -610,7 +615,7 @@ class FaceRepository:
         """
         try:
             self.client.delete(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 points_selector=models.PointIdsList(points=[face_id]),
             )
             return True
@@ -629,7 +634,7 @@ class FaceRepository:
         """
         try:
             self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 payload={"name": name},
                 points=[face_id],
             )
@@ -651,7 +656,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -689,7 +694,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 limit=10000,
                 with_payload=True,
                 with_vectors=True,
@@ -723,7 +728,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 limit=limit,
                 with_payload=True,
                 with_vectors=False,
@@ -758,7 +763,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 limit=10000,
                 with_payload=True,
                 with_vectors=True,
@@ -838,7 +843,7 @@ class FaceRepository:
         try:
             # 1. Get all faces in this cluster
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -873,7 +878,7 @@ class FaceRepository:
             # 3. Delete the points
             point_ids = [point.id for point in points]
             self.client.delete(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 points_selector=models.PointIdsList(points=point_ids),
             )
             log(
@@ -897,7 +902,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -937,7 +942,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -968,7 +973,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1030,7 +1035,7 @@ class FaceRepository:
 
             # === Step 2: Get all face point IDs in this cluster ===
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1049,7 +1054,7 @@ class FaceRepository:
 
             # === Step 3: Update all face points with the name ===
             self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 payload={"name": name},
                 points=point_ids,  # type: ignore
             )
@@ -1108,7 +1113,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1156,7 +1161,7 @@ class FaceRepository:
         point_id = str(uuid.uuid4())
         try:
             self.client.upsert(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=point_id,
@@ -1190,7 +1195,7 @@ class FaceRepository:
         """
         try:
             self.client.set_payload(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 payload={"cluster_id": target_cluster_id},
                 points=[face_id],
             )
@@ -1216,7 +1221,7 @@ class FaceRepository:
 
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1293,7 +1298,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1313,7 +1318,7 @@ class FaceRepository:
                     new_cluster if c == old_cluster else c for c in clusters
                 ]
                 self.client.set_payload(
-                    collection_name=self.MEDIA_COLLECTION,
+                    collection_name=MEDIA_COLLECTION,
                     payload={"face_cluster_ids": new_clusters},
                     points=[str(p.id)],
                 )
@@ -1338,7 +1343,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1352,7 +1357,7 @@ class FaceRepository:
             point_ids = [str(p.id) for p in resp[0]]
             if point_ids:
                 self.client.set_payload(
-                    collection_name=self.FACES_COLLECTION,
+                    collection_name=FACES_COLLECTION,
                     payload={"verified": verified},
                     points=point_ids,  # type: ignore
                 )
@@ -1377,7 +1382,7 @@ class FaceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1394,7 +1399,7 @@ class FaceRepository:
                 payload = p.payload or {}
                 names = list({*payload.get("face_names", []), name})
                 self.client.set_payload(
-                    collection_name=self.MEDIA_COLLECTION,
+                    collection_name=MEDIA_COLLECTION,
                     payload={"face_names": names},
                     points=[str(p.id)],
                 )
@@ -1408,7 +1413,7 @@ class FaceRepository:
         try:
             # Scroll frames that have source_id
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1429,7 +1434,7 @@ class FaceRepository:
                     # Deduplicate
                     new_ids = list(set(new_ids))
                     self.client.set_payload(
-                        collection_name=self.MEDIA_COLLECTION,
+                        collection_name=MEDIA_COLLECTION,
                         payload={"face_cluster_ids": new_ids},
                         points=[p.id],
                     )
@@ -1461,7 +1466,7 @@ class FaceRepository:
             query_filter = models.Filter(must=conditions)
 
             results, _ = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=query_filter,
                 limit=limit,
                 with_payload=True,

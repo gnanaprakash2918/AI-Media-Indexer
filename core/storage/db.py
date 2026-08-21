@@ -22,8 +22,8 @@ from config import settings
 from core.domain.values import Timestamp, VideoPath
 from core.storage.constants import (
     AUDIO_EVENTS_COLLECTION,
-    FACE_VECTOR_SIZE,
     FACES_COLLECTION,
+    FACE_VECTOR_SIZE,
     MASKLETS_COLLECTION,
     MEDIA_COLLECTION,
     MEDIA_SEGMENTS_COLLECTION,
@@ -35,7 +35,7 @@ from core.storage.constants import (
     TEXT_DIM,
     VIDEO_METADATA_COLLECTION,
     VOICE_COLLECTION,
-    VOICE_VECTOR_SIZE,
+    VOICE_VECTOR_SIZE
 )
 from core.storage.encoder import TextEncoder
 from core.storage.filters import build_filter, media_path_filter
@@ -110,7 +110,7 @@ class VectorDB:
         self._text_encoder = TextEncoder()
 
         log(
-            f"VectorDB initialized (lazy mode). Encoder: {self.MODEL_NAME} will load on first use."
+            f"VectorDB initialized (lazy mode). Encoder: {SELECTED_MODEL} will load on first use."
         )
 
         # Load Visual Encoder for cross-modal search (Text -> Visual Embedding)
@@ -141,13 +141,6 @@ class VectorDB:
         self.voice = VoiceRepository(self.client)
         self.scenes = SceneRepository(self.client)
         self.search = SearchRepository(self.client)
-
-    def __getattr__(self, name: str) -> Any:
-        """Dynamically delegate method calls to the appropriate sub-repository."""
-        for repo in (self.faces, self.voice, self.scenes, self.search):
-            if hasattr(repo, name):
-                return getattr(repo, name)
-        raise AttributeError(f"'VectorDB' object has no attribute '{name}'")
 
     def _validate_vector_dim(
         self, vector: list | None, collection: str, context: str = ""
@@ -289,7 +282,7 @@ class VectorDB:
         offset = None
         while True:
             results, offset = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 limit=500,
                 offset=offset,
                 with_payload=["video_path"],
@@ -358,7 +351,7 @@ class VectorDB:
 
         while True:
             results, offset = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=models.Filter(must=must_conditions),
                 limit=500,
                 offset=offset,
@@ -419,7 +412,7 @@ class VectorDB:
 
         try:
             results, _ = self.client.scroll(
-                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                collection_name=AUDIO_EVENTS_COLLECTION,
                 scroll_filter=models.Filter(must=must_conditions),
                 limit=5000,  # Might have many audio events
                 with_payload=True,
@@ -503,7 +496,7 @@ class VectorDB:
             )
 
         self.client.upsert(
-            collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+            collection_name=MEDIA_SEGMENTS_COLLECTION,
             points=points,
             wait=False,
         )
@@ -554,7 +547,7 @@ class VectorDB:
         payload = sanitize_numpy_types(payload)
 
         self.client.upsert(
-            collection_name=self.MEDIA_COLLECTION,
+            collection_name=MEDIA_COLLECTION,
             points=[
                 models.PointStruct(id=point_id, vector=vector, payload=payload)
             ],
@@ -626,7 +619,7 @@ class VectorDB:
             )
 
         self.client.upsert(
-            collection_name=self.MEDIA_COLLECTION,
+            collection_name=MEDIA_COLLECTION,
             points=points,
             wait=False,
         )
@@ -649,7 +642,7 @@ class VectorDB:
         """
         try:
             results, _ = self.client.scroll(
-                collection_name=self.SUMMARIES_COLLECTION,
+                collection_name=SUMMARIES_COLLECTION,
                 scroll_filter=build_filter(
                     [
                         media_path_filter(video_path),
@@ -691,7 +684,7 @@ class VectorDB:
 
         try:
             results = self.client.search(
-                collection_name=self.SUMMARIES_COLLECTION,
+                collection_name=SUMMARIES_COLLECTION,
                 query_vector=query_vector,
                 limit=limit,
                 score_threshold=score_threshold,
@@ -728,7 +721,7 @@ class VectorDB:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 limit=limit,
                 with_payload=True,
                 with_vectors=False,
@@ -755,7 +748,7 @@ class VectorDB:
         """Retrieve a specific frame by ID."""
         try:
             results = self.client.retrieve(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 ids=[frame_id],
                 with_payload=True,
             )
@@ -809,7 +802,7 @@ class VectorDB:
             ] * CLAP_DIM  # Zero vector for events without embedding
 
         self.client.upsert(
-            collection_name=self.AUDIO_EVENTS_COLLECTION,
+            collection_name=AUDIO_EVENTS_COLLECTION,
             points=[
                 models.PointStruct(id=point_id, vector=vector, payload=data)
             ],
@@ -825,7 +818,7 @@ class VectorDB:
         data = {"media_path": media_path, **metadata}
 
         self.client.upsert(
-            collection_name=self.VIDEO_METADATA_COLLECTION,
+            collection_name=VIDEO_METADATA_COLLECTION,
             points=[
                 models.PointStruct(id=point_id, vector=[1.0], payload=data)
             ],
@@ -882,7 +875,7 @@ class VectorDB:
             )
 
             resp = self.client.query_points(
-                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                collection_name=MEDIA_SEGMENTS_COLLECTION,
                 query=query_vec,
                 limit=limit,
                 score_threshold=score_threshold,
@@ -938,7 +931,7 @@ class VectorDB:
             # so we scroll and do a text match on summary and title instead of semantic search.
             query_lower = query.lower()
             resp = self.client.scroll(
-                collection_name=self.VIDEO_METADATA_COLLECTION,
+                collection_name=VIDEO_METADATA_COLLECTION,
                 limit=limit * 10,  # Fetch more to filter down
                 with_payload=True,
                 with_vectors=False,
@@ -1004,7 +997,7 @@ class VectorDB:
         try:
             # 1. Find all frames for this video
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1023,7 +1016,7 @@ class VectorDB:
 
             point_ids = [point.id for point in points]
             self.client.set_payload(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 payload=metadata,
                 points=point_ids,  # type: ignore
             )
@@ -1058,7 +1051,7 @@ class VectorDB:
             # Paginate through ALL segments to build complete video list
             while True:
                 resp = self.client.scroll(
-                    collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                    collection_name=MEDIA_SEGMENTS_COLLECTION,
                     limit=limit,
                     offset=offset,
                     with_payload=True,
@@ -1095,10 +1088,10 @@ class VectorDB:
         """
         stats = {}
         for name in [
-            self.MEDIA_SEGMENTS_COLLECTION,
-            self.MEDIA_COLLECTION,
-            self.FACES_COLLECTION,
-            self.VOICE_COLLECTION,
+            MEDIA_SEGMENTS_COLLECTION,
+            MEDIA_COLLECTION,
+            FACES_COLLECTION,
+            VOICE_COLLECTION,
         ]:
             try:
                 info = self.client.get_collection(name)
@@ -1136,7 +1129,7 @@ class VectorDB:
                 ]
             )
             face_points = self.client.scroll(
-                self.FACES_COLLECTION,
+                FACES_COLLECTION,
                 scroll_filter=face_filter,
                 limit=10000,
                 with_payload=True,
@@ -1166,7 +1159,7 @@ class VectorDB:
                 ]
             )
             voice_points = self.client.scroll(
-                self.VOICE_COLLECTION,
+                VOICE_COLLECTION,
                 scroll_filter=voice_filter,
                 limit=10000,
                 with_payload=True,
@@ -1186,23 +1179,23 @@ class VectorDB:
             pass
 
         for collection in [
-            self.MEDIA_SEGMENTS_COLLECTION,
-            self.MEDIA_COLLECTION,
-            self.FACES_COLLECTION,
-            self.VOICE_COLLECTION,
-            self.SCENES_COLLECTION,
-            self.SCENELETS_COLLECTION,
-            self.AUDIO_EVENTS_COLLECTION,
-            self.MASKLETS_COLLECTION,
-            self.SUMMARIES_COLLECTION,
-            self.VIDEO_METADATA_COLLECTION,
+            MEDIA_SEGMENTS_COLLECTION,
+            MEDIA_COLLECTION,
+            FACES_COLLECTION,
+            VOICE_COLLECTION,
+            SCENES_COLLECTION,
+            SCENELETS_COLLECTION,
+            AUDIO_EVENTS_COLLECTION,
+            MASKLETS_COLLECTION,
+            SUMMARIES_COLLECTION,
+            VIDEO_METADATA_COLLECTION,
         ]:
             try:
                 # For faces and voices, we need to match media_path
                 key = (
                     "video_path"
                     if collection
-                    in [self.MEDIA_SEGMENTS_COLLECTION, self.MEDIA_COLLECTION]
+                    in [MEDIA_SEGMENTS_COLLECTION, MEDIA_COLLECTION]
                     else "media_path"
                 )
 
@@ -1248,7 +1241,7 @@ class VectorDB:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 limit=limit,
                 with_payload=True,
                 with_vectors=False,
@@ -1285,7 +1278,7 @@ class VectorDB:
         # Face names
         try:
             face_resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 scroll_filter=models.Filter(
                     must_not=[
                         models.IsNullCondition(
@@ -1306,7 +1299,7 @@ class VectorDB:
         # Speaker names
         try:
             voice_resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must_not=[
                         models.IsNullCondition(
@@ -1355,7 +1348,7 @@ class VectorDB:
                 )
 
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=models.Filter(must=conditions)
                 if conditions
                 else None,
@@ -1435,7 +1428,7 @@ class VectorDB:
         """Update frame description manually and re-embed. HITL correction for VLM errors."""
         try:
             resp = self.client.retrieve(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 ids=[frame_id],
                 with_payload=True,
                 with_vectors=False,
@@ -1459,7 +1452,7 @@ class VectorDB:
             new_vector = (await self.encode_texts(full_text, is_query=False))[0]
 
             self.client.upsert(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=frame_id, vector=new_vector, payload=payload
@@ -1497,7 +1490,7 @@ class VectorDB:
         try:
             # 1. Fetch existing frame to get visual description
             resp = self.client.retrieve(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 ids=[frame_id],
                 with_payload=True,
                 with_vectors=False,  # Don't need old vector
@@ -1543,7 +1536,7 @@ class VectorDB:
 
             # 6. Upsert with NEW vector
             self.client.upsert(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=frame_id,
@@ -1565,16 +1558,16 @@ class VectorDB:
     def delete_media_by_path(self, media_path: str | VideoPath) -> None:
         """Delete all data associated with a media file."""
         for collection in [
-            self.MEDIA_SEGMENTS_COLLECTION,
-            self.MEDIA_COLLECTION,
-            self.FACES_COLLECTION,
-            self.VOICE_COLLECTION,
-            self.SCENES_COLLECTION,
-            self.SCENELETS_COLLECTION,
-            self.AUDIO_EVENTS_COLLECTION,
-            self.MASKLETS_COLLECTION,
-            self.SUMMARIES_COLLECTION,
-            self.VIDEO_METADATA_COLLECTION,
+            MEDIA_SEGMENTS_COLLECTION,
+            MEDIA_COLLECTION,
+            FACES_COLLECTION,
+            VOICE_COLLECTION,
+            SCENES_COLLECTION,
+            SCENELETS_COLLECTION,
+            AUDIO_EVENTS_COLLECTION,
+            MASKLETS_COLLECTION,
+            SUMMARIES_COLLECTION,
+            VIDEO_METADATA_COLLECTION,
         ]:
             try:
                 # Try with "media_path" key
@@ -1624,7 +1617,7 @@ class VectorDB:
         try:
             # Scroll recent frames with payloads
             resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 limit=limit_frames,
                 with_payload=["face_cluster_ids", "entities"],
                 with_vectors=False,

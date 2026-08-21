@@ -51,9 +51,6 @@ def _ask_media_type() -> str:
 async def _run(
     video_path: Path,
     media_type: str,
-    *,
-    skip_warmup: bool = False,
-    skip_startup_checks: bool = False,
 ) -> None:
     """Run the ingestion pipeline for a single video.
 
@@ -62,22 +59,7 @@ async def _run(
         media_type: Media type hint string to be forwarded to the ingestion
             pipeline. Should align with values in :class:`MediaType`, such
             as ``"movie"``, ``"tv"``, ``"personal"``, or ``"unknown"``.
-        skip_warmup: If True, skip model pre-download/warming.
-        skip_startup_checks: If True, skip pre-flight dependency checks.
     """
-    # === STARTUP CHECKS ===
-    if not skip_startup_checks:
-        from core.utils.startup_checks import run_startup_checks
-
-        run_startup_checks()
-
-    # === MODEL WARMUP ===
-    if not skip_warmup:
-        from core.utils.model_warmer import warmup_models
-
-        await warmup_models()
-    else:
-        print("[INFO] Skipping model warmup (--skip-warmup)")
 
     pipeline = IngestionPipeline(
         qdrant_backend="docker",
@@ -212,9 +194,7 @@ def main() -> None:
     asyncio.run(
         _run(
             video_path,
-            media_type_str,
-            skip_warmup=args.skip_warmup,
-            skip_startup_checks=args.skip_checks,
+            media_type_str
         )
     )
 

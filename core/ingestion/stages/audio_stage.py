@@ -15,7 +15,9 @@ from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
 from core.storage.db import VectorDB
 from core.utils.hardware import RESOURCE_ARBITER
-from core.utils.hardware import RESOURCE_ARBITER
+from core.storage.constants import (
+    MEDIA_SEGMENTS_COLLECTION
+)
 
 if TYPE_CHECKING:
     pass
@@ -24,11 +26,12 @@ if TYPE_CHECKING:
 class AudioStage:
     """Audio processing and transcription stage."""
 
-    def __init__(self, db: VectorDB, get_probe_data, cleanup_memory):
+    def __init__(self, db: VectorDB, get_probe_data, cleanup_memory, prepare_segments_for_db):
         self.db = db
         self.get_probe_data = get_probe_data
         self._cleanup_memory = cleanup_memory
         self.audio_classification: dict | None = None
+        self._prepare_segments_for_db = prepare_segments_for_db
 
     async def process_audio(self, path: Path) -> None:
         """Processes audio to generate transcriptions and language classification.
@@ -55,7 +58,6 @@ class AudioStage:
 
         # Check for embedded subtitles
         if not audio_segments:
-            await RESOURCE_ARBITER.throttle_if_needed("compute")
             temp_srt = path.with_suffix(".embedded.srt")
             try:
                 with AudioTranscriber() as transcriber:
@@ -75,8 +77,6 @@ class AudioStage:
 
         # Run ASR if no existing subtitles
         if not audio_segments:
-            await RESOURCE_ARBITER.throttle_if_needed("compute")
-
             # Content Classification (speech/music/silence detection)
             use_lyrics_mode = False
             try:

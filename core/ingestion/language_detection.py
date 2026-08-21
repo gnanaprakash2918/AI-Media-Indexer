@@ -24,7 +24,6 @@ async def detect_audio_language(path: Path) -> str:
     Returns:
         ISO 639-1 language code (e.g., 'en', 'ta', 'hi').
     """
-    await RESOURCE_ARBITER.throttle_if_needed("compute")
 
     try:
         return await asyncio.to_thread(_run_detection_sync, path)
@@ -54,7 +53,6 @@ async def detect_audio_language_with_confidence(
     Returns:
         Tuple of (language_code, confidence_score).
     """
-    await RESOURCE_ARBITER.throttle_if_needed("compute")
 
     wav_path = None
     try:

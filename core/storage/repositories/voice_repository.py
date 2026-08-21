@@ -14,6 +14,12 @@ from qdrant_client.http import models
 from config import settings
 from core.domain.values import ClusterId, Timestamp, VideoPath
 from core.utils.logger import log
+from core.storage.constants import (
+    MEDIA_COLLECTION,
+    VOICE_COLLECTION,
+    VOICE_VECTOR_SIZE
+)
+
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
@@ -22,7 +28,8 @@ if TYPE_CHECKING:
 class VoiceRepository:
     """Voice segment, speaker clustering, naming, and diarization operations."""
 
-    client: QdrantClient
+    def __init__(self, client: QdrantClient):
+        self.client = client
 
     def get_max_voice_cluster_id(self) -> int:
         """Get the maximum existing voice cluster ID.
@@ -38,7 +45,7 @@ class VoiceRepository:
             offset = None
             while True:
                 results, offset = self.client.scroll(
-                    collection_name=self.VOICE_COLLECTION,
+                    collection_name=VOICE_COLLECTION,
                     limit=1000,
                     offset=offset,
                     with_payload=["voice_cluster_id"],
@@ -103,7 +110,7 @@ class VoiceRepository:
 
         try:
             results, _ = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(must=must_conditions),
                 limit=5000,
                 with_payload=True,
@@ -146,7 +153,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.query_points(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 query=embedding,
                 limit=1,
                 score_threshold=threshold,
@@ -180,7 +187,7 @@ class VoiceRepository:
 
         try:
             self.client.upsert(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=point_id,
@@ -225,7 +232,7 @@ class VoiceRepository:
         point_id = str(uuid.uuid4())
 
         self.client.upsert(
-            collection_name=self.VOICE_COLLECTION,
+            collection_name=VOICE_COLLECTION,
             points=[
                 models.PointStruct(
                     id=point_id,
@@ -269,9 +276,9 @@ class VoiceRepository:
         Raises:
             ValueError: If the embedding dimension does not match `VOICE_VECTOR_SIZE`.
         """
-        if len(embedding) != self.VOICE_VECTOR_SIZE:
+        if len(embedding) != VOICE_VECTOR_SIZE:
             raise ValueError(
-                f"voice vector dim mismatch: expected {self.VOICE_VECTOR_SIZE}, "
+                f"voice vector dim mismatch: expected {VOICE_VECTOR_SIZE}, "
                 f"got {len(embedding)}"
             )
 
@@ -296,7 +303,7 @@ class VoiceRepository:
             payload.update(kwargs)
 
         self.client.upsert(
-            collection_name=self.VOICE_COLLECTION,
+            collection_name=VOICE_COLLECTION,
             points=[
                 models.PointStruct(
                     id=point_id,
@@ -318,7 +325,7 @@ class VoiceRepository:
         """
         try:
             self.client.set_payload(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 payload={"speaker_name": name},
                 points=models.Filter(
                     must=[
@@ -355,7 +362,7 @@ class VoiceRepository:
             # Usually we allow multiple mains or just one. Assuming one main per cluster.
             if is_main:
                 self.client.set_payload(
-                    collection_name=self.VOICE_COLLECTION,
+                    collection_name=VOICE_COLLECTION,
                     payload={"is_main": False},
                     points=models.Filter(
                         must=[
@@ -369,7 +376,7 @@ class VoiceRepository:
 
             # 2. Set target
             self.client.set_payload(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 payload={"is_main": is_main},
                 points=models.PointIdsList(points=[segment_id]),
             )
@@ -446,7 +453,7 @@ class VoiceRepository:
 
             # Use Scroll (no vector scoring)
             results, _ = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=query_filter,
                 limit=limit,
                 with_payload=True,
@@ -523,7 +530,7 @@ class VoiceRepository:
                 )
             qfilter = models.Filter(must=conditions) if conditions else None
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=qfilter,
                 limit=limit,
                 with_payload=True,
@@ -565,7 +572,7 @@ class VoiceRepository:
         try:
             # 1. Get payload to find file
             points = self.client.retrieve(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 ids=[segment_id],
                 with_payload=True,
             )
@@ -584,7 +591,7 @@ class VoiceRepository:
 
             # 2. Delete point
             self.client.delete(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 points_selector=models.PointIdsList(points=[segment_id]),
             )
             return True
@@ -603,7 +610,7 @@ class VoiceRepository:
         """
         try:
             self.client.set_payload(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 payload={"speaker_name": name},
                 points=[segment_id],
             )
@@ -619,7 +626,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 limit=10000,
                 with_payload=True,
                 with_vectors=True,
@@ -654,7 +661,7 @@ class VoiceRepository:
         """
         try:
             self.client.set_payload(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 payload={"voice_cluster_id": cluster_id},
                 points=[segment_id],
             )
@@ -675,7 +682,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 limit=limit,
                 with_payload=True,
                 with_vectors=False,
@@ -714,7 +721,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -730,7 +737,7 @@ class VoiceRepository:
             updated = 0
             for point in resp[0]:
                 self.client.set_payload(
-                    collection_name=self.VOICE_COLLECTION,
+                    collection_name=VOICE_COLLECTION,
                     payload={"voice_cluster_id": to_cluster},
                     points=[point.id],
                 )
@@ -751,7 +758,7 @@ class VoiceRepository:
         try:
             # 1. Get all segments in this cluster
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -786,7 +793,7 @@ class VoiceRepository:
             # 3. Delete the points
             point_ids = [point.id for point in points]
             self.client.delete(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 points_selector=models.PointIdsList(points=point_ids),
             )
             log(
@@ -808,7 +815,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -854,7 +861,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -898,7 +905,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 limit=limit,
                 with_payload=True,
                 with_vectors=False,
@@ -938,7 +945,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -999,7 +1006,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1035,7 +1042,7 @@ class VoiceRepository:
         try:
             # 1. Find all segments for this cluster
             segments = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1073,7 +1080,7 @@ class VoiceRepository:
 
                 # Fetch all frames for this video
                 frames_resp = self.client.scroll(
-                    collection_name=self.MEDIA_COLLECTION,
+                    collection_name=MEDIA_COLLECTION,
                     scroll_filter=models.Filter(
                         must=[
                             models.FieldCondition(
@@ -1131,7 +1138,7 @@ class VoiceRepository:
         try:
             # 1. Get all voice segments for this cluster
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1165,7 +1172,7 @@ class VoiceRepository:
 
                 # Find frames in this time range for this video
                 frames_resp = self.client.scroll(
-                    collection_name=self.MEDIA_COLLECTION,
+                    collection_name=MEDIA_COLLECTION,
                     scroll_filter=models.Filter(
                         must=[
                             models.FieldCondition(
@@ -1224,7 +1231,7 @@ class VoiceRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(
                     should=[
                         models.IsNullCondition(

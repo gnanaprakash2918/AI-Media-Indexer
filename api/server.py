@@ -131,7 +131,6 @@ from config import settings  # noqa: E402
 
 from core.storage.db import VectorDB
 from core.utils.logger import bind_context, clear_context  # noqa: E402
-from core.utils.model_warmer import warmup_models  # [NEW] Warmer
 from core.utils.observability import (  # noqa: E402
     end_trace,
     init_langfuse,

@@ -85,9 +85,6 @@ class IngestionPipeline:
             frame_interval_seconds: Frame sampling interval in seconds.
             tmdb_api_key: Optional API key for TMDB movie metadata.
         """
-        from core.processing.dependency_check import check_model_dependencies
-
-        check_model_dependencies()
 
         self.scene_detector = detect_scenes
         self.prober = MediaProber()
@@ -97,7 +94,7 @@ class IngestionPipeline:
         self.extractor = FrameExtractor()
 
         # Inject or instantiate dependencies
-        self.db = db or VectorDB(
+        self.db = VectorDB(
             backend=qdrant_backend,
             host=qdrant_host,
             port=qdrant_port,
@@ -107,8 +104,8 @@ class IngestionPipeline:
             tmdb_key=settings.tmdb_api_key, omdb_key=settings.omdb_api_key
         )
         self.transnet = TransNetV2()
-        self.video_vlm = video_vlm or VideoVLM()
-        self.voice_processor = voice_processor or VoiceProcessor(db=self.db)
+        self.video_vlm = VideoVLM()
+        self.voice_processor = VoiceProcessor(db=self.db)
 
         self.frame_interval_seconds = frame_interval_seconds
         self.vision: VisionAnalyzerProtocol | None = None
@@ -132,7 +129,8 @@ class IngestionPipeline:
         
         # Instantiate Composition Stages
         self.audio_stage = AudioStage(
-            db=self.db, get_probe_data=self.get_probe_data, cleanup_memory=self._cleanup_memory
+            db=self.db, get_probe_data=self.get_probe_data, cleanup_memory=self._cleanup_memory, 
+            prepare_segments_for_db = self._prepare_segments_for_db
         )
         self.voice_stage = VoiceStage(db=self.db, cleanup_memory=self._cleanup_memory)
         self.audio_events_stage = AudioEventsStage(db=self.db, get_probe_data=self.get_probe_data)
@@ -234,7 +232,6 @@ class IngestionPipeline:
             job_id,
             file_path=str(path),
             media_type=media_type_hint or "unknown",
-            resume=resume,
         )
 
         if not path.exists() or not path.is_file():

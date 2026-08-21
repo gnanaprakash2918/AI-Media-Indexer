@@ -11,6 +11,15 @@ from typing import TYPE_CHECKING, Any, cast
 from qdrant_client.http import models
 
 from core.utils.logger import log
+from core.storage.constants import (
+    AUDIO_EVENTS_COLLECTION,
+    FACES_COLLECTION,
+    MASKLETS_COLLECTION,
+    MEDIA_COLLECTION,
+    MEDIA_SEGMENTS_COLLECTION,
+    VOICE_COLLECTION
+)
+
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
@@ -19,7 +28,8 @@ if TYPE_CHECKING:
 class SearchRepository:
     """Frame search, media search, hybrid search, and explainable search operations."""
 
-    client: QdrantClient
+    def __init__(self, client: QdrantClient):
+        self.client = client
 
     async def search_frames(
         self,
@@ -84,7 +94,7 @@ class SearchRepository:
             )
 
         results = self.client.query_points(
-            collection_name=self.MEDIA_COLLECTION,
+            collection_name=MEDIA_COLLECTION,
             query=query_vector,
             query_filter=scroll_filter,
             limit=limit,
@@ -134,7 +144,7 @@ class SearchRepository:
         qfilter = models.Filter(must=conditions) if conditions else None
 
         resp = self.client.query_points(
-            collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+            collection_name=MEDIA_SEGMENTS_COLLECTION,
             query=query_vector,
             limit=limit,
             score_threshold=score_threshold,
@@ -215,7 +225,7 @@ class SearchRepository:
         query_filter = models.Filter(must=conditions) if conditions else None
 
         resp = self.client.query_points(
-            collection_name=self.MEDIA_COLLECTION,
+            collection_name=MEDIA_COLLECTION,
             query=query_vector,
             limit=limit,
             query_filter=query_filter,
@@ -293,7 +303,7 @@ class SearchRepository:
             qfilter = models.Filter(must=conditions) if conditions else None
 
             vec_resp = self.client.query_points(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 query=query_vector,
                 limit=limit * 2,
                 query_filter=qfilter,
@@ -374,7 +384,7 @@ class SearchRepository:
             # Since Qdrant basic text match doesn't score, we treat them as high-confidence hits.
             # Ideally we'd use sparse vectors for BM25, but this is a robust fallback.
             scroll_resp = self.client.scroll(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 scroll_filter=keyword_filter,
                 limit=limit * 3,
                 with_payload=True,
@@ -445,7 +455,7 @@ class SearchRepository:
                 masklet_filter = models.Filter(must=masklet_conditions)
 
                 mask_resp = self.client.scroll(
-                    collection_name=self.MASKLETS_COLLECTION,  # Fixed: use constant
+                    collection_name=MASKLETS_COLLECTION,  # Fixed: use constant
                     scroll_filter=masklet_filter,
                     limit=50,
                     with_payload=True,
@@ -501,7 +511,7 @@ class SearchRepository:
                             )
 
                         identity_resp = self.client.scroll(
-                            collection_name=self.MEDIA_COLLECTION,
+                            collection_name=MEDIA_COLLECTION,
                             scroll_filter=models.Filter(must=conditions),  # type: ignore
                             limit=limit * 2,
                             with_payload=True,
@@ -565,7 +575,7 @@ class SearchRepository:
             )
 
             voice_resp = self.client.scroll(
-                collection_name=self.VOICE_COLLECTION,
+                collection_name=VOICE_COLLECTION,
                 scroll_filter=models.Filter(must=voice_conditions),
                 limit=limit * 2,
                 with_payload=True,
@@ -594,7 +604,7 @@ class SearchRepository:
                 )
 
                 frame_resp = self.client.scroll(
-                    collection_name=self.MEDIA_COLLECTION,
+                    collection_name=MEDIA_COLLECTION,
                     scroll_filter=frame_filter,
                     limit=1,
                     with_payload=True,
@@ -649,7 +659,7 @@ class SearchRepository:
             )
 
             asr_resp = self.client.scroll(
-                collection_name=self.MEDIA_SEGMENTS_COLLECTION,
+                collection_name=MEDIA_SEGMENTS_COLLECTION,
                 scroll_filter=models.Filter(must=asr_conditions),
                 limit=limit * 2,
                 with_payload=True,
@@ -678,7 +688,7 @@ class SearchRepository:
                 )
 
                 frame_resp = self.client.scroll(
-                    collection_name=self.MEDIA_COLLECTION,
+                    collection_name=MEDIA_COLLECTION,
                     scroll_filter=frame_filter,
                     limit=1,
                     with_payload=True,
@@ -737,7 +747,7 @@ class SearchRepository:
             )
 
             audio_resp = self.client.scroll(
-                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                collection_name=AUDIO_EVENTS_COLLECTION,
                 scroll_filter=models.Filter(
                     should=audio_conditions
                 ),  # OR condition
@@ -768,7 +778,7 @@ class SearchRepository:
                     )
 
                     frame_resp = self.client.scroll(
-                        collection_name=self.MEDIA_COLLECTION,
+                        collection_name=MEDIA_COLLECTION,
                         scroll_filter=frame_filter,
                         limit=1,
                         with_payload=True,
@@ -819,7 +829,7 @@ class SearchRepository:
                     )
 
                 section_resp = self.client.scroll(
-                    collection_name=self.AUDIO_EVENTS_COLLECTION,
+                    collection_name=AUDIO_EVENTS_COLLECTION,
                     scroll_filter=models.Filter(must=section_conditions),
                     limit=50,
                     with_payload=True,
@@ -878,7 +888,7 @@ class SearchRepository:
 
                 # Look for drops and choruses (typically high energy)
                 energy_resp = self.client.scroll(
-                    collection_name=self.AUDIO_EVENTS_COLLECTION,
+                    collection_name=AUDIO_EVENTS_COLLECTION,
                     scroll_filter=models.Filter(
                         must=energy_conditions,
                         should=[
@@ -969,7 +979,7 @@ class SearchRepository:
         known_names = set()
         try:
             resp = self.client.scroll(
-                collection_name=self.FACES_COLLECTION,
+                collection_name=FACES_COLLECTION,
                 limit=500,
                 with_payload=["name"],
                 with_vectors=False,
@@ -1013,7 +1023,7 @@ class SearchRepository:
 
         try:
             resp, _ = self.client.scroll(
-                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                collection_name=AUDIO_EVENTS_COLLECTION,
                 scroll_filter=models.Filter(must=conditions),
                 limit=limit,
             )
@@ -1087,7 +1097,7 @@ class SearchRepository:
             )
 
             resp = self.client.query_points(
-                collection_name=self.AUDIO_EVENTS_COLLECTION,
+                collection_name=AUDIO_EVENTS_COLLECTION,
                 query=query_vec,
                 limit=limit,
                 score_threshold=score_threshold,
@@ -1377,7 +1387,7 @@ class SearchRepository:
         query_vector = (await self.encode_texts(query, is_query=True))[0]
 
         vector_results = self.client.query_points(
-            collection_name=self.MEDIA_COLLECTION,
+            collection_name=MEDIA_COLLECTION,
             query=query_vector,
             limit=limit * 3,
             query_filter=combined_filter,

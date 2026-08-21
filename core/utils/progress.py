@@ -72,6 +72,13 @@ class ProgressTracker:
                 setattr(job, k, v)
             self._broadcast_sync({"type": "job_progress", "job": job.__dict__})
         
+    def update_granular(self, job_id: str, **kwargs):
+        job = self._live_jobs.get(job_id)
+        if job:
+            for k, v in kwargs.items():
+                setattr(job, k, v)
+            self._broadcast_sync({"type": "job_granular_update", "job_id": job_id, **kwargs})
+        
     def fail(self, job_id: str, error: str):
         job = self._live_jobs.get(job_id)
         if job:
@@ -88,20 +95,20 @@ class ProgressTracker:
             self._broadcast_sync({"type": "job_completed", "job": job.__dict__})
 
     @asynccontextmanager
-    async def stage(self, job_id: str, stage_name: str, **kwargs) -> AsyncGenerator[None, None]:
-        self.stage_start(job_id, stage_name)
+    async def stage(self, job_id: str, stage_name: str, message: str = "", **kwargs) -> AsyncGenerator[None, None]:
+        self.stage_start(job_id, stage_name, message)
         try:
             yield
-            self.stage_complete(job_id, stage_name)
+            self.stage_complete(job_id, stage_name, message)
         except Exception as e:
             self.fail(job_id, str(e))
             raise
 
-    def stage_start(self, job_id: str, stage_name: str):
+    def stage_start(self, job_id: str, stage_name: str, message: str = ""):
         job = self._live_jobs.get(job_id)
         if job:
             job.current_stage = stage_name
-            self._broadcast_sync({"type": "stage_start", "job_id": job_id, "stage": stage_name})
+            self._broadcast_sync({"type": "stage_start", "job_id": job_id, "stage": stage_name, "message": message})
 
     def stage_complete(self, job_id: str, stage_name: str, message: str = ""):
         job = self._live_jobs.get(job_id)
@@ -188,12 +195,36 @@ class ProgressTracker:
             await q.put(data)
 
     async def listen(self):
-        q = asyncio.Queue()
-        self._subscribers.append(q)
+        q = self.subscribe()
         try:
             while True:
                 yield await q.get()
         finally:
+            self.unsubscribe(q)
+
+    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
+        q = asyncio.Queue()
+        self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue[dict[str, Any]]):
+        if q in self._subscribers:
             self._subscribers.remove(q)
+
+    async def event_stream(self, last_event_id: int | None = None):
+        import json
+        
+        q = self.subscribe()
+        heartbeat_interval = 15  # seconds
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=heartbeat_interval)
+                    event_type = event.get("type", "message")
+                    yield {"event": event_type, "data": json.dumps(event, default=str)}
+                except asyncio.TimeoutError:
+                    yield {"event": "heartbeat", "data": ""}
+        finally:
+            self.unsubscribe(q)
 
 progress_tracker = ProgressTracker()

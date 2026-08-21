@@ -18,6 +18,17 @@ from core.domain.values import Timestamp, VideoPath
 from core.storage.filters import build_filter, media_path_filter
 from core.storage.qdrant_utils import sanitize_numpy_types
 from core.utils.logger import log
+from core.storage.constants import (
+    MASKLETS_COLLECTION,
+    MEDIA_COLLECTION,
+    MEDIA_SEGMENTS_COLLECTION,
+    MEDIA_VECTOR_SIZE,
+    SCENELETS_COLLECTION,
+    SCENES_COLLECTION,
+    TEXT_DIM,
+    VOICE_COLLECTION
+)
+
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
@@ -26,7 +37,8 @@ if TYPE_CHECKING:
 class SceneRepository:
     """Scene detection, captioning, masklet tracking, and scenelet operations."""
 
-    client: QdrantClient
+    def __init__(self, client: QdrantClient):
+        self.client = client
 
     async def search_scenelets(
         self,
@@ -84,7 +96,7 @@ class SceneRepository:
         try:
             # FIX: Use query_points instead of search (deprecated/wrong method name for Client)
             resp = self.client.query_points(
-                collection_name=self.MEDIA_COLLECTION,
+                collection_name=MEDIA_COLLECTION,
                 query=query_vector,
                 limit=raw_limit,
                 query_filter=models.Filter(must=filters) if filters else None,
@@ -235,11 +247,11 @@ class SceneRepository:
         final_payload = sanitize_numpy_types(final_payload)
 
         # Use provided embedding or dummy fallback (not ideal for search)
-        vector = embedding if embedding else [0.0] * self.MEDIA_VECTOR_SIZE
+        vector = embedding if embedding else [0.0] * MEDIA_VECTOR_SIZE
 
         try:
             self.client.upsert(
-                collection_name=self.MASKLETS_COLLECTION,
+                collection_name=MASKLETS_COLLECTION,
                 points=[
                     models.PointStruct(
                         id=point_id,
@@ -292,7 +304,7 @@ class SceneRepository:
         try:
             if query_vector:
                 results = self.client.search(
-                    collection_name=self.MASKLETS_COLLECTION,
+                    collection_name=MASKLETS_COLLECTION,
                     query_vector=query_vector,
                     query_filter=query_filter,
                     limit=limit,
@@ -302,7 +314,7 @@ class SceneRepository:
             else:
                 # Fallback to scroll if no vector provided (Exact Concept lookup)
                 resp, _ = self.client.scroll(
-                    collection_name=self.MASKLETS_COLLECTION,
+                    collection_name=MASKLETS_COLLECTION,
                     scroll_filter=query_filter,
                     limit=limit,
                     with_payload=True,
@@ -360,7 +372,7 @@ class SceneRepository:
                 point_id = m["id"]
                 # Qdrant set_payload allows partial updates
                 self.client.set_payload(
-                    collection_name=self.MASKLETS_COLLECTION,
+                    collection_name=MASKLETS_COLLECTION,
                     payload={"concept": new_concept},
                     points=[point_id],
                 )
@@ -392,7 +404,7 @@ class SceneRepository:
         try:
             # We use set_payload to update specific fields without rewriting the whole point
             self.client.set_payload(
-                collection_name=self.MASKLETS_COLLECTION,
+                collection_name=MASKLETS_COLLECTION,
                 payload=updates,
                 points=[masklet_id],
             )
@@ -441,7 +453,7 @@ class SceneRepository:
 
         try:
             results = self.client.scroll(
-                collection_name=self.MASKLETS_COLLECTION,
+                collection_name=MASKLETS_COLLECTION,
                 scroll_filter=models.Filter(
                     must=cast(list[models.Condition], must_filters)
                 ),
@@ -524,17 +536,17 @@ class SceneRepository:
         if visual_text:
             visual_vec = (await self.encode_texts(visual_text))[0]
         else:
-            visual_vec = _safe_fill(self.TEXT_DIM)
+            visual_vec = _safe_fill(TEXT_DIM)
 
         if motion_text:
             motion_vec = (await self.encode_texts(motion_text))[0]
         else:
-            motion_vec = _safe_fill(self.TEXT_DIM)
+            motion_vec = _safe_fill(TEXT_DIM)
 
         if dialogue_text:
             dialogue_vec = (await self.encode_texts(dialogue_text))[0]
         else:
-            dialogue_vec = _safe_fill(self.TEXT_DIM)
+            dialogue_vec = _safe_fill(TEXT_DIM)
 
         # Visual features (actual visual embedding from CLIP/SigLIP)
         visual_features_dim = getattr(settings, "visual_features_dim", 768)
@@ -603,7 +615,7 @@ class SceneRepository:
         }
 
         self.client.upsert(
-            collection_name=self.SCENES_COLLECTION,
+            collection_name=SCENES_COLLECTION,
             points=[
                 models.PointStruct(
                     id=scene_id,
@@ -634,9 +646,9 @@ class SceneRepository:
     ) -> None:
         """Dynamically link leaf nodes (Frames, Audio, Transcripts) to their parent scene in the DB Tree."""
         collections = [
-            self.MEDIA_COLLECTION,
-            self.VOICE_COLLECTION,
-            self.MEDIA_SEGMENTS_COLLECTION,
+            MEDIA_COLLECTION,
+            VOICE_COLLECTION,
+            MEDIA_SEGMENTS_COLLECTION,
         ]
         for collection in collections:
             try:
@@ -647,7 +659,7 @@ class SceneRepository:
                         must=[
                             models.FieldCondition(
                                 key="media_path"
-                                if collection != self.MEDIA_COLLECTION
+                                if collection != MEDIA_COLLECTION
                                 else "video_path",
                                 match=models.MatchValue(value=media_path),
                             )
@@ -717,7 +729,7 @@ class SceneRepository:
             full_payload.update(payload)
 
         self.client.upsert(
-            collection_name=self.SCENELETS_COLLECTION,
+            collection_name=SCENELETS_COLLECTION,
             points=[
                 models.PointStruct(
                     id=scenelet_id,
@@ -1025,7 +1037,7 @@ class SceneRepository:
                             )
 
                     resp = self.client.query_points(
-                        collection_name=self.SCENES_COLLECTION,
+                        collection_name=SCENES_COLLECTION,
                         query=vec_for_search,
                         using=vector_name,
                         limit=limit,
@@ -1076,7 +1088,7 @@ class SceneRepository:
                     log(f"Skipping {search_mode} search: dimension mismatch (expected {visual_features_dim}, got {len(vec_for_search)})")
                 else:
                     resp = self.client.query_points(
-                        collection_name=self.SCENES_COLLECTION,
+                        collection_name=SCENES_COLLECTION,
                         query=vec_for_search,
                     using=search_mode,
                     limit=limit,
@@ -1169,7 +1181,7 @@ class SceneRepository:
 
         try:
             results = self.client.search(
-                collection_name=self.SCENES_COLLECTION,
+                collection_name=SCENES_COLLECTION,
                 query_vector=models.NamedVector(
                     name="visual_features",
                     vector=query_vector,
@@ -1266,7 +1278,7 @@ class SceneRepository:
                 )
 
                 lb_results = self.client.search(
-                    collection_name=self.SCENES_COLLECTION,
+                    collection_name=SCENES_COLLECTION,
                     query_vector=models.NamedVector(
                         name="languagebind",
                         vector=query_embedding,
@@ -1308,7 +1320,7 @@ class SceneRepository:
                 )
 
                 iv_results = self.client.search(
-                    collection_name=self.SCENES_COLLECTION,
+                    collection_name=SCENES_COLLECTION,
                     query_vector=models.NamedVector(
                         name="internvideo",
                         vector=query_embedding,
@@ -1363,7 +1375,7 @@ class SceneRepository:
         """
         try:
             points = self.client.retrieve(
-                collection_name=self.SCENES_COLLECTION,
+                collection_name=SCENES_COLLECTION,
                 ids=[scene_id],
                 with_payload=True,
             )
@@ -1389,7 +1401,7 @@ class SceneRepository:
         """
         try:
             resp = self.client.scroll(
-                collection_name=self.SCENES_COLLECTION,
+                collection_name=SCENES_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(
@@ -1434,7 +1446,7 @@ class SceneRepository:
         """Retrieve all masklets (SAM tracks) for a specific video."""
         try:
             resp = self.client.scroll(
-                collection_name=self.MASKLETS_COLLECTION,
+                collection_name=MASKLETS_COLLECTION,
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(

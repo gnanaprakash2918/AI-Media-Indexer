@@ -38,7 +38,6 @@ class VoiceStage:
         Args:
             path: Path to the media file.
         """
-        await RESOURCE_ARBITER.throttle_if_needed("compute")
         voice = VoiceProcessor()
 
         try:

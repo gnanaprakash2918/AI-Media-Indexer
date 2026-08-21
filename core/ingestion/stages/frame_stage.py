@@ -82,7 +82,6 @@ class FrameStage:
         vision_task_type = (
             "network" if settings.llm_provider == "gemini" else "compute"
         )
-        await RESOURCE_ARBITER.throttle_if_needed(vision_task_type)
 
         # Use the configured LLM provider from settings
         from core.processing.extractor import FrameExtractor
@@ -359,8 +358,6 @@ class FrameStage:
                 if frame_count % cleanup_interval == 0:
                     self._cleanup_memory(context=f"frame_{frame_count}")
 
-                    # Thermal throttling - pause if system overheating
-                    await RESOURCE_ARBITER.throttle_if_needed("compute")
 
                 # CHECKPOINT: Save progress every 50 frames for crash recovery
                 checkpoint_interval = 50
