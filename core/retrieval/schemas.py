@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+from core.domain.schemas import ParsedQuery
 
 
 class QueryModality(str, Enum):
@@ -162,7 +163,7 @@ class VideoRAGResponse(BaseModel):
     """
 
     # The structured query used
-    query: StructuredQuery
+    query: ParsedQuery
 
     # Retrieved results
     results: list[SearchResultItem] = Field(default_factory=list)

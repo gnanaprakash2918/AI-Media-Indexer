@@ -438,6 +438,10 @@ class ParsedQuery(BaseModel):
     audio: list[dict[str, Any]] = Field(default_factory=list)
     spatial: list[dict[str, Any]] = Field(default_factory=list)
     exclusions: list[dict[str, Any]] = Field(default_factory=list)
+    # Temporal constraints
+    temporal_cues: list[str] = Field(default_factory=list)
+    temporal_constraints: list[Any] = Field(default_factory=list)
+
 
     def to_search_text(self) -> str:
         """Flatten all extracted keywords into a single search string."""
