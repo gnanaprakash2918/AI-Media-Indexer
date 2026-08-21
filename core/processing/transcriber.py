@@ -60,6 +60,15 @@ def get_transcriber(language: str | None = None):
     return AudioTranscriber()
 
 
+
+import threading
+class _TranscriberState:
+    lock = threading.Lock()
+    model = None
+    batched = None
+    size = None
+    fallback_attempted = False
+
 class AudioTranscriber:
     """Orchestrates the audio-to-text transcription lifecycle.
 
@@ -68,11 +77,7 @@ class AudioTranscriber:
     fallback to smaller models on memory-constrained systems.
     """
 
-    # Class-level shared model state (singleton pattern for VRAM efficiency)
-    _SHARED_MODEL: WhisperModel | None = None
-    _SHARED_BATCHED: BatchedInferencePipeline | None = None
-    _SHARED_SIZE: str | None = None
-    _FALLBACK_ATTEMPTED: bool = False
+    # State moved to module-level _TranscriberState
 
     # Smaller fallback models for memory-constrained systems (pre-converted, no conversion needed)
     LOW_MEMORY_MODELS = [
@@ -117,7 +122,7 @@ class AudioTranscriber:
 
         # Register with Resource Arbiter for VRAM management
         try:
-            from core.utils.resource_arbiter import (
+            from core.utils.hardware import (
                 RESOURCE_ARBITER,
                 safe_cleanup_vram,
             )
@@ -148,7 +153,7 @@ class AudioTranscriber:
         if (
             self._model is None
             and self._batched_model is None
-            and AudioTranscriber._SHARED_MODEL is None
+            and _TranscriberState.model is None
         ):
             return  # Nothing to unload
 
@@ -160,24 +165,24 @@ class AudioTranscriber:
             self._batched_model = None
 
         # Clear shared state
-        if AudioTranscriber._SHARED_BATCHED is not None:
-            del AudioTranscriber._SHARED_BATCHED
-            AudioTranscriber._SHARED_BATCHED = None
+        if _TranscriberState.batched is not None:
+            del _TranscriberState.batched
+            _TranscriberState.batched = None
 
         if self._model is not None:
             del self._model
             self._model = None
             self._current_model_size = None
 
-        if AudioTranscriber._SHARED_MODEL is not None:
-            del AudioTranscriber._SHARED_MODEL
-            AudioTranscriber._SHARED_MODEL = None
-            AudioTranscriber._SHARED_SIZE = None
+        if _TranscriberState.model is not None:
+            del _TranscriberState.model
+            _TranscriberState.model = None
+            _TranscriberState.size = None
 
         # 2. Force Python's Garbage Collector to run
 
         # 3. Force PyTorch to release cached VRAM
-        from core.utils.resource_arbiter import safe_cleanup_vram
+        from core.utils.hardware import safe_cleanup_vram
 
         safe_cleanup_vram()
 
@@ -534,8 +539,8 @@ class AudioTranscriber:
     def _load_model(self, model_key: str) -> None:
         # Check if already loaded with correct size
         if (
-            AudioTranscriber._SHARED_MODEL is not None
-            and model_key == AudioTranscriber._SHARED_SIZE
+            _TranscriberState.model is not None
+            and model_key == _TranscriberState.size
         ):
             log_verbose(
                 f"[Transcriber] Model {model_key} already loaded, skipping init"
@@ -544,9 +549,9 @@ class AudioTranscriber:
 
         # Unload if different size loaded?
         # Yes, we only support one model loaded at a time for Whisper
-        if AudioTranscriber._SHARED_MODEL is not None:
+        if _TranscriberState.model is not None:
             log_verbose(
-                f"[Transcriber] Unloading existing model {AudioTranscriber._SHARED_SIZE} for new {model_key}"
+                f"[Transcriber] Unloading existing model {_TranscriberState.size} for new {model_key}"
             )
             self.unload_model()
 
@@ -583,7 +588,7 @@ class AudioTranscriber:
             log_verbose(
                 f"[Transcriber] Initializing WhisperModel with threads={cpu_threads}"
             )
-            AudioTranscriber._SHARED_MODEL = WhisperModel(
+            _TranscriberState.model = WhisperModel(
                 str(final_model_path),
                 device=self.device,
                 compute_type=self.compute_type,
@@ -591,10 +596,10 @@ class AudioTranscriber:
                 cpu_threads=cpu_threads,
                 num_workers=1,  # Single worker to minimize memory
             )
-            AudioTranscriber._SHARED_BATCHED = BatchedInferencePipeline(
-                model=AudioTranscriber._SHARED_MODEL
+            _TranscriberState.batched = BatchedInferencePipeline(
+                model=_TranscriberState.model
             )
-            AudioTranscriber._SHARED_SIZE = model_key
+            _TranscriberState.size = model_key
             log(f"[SUCCESS] Loaded {model_key} on {self.device}")
             log_verbose("[Transcriber] Model loaded successfully")
 
@@ -625,7 +630,7 @@ class AudioTranscriber:
                     )
 
                     # Retry initialization with explicit path
-                    AudioTranscriber._SHARED_MODEL = WhisperModel(
+                    _TranscriberState.model = WhisperModel(
                         match_path,
                         device=self.device,
                         compute_type=self.compute_type,
@@ -633,10 +638,10 @@ class AudioTranscriber:
                         cpu_threads=cpu_threads,
                         num_workers=1,
                     )
-                    AudioTranscriber._SHARED_BATCHED = BatchedInferencePipeline(
-                        model=AudioTranscriber._SHARED_MODEL
+                    _TranscriberState.batched = BatchedInferencePipeline(
+                        model=_TranscriberState.model
                     )
-                    AudioTranscriber._SHARED_SIZE = model_key
+                    _TranscriberState.size = model_key
                     log(
                         f"[SUCCESS] Self-healing successful. Loaded {model_key}"
                     )
@@ -659,8 +664,8 @@ class AudioTranscriber:
                 for x in ["memory", "mkl_malloc", "allocation", "oom"]
             ):
                 log(f"[WARN] Memory error loading {model_key}: {e}")
-                if not AudioTranscriber._FALLBACK_ATTEMPTED:
-                    AudioTranscriber._FALLBACK_ATTEMPTED = True
+                if not _TranscriberState.fallback_attempted:
+                    _TranscriberState.fallback_attempted = True
                     log("[INFO] Attempting fallback to smaller model...")
                     # Try smaller models
                     for fallback_model in self.LOW_MEMORY_MODELS:
@@ -676,7 +681,7 @@ class AudioTranscriber:
                             fallback_path = self._convert_and_cache_model(
                                 fallback_model
                             )
-                            AudioTranscriber._SHARED_MODEL = WhisperModel(
+                            _TranscriberState.model = WhisperModel(
                                 str(fallback_path),
                                 device="cpu",  # Force CPU for stability
                                 compute_type="int8",  # Use int8 for minimal memory
@@ -684,12 +689,12 @@ class AudioTranscriber:
                                 cpu_threads=2,
                                 num_workers=1,
                             )
-                            AudioTranscriber._SHARED_BATCHED = (
+                            _TranscriberState.batched = (
                                 BatchedInferencePipeline(
-                                    model=AudioTranscriber._SHARED_MODEL
+                                    model=_TranscriberState.model
                                 )
                             )
-                            AudioTranscriber._SHARED_SIZE = fallback_model
+                            _TranscriberState.size = fallback_model
                             log(
                                 f"[SUCCESS] Loaded fallback model {fallback_model} on CPU"
                             )
@@ -889,12 +894,12 @@ class AudioTranscriber:
                 import io  # Import locally for thread safety if needed
 
                 # Check shared model state
-                if AudioTranscriber._SHARED_BATCHED is None or (
-                    model_to_use != AudioTranscriber._SHARED_SIZE
+                if _TranscriberState.batched is None or (
+                    model_to_use != _TranscriberState.size
                 ):
                     self._load_model(model_to_use)
 
-                if AudioTranscriber._SHARED_BATCHED is None:
+                if _TranscriberState.batched is None:
                     raise RuntimeError("Model failed to initialize")
 
                 # Prepare input source and display name
@@ -939,7 +944,7 @@ class AudioTranscriber:
                 )  # More permissive for lyrics
 
                 # Run blocking inference in a separate thread
-                segments, info = AudioTranscriber._SHARED_BATCHED.transcribe(
+                segments, info = _TranscriberState.batched.transcribe(
                     audio_source,
                     batch_size=settings.batch_size,
                     language=effective_lang,
@@ -1081,11 +1086,11 @@ class AudioTranscriber:
 
         try:
             # Ensure model is loaded (handles download/conversion)
-            if model_id != AudioTranscriber._SHARED_SIZE:
+            if model_id != _TranscriberState.size:
                 self._load_model(model_id)
 
             # Use the underlying model directly for detection (no batching needed)
-            if AudioTranscriber._SHARED_MODEL is None:
+            if _TranscriberState.model is None:
                 raise RuntimeError("Model not initialized")
 
             # Extract first 30s as WAV to avoid container/codec issues (Opus, etc)
@@ -1110,7 +1115,7 @@ class AudioTranscriber:
             else:
                 input_file = str(wav_path)
 
-            _, info = AudioTranscriber._SHARED_MODEL.transcribe(
+            _, info = _TranscriberState.model.transcribe(
                 input_file,
                 task="transcribe",  # Changed from 'detect_language'
                 beam_size=5,
