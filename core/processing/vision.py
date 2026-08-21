@@ -54,7 +54,7 @@ class VisionAnalyzer:
 
         # Register with Resource Arbiter
         try:
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             # Register with a default VRAM estimate (e.g. 6GB for a 7B model)
             RESOURCE_ARBITER.register_model("vision_llm", self.unload_model)
@@ -213,7 +213,7 @@ IMPORTANT RULES:
         # Retry logic for robustness against Ollama timeouts/transient errors
         max_retries = 3
 
-        from core.utils.resource_arbiter import RESOURCE_ARBITER
+        from core.utils.hardware import RESOURCE_ARBITER
 
         for attempt in range(max_retries):
             try:

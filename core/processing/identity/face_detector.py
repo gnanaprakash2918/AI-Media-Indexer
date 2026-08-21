@@ -31,7 +31,7 @@ from core.domain.schemas import DetectedFace
 from core.utils.hardware import get_available_ram, get_available_vram
 from core.utils.logger import log
 from core.utils.observe import observe
-from core.utils.resource_arbiter import GPU_SEMAPHORE
+from core.utils.hardware import GPU_SEMAPHORE
 
 # High-end threshold: 32GB+ RAM or 8GB+ VRAM
 _HIGH_END_RAM_GB: Final[float] = 32.0
@@ -356,7 +356,7 @@ class FaceDetector:
             self._insightface_app = app
 
             # Register cleanup for emergency unloading
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             RESOURCE_ARBITER.register_model("insightface", self.unload_gpu)
 
@@ -517,7 +517,7 @@ class FaceDetector:
         results = []
 
         # Resource Arbiter manages VRAM + Locking
-        from core.utils.resource_arbiter import RESOURCE_ARBITER
+        from core.utils.hardware import RESOURCE_ARBITER
 
         # Process in chunks
         for i in range(0, len(images), self.batch_size):
@@ -594,7 +594,7 @@ class FaceDetector:
         assert self._insightface_app is not None, "InsightFace not initialized"
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        from core.utils.resource_arbiter import RESOURCE_ARBITER
+        from core.utils.hardware import RESOURCE_ARBITER
 
         # Use Arbiter to track VRAM
         async with RESOURCE_ARBITER.acquire("insightface", vram_gb=1.5):

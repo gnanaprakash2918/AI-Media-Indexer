@@ -132,7 +132,7 @@ class TextEncoder:
             elif "bge-m3" in model_lower:
                 vram_gb = 2.0
 
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             try:
                 import asyncio

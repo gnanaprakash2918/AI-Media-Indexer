@@ -114,7 +114,7 @@ class AudioEventDetector:
                 self._device = device
 
                 # Register cleanup for emergency unloading
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                from core.utils.hardware import RESOURCE_ARBITER
 
                 RESOURCE_ARBITER.register_model("clap", self.cleanup)
 
@@ -174,7 +174,7 @@ class AudioEventDetector:
         try:
             import torch
 
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             # CLAP expects 48kHz audio - resample BEFORE acquiring GPU lock
             # to avoid blocking the async event loop
@@ -308,7 +308,7 @@ class AudioEventDetector:
         try:
             import torch
 
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             # CLAP expects 48kHz audio - resample ALL chunks BEFORE acquiring GPU
             target_sr = 48000
@@ -510,7 +510,7 @@ class AudioEventDetector:
         try:
             import torch
 
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=0.5):
                 device = self._device or "cpu"
@@ -557,7 +557,7 @@ class AudioEventDetector:
             import librosa
             import torch
 
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             # AST High-Res Audio (16kHz)
             target_sr = 16000
@@ -642,7 +642,7 @@ class AudioEventDetector:
             import librosa
             import torch
 
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             target_sr = 48000
             resampled_list = []
@@ -726,7 +726,7 @@ class AudioEventDetector:
         except ImportError:
             pass
 
-        from core.utils.resource_arbiter import safe_cleanup_vram
+        from core.utils.hardware import safe_cleanup_vram
 
         safe_cleanup_vram()
 

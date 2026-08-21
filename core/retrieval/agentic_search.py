@@ -932,7 +932,7 @@ class SearchAgent:
 
                 from sentence_transformers import CrossEncoder
 
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                from core.utils.hardware import RESOURCE_ARBITER
 
                 reranker_model_id = "BAAI/bge-reranker-v2-m3"
 

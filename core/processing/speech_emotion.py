@@ -44,7 +44,7 @@ class SpeechEmotionAnalyzer:
                 return True
 
             try:
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                from core.utils.hardware import RESOURCE_ARBITER
 
                 # Wav2Vec2 fits in 1GB easily
                 if not await RESOURCE_ARBITER.ensure_loaded(

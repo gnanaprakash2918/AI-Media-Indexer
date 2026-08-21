@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from core.utils.resource_arbiter import GPU_SEMAPHORE
+from core.utils.hardware import GPU_SEMAPHORE
 
 log = logging.getLogger(__name__)
 

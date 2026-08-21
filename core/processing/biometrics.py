@@ -14,7 +14,7 @@ except ImportError:
 import asyncio
 
 from core.utils.logger import log
-from core.utils.resource_arbiter import GPU_SEMAPHORE
+from core.utils.hardware import GPU_SEMAPHORE
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from core.processing.transcriber import AudioTranscriber
 from core.utils.logger import log
-from core.utils.resource import resource_manager
+from core.utils.hardware import RESOURCE_ARBITER
 
 
 async def detect_audio_language(path: Path) -> str:
@@ -24,7 +24,7 @@ async def detect_audio_language(path: Path) -> str:
     Returns:
         ISO 639-1 language code (e.g., 'en', 'ta', 'hi').
     """
-    await resource_manager.throttle_if_needed("compute")
+    await RESOURCE_ARBITER.throttle_if_needed("compute")
 
     try:
         return await asyncio.to_thread(_run_detection_sync, path)
@@ -54,7 +54,7 @@ async def detect_audio_language_with_confidence(
     Returns:
         Tuple of (language_code, confidence_score).
     """
-    await resource_manager.throttle_if_needed("compute")
+    await RESOURCE_ARBITER.throttle_if_needed("compute")
 
     wav_path = None
     try:

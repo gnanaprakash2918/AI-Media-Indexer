@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from core.retrieval.hybrid import HybridSearcher
     from core.storage.keyword_index import KeywordIndex
     from core.utils.cancellation import CancellationToken
-    from core.utils.resource_arbiter import ResourceArbiter
+    from core.utils.hardware import ResourceArbiter
 
 log = get_logger(__name__)
 
@@ -41,7 +41,7 @@ log = get_logger(__name__)
 
 def get_resource_arbiter() -> ResourceArbiter:
     """Get the global ResourceArbiter for VRAM management."""
-    from core.utils.resource_arbiter import RESOURCE_ARBITER
+    from core.utils.hardware import RESOURCE_ARBITER
 
     return RESOURCE_ARBITER
 

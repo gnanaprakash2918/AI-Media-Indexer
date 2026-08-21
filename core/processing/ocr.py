@@ -497,7 +497,7 @@ class EasyOCRProcessor:
                 self.reader = await asyncio.to_thread(_load)
 
                 # Register with Arbiter for OOM protection (auto-unload)
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                from core.utils.hardware import RESOURCE_ARBITER
 
                 RESOURCE_ARBITER.register_model("easyocr", self.cleanup)
 
@@ -524,7 +524,7 @@ class EasyOCRProcessor:
             return {"text": "", "boxes": [], "confidence": 0.0}
 
         # Acquire VRAM budget (EasyOCR ~1.5GB)
-        from core.utils.resource_arbiter import RESOURCE_ARBITER
+        from core.utils.hardware import RESOURCE_ARBITER
 
         async with RESOURCE_ARBITER.acquire("easyocr", vram_gb=1.5):
             # Double-check reader exists (Arbiter might have unloaded it in extreme cases,

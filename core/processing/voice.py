@@ -57,7 +57,7 @@ import numpy as np
 from config import settings  # noqa: E402
 from core.domain.schemas import SpeakerSegment  # noqa: E402
 from core.utils.logger import get_logger, log_verbose  # noqa: E402
-from core.utils.resource_arbiter import (  # noqa: E402
+from core.utils.hardware import (  # noqa: E402
     GPU_SEMAPHORE,
     safe_cleanup_vram,
 )

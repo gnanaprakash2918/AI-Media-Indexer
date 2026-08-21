@@ -77,7 +77,7 @@ class ObjectDetector:
                 return True
 
             try:
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                from core.utils.hardware import RESOURCE_ARBITER
 
                 # Persistent load: Allocate VRAM and register cleanup
                 if not await RESOURCE_ARBITER.ensure_loaded(
@@ -136,7 +136,7 @@ class ObjectDetector:
             return []
 
         try:
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("yolo_world", vram_gb=1.0):
                 model = self.model
@@ -278,7 +278,7 @@ class GroundingDINODetector:
                 return True
 
             try:
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                from core.utils.hardware import RESOURCE_ARBITER
 
                 # Persistent load
                 if not await RESOURCE_ARBITER.ensure_loaded(
@@ -343,7 +343,7 @@ class GroundingDINODetector:
             import torch
             from PIL import Image
 
-            from core.utils.resource_arbiter import RESOURCE_ARBITER
+            from core.utils.hardware import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("grounding_dino", vram_gb=2.0):
                 # Convert to PIL Image

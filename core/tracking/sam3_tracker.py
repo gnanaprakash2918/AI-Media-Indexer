@@ -21,7 +21,7 @@ from PIL import Image
 from config import settings
 from core.processing.visual_encoder import get_default_visual_encoder
 from core.utils.logger import get_logger
-from core.utils.resource_arbiter import GPU_SEMAPHORE, RESOURCE_ARBITER
+from core.utils.hardware import GPU_SEMAPHORE, RESOURCE_ARBITER
 
 log = get_logger(__name__)
 

@@ -17,7 +17,7 @@ import numpy as np
 
 from config import settings
 from core.utils.logger import get_logger
-from core.utils.resource_arbiter import GPU_SEMAPHORE
+from core.utils.hardware import GPU_SEMAPHORE
 
 log = get_logger(__name__)
 
@@ -89,7 +89,7 @@ class LanguageBindEncoder:
 
                 # Acquire resources first
                 # Acquire resources first
-                from core.utils.resource_arbiter import RESOURCE_ARBITER
+                from core.utils.hardware import RESOURCE_ARBITER
 
                 # Reserve 2GB for Video Encoder - Persistent
                 if not await RESOURCE_ARBITER.ensure_loaded(

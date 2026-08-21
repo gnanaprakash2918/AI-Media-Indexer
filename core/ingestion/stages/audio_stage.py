@@ -14,8 +14,8 @@ from config import settings
 from core.processing.text_utils import parse_srt
 from core.processing.transcriber import AudioTranscriber
 from core.storage.db import VectorDB
-from core.utils.resource import resource_manager
-from core.utils.resource_arbiter import RESOURCE_ARBITER
+from core.utils.hardware import RESOURCE_ARBITER
+from core.utils.hardware import RESOURCE_ARBITER
 
 if TYPE_CHECKING:
     pass
@@ -55,7 +55,7 @@ class AudioStage:
 
         # Check for embedded subtitles
         if not audio_segments:
-            await resource_manager.throttle_if_needed("compute")
+            await RESOURCE_ARBITER.throttle_if_needed("compute")
             temp_srt = path.with_suffix(".embedded.srt")
             try:
                 with AudioTranscriber() as transcriber:
@@ -75,7 +75,7 @@ class AudioStage:
 
         # Run ASR if no existing subtitles
         if not audio_segments:
-            await resource_manager.throttle_if_needed("compute")
+            await RESOURCE_ARBITER.throttle_if_needed("compute")
 
             # Content Classification (speech/music/silence detection)
             use_lyrics_mode = False

@@ -15,7 +15,7 @@ from config import settings
 from core.processing.voice import VoiceProcessor
 from core.storage.db import VectorDB
 from core.utils.logger import logger
-from core.utils.resource import resource_manager
+from core.utils.hardware import RESOURCE_ARBITER
 
 if TYPE_CHECKING:
     pass
@@ -38,7 +38,7 @@ class VoiceStage:
         Args:
             path: Path to the media file.
         """
-        await resource_manager.throttle_if_needed("compute")
+        await RESOURCE_ARBITER.throttle_if_needed("compute")
         voice = VoiceProcessor()
 
         try:
