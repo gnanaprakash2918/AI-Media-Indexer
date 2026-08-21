@@ -71,16 +71,10 @@ class IngestionSettings:
     clap_window_seconds: float = Field(default=5.0)
     clap_stride_seconds: float = Field(default=2.5)
     clap_detection_threshold: float = Field(default=0.25)
-    ast_detection_threshold: float = Field(default=0.15)
     clap_model_id: str = Field(default="laion/clap-htsat-unfused")
-    ast_model_id: str = Field(default="mit/ast-finetuned-audioset-10-10-0.4593")
-
     auto_detect_language: bool = Field(default=True)
     
-    # SAM3
-    enable_sam3_tracking: bool = Field(default=True)
-    sam_checkpoint: str = Field(default="sam3.pt")
-    sam_config: str = Field(default="config.json")
+
     
     summary_scene_duration: int = Field(default=300)
     auto_summarize_on_ingest: bool = Field(default=False)

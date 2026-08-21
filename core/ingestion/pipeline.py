@@ -121,12 +121,7 @@ class IngestionPipeline:
             asyncio.Lock()
         )  # Prevents race during parallel face clustering
 
-        # Deep Video Understanding (SAM 3)
-        if settings.enable_sam3_tracking:
-            from core.tracking.sam3_tracker import SAM3Tracker
-            self.sam3_tracker = SAM3Tracker()
-        else:
-            self.sam3_tracker = None
+
         self.frame_sampler_every_n = getattr(settings, "frame_sample_every", 5)
 
         # Visual encoder for CLIP/SigLIP embeddings (lazy-loaded)
@@ -728,13 +723,6 @@ class IngestionPipeline:
             frames = self.db.get_frames_by_video(media_path)
             audio_segments = self._get_audio_segments_for_video(media_path)
 
-            # Deep Video Understanding: SAM 3 Concept Tracking
-            # Only run if enabled and frames exist
-            if self.sam3_tracker and frames:
-                try:
-                    self._process_video_masklets(path, frames)
-                except Exception as e:
-                    logger.warning(f"SAM3 Tracking failed: {e}")
 
 
 
@@ -864,128 +852,3 @@ class IngestionPipeline:
             logger.warning(f"Failed to generate main thumbnail: {e}")
             return None
 
-    def _process_video_masklets(self, path: Path, frames: list[dict]) -> None:
-        """Executes Segment-Anything-2 (SAM 3) tracking for top visual concepts.
-
-        Identifies recurring or unique entities across frames and generates
-        spatio-temporal tracking data (masklets) for precise retrieval.
-
-        Args:
-            path: Path to the media file.
-            frames: List of already analyzed frame metadata.
-        """
-        # 1. Extract potential concepts from frame entities/descriptions
-        concept_counts = {}
-        for f in frames:
-            # Entities
-            for e in f.get("entities", []):
-                concept_counts[e] = concept_counts.get(e, 0) + 1
-            # Keywords from action (simple heuristic)
-            action = f.get("action", "")
-            if "holding a" in action:
-                try:
-                    obj = (
-                        action.split("holding a")[1]
-                        .split()[0]
-                        .strip()
-                        .strip(".,")
-                    )
-                    if len(obj) > 2:
-                        concept_counts[obj] = concept_counts.get(obj, 0) + 1
-                except Exception:
-                    pass
-
-        # 2. Select top 5 concepts to track
-        top_concepts = sorted(
-            concept_counts.items(), key=lambda x: x[1], reverse=True
-        )[:5]
-        prompts = [c[0] for c in top_concepts]
-
-        if not prompts:
-            logger.info("No concepts found to track with SAM3.")
-            return
-
-        logger.info(f"SAM3 Tracking Concepts: {prompts}")
-
-        # 3. Run Tracker
-        # Result aggregation: TrackID -> {start, end, max_conf}
-        tracks = {}
-
-        # SAM3 returns iterator of {frame_idx, object_ids, masks}
-        # object_ids maps to the index in 'prompts' list added sequentially?
-        # Actually Sam3Tracker.add_concept_prompt adds one text.
-        # We need to map object_id back to prompt text.
-        # Implementation Detail: Sam3 wrapper doesn't provide easy mapping back yet.
-        # We will iterate prompts and run sequentially or concurrently if supported.
-        # Sam3Tracker.process_video_concepts runs all prompts.
-        # The object IDs returned correspond to sequential addition.
-        # i.e. Prompt 0 -> obj_id 0, Prompt 1 -> obj_id 1 (usually).
-
-        # We assume 1-to-1 for now.
-
-        if self.sam3_tracker:
-            for frame_data in self.sam3_tracker.process_video_concepts(
-                path, prompts
-            ):
-                frame_idx = frame_data["frame_idx"]
-                obj_ids = frame_data["object_ids"]
-
-                for obj_id in obj_ids:
-                    # Get concept name
-                    if obj_id < len(prompts):
-                        concept = prompts[obj_id]
-                    else:
-                        concept = f"object_{obj_id}"
-
-                    track_key = f"{concept}_{obj_id}"
-
-                    if track_key not in tracks:
-                        tracks[track_key] = {
-                            "start": frame_idx,
-                            "end": frame_idx,
-                            "concept": concept,
-                        }
-                    else:
-                        tracks[track_key]["end"] = max(
-                            tracks[track_key]["end"], frame_idx
-                        )
-
-        # 4. Save Masklets to DB
-        fps = (
-            settings.frame_interval
-        )  # Ingestion loop uses frame_interval approx?
-        # Actually frames have timestamps. We can map frame_idx to timestamp roughly.
-        # Or better: pipeline knows fps or duration.
-        # We can map frame_idx to time if we know video FPS.
-        # For now, we estimate based on frame_interval setting if available, or just index.
-        # Ideally we should use CV2 to get FPS of source to map frame_idx -> time.
-
-        # Simpler: Use frame data if we have it? No, SAM3 processes all frames.
-        # We will assume standard 30fps for timestamp estimation if metadata unavailable,
-        # or fetch it.
-
-        try:
-            import cv2
-
-            cap = cv2.VideoCapture(str(path))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            cap.release()
-        except Exception:
-            fps = 30.0
-
-        for _key, data in tracks.items():
-            start_time = data["start"] / fps
-            end_time = data["end"] / fps
-            duration = end_time - start_time
-
-            if duration > 0.5:  # Ignore blips
-                self.db.insert_masklet(
-                    media_path=str(path),
-                    concept=data["concept"],
-                    start_time=start_time,
-                    end_time=end_time,
-                    confidence=0.9,  # SAM3 is usually confident
-                )
-                logger.info(
-                    f"Masklet saved: {data['concept']} ({start_time:.1f}-{end_time:.1f}s)"
-                )
