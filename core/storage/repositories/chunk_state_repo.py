@@ -315,6 +315,51 @@ class ChunkStateRepository:
     # Internal helpers
     # -----------------------------------------------------------------------
 
+
+    async def get_progress_for_media(self, media_id: str) -> dict[str, Any]:
+        """Calculates progress based on chunk states for a given media_id."""
+        async for conn in self._conn():
+            stmt = select(
+                chunk_state_table.c.status,
+                text("COUNT(*)")
+            ).where(
+                chunk_state_table.c.media_id == media_id
+            ).group_by(
+                chunk_state_table.c.status
+            )
+            result = await conn.execute(stmt)
+            counts = {row[0]: row[1] for row in result.fetchall()}
+            
+            total = sum(counts.values())
+            if total == 0:
+                return {"status": "pending", "progress": 0.0, "total_chunks": 0, "completed": 0}
+            
+            completed = counts.get("completed", 0)
+            failed = counts.get("failed", 0)
+            processing = counts.get("processing", 0)
+            
+            progress = (completed / total) * 100.0
+            
+            status = "completed" if completed == total else ("failed" if failed > 0 else ("running" if processing > 0 else "pending"))
+            
+            return {
+                "status": status,
+                "progress": round(progress, 2),
+                "total_chunks": total,
+                "completed_chunks": completed,
+                "failed_chunks": failed,
+                "processing_chunks": processing
+            }
+        return {"status": "pending", "progress": 0.0}
+
+    async def get_all_active_media_ids(self) -> list[str]:
+        """Returns all media_ids that have chunks."""
+        async for conn in self._conn():
+            stmt = select(chunk_state_table.c.media_id).distinct()
+            result = await conn.execute(stmt)
+            return [row[0] for row in result.fetchall()]
+        return []
+
     async def _set_status(
         self,
         chunk_id: str,

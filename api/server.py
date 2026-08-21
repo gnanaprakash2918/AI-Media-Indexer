@@ -128,7 +128,7 @@ except ImportError:
     overlays = None
 logger.debug("Importing config & pipeline...")
 from config import settings  # noqa: E402
-from core.ingestion.jobs import job_manager  # noqa: E402
+
 from core.storage.db import VectorDB
 from core.utils.logger import bind_context, clear_context  # noqa: E402
 from core.utils.model_warmer import warmup_models  # [NEW] Warmer
@@ -164,12 +164,7 @@ async def lifespan(app: FastAPI):
         app.state.db = db
         logger.info("VectorDB initialized")
 
-        # Crash Recovery
-        recovery_stats = job_manager.recover_on_startup(timeout_seconds=60.0)
-        if recovery_stats["paused"] > 0:
-            logger.warning(
-                f"Crash recovery: Marked {recovery_stats['paused']} interrupted jobs as PAUSED"
-            )
+        # Crash recovery now handled by workers pulling from chunk_state_repo.
 
         # Initialize Search Agent (Singleton)
         try:

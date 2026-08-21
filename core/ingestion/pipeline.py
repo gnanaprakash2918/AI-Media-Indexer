@@ -115,7 +115,6 @@ class IngestionPipeline:
         self.faces: FaceTrackerProtocol | None = None
         self.voice: VoiceProcessorProtocol | None = None
 
-        self.graph_builder = None
 
         self._face_clusters: dict[int, list[float]] = {}
         self._face_cluster_lock = (
@@ -374,22 +373,9 @@ class IngestionPipeline:
             self._total_chunks = 1
 
         # RESUME LOGIC: Check checkpoint for crash recovery
-        checkpoint = None
         skip_audio = False
         skip_voice = False
         resume_from_frame = 0
-        if resume:
-            from core.ingestion.jobs import job_manager
-
-            existing_job = job_manager.get_job(job_id)
-            if existing_job and existing_job.checkpoint_data:
-                checkpoint = existing_job.checkpoint_data
-                skip_audio = checkpoint.get("audio_complete", False)
-                skip_voice = checkpoint.get("voice_complete", False)
-                resume_from_frame = checkpoint.get("last_frame", 0)
-                logger.info(
-                    f"Resuming job {job_id}: skip_audio={skip_audio}, skip_voice={skip_voice}, resume_from={resume_from_frame}"
-                )
 
         self._resume_from_frame = resume_from_frame  # Store for _process_frames
 
@@ -750,19 +736,7 @@ class IngestionPipeline:
                 except Exception as e:
                     logger.warning(f"SAM3 Tracking failed: {e}")
 
-                # === GRAPH INGESTION (Masklets / Precision Objects) ===
-                # "Abuse it" - Ensure precise objects are in the Graph
-                try:
-                    full_masklets = self.db.get_masklets_for_media(media_path)
-                    if full_masklets:
-                        self.graph_builder.process_masklets(
-                            media_path, full_masklets
-                        )
-                        logger.info(
-                            f"[Graph] Ingested {len(full_masklets)} masklet nodes."
-                        )
-                except Exception as e:
-                    logger.warning(f"[Graph] Masklet ingestion failed: {e}")
+
 
             # NOTE: Scene processing removed — redundant with _process_scene_captions()
             # which runs TransNet V2, VLM captions, deep research, visual embeddings,

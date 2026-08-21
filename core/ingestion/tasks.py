@@ -6,7 +6,7 @@ from pathlib import Path
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
-from core.ingestion.jobs import JobStatus, job_manager
+
 from core.ingestion.pipeline import IngestionPipeline
 from core.utils.logger import bind_context, clear_context
 
@@ -66,8 +66,6 @@ def ingest_video_task(self, video_path: str, job_id: str):
     except Exception as exc:
         logger.error(f"Ingestion failed: {exc}")
         # Job status 'failed' should be set by pipeline error handling
-        # But if it crashes hard, we might need to set it here.
-        job_manager.update_job(job_id, status=JobStatus.FAILED, error=str(exc))
         raise self.retry(exc=exc, countdown=60, max_retries=3) from exc
     finally:
         clear_context()

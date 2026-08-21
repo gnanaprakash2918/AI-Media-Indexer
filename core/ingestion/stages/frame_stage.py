@@ -26,7 +26,7 @@ from core.processing.vision import VisionAnalyzer
 from core.storage.db import VectorDB
 from core.utils.logger import logger
 from core.utils.progress import progress_tracker
-from core.utils.resource import resource_manager
+from core.utils.hardware import RESOURCE_ARBITER
 
 if TYPE_CHECKING:
     pass
@@ -82,7 +82,7 @@ class FrameStage:
         vision_task_type = (
             "network" if settings.llm_provider == "gemini" else "compute"
         )
-        await resource_manager.throttle_if_needed(vision_task_type)
+        await RESOURCE_ARBITER.throttle_if_needed(vision_task_type)
 
         # Use the configured LLM provider from settings
         from core.processing.extractor import FrameExtractor
@@ -360,7 +360,7 @@ class FrameStage:
                     self._cleanup_memory(context=f"frame_{frame_count}")
 
                     # Thermal throttling - pause if system overheating
-                    await resource_manager.throttle_if_needed("compute")
+                    await RESOURCE_ARBITER.throttle_if_needed("compute")
 
                 # CHECKPOINT: Save progress every 50 frames for crash recovery
                 checkpoint_interval = 50
