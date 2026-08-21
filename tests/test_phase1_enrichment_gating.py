@@ -104,20 +104,20 @@ class TestInsightfaceGating:
         mock_settings = MagicMock()
         mock_settings.enable_face_recognition = False
 
-        with patch("core.processing.identity.settings", mock_settings):
-            from core.processing.identity import FaceManager
+        with patch("core.processing.identity.face_detector.settings", mock_settings):
+            from core.processing.identity.face_detector import FaceDetector
 
-            mgr = FaceManager(db_client=None)
+            detector = FaceDetector()
 
             async def run():
-                result = await mgr._try_init_insightface()
+                result = await detector._try_init_insightface()
                 return result
 
             result = asyncio.run(run())
 
         assert result is False
         # Verify InsightFace was never initialized
-        assert mgr._insightface_app is None
+        assert detector._insightface_app is None
 
     def test_insightface_attempted_when_face_recognition_enabled(self):
         """When enable_face_recognition=True, the init is attempted (may fail on import)."""
@@ -131,17 +131,17 @@ class TestInsightfaceGating:
         def _try_import_insightface_none():
             return None
 
-        with patch("core.processing.identity.settings", mock_settings):
+        with patch("core.processing.identity.face_detector.settings", mock_settings):
             with patch(
-                "core.processing.identity._try_import_insightface",
+                "core.processing.identity.face_detector._try_import_insightface",
                 _try_import_insightface_none,
             ):
-                from core.processing.identity import FaceManager
+                from core.processing.identity.face_detector import FaceDetector
 
-                mgr = FaceManager(db_client=None)
+                detector = FaceDetector()
 
                 async def run():
-                    return await mgr._try_init_insightface()
+                    return await detector._try_init_insightface()
 
                 result = asyncio.run(run())
 

@@ -30,8 +30,7 @@ dependencies = [
     "ollama>=0.6.1",
     "packaging",
     "pydantic>=2.10.0",
-    "python-magic>=0.4.27",
-    "python-magic-bin>=0.4.14; sys_platform == 'win32'",
+
     "scikit-learn>=1.5.0",
     "transformers>=4.46.3",
     "torch>=2.5.1",
@@ -76,25 +75,20 @@ dependencies = [
     # sam3_tracker.py falls back to sam2 or mocks gracefully when sam3 is absent.
     # Re-add when sam3 publishes a PyPI release with numpy>=2 support.
     # "brave-search>=0.1.0", # Removed due to httpx conflict
-    "pyloudnorm>=0.1.1",
-    "fer>=22.5.1 ; python_version < '3.14'",
-    "deepface>=0.0.93 ; python_version < '3.14'",
+
     "ultralytics>=8.3.0",
     "paddleocr>=2.9.1 ; python_version < '3.14'",
-    "decord>=0.6.0",
-    "pycocotools>=2.0.0",
-    "FlagEmbedding>=1.3.3",
+
     "rank_bm25>=0.2.2",
     "tf-keras>=2.16.0 ; python_version < '3.14'",  # Required for transformers compatibility with Keras 3
     "scenedetect>=0.6.0",
-    "triton @ https://github.com/woct0rdho/triton-windows/releases/download/v3.0.0-windows.post1/triton-3.0.0-cp312-cp312-win_amd64.whl ; sys_platform == 'win32' and python_version == '3.12'",
-    "imagehash>=4.3.0",  # Perceptual hashing for content fingerprinting
+
     "open-clip-torch>=3.2.0",
     "setuptools<70.0.0",
-    "neo4j>=6.1.0",
+
     "opencv-python>=4.11.0.86",
     "paddlepaddle>=3.3.0 ; python_version < '3.14'",
-    "psycopg2-binary>=2.9.12",
+
 ]
 
 [project.optional-dependencies]
@@ -174,3 +168,8 @@ reportFunctionMemberAccess = "none"
 reportUnusedExpression = "none"
 reportPrivateImportUsage = "none"
 reportAbstractUsage = "none"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "auto"
+
