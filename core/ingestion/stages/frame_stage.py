@@ -97,7 +97,7 @@ class FrameStage:
 
         # GLOBAL IDENTITY: Load existing cluster centroids from DB
         # This enables cross-video identity matching (O(1) gallery-probe)
-        global_clusters = self.db.get_all_cluster_centroids()
+        global_clusters = self.db.faces.get_all_cluster_centroids()
         logger.info(
             f"[GlobalIdentity] Loaded {len(global_clusters)} cluster centroids for matching"
         )
@@ -359,25 +359,7 @@ class FrameStage:
                     self._cleanup_memory(context=f"frame_{frame_count}")
 
 
-                # CHECKPOINT: Save progress every 50 frames for crash recovery
-                checkpoint_interval = 50
-                if job_id and frame_count % checkpoint_interval == 0:
-                    from core.ingestion.jobs import job_manager
 
-                    checkpoint_data = {
-                        "last_frame": frame_count,
-                        "last_timestamp": timestamp,
-                        "audio_complete": True,
-                        "voice_complete": True,
-                        "frames_complete": False,
-                    }
-                    job_manager.update_job(
-                        job_id,
-                        checkpoint_data=checkpoint_data,
-                        processed_frames=frame_count,
-                        current_frame_timestamp=timestamp,
-                    )
-                    job_manager.update_heartbeat(job_id)
                     logger.debug(f"Checkpoint saved at frame {frame_count}")
 
             # Process any remaining frames in the batch
@@ -417,7 +399,7 @@ class FrameStage:
                 )
 
                 for sl in scenelets:
-                    await self.db.store_scenelet(
+                    await self.db.scenes.store_scenelet(
                         media_path=str(path),
                         start_time=sl.start_ts,
                         end_time=sl.end_ts,
@@ -617,7 +599,7 @@ class FrameStage:
                     logger.error(f"Thumbnail generation failed: {e}")
 
                 # Store face with PROPER cluster_id (not hash-based)
-                self.db.insert_face(
+                self.db.faces.insert_face(
                     face.embedding,
                     name=None,
                     cluster_id=cluster_id,  # Use proper cluster ID
@@ -639,7 +621,7 @@ class FrameStage:
         # Build identity context from HITL names for VLM
         identity_parts = []
         for idx, cid in enumerate(face_cluster_ids):
-            name = self.db.get_face_name_by_cluster(cid)
+            name = self.db.faces.get_face_name_by_cluster(cid)
             if name:
                 identity_parts.append(f"Person {idx + 1}: {name}")
             else:
@@ -653,7 +635,7 @@ class FrameStage:
                 str(video_path), timestamp
             )
             for scid in speaker_clusters:
-                sname = self.db.get_speaker_name_by_cluster(scid)
+                sname = self.db.voice.get_speaker_name_by_cluster(scid)
                 if sname:
                     identity_parts.append(f"Speaking: {sname}")
         except Exception:
@@ -935,14 +917,14 @@ class FrameStage:
                 # First, gather face names for this frame
                 current_face_names = {}  # cluster_id -> name
                 for cid in face_cluster_ids:
-                    fname = self.db.get_face_name_by_cluster(cid)
+                    fname = self.db.faces.get_face_name_by_cluster(cid)
                     if fname:
                         current_face_names[cid] = fname
                         payload["face_names"].append(fname)
 
                 # Now process speaker clusters
                 for cluster_id in speaker_cluster_ids:
-                    speaker_name = self.db.get_speaker_name_by_cluster(
+                    speaker_name = self.db.voice.get_speaker_name_by_cluster(
                         cluster_id
                     )
 
@@ -956,7 +938,7 @@ class FrameStage:
                                 logger.info(
                                     f"Auto-mapping Speaker '{speaker_name}' -> Face Cluster {face_cid}"
                                 )
-                                self.db.set_face_name(face_cid, speaker_name)
+                                self.db.faces.set_face_name(face_cid, speaker_name)
                                 payload["face_names"].append(
                                     speaker_name
                                 )  # Update current payload
@@ -969,7 +951,7 @@ class FrameStage:
                             logger.info(
                                 f"Auto-mapping Face '{face_name}' -> Speaker Cluster {cluster_id}"
                             )
-                            self.db.set_speaker_name(cluster_id, face_name)
+                            self.db.voice.set_speaker_name(cluster_id, face_name)
                             payload["speaker_names"].append(
                                 face_name
                             )  # Update current payload
@@ -1146,7 +1128,7 @@ class FrameStage:
             for face, cluster_id in zip(
                 detected_faces, face_cluster_ids, strict=False
             ):
-                face_name = self.db.get_face_name_by_cluster(cluster_id)
+                face_name = self.db.faces.get_face_name_by_cluster(cluster_id)
                 bbox = (
                     face.bbox
                     if isinstance(face.bbox, list)

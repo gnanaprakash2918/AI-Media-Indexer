@@ -476,6 +476,10 @@ class VoiceProcessor:
             track_count = 0
             segments_with_placeholder = 0
 
+            # Check if using pyannote 3.3+ which returns DiarizeOutput instead of Annotation
+            if hasattr(diarization, "speaker_diarization"):
+                diarization = diarization.speaker_diarization
+                
             # Log raw diarization stats
             try:
                 raw_segments_count = len(

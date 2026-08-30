@@ -159,15 +159,6 @@ class AudioEventDetector:
             )
             return ([], None) if return_embedding else []
 
-        log.debug("[CLAP] detect_events: calling _lazy_load")
-        if not await self._lazy_load():
-            log.debug("[CLAP] detect_events: _lazy_load returned False")
-            return ([], None) if return_embedding else []
-        log.debug("[CLAP] detect_events: _lazy_load completed successfully")
-
-        if self.model is None or self.processor is None:
-            return ([], None) if return_embedding else []
-
         if audio_segment.size == 0:
             return ([], None) if return_embedding else []
 
@@ -196,6 +187,9 @@ class AudioEventDetector:
             log.debug("[CLAP] Acquiring GPU for CLAP detection...")
             embedding_list = None
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
+                if not await self._lazy_load() or self.model is None or self.processor is None:
+                    return ([], None) if return_embedding else []
+                    
                 log.debug("[CLAP] GPU acquired, processing...")
                 device = self._device or "cpu"
 
@@ -295,16 +289,6 @@ class AudioEventDetector:
         if not audio_chunks:
             return []
 
-        if not await self._lazy_load():
-            if return_embedding:
-                return [([], None) for _ in audio_chunks]
-            return [[] for _ in audio_chunks]
-
-        if self.model is None or self.processor is None:
-            if return_embedding:
-                return [([], None) for _ in audio_chunks]
-            return [[] for _ in audio_chunks]
-
         try:
             import torch
 
@@ -341,6 +325,11 @@ class AudioEventDetector:
                 f"[CLAP] Batch: Acquiring GPU for {len(resampled_chunks)} chunks..."
             )
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
+                if not await self._lazy_load() or self.model is None or self.processor is None:
+                    if return_embedding:
+                        return [([], None) for _ in audio_chunks]
+                    return [[] for _ in audio_chunks]
+                    
                 log.info("[CLAP] Batch: GPU acquired, processing all chunks...")
                 device = self._device or "cpu"
 
@@ -501,18 +490,15 @@ class AudioEventDetector:
         if not text:
             return None
 
-        if not await self._lazy_load():
-            return None
-
-        if self.model is None or self.processor is None:
-            return None
-
         try:
             import torch
 
             from core.utils.hardware import RESOURCE_ARBITER
 
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=0.5):
+                if not await self._lazy_load() or self.model is None or self.processor is None:
+                    return None
+                    
                 device = self._device or "cpu"
 
                 text_inputs = self.processor(
@@ -550,9 +536,6 @@ class AudioEventDetector:
         if not audio_chunks:
             return []
 
-        if not await self._lazy_load():
-            return [[] for _ in audio_chunks]
-
         try:
             import librosa
             import torch
@@ -580,6 +563,9 @@ class AudioEventDetector:
                     resampled_audios.append(audio.astype(np.float32))
 
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=0.8):
+                if not await self._lazy_load() or self.ast_model is None or self.ast_processor is None:
+                    return [[] for _ in audio_chunks]
+                    
                 device = self._get_device()
 
                 all_predictions = []
@@ -635,9 +621,6 @@ class AudioEventDetector:
         if not audio_chunks:
             return []
 
-        if not await self._lazy_load():
-            return [None for _ in audio_chunks]
-
         try:
             import librosa
             import torch
@@ -663,6 +646,9 @@ class AudioEventDetector:
                     resampled_list.append(audio.astype(np.float32))
 
             async with RESOURCE_ARBITER.acquire("clap", vram_gb=1.0):
+                if not await self._lazy_load() or self.model is None or self.processor is None:
+                    return [None for _ in audio_chunks]
+                    
                 device = self._get_device()
 
                 embeddings_out = []

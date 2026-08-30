@@ -853,7 +853,7 @@ class SearchAgent:
                 resolved_names = []
                 for cid in face_cluster_ids:
                     try:
-                        name = self.db.get_face_name_by_cluster(cid)
+                        name = self.db.faces.get_face_name_by_cluster(cid)
                         if name:
                             resolved_names.append(name)
                     except Exception:
