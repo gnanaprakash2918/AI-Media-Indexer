@@ -1,3 +1,5 @@
+
+
 # AI-MEDIA-INDEXER
 
 *Multimodal Intelligence for Media Discovery and Understanding*
@@ -183,6 +185,7 @@ cd web && npm run dev
 | Variable               | Default     | Description                      |
 | ---------------------- | ----------- | -------------------------------- |
 | `QDRANT_HOST`          | `localhost` | Vector DB host                   |
+| `QDRANT_PORT`          | `6333`      | Qdrant HTTP port                 |
 | `USE_INDIC_ASR`        | `True`      | Enable AI4Bharat for Indic langs |
 | `ENABLE_HYBRID_SEARCH` | `True`      | Use weighted RRF for ranking     |
 
